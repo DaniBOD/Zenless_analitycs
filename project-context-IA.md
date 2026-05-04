@@ -44,21 +44,21 @@ Sistema de análisis y optimización de cuenta para ZZZ porque el juego carece d
 
 | Capa | Tabla | Filas | Notas |
 |------|-------|------:|-------|
-| 1 Catálogos | `agents` | 45 | Roster completo, stats efectivos HoYoLAB |
+| 1 Catálogos | `agents` | **46** | Roster completo · 45 originales + Cissia v2.7 (2026-05-04) |
 | 1 | `weapons` | 53 | 49 base + 4 nuevas (Street Superstar, Florescencia aurífera, Wild Gastronome, Hertz Transit). Ya tiene `pasiva_modelada` + `sensibilidad_contexto` |
 | 1 | `disc_sets` | 26 | Post-merge (id 47→40 Puffer Electro; id 50→35 Nana luz cenicienta) |
-| 1 | `agent_awakenings` | 5 | 1 verificado (Burnice nv6) + 4 placeholder `pending_capture` (Lycaon, Ellen, Grace, N.°0:Anby). Harumasa y N.°11 sin insertar hasta confirmar nivel |
-| 2 Inventarios | `agent_discs` | 270 | 45 PJs × 6 slots; incluye EMPTY (Antón, Ben, builds 3+3) |
-| 2 | `inventory_discs` | 332 | 257 equipados + 75 sueltos |
+| 1 | `agent_awakenings` | **6** | 1 verificado (Burnice nv6) + 4 placeholder `pending_capture` (Lycaon, Ellen, Grace, N.°0:Anby) + 1 placeholder Cissia (v2.7 sin awakening). Harumasa y N.°11 sin insertar hasta confirmar nivel |
+| 2 Inventarios | `agent_discs` | 270 | 45 PJs × 6 slots; incluye EMPTY (Antón, Ben, builds 3+3). Cissia usa inventory_discs directamente hasta sync RF-04 |
+| 2 | `inventory_discs` | **334** | 263 equipados + 71 sueltos (+ 2 nuevos Cissia slot 4/6) |
 | 2 | `inventory_weapons` | 50 | 40 equipadas + 10 sueltas |
-| 3 Thresholds | `agent_thresholds` | 103 | (93 + 10 gaps abril 2026). 45/45 PJs con ≥1 stat |
-| 3 | `agent_score_thresholds` | 45 | Defaults equip 0.75 / stock 0.50, overridable |
+| 3 Thresholds | `agent_thresholds` | **108** | 46/46 PJs con ≥1 stat · +5 Cissia (CR/CDmg/ATK/ER/Bono Eléctrico) |
+| 3 | `agent_score_thresholds` | **46** | Defaults equip 0.75 / stock 0.50, overridable |
 | 3 | `agent_substat_preferences` | 0 | Cae al arquetipo del rol hasta que se cargue |
 | 4 Scoring | `disc_archetypes` | 6 | ATK_DPS, HP_DISRUPT, ANOMALY, STUN, SUPPORT_ER, DEFENSE |
 | 4 | `disc_set_archetype` | 34 | N:M con prioridad 1=primario, 2=secundario |
 | 4 | `inventory_disc_evaluations` | 0 | Histórico del scoring engine; crece con uso |
 | 5 RF-06 | `optimizer_pending_actions` | 0 | TODO/APLICADO/DESCARTADO/OBSOLETO |
-| 6 RF-12 | `team_synergies` | 0 | C(45,2)=990 pares posibles; ~300 esperados con sinergia |
+| 6 RF-12 | `team_synergies` | 0 | C(46,2)=1035 pares posibles; ~300+ esperados con sinergia |
 | 6 | `team_compositions` | 0 | top-N por PJ principal |
 | 6 | `ai_catalog_runs` | 0 | Auditoría llamadas Claude API |
 | 7 RF-13 | `enemies` | 12 | 5 notorious + 3 bosses + 3 elites + 1 dummy |
@@ -72,9 +72,9 @@ Sistema de análisis y optimización de cuenta para ZZZ porque el juego carece d
 | 8 | `content_profiles` | 4 | seed: shiyu_critical, da, hollow_zero, general |
 | 8 | `weapon_evaluations` | 0 | Cache scores (PJ × weapon × refinamiento × contenido) |
 | 8 | `prydwen_weapon_recommendations_snapshots` | 0 | Snapshot semanal scraper |
-| 8 | `pj_weapon_synergy` | 270 | 45 PJs × 6 categorías de pasiva |
+| 8 | `pj_weapon_synergy` | **276** | 46 PJs × 6 categorías de pasiva |
 
-**Migraciones aplicadas:** 5/5 (`01_archetypes_and_scoring`, `02_optimizer_pending`, `03_team_synergies`, `04_lategame_validation`, `05_weapon_optimizer`). Integrity OK, 0 FK violations.
+**Migraciones aplicadas:** 6/6 (`01_archetypes_and_scoring`, `02_optimizer_pending`, `03_team_synergies`, `04_lategame_validation`, `05_weapon_optimizer`, `06_onboarding_cissia`). Integrity OK, 0 FK violations.
 
 **FK con CASCADE** (resto sin CASCADE para preservar histórico): `enemy_resistances.enemy_id`, `lategame_run_damage.run_id`, `team_synergy_adjustments.synergy_id`, `weapon_passives_structured.weapon_id`.
 
