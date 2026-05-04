@@ -1,0 +1,33 @@
+[paths]
+db = "db/danibod_zzz_v2.db"
+
+[scoring]
+threshold_equip_default = 0.75
+threshold_upgrade_default = 0.50
+threshold_stock_default = 0.70
+peso_main_arquetipo = 1.0
+peso_set_4pc_primario = 1.5
+peso_set_4pc_secundario = 0.7
+peso_set_2pc_primario = 0.4
+peso_set_2pc_secundario = 0.2
+roll_multiplier_positivo = 0.25
+roll_multiplier_perjudicial = 0.5
+nivel_bonus_max = 0.5
+
+[ocr]
+backend_texto = "tesseract"
+backend_numeros = "paddle"
+confianza_minima = 0.7
+
+[monitor]
+polling_reposo_ms = 4000
+polling_inventario_ms = 2000
+polling_resultado_ms = 1000
+polling_modal_ms = 500
+
+[hotkeys]
+captura_manual = "f8"
+toggle_panel = "f9"
+toggle_pausa = "f10"
+registrar_run = "f11"
+salir = "ctrl+shift+z"
