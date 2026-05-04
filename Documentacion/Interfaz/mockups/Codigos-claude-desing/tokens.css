@@ -1,0 +1,227 @@
+/* DaniBOD ZZZ Analytics — Design tokens */
+@import url('https://fonts.googleapis.com/css2?family=Saira:wght@400;500;600;700&family=Saira+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  /* Surfaces */
+  --bg-base: #0a0a0a;
+  --bg-deep: #050505;
+  --bg-panel: rgba(20, 20, 20, 0.92);
+  --bg-panel-solid: #141414;
+  --bg-panel-hi: #1c1c1c;
+  --bg-overlay: rgba(0, 0, 0, 0.75);
+  --bg-row: rgba(255, 255, 255, 0.025);
+  --bg-row-hover: rgba(255, 203, 5, 0.06);
+
+  /* Borders */
+  --border-subtle: #2a2a2a;
+  --border-mid: #3a3a3a;
+  --border-strong: #555;
+
+  /* Text */
+  --text-primary: #f5f5f5;
+  --text-secondary: #a8a8a8;
+  --text-muted: #6b6b6b;
+  --text-dim: #4a4a4a;
+
+  /* Signature */
+  --yellow: #FFCB05;
+  --yellow-soft: #f0c020;
+  --yellow-deep: #b89008;
+  --yellow-glow: rgba(255, 203, 5, 0.4);
+  --yellow-glow-strong: rgba(255, 203, 5, 0.7);
+  --yellow-tint: rgba(255, 203, 5, 0.08);
+
+  /* Action */
+  --positive: #7BC91F;
+  --positive-deep: #5a9d10;
+  --positive-glow: rgba(123, 201, 31, 0.4);
+  --warning: #FF6B47;
+  --warning-glow: rgba(255, 107, 71, 0.4);
+  --info: #5BC0EB;
+  --info-glow: rgba(91, 192, 235, 0.4);
+
+  /* AI / RF tags */
+  --purple: #9D4EDD;
+  --pink: #FF4D8A;
+
+  /* Type */
+  --font-ui: 'Saira', 'Bahnschrift', system-ui, sans-serif;
+  --font-display: 'Saira Condensed', 'Bahnschrift Condensed', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  /* Shadows */
+  --shadow-panel: 0 4px 16px rgba(0, 0, 0, 0.6);
+  --shadow-deep: 0 12px 40px rgba(0, 0, 0, 0.8);
+  --glow-yellow: 0 0 12px rgba(255, 203, 5, 0.5);
+  --glow-yellow-strong: 0 0 20px rgba(255, 203, 5, 0.65), 0 0 4px rgba(255, 203, 5, 0.9);
+  --glow-positive: 0 0 12px rgba(123, 201, 31, 0.5);
+  --glow-info: 0 0 10px rgba(91, 192, 235, 0.5);
+  --glow-warning: 0 0 10px rgba(255, 107, 71, 0.5);
+}
+
+/* Base reset for ZZZ surfaces */
+.zzz-root, .zzz-root * {
+  box-sizing: border-box;
+}
+.zzz-root {
+  font-family: var(--font-ui);
+  color: var(--text-primary);
+  font-feature-settings: "tnum" 1, "ss01" 1;
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: 0.01em;
+}
+.zzz-root .num, .zzz-root .mono { font-variant-numeric: tabular-nums; }
+.zzz-root .display {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.zzz-root .caps {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+
+/* Carbon-fiber stripe pattern (subtle, matches the in-game panel texture) */
+.zzz-carbon {
+  background-image:
+    linear-gradient(180deg, rgba(255,255,255,0.025) 0%, rgba(255,255,255,0) 100%),
+    repeating-linear-gradient(135deg,
+      rgba(255,255,255,0.028) 0px,
+      rgba(255,255,255,0.028) 1px,
+      transparent 1px,
+      transparent 5px);
+  background-color: var(--bg-panel-solid);
+}
+
+/* Block-with-depth: panels feel like floating physical pieces.
+   Composition:
+   - Outer drop shadow (depth below)
+   - Inset highlight at top edge (top "bevel")
+   - Inset shadow at bottom (catch shadow inside)
+   - Soft outer border-color via box-shadow ring
+*/
+.zzz-block {
+  box-shadow:
+    /* outer ambient drop */
+    0 1px 0 rgba(255,255,255,0.04) inset,
+    /* top inner bevel highlight */
+    0 1px 0 0 rgba(255,255,255,0.08) inset,
+    0 -1px 0 0 rgba(0,0,0,0.4) inset,
+    /* outer depth */
+    0 8px 24px rgba(0,0,0,0.65),
+    0 2px 4px rgba(0,0,0,0.5);
+}
+.zzz-block-soft {
+  box-shadow:
+    0 1px 0 0 rgba(255,255,255,0.06) inset,
+    0 -1px 0 0 rgba(0,0,0,0.5) inset,
+    0 4px 14px rgba(0,0,0,0.55);
+}
+.zzz-block-glow-yellow {
+  box-shadow:
+    0 1px 0 0 rgba(255,255,255,0.12) inset,
+    0 -1px 0 0 rgba(0,0,0,0.5) inset,
+    0 6px 20px rgba(0,0,0,0.7),
+    0 0 18px rgba(255,203,5,0.45);
+}
+.zzz-block-glow-positive {
+  box-shadow:
+    0 1px 0 0 rgba(255,255,255,0.12) inset,
+    0 -1px 0 0 rgba(0,0,0,0.5) inset,
+    0 6px 20px rgba(0,0,0,0.7),
+    0 0 18px rgba(123,201,31,0.45);
+}
+.zzz-block-glow-info {
+  box-shadow:
+    0 1px 0 0 rgba(255,255,255,0.12) inset,
+    0 -1px 0 0 rgba(0,0,0,0.5) inset,
+    0 6px 20px rgba(0,0,0,0.7),
+    0 0 18px rgba(91,192,235,0.45);
+}
+.zzz-block-glow-warning {
+  box-shadow:
+    0 1px 0 0 rgba(255,255,255,0.12) inset,
+    0 -1px 0 0 rgba(0,0,0,0.5) inset,
+    0 6px 20px rgba(0,0,0,0.7),
+    0 0 18px rgba(255,107,71,0.45);
+}
+
+/* Glass top highlight strip — sits as a child div at top of the panel */
+.zzz-glass-top {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 50%;
+  background: linear-gradient(180deg,
+    rgba(255,255,255,0.06) 0%,
+    rgba(255,255,255,0.018) 40%,
+    transparent 100%);
+  pointer-events: none;
+}
+
+/* Radii system — based on game's rounded language */
+:root {
+  --r-sm: 8px;
+  --r-md: 14px;
+  --r-lg: 18px;
+  --r-pill: 999px;
+}
+
+/* Chamfered corners — used on toasts, badges, primary buttons */
+.zzz-chamfer-tl-br {
+  /* Top-left + bottom-right cut */
+  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
+}
+.zzz-chamfer-all {
+  clip-path: polygon(10px 0, calc(100% - 10px) 0, 100% 10px, 100% calc(100% - 10px), calc(100% - 10px) 100%, 10px 100%, 0 calc(100% - 10px), 0 10px);
+}
+.zzz-chamfer-tr-bl {
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+}
+.zzz-chamfer-strip {
+  clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+}
+
+/* Selection ring (yellow border + glow). Apply on top of chamfered shape via wrapper. */
+.zzz-ring-yellow {
+  position: relative;
+}
+.zzz-ring-yellow::after {
+  content: "";
+  position: absolute; inset: 0;
+  pointer-events: none;
+  border: 2px solid var(--yellow);
+  box-shadow: var(--glow-yellow);
+  /* match parent's chamfer via inheritance — caller composes */
+}
+
+/* Scrollbar inside panels */
+.zzz-root ::-webkit-scrollbar { width: 6px; height: 6px; }
+.zzz-root ::-webkit-scrollbar-thumb { background: #333; }
+.zzz-root ::-webkit-scrollbar-track { background: transparent; }
+
+/* Pulse glow for active toast urgency bar */
+@keyframes zzz-pulse-y {
+  0%, 100% { box-shadow: 0 0 8px rgba(255,203,5,0.4); }
+  50%      { box-shadow: 0 0 18px rgba(255,203,5,0.8); }
+}
+@keyframes zzz-pulse-g {
+  0%, 100% { box-shadow: 0 0 8px rgba(123,201,31,0.4); }
+  50%      { box-shadow: 0 0 18px rgba(123,201,31,0.8); }
+}
+@keyframes zzz-scan {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+@keyframes zzz-spin-slow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes zzz-blink {
+  0%, 60% { opacity: 1; }
+  70%, 100% { opacity: 0.25; }
+}
+
+.zzz-stripe-positive {
+  background: repeating-linear-gradient(135deg, var(--positive) 0 8px, var(--positive-deep) 8px 16px);
+}

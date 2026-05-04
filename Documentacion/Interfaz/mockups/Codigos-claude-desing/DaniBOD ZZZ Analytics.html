@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>DaniBOD ZZZ Analytics — Toast + Captura en vivo</title>
+  <link rel="stylesheet" href="tokens.css" />
+  <style>
+    html, body { margin: 0; padding: 0; background: #1a1815; min-height: 100vh; }
+    body { font-family: 'Saira', system-ui, sans-serif; }
+  </style>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" src="design-canvas.jsx"></script>
+  <script type="text/babel" src="components.jsx"></script>
+  <script type="text/babel" src="data.jsx"></script>
+  <script type="text/babel" src="toasts.jsx"></script>
+  <script type="text/babel" src="panel.jsx"></script>
+  <script type="text/babel" src="discs-tab.jsx"></script>
+  <script type="text/babel" src="disc-modal.jsx"></script>
+  <script type="text/babel" src="pj-modal.jsx"></script>
+
+  <script type="text/babel">
+    const { Toast, AppWindow, DiscsTab, DiscModal, PjModal } = window;
+
+    // Mock data sets per variant
+    const dataEquipar = {
+      id: "00482", set: "Jazz Caótico", slot: 4, main: "ATK%", mainVal: "30%",
+      subs: "CR · DC · ATK · Anom", target: "Yanagi", mind: 2,
+      score: "87.3", delta: "12", urgency: 0.82, urgencyLabel: "URGENCIA ALTA",
+      threshold: "thr 0.75", tier: "S", secs: 4,
+      setLogo: "assets/set-jazz-caotico.webp", targetIco: "assets/yanagi-ico.webp", accent: "#FFCB05",
+    };
+    const dataMejorar = {
+      id: "00471", set: "Puffer Electro", slot: 5, main: "DMG ELÉCTRICO", mainVal: "30%",
+      subs: "CR · ATK% · HP", target: "Burnice", mind: 1,
+      score: "76.8", delta: "8", urgency: 0.62, urgencyLabel: "ROI ALTO · LVL 9 → 15",
+      threshold: "thr 0.50", tier: "S", secs: 3,
+      setLogo: "assets/set-puffer-electro.webp", targetIco: "assets/burnice-ico.webp", accent: "#5BC0EB",
+    };
+    const dataReserva = {
+      id: "00465", set: "Sacudestrellas", slot: 6, main: "Maestría Anom.", mainVal: "32",
+      subs: "Anom · ATK · CR", target: "ANOMALY · arquetipo", mind: 0,
+      score: "62.4", delta: "3", urgency: 0.45, urgencyLabel: "RESERVA · SIN BUILD AHORA",
+      threshold: "thr 0.50", tier: "A", secs: 5,
+      setLogo: "assets/set-sacudestrellas.webp", targetIco: "assets/ellen-ico.webp", accent: "#FFCB05",
+    };
+    const dataDescartar = {
+      id: "00463", set: "Punk Primitivo", slot: 2, main: "DEF%", mainVal: "20%",
+      subs: "DEF · HP · ER", target: "ningún PJ", mind: null,
+      score: "23.1", delta: null, urgency: 0.18, urgencyLabel: "DESCARTAR · SILENCIADO",
+      threshold: "thr 0.75", tier: "B", secs: 2,
+      setLogo: "assets/set-punk-primitivo.webp", accent: "#FF6B47",
+    };
+    const dataLategame = {
+      contenido: "DEADLY ASSAULT · NODO 3", time: "1:48", dps: "67%", dpsTarget: "Yanagi",
+      stars: 3, secs: 4,
+      team: [
+        { name: "Yanagi",  ico: "assets/yanagi-ico.webp",  accent: "#FFCB05" },
+        { name: "Burnice", ico: "assets/burnice-ico.webp", accent: "#FF6B47" },
+        { name: "Caesar",  ico: "assets/caesar-ico.webp",  accent: "#9D4EDD" },
+      ],
+    };
+
+    // ---------- Toast row helper ----------
+    function ToastTile({ variant, state, label, data }) {
+      return (
+        <div style={{
+          display: "flex", flexDirection: "column", alignItems: "center",
+          padding: "20px 24px",
+          width: 440, height: 200,
+          justifyContent: "center",
+          background: "transparent",
+        }}>
+          <Toast variant={variant} state={state} data={data} label={label} width={380} height={116}/>
+        </div>
+      );
+    }
+
+    // ---------- Mini overview tile (toast on game-style backdrop) ----------
+    function ToastOnDesktop({ variant = "equipar", data }) {
+      return (
+        <div style={{
+          width: 1280, height: 720,
+          position: "relative",
+          overflow: "hidden",
+          background: "#0a0a0a",
+        }}>
+          {/* Fake gameplay backdrop (abstract — original shapes only) */}
+          <div style={{
+            position: "absolute", inset: 0,
+            background: "radial-gradient(ellipse at 30% 40%, #2a1a3a 0%, #0a0610 60%, #050308 100%)",
+          }}/>
+          {/* abstract neon stripes */}
+          <div style={{
+            position: "absolute", inset: 0, opacity: 0.5,
+            backgroundImage: "repeating-linear-gradient(120deg, rgba(255,77,138,0.06) 0 2px, transparent 2px 60px)",
+          }}/>
+          {/* floor grid */}
+          <svg width="1280" height="380" style={{ position: "absolute", left: 0, top: 360 }}>
+            <defs>
+              <linearGradient id="grad-floor" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="rgba(91,192,235,0.15)"/>
+                <stop offset="100%" stopColor="rgba(91,192,235,0)"/>
+              </linearGradient>
+            </defs>
+            {Array.from({ length: 22 }).map((_, i) => {
+              const y = i * 18;
+              return <line key={`h${i}`} x1="0" x2="1280" y1={y} y2={y} stroke="url(#grad-floor)" strokeWidth="1"/>;
+            })}
+            {Array.from({ length: 30 }).map((_, i) => {
+              const x = 640 + (i - 15) * 80;
+              return <line key={`v${i}`} x1="640" y1="0" x2={x} y2="380" stroke="rgba(91,192,235,0.06)" strokeWidth="1"/>;
+            })}
+          </svg>
+          {/* Fake game HUD top-left (simple silhouette) */}
+          <div style={{
+            position: "absolute", left: 24, top: 24,
+            display: "flex", gap: 8, alignItems: "center",
+            opacity: 0.45,
+          }}>
+            <div style={{ width: 44, height: 44, borderRadius: "50%", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)" }}/>
+            <div>
+              <div style={{ width: 120, height: 6, background: "rgba(255,255,255,0.15)" }}/>
+              <div style={{ width: 80, height: 4, background: "rgba(255,255,255,0.08)", marginTop: 4 }}/>
+            </div>
+          </div>
+          {/* Bottom-right mock combat numbers */}
+          <div style={{
+            position: "absolute", right: 36, top: 80, opacity: 0.35,
+            display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end",
+            fontFamily: "'Saira Condensed', sans-serif",
+          }}>
+            <span style={{ fontSize: 28, color: "#FFCB05", fontWeight: 700 }}>14,820</span>
+            <span style={{ fontSize: 18, color: "#fff", fontWeight: 600 }}>9,142</span>
+            <span style={{ fontSize: 14, color: "#FF6B47", fontWeight: 600 }}>+ COMBO ×7</span>
+          </div>
+          {/* Toast in bottom-right */}
+          <div style={{ position: "absolute", right: 28, bottom: 28 }}>
+            <Toast variant={variant} state="idle" data={data} showOuterChrome={false} width={380} height={116}/>
+          </div>
+          {/* Tray indicator hint */}
+          <div style={{
+            position: "absolute", right: 24, bottom: 4,
+            display: "flex", alignItems: "center", gap: 6,
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 10, color: "rgba(255,255,255,0.4)",
+            textTransform: "uppercase", letterSpacing: "0.1em",
+          }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#7BC91F", boxShadow: "0 0 6px #7BC91F" }}/>
+            DANIBOD ZZZ ANALYTICS · TRAY
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <DesignCanvas>
+          <DCSection id="overview" title="Toast en escritorio · contexto real" subtitle="Cómo se ve el toast flotando sobre el juego en pantalla completa. Always-on-top, 380×116 px, esquina inferior derecha.">
+            <DCArtboard id="overview-equipar" label="Equipar · in situ" width={1280} height={720}>
+              <ToastOnDesktop variant="equipar" data={dataEquipar}/>
+            </DCArtboard>
+            <DCArtboard id="overview-lategame" label="Run lategame · post F11" width={1280} height={720}>
+              <ToastOnDesktop variant="lategame" data={dataLategame}/>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection id="toasts" title="Toast · 5 variantes" subtitle="Una por color de acción. Auto-fade 5 s. Cualquiera congela en hover y abre el panel principal al click.">
+            <DCArtboard id="t-equipar" label="🟢 Equipar" width={440} height={200}>
+              <ToastTile variant="equipar" state="idle" label="V1 · ACCIÓN POSITIVA" data={dataEquipar}/>
+            </DCArtboard>
+            <DCArtboard id="t-mejorar" label="🔵 Mejorar" width={440} height={200}>
+              <ToastTile variant="mejorar" state="idle" label="V2 · MEJORAR / ROI" data={dataMejorar}/>
+            </DCArtboard>
+            <DCArtboard id="t-reserva" label="🟡 Reserva" width={440} height={200}>
+              <ToastTile variant="reserva" state="idle" label="V3 · RESERVA" data={dataReserva}/>
+            </DCArtboard>
+            <DCArtboard id="t-descartar" label="🔴 Descartar" width={440} height={200}>
+              <ToastTile variant="descartar" state="idle" label="V4 · DESCARTAR · SILENCIADO" data={dataDescartar}/>
+            </DCArtboard>
+            <DCArtboard id="t-lategame" label="📊 Run lategame" width={440} height={200}>
+              <ToastTile variant="lategame" state="idle" label="V5 · POST-F11" data={dataLategame}/>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection id="states" title="Toast · estados" subtitle="Tres momentos del ciclo de vida de un toast: hover (auto-fade pausado), click → expandiendo al panel, fade-out al expirar.">
+            <DCArtboard id="s-hover" label="Estado · hover (congelado)" width={440} height={200}>
+              <ToastTile variant="equipar" state="hover" label="HOVER · BARRA PAUSADA" data={dataEquipar}/>
+            </DCArtboard>
+            <DCArtboard id="s-expanding" label="Estado · expandiendo" width={440} height={200}>
+              <ToastTile variant="equipar" state="expanding" label="CLICK → ABRIENDO PANEL" data={dataEquipar}/>
+            </DCArtboard>
+            <DCArtboard id="s-fade" label="Estado · fade-out" width={440} height={200}>
+              <ToastTile variant="equipar" state="fade" label="EXPIRANDO · 0.3s" data={dataEquipar}/>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection id="panel" title="Panel principal · pestaña Captura en vivo" subtitle="Ventana 1320×820 con chrome custom oscuro estilo del juego. Sidebar con 8 pestañas, contenido con disco capturado + scoring + alternativas (RF-12).">
+            <DCArtboard id="panel-live" label="Captura en vivo · disco S nuevo recomendado para Yanagi" width={1320} height={820}>
+              <div className="zzz-root" style={{ width: 1320, height: 820, background: "#1a1815", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <AppWindow width={1320} height={820}/>
+              </div>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection id="discs" title="Tab DISCOS · inventario completo" subtitle="Vista tabla densa con los 332 discos. Filtros, distribución por set, acciones rápidas y un insight RF-12 lateral. Click en una fila abre el modal de disco.">
+            <DCArtboard id="discs-table" label="DISCOS · vista tabla" width={1320} height={820}>
+              <div className="zzz-root" style={{ width: 1320, height: 820, background: "var(--bg-base)" }}>
+                <DiscsTab/>
+              </div>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection id="disc-modal" title="Modal de disco · vista detalle" subtitle="3 columnas: identidad y stats · compatibilidad con PJs · arquetipo + recomendación final. Acciones rápidas en el footer (mejorar, reasignar, confirmar build).">
+            <DCArtboard id="disc-modal-1" label="Modal disco · #00482 Jazz Caótico" width={1100} height={700}>
+              <div className="zzz-root" style={{ width: 1100, height: 700 }}>
+                <DiscModal width={1100} height={700}/>
+              </div>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection id="pj-modal" title="Modal de PJ · paleta dinámica" subtitle="Hero con extend-art + paleta saturada del personaje. Stats con gauges, hexágono de build con set principal/secundario, W-Engine con refinamiento, awakening. Cada PJ tiene su propio acento de color.">
+            <DCArtboard id="pj-yanagi" label="Yanagi · azul/púrpura eléctrico" width={1000} height={640}>
+              <div className="zzz-root" style={{ width: 1000, height: 640 }}>
+                <PjModal pjId="yanagi" width={1000} height={640}/>
+              </div>
+            </DCArtboard>
+            <DCArtboard id="pj-ellen" label="Ellen · rojo/blanco Victoria" width={1000} height={640}>
+              <div className="zzz-root" style={{ width: 1000, height: 640 }}>
+                <PjModal pjId="ellen" width={1000} height={640}/>
+              </div>
+            </DCArtboard>
+            <DCArtboard id="pj-yixuan" label="Yixuan · oro/negro Yunkui" width={1000} height={640}>
+              <div className="zzz-root" style={{ width: 1000, height: 640 }}>
+                <PjModal pjId="yixuan" width={1000} height={640}/>
+              </div>
+            </DCArtboard>
+            <DCArtboard id="pj-burnice" label="Burnice · naranja/amarillo Calydon" width={1000} height={640}>
+              <div className="zzz-root" style={{ width: 1000, height: 640 }}>
+                <PjModal pjId="burnice" width={1000} height={640}/>
+              </div>
+            </DCArtboard>
+            <DCArtboard id="pj-caesar" label="Caesar · amarillo/dorado Calydon" width={1000} height={640}>
+              <div className="zzz-root" style={{ width: 1000, height: 640 }}>
+                <PjModal pjId="caesar" width={1000} height={640}/>
+              </div>
+            </DCArtboard>
+          </DCSection>
+        </DesignCanvas>
+      );
+    }
+
+    // wrap in zzz-root so tokens apply
+    function Root() {
+      return (
+        <div className="zzz-root" style={{ minHeight: "100vh", background: "#1a1815" }}>
+          <App/>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<Root/>);
+  </script>
+</body>
+</html>

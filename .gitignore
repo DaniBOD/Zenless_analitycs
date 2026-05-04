@@ -1,0 +1,92 @@
+# ==========================================================================
+# DaniBOD ZZZ Analytics — .gitignore
+# ==========================================================================
+
+# ────────────── Python ──────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# Virtual envs
+.venv/
+venv/
+env/
+ENV/
+
+# Build / dist artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+*.spec.bak
+
+# PyInstaller
+app/build/
+*.manifest
+
+# ────────────── IDE / Editor ──────────────
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.qodo/
+.claude/
+
+# ────────────── OS ──────────────
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ────────────── DB runtime artifacts ──────────────
+# Backups intermedios creados por scripts (regenerables — no se versionan)
+db/danibod_zzz_v2.backup_*.db
+db/*.db-journal
+db/*.db-wal
+db/*.db-shm
+# Basura de conexiones rotas
+db/*.db?*
+
+# Mantenemos: db/danibod_zzz_v2.db (DB activa, fuente de verdad estructural)
+# Mantenemos: db/migrations/ (SQL aplicadas)
+# Mantenemos: audit/*.backup_*.db (snapshots de auditoría intencionales)
+
+# ────────────── Inventario crudo (screenshots full-res del juego) ──────────────
+# Capturas binarias pesadas (~200MB) que el usuario regenera con la app.
+# Si en algún momento se quieren versionar, mover a Git LFS y eliminar esta línea.
+Inventario/
+
+# ────────────── Configuración personal del usuario ──────────────
+app/config/user_config.toml
+app/config/rois.toml.user
+.env
+.env.local
+
+# ────────────── Logs y reportes runtime ──────────────
+logs/
+*.log
+audit/*_running_*.md
+app/tests/_tmp/
+app/tests/__snapshots__/_actual_*
+
+# ────────────── Mockups runtime state ──────────────
+# DesignCanvas guarda estado de orden/títulos en sidecar JSON
+.design-canvas.state.json
+Documentacion/Interfaz/mockups/Codigos-claude-desing/.design-canvas.state.json
+
+# ────────────── Skills / sessions de asistentes ──────────────
+.skills-plugin/
+local-agent-mode-sessions/
