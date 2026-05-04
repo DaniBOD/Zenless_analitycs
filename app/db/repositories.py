@@ -141,6 +141,7 @@ class AgentRepo:
             "Aturdimiento":  "STUN",
             "Soporte":       "SUPPORT_ER",
             "Defensa":       "DEFENSE",
+            "Disruptivos":   "HP_DISRUPT",
         }
 
         arch_rows = {
