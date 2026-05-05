@@ -74,7 +74,7 @@ Sistema de análisis y optimización de cuenta para ZZZ porque el juego carece d
 | 8 | `prydwen_weapon_recommendations_snapshots` | 0 | Snapshot semanal scraper |
 | 8 | `pj_weapon_synergy` | **276** | 46 PJs × 6 categorías de pasiva |
 
-**Migraciones aplicadas:** 6/6 (`01_archetypes_and_scoring`, `02_optimizer_pending`, `03_team_synergies`, `04_lategame_validation`, `05_weapon_optimizer`, `06_onboarding_cissia`). Integrity OK, 0 FK violations.
+**Migraciones aplicadas:** 9/9 (`01_archetypes_and_scoring`, `02_optimizer_pending`, `03_team_synergies`, `04_lategame_validation`, `05_weapon_optimizer`, `06_onboarding_cissia`, `07_re_estandarizacion`, `08_fix_archetypes_mains`, `09_add_protected_build`). Integrity OK, 0 FK violations.
 
 **FK con CASCADE** (resto sin CASCADE para preservar histórico): `enemy_resistances.enemy_id`, `lategame_run_damage.run_id`, `team_synergy_adjustments.synergy_id`, `weapon_passives_structured.weapon_id`.
 
@@ -118,13 +118,13 @@ RF-14 coordina con RF-06 (build full = arma + 6 discos)
 | 1.5 | Inventario completo (equipados + no equipados) | ✅ Cerrada |
 | 1.6 | Schema arquetipos + scoring (mig 01) | ✅ Cerrada |
 | 1.7 | Migraciones 02-05 + seeds iniciales (enemies, content_profiles, pj_weapon_synergy) | ✅ Cerrada |
-| 2 | RF-04/05/06/09 implementación (captura + scoring + optimizador) | 📋 Pendiente |
+| 2 | RF-04/05/06/09 implementación (captura + scoring + optimizador) | ✅ Cerrada (Hitos 2.0–2.6) |
 | 3 | RF-12 implementación (team-aware + IA) | 📋 Pendiente |
 | 4 | RF-13 implementación (lategame + tier list + bayesiano) | 📋 Pendiente |
 | 5 | RF-14 implementación (W-Engines optimizer) | 📋 Pendiente |
 | Transversal | RF-11 UI `.exe` | 📋 Pendiente |
 
-**Estado actual real:** TODO el diseño cerrado, NADA del código del `.exe` implementado todavía. La DB está completa estructuralmente; falta el motor.
+**Estado actual real (2026-05-05):** Fase 2 completa. Motor de captura OCR, scoring, sync equip/upgrade, optimizador de build (RF-06) y hotkeys implementados. app/ tiene ~15 módulos core. 16 tests integración Miyabi PASS. Siguiente: Fase 3 RF-12 (team optimizer) o RF-11 UI.
 
 ---
 
@@ -171,7 +171,7 @@ D:\Proyectos\Zenless_analitycs\
 ├── db/
 │   ├── danibod_zzz_v2.db                  ← DB activa
 │   ├── danibod_zzz_v2.backup_*.db         ← backups pre-merge
-│   └── migrations/                        ← 5 SQL aplicadas
+│   └── migrations/                        ← 9 SQL aplicadas (última: 09_add_protected_build)
 ├── Documentacion/
 │   ├── Modelo_Relacional/                 ← schema canónico + diagrama ER
 │   ├── QA/                                ← plan maestro QA + 7 sub-docs (ETL, scoring, OCR, IA, lategame, performance, regresión)
