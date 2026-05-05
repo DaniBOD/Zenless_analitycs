@@ -32,6 +32,9 @@ class Agent:
     threshold_equip: float
     threshold_upgrade: float
     substat_preferences: dict[str, float]
+    set_4p_id: int | None = None
+    set_2p_id: int | None = None
+    protected_build: bool = False
 
 
 @dataclass
@@ -175,7 +178,9 @@ class AgentRepo:
         ):
             prefs.setdefault(r["agente_id"], {})[r["substat"]] = r["peso"]
 
-        for r in self._con.execute("SELECT id, nombre, rol FROM agents"):
+        for r in self._con.execute(
+            "SELECT id, nombre, rol, set_4p_id, set_2p_id, protected_build FROM agents"
+        ):
             arch_code = archetypes_by_role.get(r["rol"], "ATK_DPS")
             arch_id = arch_rows.get(arch_code, 1)
             t_equip, t_upgrade = thresholds.get(r["id"], (0.75, 0.50))
@@ -187,6 +192,9 @@ class AgentRepo:
                 threshold_equip=t_equip,
                 threshold_upgrade=t_upgrade,
                 substat_preferences=prefs.get(r["id"], {}),
+                set_4p_id=r["set_4p_id"],
+                set_2p_id=r["set_2p_id"],
+                protected_build=bool(r["protected_build"]),
             )
 
     def get_all(self) -> list[Agent]:
@@ -346,3 +354,94 @@ class EvaluationRepo:
             (disc_id, date.today().isoformat(), trigger, recomendacion, round(score, 6), detalle_json),
         )
         return cur.lastrowid  # type: ignore[return-value]
+
+
+class AgentDiscRepo:
+    """Lee agent_discs (build actual de cada PJ) como lista de Disc."""
+
+    def __init__(self, con: sqlite3.Connection):
+        self._con = con
+
+    def get_by_agent(self, agente_id: int) -> list["Disc"]:
+        rows = self._con.execute(
+            "SELECT * FROM agent_discs WHERE agente_id = ?", (agente_id,)
+        )
+        return [self._row_to_disc(r, agente_id) for r in rows]
+
+    @staticmethod
+    def _row_to_disc(r: sqlite3.Row, agente_id: int) -> "Disc":
+        from app.core.stats_vocab import normalize_stat_name, parse_value
+
+        def sub(i: int) -> "tuple[str, float | None, str | None, int]":
+            name = r[f"sub{i}"]
+            canon = normalize_stat_name(name) if name else None
+            raw_val = r[f"val{i}"]
+            parsed = parse_value(raw_val) if raw_val else None
+            rolls = r[f"sub{i}_up"] or 0
+            if parsed:
+                return (canon or name or "", parsed[0], parsed[1], rolls)
+            return (canon or name or "", None, None, rolls)
+
+        main_canon = normalize_stat_name(r["main_stat"]) if r["main_stat"] else None
+        main_parsed = parse_value(r["main_valor"]) if r["main_valor"] else None
+
+        return Disc(
+            id=r["id"],
+            set_id=r["set_id"],
+            slot=r["slot"],
+            main_stat=main_canon or r["main_stat"],
+            main_valor=main_parsed[0] if main_parsed else None,
+            main_unidad=main_parsed[1] if main_parsed else None,
+            subs=[sub(i) for i in (1, 2, 3, 4) if r[f"sub{i}"]],
+            nivel=r["nivel"] or 0,
+            equipado=1,
+            agente_asignado=agente_id,
+        )
+
+
+class OptimizerRepo:
+    """Lee y escribe optimizer_pending_actions."""
+
+    def __init__(self, con: sqlite3.Connection):
+        self._con = con
+
+    def upsert_build(
+        self,
+        agente_id: int,
+        rank: int,
+        score_estimado: float,
+        score_actual: float,
+        delta: float,
+        build_json: str,
+        set_bonus: str,
+        requiere_swaps: str,
+        fuente_trigger: str = "manual",
+    ) -> int:
+        from datetime import datetime
+        # fuente_trigger must match the DB CHECK constraint
+        trigger_map = {"manual": "manual", "auto_post_captura": "auto_post_captura", "recalc_inventario": "recalc_inventario"}
+        fuente = trigger_map.get(fuente_trigger, "manual")
+        self._con.execute(
+            "UPDATE optimizer_pending_actions SET estado='OBSOLETO', fecha_obsoleto=? "
+            "WHERE agente_id=? AND estado='TODO'",
+            (datetime.now().isoformat(), agente_id),
+        )
+        cur = self._con.execute(
+            """INSERT INTO optimizer_pending_actions
+               (agente_id, rank, score_estimado, score_actual, delta,
+                build_json, set_bonus, requiere_swaps, estado, fuente_trigger, fecha_calculado)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                agente_id, rank, round(score_estimado, 6), round(score_actual, 6),
+                round(delta, 6), build_json, set_bonus, requiere_swaps,
+                "TODO", fuente, datetime.now().isoformat(),
+            ),
+        )
+        return cur.lastrowid  # type: ignore[return-value]
+
+    def get_latest_pending(self, agente_id: int) -> "sqlite3.Row | None":
+        return self._con.execute(
+            "SELECT * FROM optimizer_pending_actions WHERE agente_id=? AND estado='TODO' "
+            "ORDER BY fecha_calculado DESC LIMIT 1",
+            (agente_id,),
+        ).fetchone()

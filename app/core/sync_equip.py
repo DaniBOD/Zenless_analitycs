@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +45,11 @@ class SyncResult:
 # Callback opcional que recibe el resultado (para el toast de Fase 3)
 NotifyFn = Callable[[SyncResult, DiscParsed], None]
 
+# Callback opcional para cuando el optimizador termina (recibe OptimizerResult)
+OptimizerNotifyFn = Callable[["OptimizerResult"], None]  # type: ignore[type-arg]
+
+_OPTIMIZER_DEBOUNCE_S = 2.0
+
 
 def _parsed_to_disc(p: DiscParsed, disc_id: int, set_id: int) -> Disc:
     """Convierte DiscParsed → Disc para pasarlo al scoring engine."""
@@ -76,9 +82,11 @@ class DiscSyncer:
         self,
         db_path: Path = DB_PATH,
         notify: NotifyFn | None = None,
+        on_optimizer_result: "OptimizerNotifyFn | None" = None,
     ):
         self._db_path = db_path
         self._notify = notify
+        self._on_optimizer_result = on_optimizer_result
         self._ctx = ScoringContext()
 
         # Repos de lectura (reutilizados entre llamadas)
@@ -89,7 +97,15 @@ class DiscSyncer:
         self._set_repo    = DiscSetRepo(self._con_r)
         self._disc_repo_r = InventoryDiscRepo(self._con_r)
 
+        # Debounce timers para auto-trigger optimizer (agente_id → Timer)
+        self._opt_timers: dict[int, threading.Timer] = {}
+        self._opt_lock   = threading.Lock()
+
     def close(self) -> None:
+        with self._opt_lock:
+            for t in self._opt_timers.values():
+                t.cancel()
+            self._opt_timers.clear()
         self._con_r.close()
 
     def on_disc_detected(self, parsed: DiscParsed) -> SyncResult | None:
@@ -168,6 +184,10 @@ class DiscSyncer:
                 except Exception as exc:
                     log.exception("Error en notify callback: %s", exc)
 
+            # Hito 2.6.4 — auto-trigger del optimizador con debounce 2s
+            if rec.tipo == "equipar" and rec.agente_id is not None:
+                self._schedule_optimizer(rec.agente_id)
+
             return result
 
         except Exception as exc:
@@ -175,6 +195,40 @@ class DiscSyncer:
             return None
         finally:
             con_w.close()
+
+    def _schedule_optimizer(self, agente_id: int) -> None:
+        """Dispara recompute_best_build con debounce de 2 s por PJ."""
+        def _run() -> None:
+            try:
+                from app.core.optimizer import recompute_best_build
+                result = recompute_best_build(agente_id, self._db_path)
+                log.info(
+                    "Optimizer PJ=%d  score_actual=%.3f  best=%.3f  latency=%.0fms",
+                    agente_id,
+                    result.score_actual,
+                    result.builds[0].score_total if result.builds else 0.0,
+                    result.latency_ms,
+                )
+                if self._on_optimizer_result:
+                    try:
+                        self._on_optimizer_result(result)
+                    except Exception as exc:
+                        log.exception("Error en on_optimizer_result: %s", exc)
+            except Exception as exc:
+                log.exception("Error en optimizer para PJ=%d: %s", agente_id, exc)
+            finally:
+                with self._opt_lock:
+                    self._opt_timers.pop(agente_id, None)
+
+        with self._opt_lock:
+            existing = self._opt_timers.pop(agente_id, None)
+            if existing:
+                existing.cancel()
+            t = threading.Timer(_OPTIMIZER_DEBOUNCE_S, _run)
+            t.daemon = True
+            self._opt_timers[agente_id] = t
+            t.start()
+        log.debug("Optimizer debounce iniciado para PJ=%d.", agente_id)
 
     def _resolve_set_id(self, parsed: DiscParsed) -> int | None:
         """Intenta resolver set_id desde set_name_raw usando exact + fuzzy matching."""
