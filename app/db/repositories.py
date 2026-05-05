@@ -124,6 +124,20 @@ class DiscSetRepo:
         self._load()
         return self._cache.get(set_id, [])  # type: ignore[union-attr]
 
+    def get_id_by_name(self, nombre: str) -> int | None:
+        """Resuelve nombre del set (OCR) → set_id. Matching case-insensitive."""
+        r = self._con.execute(
+            "SELECT id FROM disc_sets WHERE lower(nombre)=lower(?) LIMIT 1", (nombre,)
+        ).fetchone()
+        return r["id"] if r else None
+
+    def get_all_names(self) -> dict[str, int]:
+        """Devuelve {nombre_lower: id} para fuzzy matching desde el parser."""
+        return {
+            r["nombre"].lower(): r["id"]
+            for r in self._con.execute("SELECT id, nombre FROM disc_sets")
+        }
+
 
 class AgentRepo:
     def __init__(self, con: sqlite3.Connection):
@@ -213,6 +227,72 @@ class InventoryDiscRepo:
             (score, agentes_json, notas, disc_id),
         )
 
+    def find_by_hash(self, set_id: int, slot: int, main_stat: str | None, main_valor: float | None) -> "Disc | None":
+        """Busca un disco existente por (set_id, slot, main_stat, main_valor) — hash de deduplicación."""
+        r = self._con.execute(
+            "SELECT * FROM inventory_discs WHERE set_id=? AND slot=? AND main_stat=? AND main_valor=? AND descartado=0 LIMIT 1",
+            (set_id, slot, main_stat, main_valor),
+        ).fetchone()
+        return self._row_to_disc(r) if r else None
+
+    def insert_from_parsed(self, p: "DiscParsed", set_id: int) -> int:
+        """Inserta un disco nuevo desde DiscParsed. Devuelve el id insertado."""
+        subs = p.subs
+        def _sub(i: int):
+            if i < len(subs):
+                s = subs[i]
+                return s.nombre_canon or s.nombre_raw, s.valor, s.rolls, s.unidad
+            return None, None, 0, None
+
+        s1 = _sub(0); s2 = _sub(1); s3 = _sub(2); s4 = _sub(3)
+        cur = self._con.execute(
+            """INSERT INTO inventory_discs
+               (set_id, slot, main_stat, main_valor, unidad_main,
+                sub1, val1, rolls1, unidad1,
+                sub2, val2, rolls2, unidad2,
+                sub3, val3, rolls3, unidad3,
+                sub4, val4, rolls4, unidad4,
+                nivel, equipado, descartado)
+               VALUES (?,?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?)""",
+            (
+                set_id, p.slot, p.main_stat_canon or p.main_stat_raw, p.main_valor, p.main_unidad,
+                s1[0], s1[1], s1[2], s1[3],
+                s2[0], s2[1], s2[2], s2[3],
+                s3[0], s3[1], s3[2], s3[3],
+                s4[0], s4[1], s4[2], s4[3],
+                p.nivel, 0, 0,
+            ),
+        )
+        return cur.lastrowid  # type: ignore[return-value]
+
+    def update_from_parsed(self, disc_id: int, p: "DiscParsed") -> None:
+        """Actualiza nivel y substats de un disco existente (re-captura post-upgrade)."""
+        subs = p.subs
+        def _sub(i: int):
+            if i < len(subs):
+                s = subs[i]
+                return s.nombre_canon or s.nombre_raw, s.valor, s.rolls, s.unidad
+            return None, None, 0, None
+
+        s1 = _sub(0); s2 = _sub(1); s3 = _sub(2); s4 = _sub(3)
+        self._con.execute(
+            """UPDATE inventory_discs SET
+               nivel=?,
+               sub1=?, val1=?, rolls1=?, unidad1=?,
+               sub2=?, val2=?, rolls2=?, unidad2=?,
+               sub3=?, val3=?, rolls3=?, unidad3=?,
+               sub4=?, val4=?, rolls4=?, unidad4=?
+               WHERE id=?""",
+            (
+                p.nivel,
+                s1[0], s1[1], s1[2], s1[3],
+                s2[0], s2[1], s2[2], s2[3],
+                s3[0], s3[1], s3[2], s3[3],
+                s4[0], s4[1], s4[2], s4[3],
+                disc_id,
+            ),
+        )
+
     @staticmethod
     def _row_to_disc(r: sqlite3.Row) -> "Disc":
         from app.core.stats_vocab import normalize_stat_name, parse_value
@@ -242,3 +322,27 @@ class InventoryDiscRepo:
             equipado=r["equipado"] or 0,
             agente_asignado=r["agente_asignado"],
         )
+
+
+class EvaluationRepo:
+    """Write-only repo para inventory_disc_evaluations."""
+
+    def __init__(self, con: sqlite3.Connection):
+        self._con = con
+
+    def insert(
+        self,
+        disc_id: int,
+        trigger: str,
+        recomendacion: str,
+        score: float,
+        detalle_json: str,
+    ) -> int:
+        from datetime import date
+        cur = self._con.execute(
+            """INSERT INTO inventory_disc_evaluations
+               (inventory_disc_id, fecha, trigger_evento, recomendacion, score, detalle_json)
+               VALUES (?,?,?,?,?,?)""",
+            (disc_id, date.today().isoformat(), trigger, recomendacion, round(score, 6), detalle_json),
+        )
+        return cur.lastrowid  # type: ignore[return-value]

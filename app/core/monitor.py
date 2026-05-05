@@ -1,6 +1,7 @@
 """
-Hito 2.4.7 — Monitor principal con polling adaptativo · RF-04 §5.
+Hito 2.4.7 / 2.5 — Monitor principal con polling adaptativo · RF-04 §5.
 Loop en thread secundario: captura → clasifica → parsea → emite callback.
+Integra UpgradeSyncer (S10 PRE/POST) y HotkeyManager (F8/F10).
 Hook win32 para EVENT_SYSTEM_FOREGROUND (forzar scan al volver al juego).
 """
 from __future__ import annotations
@@ -36,6 +37,7 @@ class Monitor:
     """
     Loop de monitoreo en thread separado.
     Al detectar un disco en pantalla llama a `on_disc` con el DiscParsed.
+    Integra UpgradeSyncer para S10 y HotkeyManager para F8/F10.
     """
 
     def __init__(
@@ -44,13 +46,17 @@ class Monitor:
         detector: ScreenDetector,
         on_disc: Callable[[DiscParsed, ScreenState], None] | None = None,
         on_state_change: Callable[[ScreenState], None] | None = None,
+        on_toggle_panel: Callable[[], None] | None = None,
         set_repo=None,
+        upgrade_syncer=None,   # UpgradeSyncer opcional (Hito 2.5.2)
     ):
         self._ocr = ocr
         self._detector = detector
         self._on_disc = on_disc
         self._on_state_change = on_state_change
+        self._on_toggle_panel = on_toggle_panel
         self._set_repo = set_repo
+        self._upgrade_syncer = upgrade_syncer
 
         self._stop = threading.Event()
         self._paused = threading.Event()
@@ -63,13 +69,14 @@ class Monitor:
     # ---- Control ----------------------------------------------------------------
 
     def start(self) -> None:
-        """Arranca el loop en thread secundario."""
+        """Arranca el loop en thread secundario y registra hotkeys."""
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="zzz-monitor", daemon=True)
         self._thread.start()
         self._hook_foreground()
+        self._register_hotkeys()
         log.info("Monitor arrancado.")
 
     def stop(self) -> None:
@@ -100,60 +107,76 @@ class Monitor:
 
     def _run(self) -> None:
         self._force_event = threading.Event()
-
         while not self._stop.is_set():
-            # Pausa activa
             if not self._paused.is_set():
                 time.sleep(0.5)
                 continue
-
-            # Buscar ventana del juego (re-buscar si se perdió)
-            if self._window is None:
-                self._window = find_zzz_window()
-                if self._window is None:
-                    time.sleep(4.0)
-                    continue
-
-            # Captura
-            frame = capture_window(self._window)
+            frame = self._get_frame()
             if frame is None:
-                self._window = None     # ventana cerrada/minimizada
-                time.sleep(2.0)
                 continue
-
-            # Clasificar estado
             state = self._detector.classify(frame)
+            self._notify_state_change(state)
+            self._dispatch_state(frame, state)
+            self._wait_cadence(state)
 
-            # Notificar cambio de estado
-            if self._last_state is None or state.code != self._last_state.code:
-                log.debug("Estado: %s (conf=%.2f)", state.code, state.confidence)
-                if self._on_state_change:
-                    try:
-                        self._on_state_change(state)
-                    except Exception as exc:
-                        log.exception("Error en on_state_change: %s", exc)
-                self._last_state = state
+    def _get_frame(self):
+        """Captura el frame actual. Gestiona búsqueda y pérdida de ventana."""
+        if self._window is None:
+            self._window = find_zzz_window()
+            if self._window is None:
+                time.sleep(4.0)
+                return None
+        frame = capture_window(self._window)
+        if frame is None:
+            self._window = None
+            time.sleep(2.0)
+        return frame
 
-            # Procesar disco si estamos en modal de detalle
-            if state.code in _DISC_DETAIL_STATES:
-                now = time.monotonic()
-                if now - self._last_disc_state_time >= _SAME_STATE_COOLDOWN_S:
-                    self._last_disc_state_time = now
-                    self._process_disc(frame, state)
+    def _notify_state_change(self, state: ScreenState) -> None:
+        if self._last_state is not None and state.code == self._last_state.code:
+            return
+        log.debug("Estado: %s (conf=%.2f)", state.code, state.confidence)
+        if self._on_state_change:
+            try:
+                self._on_state_change(state)
+            except Exception as exc:
+                log.exception("Error en on_state_change: %s", exc)
+        self._last_state = state
 
-            # Calcular cadencia y esperar (respetando force_event)
-            cadence_ms = polling_cadence_ms(state)
-            fired = self._force_event.wait(timeout=cadence_ms / 1000.0)
-            if fired:
-                self._force_event.clear()
+    def _dispatch_state(self, frame, state: ScreenState) -> None:
+        """Enruta el frame al handler correspondiente según el estado."""
+        self._handle_upgrade(frame, state)
+        if state.code in _DISC_DETAIL_STATES:
+            self._maybe_process_disc(frame, state)
+
+    def _handle_upgrade(self, frame, state: ScreenState) -> None:
+        if self._upgrade_syncer is None:
+            return
+        prev_code = self._last_state.code if self._last_state else ""
+        if state.code == "S10":
+            if prev_code != "S10":
+                self._upgrade_syncer.on_s10_enter(frame)
+            else:
+                self._upgrade_syncer.on_s10_update(frame)
+        elif prev_code == "S10":
+            self._upgrade_syncer.on_s10_exit()
+
+    def _maybe_process_disc(self, frame, state: ScreenState) -> None:
+        now = time.monotonic()
+        if now - self._last_disc_state_time >= _SAME_STATE_COOLDOWN_S:
+            self._last_disc_state_time = now
+            self._process_disc(frame, state)
+
+    def _wait_cadence(self, state: ScreenState) -> None:
+        cadence_ms = polling_cadence_ms(state)
+        if self._force_event.wait(timeout=cadence_ms / 1000.0):
+            self._force_event.clear()
 
     def _process_disc(self, frame, state: ScreenState) -> None:
         try:
             disc = parse_modal_detalle(frame, self._ocr, self._set_repo)
             if disc.confianza_global < 0.7:
-                log.debug(
-                    "Disco capturado con baja confianza (%.2f) — ignorado.", disc.confianza_global
-                )
+                log.debug("Disco con baja confianza (%.2f) — ignorado.", disc.confianza_global)
                 return
             log.info(
                 "Disco detectado: set=%s slot=%d main=%s nivel=%d conf=%.2f",
@@ -167,6 +190,16 @@ class Monitor:
                 self._on_disc(disc, state)
         except Exception as exc:
             log.exception("Error parseando disco en estado %s: %s", state.code, exc)
+
+    def _register_hotkeys(self) -> None:
+        from app.core.hotkeys import HotkeyManager
+        hk = HotkeyManager()
+        hk.on("f8",  self.force_scan)
+        hk.on("f10", self.toggle_pause)
+        if self._on_toggle_panel:
+            hk.on("f9", self._on_toggle_panel)
+        hk.start()
+        self._hotkey_manager = hk
 
     def _hook_foreground(self) -> None:
         """
