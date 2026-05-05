@@ -371,6 +371,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("DaniBOD ZZZ Analytics  v0.1.0-dev")
         self.setMinimumSize(1320, 820)
+        _ico = Path(__file__).parent / "resources" / "icon.ico"
+        if _ico.exists():
+            self.setWindowIcon(QIcon(str(_ico)))
         self._setup_ui()
         self._setup_tray()
 
@@ -438,8 +441,7 @@ class MainWindow(QMainWindow):
 
     def _setup_tray(self):
         self._tray = QSystemTrayIcon(self)
-        # Icono inline si no existe el archivo
-        ico_path = Path("app/resources/icon.ico")
+        ico_path = Path(__file__).parent / "resources" / "icon.ico"
         if ico_path.exists():
             self._tray.setIcon(QIcon(str(ico_path)))
         else:

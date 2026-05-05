@@ -1,0 +1,75 @@
+# rois.toml — Regiones de interés para captura OCR
+# Coordenadas normalizadas 0.0-1.0 relativas al tamaño de la ventana del juego.
+# Calibrar con tools/calibrate_rois.py si la UI de ZZZ cambia de layout.
+# Basado en resolución de referencia 1920x1080 (16:9).
+#
+# Formato: [x, y, w, h] normalizados (0.0-1.0)
+# x,y = esquina superior izquierda; w,h = ancho/alto de la región
+
+# ---------------------------------------------------------------------------
+# Modal de detalle de disco (S3, S6, S7)
+# ---------------------------------------------------------------------------
+[modal_detalle]
+
+# Título: "Nombre del Set (N)" — set + slot
+titulo          = [0.52, 0.10, 0.40, 0.06]
+
+# Nivel: "Nivel X/15"
+nivel           = [0.52, 0.17, 0.18, 0.04]
+
+# Rareza: región del borde superior del icono del disco (color hue)
+rareza_borde    = [0.52, 0.21, 0.05, 0.02]
+
+# Mainstat nombre + valor (línea única)
+main_stat_nombre = [0.52, 0.26, 0.30, 0.04]
+main_stat_valor  = [0.72, 0.26, 0.18, 0.04]
+
+# Substats (4 filas): [nombre, valor, rolls]
+sub1_nombre     = [0.52, 0.35, 0.28, 0.035]
+sub1_valor      = [0.73, 0.35, 0.15, 0.035]
+
+sub2_nombre     = [0.52, 0.395, 0.28, 0.035]
+sub2_valor      = [0.73, 0.395, 0.15, 0.035]
+
+sub3_nombre     = [0.52, 0.44, 0.28, 0.035]
+sub3_valor      = [0.73, 0.44, 0.15, 0.035]
+
+sub4_nombre     = [0.52, 0.485, 0.28, 0.035]
+sub4_valor      = [0.73, 0.485, 0.15, 0.035]
+
+# ---------------------------------------------------------------------------
+# Modal de upgrade (S10)
+# ---------------------------------------------------------------------------
+[modal_upgrade]
+
+# Nivel actual (pre/post)
+nivel_actual    = [0.44, 0.32, 0.12, 0.05]
+
+# Barra de EXP (para detectar cambio de nivel)
+exp_barra       = [0.35, 0.42, 0.30, 0.03]
+
+# ---------------------------------------------------------------------------
+# Inventario discos (S9) — para detectar badge "NEW!"
+# ---------------------------------------------------------------------------
+[inventario]
+
+# Grilla de 24 discos (6x4). El badge NEW! aparece en esquina superior del tile.
+# Región del primer tile (row=0, col=0) — el resto se calcula programáticamente
+tile_00         = [0.08, 0.15, 0.11, 0.16]
+tile_cols       = 6
+tile_rows       = 4
+tile_gap_x      = 0.12
+tile_gap_y      = 0.17
+
+# ---------------------------------------------------------------------------
+# Vista agente — discos equipados (S8)
+# ---------------------------------------------------------------------------
+[agente_equipados]
+
+# Slots 1-6 del hexágono. Aprox posiciones relativas.
+slot1           = [0.48, 0.28, 0.08, 0.10]
+slot2           = [0.58, 0.35, 0.08, 0.10]
+slot3           = [0.58, 0.50, 0.08, 0.10]
+slot4           = [0.48, 0.57, 0.08, 0.10]
+slot5           = [0.38, 0.50, 0.08, 0.10]
+slot6           = [0.38, 0.35, 0.08, 0.10]

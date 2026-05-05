@@ -1,0 +1,153 @@
+"""
+Genera los templates PNG para el ScreenDetector (detector.py) recortando
+regiones características de los screenshots de referencia en:
+  Documentacion/Screenshots_Triggers/Discos_Triggers/
+
+Salida: app/resources/templates/*.png
+
+Ejecutar cada vez que cambien los screenshots de referencia o la UI del juego.
+Las coordenadas son relativas a la resolución original del screenshot (normalizado 0-1).
+
+Uso:
+    python tools/build_templates.py [--show]   # --show abre cada crop con cv2.imshow
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+ROOT = Path(__file__).resolve().parents[1]
+REFS = ROOT / "Documentacion" / "Screenshots_Triggers" / "Discos_Triggers"
+OUT  = ROOT / "app" / "resources" / "templates"
+OUT.mkdir(parents=True, exist_ok=True)
+
+# ---------------------------------------------------------------------------
+# Definición de cada template:
+#   name        → nombre del archivo de salida (debe coincidir con detector.py)
+#   source      → imagen de referencia (relativa a REFS)
+#   roi         → [x, y, w, h] normalizados (0-1) — zona característica del estado
+#   description → para logs
+# ---------------------------------------------------------------------------
+TEMPLATES = [
+    {
+        "name": "s2_resultado_desafio.png",
+        "source": "01_Pantalla_Resultado_Desafio/Ejemplo_1.png",
+        # Encabezado "RESULTADOS DEL DESAFÍO" — franja superior central
+        "roi": [0.25, 0.04, 0.50, 0.07],
+        "description": "S2 — encabezado resultado desafio",
+    },
+    {
+        "name": "s3_modal_detalle_drop.png",
+        "source": "02_Detalle_Disco_Desde_Resultado/Ejemplo_1.png",
+        # Panel derecho del modal con stats del disco (nivel 0, borde color)
+        "roi": [0.50, 0.08, 0.45, 0.08],
+        "description": "S3 — panel detalle disco (resultado)",
+    },
+    {
+        "name": "s8_agente_driver.png",
+        "source": "03_Pantalla_Agente_Discos_Equipados/Ejemplo_1.png",
+        # Hexágono central con "DRIVER" visible
+        "roi": [0.38, 0.22, 0.24, 0.20],
+        "description": "S8 — hexagono DRIVER vista agente",
+    },
+    {
+        "name": "s9_personalizacion_pistas.png",
+        "source": "04_Inventario_Disco_Vista_Individual/Ejemplo_1.png",
+        # Header "Personalización de pistas de disco" — barra superior izquierda
+        "roi": [0.02, 0.04, 0.40, 0.06],
+        "description": "S9 — header inventario discos",
+    },
+    {
+        "name": "s6_tienda_detalle_panel.png",
+        "source": "04_Inventario_Disco_Vista_Individual/Ejemplo_6(vista_detallada_tienda_musica).png",
+        # Panel lateral derecho con stats (vista tienda)
+        "roi": [0.50, 0.08, 0.45, 0.08],
+        "description": "S6 — panel detalle tienda musica",
+    },
+    {
+        "name": "s5_resultado_afinacion.png",
+        "source": "11_Tienda_Musica_Afinacion/Tienda_musica_afinacion.png",
+        # Header "Resultado de afinación:"
+        "roi": [0.02, 0.04, 0.45, 0.07],
+        "description": "S5 — header resultado afinacion",
+    },
+    {
+        "name": "s10_modal_upgrade.png",
+        "source": "05_Upgrade_PRE_nivel0/Ejemplo_1.png",
+        # Barra EXP verde + zona del nivel (parte inferior del modal)
+        "roi": [0.30, 0.38, 0.40, 0.08],
+        "description": "S10 — barra EXP modal upgrade",
+    },
+    {
+        "name": "s11_desmontaje.png",
+        "source": "09_Iconos_UI_por_aclarar/Ejemplo_1.png",
+        # Intentar con un screenshot genérico si existe; si no, usar s9 como fallback
+        "roi": [0.02, 0.04, 0.35, 0.06],
+        "description": "S11 — header desmontaje (requiere screenshot dedicado)",
+        "optional": True,
+    },
+]
+
+
+def crop_roi(img: np.ndarray, roi: list[float]) -> np.ndarray:
+    h, w = img.shape[:2]
+    x = int(roi[0] * w)
+    y = int(roi[1] * h)
+    rw = int(roi[2] * w)
+    rh = int(roi[3] * h)
+    return img[y:y + rh, x:x + rw]
+
+
+def build(show: bool = False) -> int:
+    ok = 0
+    for t in TEMPLATES:
+        src_path = REFS / t["source"]
+        out_path = OUT / t["name"]
+
+        if not src_path.exists():
+            if t.get("optional"):
+                print(f"  [SKIP] {t['name']} — source no encontrado (opcional): {src_path.name}")
+                continue
+            print(f"  [FAIL] {t['name']} — source no encontrado: {src_path}")
+            continue
+
+        img = cv2.imread(str(src_path))
+        if img is None:
+            print(f"  [FAIL] {t['name']} — no se pudo leer: {src_path}")
+            continue
+
+        crop = crop_roi(img, t["roi"])
+        if crop.size == 0:
+            print(f"  [FAIL] {t['name']} — crop vacío con roi={t['roi']}")
+            continue
+
+        cv2.imwrite(str(out_path), crop)
+        print(f"  [OK]   {t['name']} ({crop.shape[1]}x{crop.shape[0]}) — {t['description']}")
+        ok += 1
+
+        if show:
+            cv2.imshow(t["name"], crop)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+
+    return ok
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--show", action="store_true", help="Mostrar cada crop con cv2.imshow")
+    args = parser.parse_args()
+
+    print(f"Generando templates en {OUT}...")
+    n = build(show=args.show)
+    print(f"\n[{n}/{len(TEMPLATES)}] templates generados.")
+    if n < len([t for t in TEMPLATES if not t.get("optional")]):
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
