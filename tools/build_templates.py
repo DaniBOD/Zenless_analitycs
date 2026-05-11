@@ -43,9 +43,15 @@ TEMPLATES = [
     {
         "name": "s3_modal_detalle_drop.png",
         "source": "02_Detalle_Disco_Desde_Resultado/Ejemplo_1.png",
-        # Panel derecho del modal con stats del disco (nivel 0, borde color)
-        "roi": [0.50, 0.08, 0.45, 0.08],
-        "description": "S3 — panel detalle disco (resultado)",
+        # ROI previa [0.50, 0.08, 0.45, 0.08] era una franja de fondo negro
+        # texturado genérica → matcheaba cualquier panel oscuro (S16 set
+        # detail, perfil de PJ, etc) con conf 0.85+.
+        # Nueva ROI: footer "R Descartar / T Bloquear" del modal — texto
+        # estático que aparece ÚNICAMENTE en este modal post-farmeo (los
+        # otros modales similares como S16 'Información de conjunto' o el
+        # perfil del PJ no tienen ese footer).
+        "roi": [0.42, 0.870, 0.20, 0.030],
+        "description": "S3 — footer 'R Descartar / T Bloquear' (modal post-farmeo)",
     },
     {
         "name": "s8_agente_driver.png",
@@ -57,11 +63,12 @@ TEMPLATES = [
     {
         "name": "s9_inventario_general.png",
         "source": "09_Inventario_discos_general/Ejemplo_1.png",
-        # Header "Pistas de disco [N/3000]" arriba-izquierda — texto estático
-        # "Pistas de disco" identifica al inventario general (no la pantalla de
-        # equipamiento del personaje, que es S8). Coords vía OCR (Pistas en
-        # x≈0.041,y≈0.122 — disco en x≈0.097,y≈0.122).
-        "roi": [0.035, 0.115, 0.110, 0.030],
+        # ROI previa solo cubría "Pistas de disco [3" — texto repetido en S17
+        # (botón "Personalización de pistas de disco") → causa FP.
+        # Nueva ROI: bloque vertical superior izquierdo que incluye breadcrumb
+        # 'Ciudad' (y≈0.039) + header 'Pistas de disco' (y≈0.122). Esa pareja
+        # de elementos solo aparece en el inventario global.
+        "roi": [0.025, 0.025, 0.150, 0.130],
         "description": "S9 — header 'Pistas de disco' (inventario general)",
     },
     {
@@ -133,6 +140,17 @@ TEMPLATES = [
         # arriba) y aparece SOLO en este modal. Anti-FP crítico vs S3.
         "roi": [0.325, 0.420, 0.180, 0.025],
         "description": "S16 — 'Información de conjunto' (modal detalle set)",
+    },
+    {
+        "name": "s17_personalizacion_pistas.png",
+        "source": "04_Inventario_Disco_Vista_Individual/Ejemplo_1.png",
+        # Pantalla "Personalización de pistas de disco" cuando el usuario
+        # clickea un disco equipado en el PJ y se abre el panel lateral.
+        # Distintiva por el footer "Comparar / Recomendado" abajo-izquierda
+        # (combo de botones único de esta pantalla — no aparece en S8 ni en
+        # los modales S3/S6/S7).
+        "roi": [0.050, 0.935, 0.220, 0.040],
+        "description": "S17 — footer 'Comparar / Recomendado' (vista detalle disco PJ)",
     },
 ]
 
