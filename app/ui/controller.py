@@ -103,6 +103,7 @@ class MonitorController(QObject):
             on_disc=self._on_disc_from_monitor,
             on_state_change=self._on_state_from_monitor,
             on_disc_rejected=self._on_disc_rejected_from_monitor,
+            on_diagnostic=self._on_diagnostic_from_monitor,
             set_repo=self._disc_set_repo,
         )
         self._monitor.start()
@@ -244,6 +245,10 @@ class MonitorController(QObject):
             f"main_raw={disc.main_stat_raw!r} | notas: {notas_str}"
         )
         self.log_message.emit(msg)
+
+    def _on_diagnostic_from_monitor(self, msg: str):
+        """Mensajes de diagnóstico del loop (heartbeat, ventana no encontrada, etc)."""
+        self.log_message.emit(f"[diag] {msg}")
 
     def _on_disc_from_monitor(self, disc_parsed, state):
         """

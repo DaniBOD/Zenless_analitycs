@@ -11,8 +11,15 @@ from typing import NamedTuple
 
 import numpy as np
 
-# Título de ventana del cliente ZZZ
-ZZZ_WINDOW_TITLE = "ZenlessZoneZero"
+# Substrings que pueden aparecer en el título de la ventana de ZZZ.
+# Probamos varios porque distintas versiones / regiones tienen formatos distintos:
+#   "ZenlessZoneZero", "Zenless Zone Zero", "ZZZ", etc.
+ZZZ_WINDOW_TITLE_CANDIDATES = (
+    "ZenlessZoneZero",
+    "Zenless Zone Zero",
+    "ZenlessZoneZero v",  # con versión
+    "Zenless",
+)
 
 _ROIS: dict | None = None
 
@@ -35,22 +42,66 @@ class WindowBounds(NamedTuple):
     top: int
     width: int
     height: int
+    title: str = ""    # título real encontrado (para log/debug)
 
 
-def find_zzz_window(title: str = ZZZ_WINDOW_TITLE) -> WindowBounds | None:
-    """Busca la ventana del juego por título. Devuelve None si no está abierta."""
+def list_all_visible_windows() -> list[tuple[int, str]]:
+    """Devuelve [(hwnd, title)] de todas las ventanas visibles con título no vacío."""
+    if sys.platform != "win32":
+        return []
+    try:
+        import win32gui
+    except ImportError:
+        return []
+
+    found: list[tuple[int, str]] = []
+
+    def _enum_cb(hwnd: int, lparam: object) -> bool:
+        if win32gui.IsWindowVisible(hwnd):
+            title = win32gui.GetWindowText(hwnd)
+            if title:
+                found.append((hwnd, title))
+        return True
+
+    win32gui.EnumWindows(_enum_cb, None)
+    return found
+
+
+def find_zzz_window(title_substrings: tuple[str, ...] = ZZZ_WINDOW_TITLE_CANDIDATES) -> WindowBounds | None:
+    """
+    Busca la ventana del juego por substring del título (case-insensitive).
+    Devuelve None si no está abierta. Más permisivo que FindWindow(None, exact_title).
+    """
     if sys.platform != "win32":
         return None
     try:
         import win32gui
-        hwnd = win32gui.FindWindow(None, title)
-        if not hwnd:
-            return None
-        rect = win32gui.GetWindowRect(hwnd)
-        left, top, right, bottom = rect
-        return WindowBounds(left, top, right - left, bottom - top)
     except ImportError:
         return None
+
+    # Primero intento match EXACTO (más rápido) para los más probables
+    for exact in ("ZenlessZoneZero", "Zenless Zone Zero"):
+        hwnd = win32gui.FindWindow(None, exact)
+        if hwnd:
+            rect = win32gui.GetWindowRect(hwnd)
+            left, top, right, bottom = rect
+            return WindowBounds(left, top, right - left, bottom - top, exact)
+
+    # Fallback: enumerar ventanas y buscar por substring (case-insensitive)
+    candidates_lower = tuple(s.lower() for s in title_substrings)
+    for hwnd, title in list_all_visible_windows():
+        title_l = title.lower()
+        for sub in candidates_lower:
+            if sub in title_l:
+                rect = win32gui.GetWindowRect(hwnd)
+                left, top, right, bottom = rect
+                # Filtros mínimos: la ventana debe ser razonablemente grande
+                # (descartamos tooltips, taskbar, etc).
+                if right - left < 400 or bottom - top < 300:
+                    continue
+                return WindowBounds(left, top, right - left, bottom - top, title)
+
+    return None
 
 
 def capture_window(window: WindowBounds | None = None) -> np.ndarray | None:
