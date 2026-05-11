@@ -14,10 +14,19 @@ Comandos:
 """
 import sys
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 # El spec se ejecuta con cwd = directorio donde se invoca PyInstaller.
 # Asumimos que se ejecuta desde la raíz del repo (cwd = repo root).
 REPO = Path.cwd().resolve()
+
+# Paquetes con carga dinámica de submódulos. collect_all es más robusto que
+# hiddenimports porque captura también datas + binaries del paquete.
+mss_datas, mss_binaries, mss_hiddenimports = collect_all("mss")
+pyside_datas, pyside_binaries, pyside_hiddenimports = collect_all("PySide6")
+pytess_datas, pytess_binaries, pytess_hiddenimports = collect_all("pytesseract")
+pynput_datas, pynput_binaries, pynput_hiddenimports = collect_all("pynput")
+win32_hiddenimports = collect_submodules("win32com") + collect_submodules("win32")
 
 # ---------------------------------------------------------------------------
 # Data files que tienen que ir adentro del bundle
@@ -35,24 +44,17 @@ datas = [
     (str(REPO / "Documentacion" / "Interfaz" / "Set_Discos_Logo"), "Documentacion/Interfaz/Set_Discos_Logo"),
     (str(REPO / "Documentacion" / "Interfaz" / "splash_arts"),     "Documentacion/Interfaz/splash_arts"),
     (str(REPO / "Pj_stats"),                                       "Pj_stats"),
-]
+] + mss_datas + pyside_datas + pytess_datas + pynput_datas
+
+binaries = mss_binaries + pyside_binaries + pytess_binaries + pynput_binaries
 
 # ---------------------------------------------------------------------------
 # Hidden imports — módulos que PyInstaller no detecta automáticamente
 # ---------------------------------------------------------------------------
-hiddenimports = [
+hiddenimports = mss_hiddenimports + pyside_hiddenimports + pytess_hiddenimports + pynput_hiddenimports + win32_hiddenimports + [
     # PySide6 plugins
     "PySide6.QtSvg",
     "PySide6.QtNetwork",
-    # OCR / captura
-    "pytesseract",
-    "mss",
-    "mss.base",
-    "mss.tools",
-    "mss.windows",
-    "mss.screenshot",
-    "mss.exception",
-    "mss.factory",
     # Win32
     "win32gui",
     "win32api",
@@ -103,7 +105,7 @@ excludes = [
 a = Analysis(
     [str(REPO / "app" / "main.py")],
     pathex=[str(REPO)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
