@@ -51,6 +51,8 @@ class MonitorController(QObject):
     # Eventos de captura
     disc_detected = Signal(dict)             # payload listo para LivePanel + Toast
     error_occurred = Signal(str)
+    # Mensaje informativo crudo para el log (estado, captura descartada, etc).
+    log_message = Signal(str)
 
     # Auto-start: el monitor arranca cuando se detecta el proceso de ZZZ
     auto_start_enabled = Signal(bool)        # True cuando se habilita el auto-arranque
@@ -100,6 +102,7 @@ class MonitorController(QObject):
             detector=self._detector,
             on_disc=self._on_disc_from_monitor,
             on_state_change=self._on_state_from_monitor,
+            on_disc_rejected=self._on_disc_rejected_from_monitor,
             set_repo=self._disc_set_repo,
         )
         self._monitor.start()
@@ -222,7 +225,25 @@ class MonitorController(QObject):
 
     def _on_state_from_monitor(self, state):
         # Signals son thread-safe en Qt (cross-thread auto-marshalled si hay event loop)
+        from app.core.detector import describe_state
         self.state_changed.emit(state.code, state.confidence)
+        desc = describe_state(state.code)
+        if state.code == "S12":
+            # No hubo match — mostrar el mejor match parcial para diagnóstico
+            tmpl_hint = f" (mejor match parcial: {state.template_name}, conf={state.confidence:.2f})" if state.template_name else ""
+            self.log_message.emit(f"[detector] sin match{tmpl_hint}")
+        else:
+            self.log_message.emit(f"[estado] {state.code} — {desc} (conf {state.confidence:.2f})")
+
+    def _on_disc_rejected_from_monitor(self, disc, state, reason: str):
+        """Disco parseado pero descartado por baja confianza u otro motivo."""
+        notas_str = ", ".join(disc.notas) if disc.notas else "sin notas"
+        msg = (
+            f"[descartado] {reason}. "
+            f"set_raw={disc.set_name_raw!r} slot={disc.slot} "
+            f"main_raw={disc.main_stat_raw!r} | notas: {notas_str}"
+        )
+        self.log_message.emit(msg)
 
     def _on_disc_from_monitor(self, disc_parsed, state):
         """

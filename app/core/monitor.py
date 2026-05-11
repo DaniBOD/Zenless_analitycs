@@ -48,7 +48,8 @@ class Monitor:
         on_state_change: Callable[[ScreenState], None] | None = None,
         on_toggle_panel: Callable[[], None] | None = None,
         set_repo=None,
-        upgrade_syncer=None,   # UpgradeSyncer opcional (Hito 2.5.2)
+        upgrade_syncer=None,                                   # UpgradeSyncer opcional
+        on_disc_rejected: Callable[[DiscParsed, ScreenState, str], None] | None = None,
     ):
         self._ocr = ocr
         self._detector = detector
@@ -57,6 +58,9 @@ class Monitor:
         self._on_toggle_panel = on_toggle_panel
         self._set_repo = set_repo
         self._upgrade_syncer = upgrade_syncer
+        # Callback opcional: se llama cuando un disco se parsea pero se descarta
+        # (ej. confianza OCR baja). Útil para que la UI muestre por qué no salió el toast.
+        self._on_disc_rejected = on_disc_rejected
 
         self._stop = threading.Event()
         self._paused = threading.Event()
@@ -176,7 +180,16 @@ class Monitor:
         try:
             disc = parse_modal_detalle(frame, self._ocr, self._set_repo, state_code=state.code)
             if disc.confianza_global < 0.7:
-                log.debug("Disco con baja confianza (%.2f) — ignorado.", disc.confianza_global)
+                reason = f"confianza OCR {disc.confianza_global:.2f} < 0.70"
+                log.info(
+                    "Disco descartado: %s (set_raw=%r slot=%d main_raw=%r notas=%s)",
+                    reason, disc.set_name_raw, disc.slot, disc.main_stat_raw, disc.notas,
+                )
+                if self._on_disc_rejected:
+                    try:
+                        self._on_disc_rejected(disc, state, reason)
+                    except Exception:
+                        log.exception("Error en on_disc_rejected")
                 return
             log.info(
                 "Disco detectado: set=%s slot=%d main=%s nivel=%d conf=%.2f",

@@ -15,8 +15,32 @@ import numpy as np
 # Directorio de templates (relativo al package app/)
 TEMPLATES_DIR = Path(__file__).parent.parent / "resources" / "templates"
 
-# Threshold por defecto para template matching
-MATCH_THRESHOLD = 0.85
+# Threshold por defecto para template matching.
+# 0.85 era muy estricto y producía S12 (sin match) en pantallas donde
+# visualmente el template existe. 0.70 da mejor recall manteniendo precisión
+# (verificado en QA 2026-05-11 — antes con 0.85 los farmeos no se detectaban).
+MATCH_THRESHOLD = 0.70
+
+# Descripciones humanas de cada estado para el log y la UI
+STATE_DESCRIPTIONS: dict[str, str] = {
+    "S1":  "Patrulla / menú",
+    "S2":  "Resultado del desafío (lista de drops)",
+    "S3":  "Modal detalle disco (desde resultado)",
+    "S4":  "Tienda música — selector",
+    "S5":  "Resultado de afinación",
+    "S6":  "Tienda música — panel detalle disco",
+    "S7":  "Tienda música — detalle fullscreen",
+    "S8":  "Vista agente — equipamiento",
+    "S9":  "Inventario discos",
+    "S10": "Modal upgrade disco",
+    "S11": "Pantalla desmontaje",
+    "S12": "Sin coincidencia (estado no reconocido)",
+}
+
+
+def describe_state(code: str) -> str:
+    """Devuelve descripción legible para un código de estado (S1-S12)."""
+    return STATE_DESCRIPTIONS.get(code, code)
 
 
 @dataclass
@@ -84,24 +108,30 @@ class ScreenDetector:
 
     def classify(self, frame: np.ndarray) -> ScreenState:
         """
-        Clasifica un frame. Devuelve S12 (negativo) si ningún template hace match.
-        El orden de _STATE_TEMPLATES importa: estados más específicos primero.
+        Clasifica un frame. Devuelve S12 si ningún template supera el threshold,
+        pero en ese caso `confidence` reporta el max parcial conseguido (útil
+        para diagnóstico: '¿qué tan cerca estuvimos?').
         """
         if frame is None or frame.size == 0:
             return ScreenState("S12", 0.0, "")
 
         gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
 
-        best_code = "S12"
-        best_conf = 0.0
-        best_name = ""
+        # Buscamos el mejor match global (sin filtrar por threshold todavía)
+        overall_best_code = "S12"
+        overall_best_conf = 0.0
+        overall_best_name = ""
 
+        # Y el mejor match que supere el threshold
+        passing_best_code = "S12"
+        passing_best_conf = 0.0
+        passing_best_name = ""
+
+        fh, fw = gray_frame.shape[:2]
         for entry in self._templates:
             tmpl = entry["img"]
             gray_tmpl = cv2.cvtColor(tmpl, cv2.COLOR_BGR2GRAY) if tmpl.ndim == 3 else tmpl
 
-            # El template no puede ser más grande que el frame
-            fh, fw = gray_frame.shape[:2]
             th, tw = gray_tmpl.shape[:2]
             if th > fh or tw > fw:
                 continue
@@ -109,12 +139,20 @@ class ScreenDetector:
             result = cv2.matchTemplate(gray_frame, gray_tmpl, cv2.TM_CCOEFF_NORMED)
             _, max_val, _, _ = cv2.minMaxLoc(result)
 
-            if max_val >= self._threshold and max_val > best_conf:
-                best_conf = max_val
-                best_code = entry["code"]
-                best_name = entry["name"]
+            if max_val > overall_best_conf:
+                overall_best_conf = max_val
+                overall_best_code = entry["code"]
+                overall_best_name = entry["name"]
 
-        return ScreenState(best_code, round(best_conf, 3), best_name)
+            if max_val >= self._threshold and max_val > passing_best_conf:
+                passing_best_conf = max_val
+                passing_best_code = entry["code"]
+                passing_best_name = entry["name"]
+
+        if passing_best_code != "S12":
+            return ScreenState(passing_best_code, round(passing_best_conf, 3), passing_best_name)
+        # No hay match — reportamos el mejor parcial para que se vea en el log
+        return ScreenState("S12", round(overall_best_conf, 3), overall_best_name or "")
 
     def classify_batch(self, frames: list[np.ndarray]) -> list[ScreenState]:
         return [self.classify(f) for f in frames]

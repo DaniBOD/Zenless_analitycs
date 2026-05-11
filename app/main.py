@@ -423,6 +423,10 @@ class MainWindow(QMainWindow):
         # Cableado controller → toast
         self._controller.disc_detected.connect(self._on_disc_show_toast)
 
+        # Cableado controller.log_message → live_panel.append_log
+        # (mensajes informativos: cambios de estado, capturas descartadas, etc)
+        self._controller.log_message.connect(self._live_panel.append_log)
+
         # Cableado toast.clicked → abrir panel principal
         self._toast.clicked.connect(self._show_and_raise)
 
