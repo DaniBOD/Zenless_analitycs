@@ -46,6 +46,14 @@ class DiscSetArchetype:
 
 
 @dataclass
+class DiscSetEntry:
+    """Representación liviana de una fila de disc_sets para resolvers de UI/assets."""
+    id: int
+    nombre: str
+    nombre_en: str | None = None
+
+
+@dataclass
 class Disc:
     id: int
     set_id: int
@@ -140,6 +148,15 @@ class DiscSetRepo:
             r["nombre"].lower(): r["id"]
             for r in self._con.execute("SELECT id, nombre FROM disc_sets")
         }
+
+    def get_all(self) -> list[DiscSetEntry]:
+        """Devuelve todas las filas de disc_sets con id, nombre y nombre_en."""
+        return [
+            DiscSetEntry(id=r["id"], nombre=r["nombre"], nombre_en=r["nombre_en"])
+            for r in self._con.execute(
+                "SELECT id, nombre, nombre_en FROM disc_sets ORDER BY id"
+            )
+        ]
 
 
 class AgentRepo:
