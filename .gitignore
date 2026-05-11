@@ -31,9 +31,13 @@ dist/
 *.egg
 *.spec.bak
 
-# PyInstaller
+# PyInstaller — bundle output gitignored, spec versionado
 app/build/
+!app/build/main.spec
 *.manifest
+
+# QA visual artifacts — regenerables con tools/annotate_rois.py y tools/render_toast_preview.py
+Documentacion/QA/calibracion_visual/
 
 # ────────────── IDE / Editor ──────────────
 .vscode/
