@@ -100,19 +100,27 @@ TEMPLATES = [
     },
     {
         "name": "s13_seleccion_set_farmeo.png",
-        "source": "13_Seleccion_Set_Farmeo/Ejemplo_1.png",
-        # Header "Nivel de desafío Nivel 60" arriba a la derecha + zona de WARNING enemigo
-        "roi": [0.70, 0.02, 0.28, 0.10],
+        "source": "13_Seleccion_set_farmeo/Ejemplo_1.png",
+        # Header "Nivel de desafío Nivel 60" arriba-derecha
+        "roi": [0.55, 0.015, 0.30, 0.05],
         "description": "S13 — header 'Nivel de desafío' (seleccion set farmeo)",
-        "optional": True,  # opcional hasta que el usuario suba el screenshot
     },
+    # ---- Triggers generales (no específicos de captura de discos) ----
+    # Path relativo es desde la raíz de Screenshots_Triggers (no Discos_Triggers/).
+    # build_templates resuelve esto via la flag source_relative_to_root.
     {
         "name": "s14_seleccion_equipo_combate.png",
-        "source": "14_Seleccion_Equipo_Combate/Ejemplo_1.png",
-        # Header "Ciudad" + contador "3/3" arriba (único de esta pantalla de equipo)
-        "roi": [0.08, 0.01, 0.30, 0.06],
-        "description": "S14 — header 'Ciudad 3/3' (seleccion equipo pre-combate)",
-        "optional": True,
+        "source": "../Triggers_Generales/Seleecion_Equipo_Combate/Ejemplo_1.png",
+        # Contador "3/3" + emoji amarillo en esquina superior derecha
+        "roi": [0.85, 0.005, 0.13, 0.06],
+        "description": "S14 — contador '3/3' (seleccion equipo pre-combate)",
+    },
+    {
+        "name": "s15_menu_personajes.png",
+        "source": "../Triggers_Generales/Menu_Personajes/Ejemplo_1.png",
+        # Header "Plan de entrenamiento" arriba-izquierda
+        "roi": [0.05, 0.015, 0.22, 0.05],
+        "description": "S15 — header 'Plan de entrenamiento' (menu personajes)",
     },
 ]
 
@@ -126,10 +134,18 @@ def crop_roi(img: np.ndarray, roi: list[float]) -> np.ndarray:
     return img[y:y + rh, x:x + rw]
 
 
+def _resolve_source(source_rel: str) -> Path:
+    """
+    Resuelve rutas relativas a REFS. Soporta '..' para escapar a otras
+    subcarpetas dentro de Screenshots_Triggers/ (ej. Triggers_Generales/).
+    """
+    return (REFS / source_rel).resolve()
+
+
 def build(show: bool = False) -> int:
     ok = 0
     for t in TEMPLATES:
-        src_path = REFS / t["source"]
+        src_path = _resolve_source(t["source"])
         out_path = OUT / t["name"]
 
         if not src_path.exists():

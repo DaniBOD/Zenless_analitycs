@@ -38,12 +38,13 @@ STATE_DESCRIPTIONS: dict[str, str] = {
     "S10": "Modal upgrade disco",
     "S11": "Pantalla desmontaje",
     "S12": "Sin coincidencia (estado no reconocido / pantalla intermedia)",
-    "S13": "Selección de set de discos para farmear (nodo boss)",
-    "S14": "Selección de equipo (pre-combate)",
+    "S13": "Selección de set de discos para farmear (nodo boss) — ANTELACIÓN A CAPTURA",
+    "S14": "Selección de equipo (pre-combate) — ANTELACIÓN A CAPTURA",
+    "S15": "Menú de personajes (plan de entrenamiento)",
 }
 
 # Estados donde NO hay disco para capturar (logging informativo, no error).
-NON_CAPTURE_STATES = {"S1", "S2", "S4", "S5", "S8", "S9", "S11", "S12", "S13", "S14"}
+NON_CAPTURE_STATES = {"S1", "S2", "S4", "S5", "S8", "S9", "S11", "S12", "S13", "S14", "S15"}
 # Estados donde SÍ hay un disco visible para parsear
 CAPTURE_DISC_STATES = {"S3", "S6", "S7"}
 # Estados de upgrade (PRE/POST sync, no es captura de drop)
@@ -81,6 +82,7 @@ _STATE_TEMPLATES: list[dict] = [
     # debemos clasificarlas para no producir false positives).
     {"code": "S13", "template": "s13_seleccion_set_farmeo.png",     "desc": "Selección set de discos a farmear"},
     {"code": "S14", "template": "s14_seleccion_equipo_combate.png", "desc": "Selección de equipo pre-combate"},
+    {"code": "S15", "template": "s15_menu_personajes.png",          "desc": "Menú de personajes (plan entrenamiento)"},
 ]
 
 # Estados de captura activa (donde se debe procesar el disco)
