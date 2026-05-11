@@ -31,6 +31,10 @@ datas = [
     (str(REPO / "app" / "resources" / "icon.ico"),  "app/resources"),
     # DB (sólo lectura desde el .exe; el usuario puede sobrescribirla)
     (str(REPO / "db" / "danibod_zzz_v2.db"),        "db"),
+    # Assets para asset_resolver (Hito 2.7) — set logos, splash arts, avatares
+    (str(REPO / "Documentacion" / "Interfaz" / "Set_Discos_Logo"), "Documentacion/Interfaz/Set_Discos_Logo"),
+    (str(REPO / "Documentacion" / "Interfaz" / "splash_arts"),     "Documentacion/Interfaz/splash_arts"),
+    (str(REPO / "Pj_stats"),                                       "Pj_stats"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -66,6 +70,7 @@ hiddenimports = [
     "app.core.optimizer",
     "app.core.hotkeys",
     "app.core.capturer",
+    "app.core.asset_resolver",
     "app.ui.tokens",
     "app.ui.toast",
     "app.ui.live_panel",

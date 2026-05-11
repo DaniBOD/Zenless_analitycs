@@ -180,7 +180,7 @@ Con el juego al frente, presionar:
 1. Hover sobre el toast cuando aparezca.
 **Pass:** countdown pausa, label "PAUSE" amarillo, opacity sube a 100%.
 2. Click sobre el toast.
-**Pass:** toast desaparece (TODO: en versión completa abriría el panel — actualmente solo se cierra).
+**Pass:** toast desaparece + el panel principal aparece al frente (`MainWindow._show_and_raise`).
 
 ---
 
@@ -203,11 +203,19 @@ Con el juego al frente, presionar:
 
 ## 5. Issues conocidos pre-QA
 
-- ⚠️  Label del toast (EQUIPAR/MEJORAR/etc) puede aparecer visualmente solapado con el chevron de color en algunos sistemas. No es funcional, solo estético.
-- ⚠️  Subwidget DiscThumb usa hexágono fallback porque aún no cargamos `set_logo` real desde `Documentacion\Interfaz\Sets_Logos\`. Implementar en Hito 2.7.
-- ⚠️  El avatar del target agent no se renderiza (target_avatar=None). Implementar en Hito 2.7.
-- ⚠️  Tras click en el toast, no abre el panel principal. Solo se cierra. Implementar wiring `clicked → mainwindow.show()` en Hito 2.7.
+### Resueltos en Hito 2.7 (este sprint)
+- ✅ **Set logos**: cableados desde `Documentacion\Interfaz\Set_Discos_Logo\` vía `app/core/asset_resolver.py`. Cobertura **26/26 sets**.
+- ✅ **Avatar del target**: cableado desde `Documentacion\Interfaz\splash_arts\<Nombre>-extend.webp`. Cobertura **46/46 agentes** (incluye overrides para Sporos→Seed, Gatillo→Trigger, Cissia→cissia, N.º 0: Anby→Anby-Soldier-0, etc).
+- ✅ **Click en toast** → abre/trae al frente el panel principal (`MainWindow._show_and_raise`).
+- ✅ **Label del toast** (EQUIPAR/MEJORAR/RESERVA/DESCARTAR) se renderiza completo. **Bug raíz**: el `DiscThumb` child widget se solapaba con el header (Qt renderiza children DESPUÉS del paint del parent). **Fix**: subir `HEIGHT` del toast de 116 a 140 px y mover el thumb a `HEADER_GAP+52`.
+
+### Diferidos para Hito 2.8 (después del QA)
+- ℹ️  Soporte para resolución < 1920×1080 sin testear. Validado en 2560×1440 con ROIs normalizados.
+- ℹ️  Toast `lategame` (RF-13) sin implementar UI todavía (los 4 variants de disco están).
+
+### Operativo
 - ℹ️  Si el shortcut del escritorio queda roto: el `.exe` está en `app\build\dist\DaniBOD_ZZZ_Analytics\DaniBOD_ZZZ_Analytics.exe` (relativo al repo). Re-ejecutar `tools\create_shortcut.ps1`.
+- ℹ️  Si después del QA cambiás de rama o hacés merge, recompilar con: `python -m PyInstaller app\build\main.spec --noconfirm --distpath app\build\dist --workpath app\build\work`
 
 ---
 
