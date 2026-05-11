@@ -16,10 +16,13 @@ import numpy as np
 TEMPLATES_DIR = Path(__file__).parent.parent / "resources" / "templates"
 
 # Threshold por defecto para template matching.
-# 0.85 era muy estricto y producía S12 (sin match) en pantallas donde
-# visualmente el template existe. 0.70 da mejor recall manteniendo precisión
-# (verificado en QA 2026-05-11 — antes con 0.85 los farmeos no se detectaban).
-MATCH_THRESHOLD = 0.70
+# QA 2026-05-11 (segunda iteración):
+#  - 0.85 inicial: muy estricto, S12 en pantallas reales.
+#  - 0.70: mejor recall pero produce false positives (ej. pantalla de
+#    "selección de equipo" matcheaba S7 con conf 0.99 por matching de
+#    elementos UI genéricos como botón retorno).
+#  - 0.85 (final): balance correcto cuando los templates son específicos.
+MATCH_THRESHOLD = 0.85
 
 # Descripciones humanas de cada estado para el log y la UI
 STATE_DESCRIPTIONS: dict[str, str] = {
@@ -34,8 +37,17 @@ STATE_DESCRIPTIONS: dict[str, str] = {
     "S9":  "Inventario discos",
     "S10": "Modal upgrade disco",
     "S11": "Pantalla desmontaje",
-    "S12": "Sin coincidencia (estado no reconocido)",
+    "S12": "Sin coincidencia (estado no reconocido / pantalla intermedia)",
+    "S13": "Selección de set de discos para farmear (nodo boss)",
+    "S14": "Selección de equipo (pre-combate)",
 }
+
+# Estados donde NO hay disco para capturar (logging informativo, no error).
+NON_CAPTURE_STATES = {"S1", "S2", "S4", "S5", "S8", "S9", "S11", "S12", "S13", "S14"}
+# Estados donde SÍ hay un disco visible para parsear
+CAPTURE_DISC_STATES = {"S3", "S6", "S7"}
+# Estados de upgrade (PRE/POST sync, no es captura de drop)
+UPGRADE_STATES = {"S10"}
 
 
 def describe_state(code: str) -> str:
@@ -51,9 +63,11 @@ class ScreenState:
     template_name: str # nombre del template que disparó el match
 
 
-# Descripción de cada estado y su plantilla de detección
+# Descripción de cada estado y su plantilla de detección.
+# ORDEN IMPORTA: estados más específicos primero (los que matchean menos cosas
+# generales). Si un template más genérico está antes y matchea, ya no se evalúan
+# los siguientes a menos que tengan conf más alta.
 _STATE_TEMPLATES: list[dict] = [
-    # Cada entrada: code, template_file, descripcion
     {"code": "S2",  "template": "s2_resultado_desafio.png",        "desc": "Resultado del Desafio"},
     {"code": "S5",  "template": "s5_resultado_afinacion.png",       "desc": "Resultado de afinacion"},
     {"code": "S9",  "template": "s9_personalizacion_pistas.png",    "desc": "Inventario discos"},
@@ -63,6 +77,10 @@ _STATE_TEMPLATES: list[dict] = [
     {"code": "S3",  "template": "s3_modal_detalle_drop.png",        "desc": "Modal detalle drop"},
     {"code": "S6",  "template": "s6_tienda_detalle_panel.png",      "desc": "Tienda musica panel"},
     {"code": "S7",  "template": "s7_tienda_detalle_full.png",       "desc": "Tienda musica fullscreen"},
+    # Pantallas adicionales detectadas durante QA (no son capturables pero
+    # debemos clasificarlas para no producir false positives).
+    {"code": "S13", "template": "s13_seleccion_set_farmeo.png",     "desc": "Selección set de discos a farmear"},
+    {"code": "S14", "template": "s14_seleccion_equipo_combate.png", "desc": "Selección de equipo pre-combate"},
 ]
 
 # Estados de captura activa (donde se debe procesar el disco)

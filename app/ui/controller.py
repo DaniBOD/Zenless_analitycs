@@ -226,15 +226,21 @@ class MonitorController(QObject):
 
     def _on_state_from_monitor(self, state):
         # Signals son thread-safe en Qt (cross-thread auto-marshalled si hay event loop)
-        from app.core.detector import describe_state
+        from app.core.detector import describe_state, CAPTURE_DISC_STATES, UPGRADE_STATES, NON_CAPTURE_STATES
         self.state_changed.emit(state.code, state.confidence)
         desc = describe_state(state.code)
+
         if state.code == "S12":
-            # No hubo match — mostrar el mejor match parcial para diagnóstico
             tmpl_hint = f" (mejor match parcial: {state.template_name}, conf={state.confidence:.2f})" if state.template_name else ""
-            self.log_message.emit(f"[detector] sin match{tmpl_hint}")
+            self.log_message.emit(f"[pantalla] no reconocida — posible menú/transición{tmpl_hint}")
+        elif state.code in CAPTURE_DISC_STATES:
+            self.log_message.emit(f"[pantalla] {state.code} — {desc} · CAPTURABLE (conf {state.confidence:.2f})")
+        elif state.code in UPGRADE_STATES:
+            self.log_message.emit(f"[pantalla] {state.code} — {desc} · UPGRADE sync (conf {state.confidence:.2f})")
+        elif state.code in NON_CAPTURE_STATES:
+            self.log_message.emit(f"[pantalla] {state.code} — {desc} · sin disco visible (conf {state.confidence:.2f})")
         else:
-            self.log_message.emit(f"[estado] {state.code} — {desc} (conf {state.confidence:.2f})")
+            self.log_message.emit(f"[pantalla] {state.code} — {desc} (conf {state.confidence:.2f})")
 
     def _on_disc_rejected_from_monitor(self, disc, state, reason: str):
         """Disco parseado pero descartado por baja confianza u otro motivo."""

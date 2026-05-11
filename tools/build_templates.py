@@ -92,9 +92,27 @@ TEMPLATES = [
     {
         "name": "s7_tienda_detalle_full.png",
         "source": "07_Upgrade_POST_animacion_confirmacion/Ejemplo_3(tienda_musica).png",
-        # Header tienda música — barra superior izquierda con "Ciudad / Tienda"
-        "roi": [0.02, 0.02, 0.20, 0.06],
-        "description": "S7 — header tienda musica fullscreen",
+        # IMPORTANTE: usar un crop más distintivo que solo "Ciudad" arriba, porque
+        # ese texto aparece también en otras pantallas (S13/S14). Usamos el panel
+        # de stats derecho del modal que es exclusivo de S7.
+        "roi": [0.50, 0.20, 0.40, 0.30],
+        "description": "S7 — panel stats derecho (tienda musica fullscreen)",
+    },
+    {
+        "name": "s13_seleccion_set_farmeo.png",
+        "source": "13_Seleccion_Set_Farmeo/Ejemplo_1.png",
+        # Header "Nivel de desafío Nivel 60" arriba a la derecha + zona de WARNING enemigo
+        "roi": [0.70, 0.02, 0.28, 0.10],
+        "description": "S13 — header 'Nivel de desafío' (seleccion set farmeo)",
+        "optional": True,  # opcional hasta que el usuario suba el screenshot
+    },
+    {
+        "name": "s14_seleccion_equipo_combate.png",
+        "source": "14_Seleccion_Equipo_Combate/Ejemplo_1.png",
+        # Header "Ciudad" + contador "3/3" arriba (único de esta pantalla de equipo)
+        "roi": [0.08, 0.01, 0.30, 0.06],
+        "description": "S14 — header 'Ciudad 3/3' (seleccion equipo pre-combate)",
+        "optional": True,
     },
 ]
 
