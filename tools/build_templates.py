@@ -84,11 +84,17 @@ TEMPLATES = [
     },
     {
         "name": "s11_desmontaje.png",
-        "source": "09_Iconos_UI_por_aclarar/Ejemplo_1.png",
-        # Intentar con un screenshot genérico si existe; si no, usar s9 como fallback
+        "source": "12_Desmontaje/Ejemplo_1.png",
+        # Header con título "Desmontaje" o botón principal — franja superior
         "roi": [0.02, 0.04, 0.35, 0.06],
-        "description": "S11 — header desmontaje (requiere screenshot dedicado)",
-        "optional": True,
+        "description": "S11 — header desmontaje",
+    },
+    {
+        "name": "s7_tienda_detalle_full.png",
+        "source": "07_Upgrade_POST_animacion_confirmacion/Ejemplo_3(tienda_musica).png",
+        # Header tienda música — barra superior izquierda con "Ciudad / Tienda"
+        "roi": [0.02, 0.02, 0.20, 0.06],
+        "description": "S7 — header tienda musica fullscreen",
     },
 ]
 
