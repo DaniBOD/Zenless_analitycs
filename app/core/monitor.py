@@ -174,7 +174,7 @@ class Monitor:
 
     def _process_disc(self, frame, state: ScreenState) -> None:
         try:
-            disc = parse_modal_detalle(frame, self._ocr, self._set_repo)
+            disc = parse_modal_detalle(frame, self._ocr, self._set_repo, state_code=state.code)
             if disc.confianza_global < 0.7:
                 log.debug("Disco con baja confianza (%.2f) — ignorado.", disc.confianza_global)
                 return

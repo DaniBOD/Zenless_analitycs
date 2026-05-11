@@ -1,75 +1,193 @@
 # rois.toml — Regiones de interés para captura OCR
 # Coordenadas normalizadas 0.0-1.0 relativas al tamaño de la ventana del juego.
-# Calibrar con tools/calibrate_rois.py si la UI de ZZZ cambia de layout.
-# Basado en resolución de referencia 1920x1080 (16:9).
+# Calibradas sobre screenshots reales en Documentacion/Screenshots_Triggers/Discos_Triggers/
+# Resolución de referencia: 16:9 (verificadas en 2560x1440 y 1920x1080).
 #
 # Formato: [x, y, w, h] normalizados (0.0-1.0)
 # x,y = esquina superior izquierda; w,h = ancho/alto de la región
+#
+# IMPORTANTE: cada estado (S3, S6, S7, S10) tiene layout distinto.
+# Validar con tools/annotate_rois.py tras cualquier cambio.
+#
+# Substats: el juego los muestra en grilla 2 columnas × 2 filas (max 4).
+# Numeración:  sub1=fila1col1  sub2=fila1col2  sub3=fila2col1  sub4=fila2col2
 
-# ---------------------------------------------------------------------------
-# Modal de detalle de disco (S3, S6, S7)
-# ---------------------------------------------------------------------------
-[modal_detalle]
+# ===========================================================================
+# S3 — Modal de detalle de drop (desde pantalla de Resultado de Desafío)
+# ===========================================================================
+# Layout: modal centrado, ocupa ~40% del ancho de pantalla en x≈[0.30, 0.70].
+# Stats panel a la izquierda dentro del modal, imagen del disco a la derecha.
+# Discos recién dropeados (nivel 0) tienen 3 substats; nivel >=3 tienen 4.
+[modal_detalle_s3]
 
-# Título: "Nombre del Set (N)" — set + slot
-titulo          = [0.52, 0.10, 0.40, 0.06]
+titulo            = [0.32, 0.180, 0.28, 0.050]   # "Fábula Yunkui (1)"
+nivel             = [0.32, 0.235, 0.13, 0.035]   # "Nivel 00/15"
+rareza_borde      = [0.62, 0.230, 0.04, 0.030]   # esquina sup-izq de la imagen del disco
 
-# Nivel: "Nivel X/15"
-nivel           = [0.52, 0.17, 0.18, 0.04]
+# Mainstat (alineado más a la derecha que substats por padding interno)
+main_stat_nombre  = [0.555, 0.358, 0.10, 0.035]  # "PV" / "ATK %" / etc
+main_stat_valor   = [0.660, 0.358, 0.08, 0.035]  # "550" / "30 %"
 
-# Rareza: región del borde superior del icono del disco (color hue)
-rareza_borde    = [0.52, 0.21, 0.05, 0.02]
+# Substats — grilla 2 cols × 2 filas (col1: x=0.42, col2: x=0.61)
+sub1_nombre       = [0.420, 0.430, 0.13, 0.030]  # fila1 col1
+sub1_valor        = [0.545, 0.430, 0.07, 0.030]
+sub2_nombre       = [0.610, 0.430, 0.13, 0.030]  # fila1 col2
+sub2_valor        = [0.735, 0.430, 0.07, 0.030]
+sub3_nombre       = [0.420, 0.470, 0.13, 0.030]  # fila2 col1
+sub3_valor        = [0.545, 0.470, 0.07, 0.030]
+sub4_nombre       = [0.610, 0.470, 0.13, 0.030]  # fila2 col2
+sub4_valor        = [0.735, 0.470, 0.07, 0.030]
 
-# Mainstat nombre + valor (línea única)
-main_stat_nombre = [0.52, 0.26, 0.30, 0.04]
-main_stat_valor  = [0.72, 0.26, 0.18, 0.04]
+# Set bonus block (texto del efecto de conjunto, para fuzzy match del nombre)
+efecto_conjunto   = [0.420, 0.560, 0.30, 0.180]
 
-# Substats (4 filas): [nombre, valor, rolls]
-sub1_nombre     = [0.52, 0.35, 0.28, 0.035]
-sub1_valor      = [0.73, 0.35, 0.15, 0.035]
 
-sub2_nombre     = [0.52, 0.395, 0.28, 0.035]
-sub2_valor      = [0.73, 0.395, 0.15, 0.035]
+# ===========================================================================
+# S6 — Modal detalle desde Tienda Música (vista panel)
+# ===========================================================================
+# Layout: pantalla "fullscreen" con imagen del disco grande a la izquierda
+# y panel de stats a la derecha (x≈0.50 hasta x≈0.95).
+# Header arriba con "Ciudad/Tienda" y monedas; título grande arriba-izquierda.
+[modal_detalle_s6]
 
-sub3_nombre     = [0.52, 0.44, 0.28, 0.035]
-sub3_valor      = [0.73, 0.44, 0.15, 0.035]
+titulo            = [0.020, 0.115, 0.42, 0.060]  # "Nana a la luz cenicienta (4)"
+nivel             = [0.640, 0.135, 0.10, 0.050]  # "Nivel 00/15"
+rareza_borde      = [0.200, 0.220, 0.06, 0.040]  # banda superior del disco grande (color identifica rareza)
 
-sub4_nombre     = [0.52, 0.485, 0.28, 0.035]
-sub4_valor      = [0.73, 0.485, 0.15, 0.035]
+# Mainstat (panel derecho)
+main_stat_nombre  = [0.500, 0.310, 0.20, 0.040]  # "Daño Crítico"
+main_stat_valor   = [0.835, 0.310, 0.10, 0.040]  # "12 %"
 
-# ---------------------------------------------------------------------------
-# Modal de upgrade (S10)
-# ---------------------------------------------------------------------------
-[modal_upgrade]
+# Substats — grilla 2 cols × 2 filas (col1: x=0.50, col2: x=0.72)
+sub1_nombre       = [0.500, 0.420, 0.18, 0.035]
+sub1_valor        = [0.665, 0.420, 0.07, 0.035]
+sub2_nombre       = [0.720, 0.420, 0.18, 0.035]
+sub2_valor        = [0.890, 0.420, 0.07, 0.035]
+sub3_nombre       = [0.500, 0.465, 0.18, 0.035]
+sub3_valor        = [0.665, 0.465, 0.07, 0.035]
+sub4_nombre       = [0.720, 0.465, 0.18, 0.035]
+sub4_valor        = [0.890, 0.465, 0.07, 0.035]
 
-# Nivel actual (pre/post)
-nivel_actual    = [0.44, 0.32, 0.12, 0.05]
+efecto_conjunto   = [0.500, 0.585, 0.43, 0.300]
 
-# Barra de EXP (para detectar cambio de nivel)
-exp_barra       = [0.35, 0.42, 0.30, 0.03]
 
-# ---------------------------------------------------------------------------
-# Inventario discos (S9) — para detectar badge "NEW!"
-# ---------------------------------------------------------------------------
-[inventario]
+# ===========================================================================
+# S7 — Modal detalle Tienda Música (fullscreen detalle)
+# ===========================================================================
+# PENDIENTE CALIBRACIÓN — necesita screenshot real
+# (placeholder copiado de S6; ajustar cuando llegue Ejemplo_S7_*.png)
+[modal_detalle_s7]
 
-# Grilla de 24 discos (6x4). El badge NEW! aparece en esquina superior del tile.
-# Región del primer tile (row=0, col=0) — el resto se calcula programáticamente
-tile_00         = [0.08, 0.15, 0.11, 0.16]
+titulo            = [0.020, 0.115, 0.42, 0.060]
+nivel             = [0.640, 0.135, 0.10, 0.050]
+rareza_borde      = [0.200, 0.220, 0.06, 0.040]
+main_stat_nombre  = [0.500, 0.310, 0.20, 0.040]
+main_stat_valor   = [0.835, 0.310, 0.10, 0.040]
+sub1_nombre       = [0.500, 0.420, 0.18, 0.035]
+sub1_valor        = [0.665, 0.420, 0.07, 0.035]
+sub2_nombre       = [0.720, 0.420, 0.18, 0.035]
+sub2_valor        = [0.890, 0.420, 0.07, 0.035]
+sub3_nombre       = [0.500, 0.465, 0.18, 0.035]
+sub3_valor        = [0.665, 0.465, 0.07, 0.035]
+sub4_nombre       = [0.720, 0.465, 0.18, 0.035]
+sub4_valor        = [0.890, 0.465, 0.07, 0.035]
+efecto_conjunto   = [0.500, 0.585, 0.43, 0.300]
+
+
+# ===========================================================================
+# S10 — Modal de upgrade (PRE y POST comparten layout)
+# ===========================================================================
+# Layout: modal centrado más grande que S3 (x≈[0.18, 0.78]).
+# Imagen del disco a la izquierda, stats a la derecha, barra EXP abajo, botón "Mejorar" abajo-derecha.
+# Distinción PRE/POST: nivel_actual cambia + substats POST muestran "+N" rolls + valor mainstat sube.
+[modal_upgrade_s10]
+
+titulo            = [0.205, 0.180, 0.28, 0.050]  # "Fábula Yunkui (1)"
+# Nota: en S10 NO hay un campo "Nivel X/15" textual aparte. El nivel se infiere de exp_actual (chip izquierda de abajo).
+rareza_borde      = [0.215, 0.270, 0.04, 0.040]
+
+# Mainstat
+main_stat_nombre  = [0.500, 0.235, 0.10, 0.035]  # "PV"
+main_stat_valor   = [0.610, 0.235, 0.10, 0.035]  # "550" / "2200"
+
+# Substats — grilla 2 cols × 2 filas
+# Importante en POST: pueden tener "+N" rolls junto al nombre (ej "Defensa +1")
+sub1_nombre       = [0.500, 0.305, 0.13, 0.035]
+sub1_valor        = [0.625, 0.305, 0.07, 0.035]
+sub2_nombre       = [0.720, 0.305, 0.13, 0.035]
+sub2_valor        = [0.840, 0.305, 0.07, 0.035]
+sub3_nombre       = [0.500, 0.345, 0.13, 0.035]
+sub3_valor        = [0.625, 0.345, 0.07, 0.035]
+sub4_nombre       = [0.720, 0.345, 0.13, 0.035]
+sub4_valor        = [0.840, 0.345, 0.07, 0.035]
+
+# Barra EXP (3 chips: actual / progreso / total)
+exp_actual        = [0.430, 0.435, 0.10, 0.045]  # "0" o "15"
+exp_progreso      = [0.530, 0.435, 0.18, 0.045]  # "0/480" o "MAX"
+exp_total         = [0.715, 0.435, 0.10, 0.045]  # "0" o "15"
+
+# Botón Mejorar (para detectar habilitado/deshabilitado por color)
+boton_mejorar     = [0.640, 0.620, 0.13, 0.055]
+
+
+# ===========================================================================
+# Inventario discos (S9) — para detectar badge "NEW!" o cambios masivos
+# ===========================================================================
+# Layout: grilla 6 columnas × 4 filas en panel izquierdo.
+# El badge "NEW!" aparece en esquina sup-izq del tile cuando hay disco recién obtenido.
+[inventario_s9]
+
+# Tile [0,0] (primer disco arriba-izq)
+tile_00         = [0.045, 0.130, 0.060, 0.110]
 tile_cols       = 6
 tile_rows       = 4
-tile_gap_x      = 0.12
-tile_gap_y      = 0.17
+tile_gap_x      = 0.067
+tile_gap_y      = 0.115
 
-# ---------------------------------------------------------------------------
+# Filtros / ordenamiento (top bar)
+filtro_btn      = [0.080, 0.025, 0.080, 0.045]
+
+
+# ===========================================================================
 # Vista agente — discos equipados (S8)
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Hexágono de 6 slots en el panel central-derecho de la vista agente.
 [agente_equipados]
 
-# Slots 1-6 del hexágono. Aprox posiciones relativas.
-slot1           = [0.48, 0.28, 0.08, 0.10]
-slot2           = [0.58, 0.35, 0.08, 0.10]
-slot3           = [0.58, 0.50, 0.08, 0.10]
-slot4           = [0.48, 0.57, 0.08, 0.10]
-slot5           = [0.38, 0.50, 0.08, 0.10]
-slot6           = [0.38, 0.35, 0.08, 0.10]
+slot1           = [0.480, 0.280, 0.080, 0.100]
+slot2           = [0.580, 0.350, 0.080, 0.100]
+slot3           = [0.580, 0.500, 0.080, 0.100]
+slot4           = [0.480, 0.570, 0.080, 0.100]
+slot5           = [0.380, 0.500, 0.080, 0.100]
+slot6           = [0.380, 0.350, 0.080, 0.100]
+
+
+# ===========================================================================
+# Compatibilidad legacy
+# ===========================================================================
+# Los módulos viejos referencian "modal_detalle" sin sufijo. Mantener apuntando a S3
+# como default hasta que todos migren a get_rois_for_state(state_code).
+[modal_detalle]
+
+titulo            = [0.32, 0.130, 0.28, 0.050]
+nivel             = [0.32, 0.185, 0.12, 0.040]
+rareza_borde      = [0.62, 0.180, 0.04, 0.030]
+main_stat_nombre  = [0.420, 0.310, 0.13, 0.035]
+main_stat_valor   = [0.555, 0.310, 0.08, 0.035]
+sub1_nombre       = [0.420, 0.395, 0.13, 0.030]
+sub1_valor        = [0.545, 0.395, 0.07, 0.030]
+sub2_nombre       = [0.610, 0.395, 0.13, 0.030]
+sub2_valor        = [0.735, 0.395, 0.07, 0.030]
+sub3_nombre       = [0.420, 0.435, 0.13, 0.030]
+sub3_valor        = [0.545, 0.435, 0.07, 0.030]
+sub4_nombre       = [0.610, 0.435, 0.13, 0.030]
+sub4_valor        = [0.735, 0.435, 0.07, 0.030]
+
+
+# ===========================================================================
+# Compatibilidad legacy modal_upgrade
+# ===========================================================================
+[modal_upgrade]
+
+nivel_actual    = [0.470, 0.165, 0.10, 0.060]
+exp_barra       = [0.430, 0.435, 0.30, 0.045]
