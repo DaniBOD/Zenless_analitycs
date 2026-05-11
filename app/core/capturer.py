@@ -11,14 +11,28 @@ from typing import NamedTuple
 
 import numpy as np
 
+# Nombres del ejecutable del juego (filtro principal — el más confiable).
+# Verificado en QA 2026-05-11: el proceso del juego es "ZenlessZoneZero.exe".
+ZZZ_EXECUTABLE_NAMES = (
+    "ZenlessZoneZero.exe",
+    "ZZZ.exe",
+)
+
 # Substrings que pueden aparecer en el título de la ventana de ZZZ.
-# Probamos varios porque distintas versiones / regiones tienen formatos distintos:
-#   "ZenlessZoneZero", "Zenless Zone Zero", "ZZZ", etc.
+# Filtro secundario solo si no podemos verificar el proceso.
 ZZZ_WINDOW_TITLE_CANDIDATES = (
     "ZenlessZoneZero",
     "Zenless Zone Zero",
-    "ZenlessZoneZero v",  # con versión
-    "Zenless",
+)
+
+# Keywords que indican que la ventana NO es el juego (navegadores, editores
+# que pueden tener "Zenless" en el título cuando muestran este repo).
+EXCLUDED_TITLE_KEYWORDS = (
+    "opera", "chrome", "firefox", "edge", "brave", "safari", "vivaldi",
+    "code", "vscode", "visual studio", "github",
+    "explorer", "explorador", "powershell", "cmd", "terminal",
+    "discord", "telegram", "whatsapp", "spotify",
+    "notepad", "bloc de notas",
 )
 
 _ROIS: dict | None = None
@@ -67,10 +81,54 @@ def list_all_visible_windows() -> list[tuple[int, str]]:
     return found
 
 
+def _get_window_exe_name(hwnd: int) -> str:
+    """
+    Devuelve el nombre del ejecutable (basename) del proceso dueño del hwnd.
+    Vacío si no se puede determinar. Usa QueryFullProcessImageNameW (kernel32).
+    """
+    if sys.platform != "win32":
+        return ""
+    try:
+        import os as _os
+        import win32process
+        import win32api
+        import ctypes
+        from ctypes import wintypes, byref, create_unicode_buffer
+
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        if pid == 0:
+            return ""
+        # PROCESS_QUERY_LIMITED_INFORMATION = 0x1000 (funciona en procesos elevados)
+        h_proc = win32api.OpenProcess(0x1000, False, pid)
+        if not h_proc:
+            return ""
+        try:
+            kernel32 = ctypes.windll.kernel32
+            buf = create_unicode_buffer(1024)
+            size = wintypes.DWORD(1024)
+            ok = kernel32.QueryFullProcessImageNameW(int(h_proc), 0, buf, byref(size))
+            if not ok:
+                return ""
+            return _os.path.basename(buf.value)
+        finally:
+            win32api.CloseHandle(h_proc)
+    except Exception:
+        return ""
+
+
+def _is_excluded_title(title: str) -> bool:
+    """True si el título contiene keywords de navegadores/editores (no es el juego)."""
+    title_l = title.lower()
+    return any(kw in title_l for kw in EXCLUDED_TITLE_KEYWORDS)
+
+
 def find_zzz_window(title_substrings: tuple[str, ...] = ZZZ_WINDOW_TITLE_CANDIDATES) -> WindowBounds | None:
     """
-    Busca la ventana del juego por substring del título (case-insensitive).
-    Devuelve None si no está abierta. Más permisivo que FindWindow(None, exact_title).
+    Busca la ventana del juego. Estrategia:
+    1. Enumerar TODAS las ventanas visibles.
+    2. Para cada una, verificar si el ejecutable es ZenlessZoneZero.exe (filtro definitivo).
+    3. Como fallback, si no podemos leer el proceso, filtrar por título y excluir
+       navegadores/editores que pueden contener 'Zenless' en el título.
     """
     if sys.platform != "win32":
         return None
@@ -79,27 +137,36 @@ def find_zzz_window(title_substrings: tuple[str, ...] = ZZZ_WINDOW_TITLE_CANDIDA
     except ImportError:
         return None
 
-    # Primero intento match EXACTO (más rápido) para los más probables
-    for exact in ("ZenlessZoneZero", "Zenless Zone Zero"):
-        hwnd = win32gui.FindWindow(None, exact)
-        if hwnd:
+    # Estrategia 1: buscar por nombre del proceso (más confiable)
+    exe_candidates_lower = tuple(e.lower() for e in ZZZ_EXECUTABLE_NAMES)
+    for hwnd, title in list_all_visible_windows():
+        try:
             rect = win32gui.GetWindowRect(hwnd)
             left, top, right, bottom = rect
-            return WindowBounds(left, top, right - left, bottom - top, exact)
+            if right - left < 400 or bottom - top < 300:
+                continue
+            exe = _get_window_exe_name(hwnd).lower()
+            if exe and exe in exe_candidates_lower:
+                return WindowBounds(left, top, right - left, bottom - top, f"{title} [{exe}]")
+        except Exception:
+            continue
 
-    # Fallback: enumerar ventanas y buscar por substring (case-insensitive)
+    # Estrategia 2 (fallback): match por título con exclusiones
     candidates_lower = tuple(s.lower() for s in title_substrings)
     for hwnd, title in list_all_visible_windows():
+        if _is_excluded_title(title):
+            continue
         title_l = title.lower()
         for sub in candidates_lower:
             if sub in title_l:
-                rect = win32gui.GetWindowRect(hwnd)
-                left, top, right, bottom = rect
-                # Filtros mínimos: la ventana debe ser razonablemente grande
-                # (descartamos tooltips, taskbar, etc).
-                if right - left < 400 or bottom - top < 300:
+                try:
+                    rect = win32gui.GetWindowRect(hwnd)
+                    left, top, right, bottom = rect
+                    if right - left < 400 or bottom - top < 300:
+                        continue
+                    return WindowBounds(left, top, right - left, bottom - top, title)
+                except Exception:
                     continue
-                return WindowBounds(left, top, right - left, bottom - top, title)
 
     return None
 

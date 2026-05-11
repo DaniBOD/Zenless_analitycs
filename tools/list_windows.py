@@ -14,7 +14,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from app.core.capturer import find_zzz_window, list_all_visible_windows
+from app.core.capturer import find_zzz_window, list_all_visible_windows, _get_window_exe_name
 
 
 def main():
@@ -23,11 +23,15 @@ def main():
     print("=" * 80)
     windows = list_all_visible_windows()
     for hwnd, title in windows:
+        exe = _get_window_exe_name(hwnd)
         marker = ""
         title_lower = title.lower()
-        if "zenless" in title_lower or "zzz" in title_lower:
-            marker = "  <-- POSIBLE ZZZ"
-        print(f"  hwnd={hwnd:>10}  title={title!r}{marker}")
+        exe_lower = exe.lower()
+        if exe_lower in ("zenlesszonezero.exe", "zzz.exe"):
+            marker = "  <-- ZZZ (por proceso)"
+        elif "zenless" in title_lower and not any(b in title_lower for b in ("opera", "chrome", "firefox", "edge", "code")):
+            marker = "  <-- posible ZZZ (por titulo)"
+        print(f"  hwnd={hwnd:>10}  exe={exe:<28}  title={title[:60]!r}{marker}")
 
     print()
     print("=" * 80)
