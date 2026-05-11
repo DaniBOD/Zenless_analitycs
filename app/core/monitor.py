@@ -21,8 +21,6 @@ log = logging.getLogger(__name__)
 
 # Estado que requiere captura de disco
 _DISC_DETAIL_STATES = {"S3", "S6", "S7"}
-# Intervalo mínimo entre dos capturas del mismo estado (evitar parsear el mismo disco dos veces)
-_SAME_STATE_COOLDOWN_S = 2.0
 
 
 @dataclass
@@ -72,7 +70,10 @@ class Monitor:
         self._paused.set()          # no paused by default (set = can run)
         self._thread: threading.Thread | None = None
         self._last_state: ScreenState | None = None
-        self._last_disc_state_time: float = 0.0
+        # Código del estado en el que ya emitimos un evento de captura. Sólo
+        # disparamos `_process_disc` al ENTRAR a un disc-state (transición),
+        # no en cada tick. Se resetea cuando salimos del estado.
+        self._processed_disc_state_code: str | None = None
         self._window: WindowBounds | None = None
 
     # ---- Control ----------------------------------------------------------------
@@ -196,6 +197,9 @@ class Monitor:
         self._handle_upgrade(frame, state)
         if state.code in _DISC_DETAIL_STATES:
             self._maybe_process_disc(frame, state)
+        else:
+            # Salimos del disc-state — limpiar flag para permitir captura al volver
+            self._processed_disc_state_code = None
 
     def _handle_upgrade(self, frame, state: ScreenState) -> None:
         if self._upgrade_syncer is None:
@@ -210,10 +214,16 @@ class Monitor:
             self._upgrade_syncer.on_s10_exit()
 
     def _maybe_process_disc(self, frame, state: ScreenState) -> None:
-        now = time.monotonic()
-        if now - self._last_disc_state_time >= _SAME_STATE_COOLDOWN_S:
-            self._last_disc_state_time = now
-            self._process_disc(frame, state)
+        """
+        Dispara `_process_disc` UNA SOLA VEZ por entrada al estado.
+        Si seguimos en el mismo disc-state que ya procesamos, no re-emitimos.
+        Para re-capturar el mismo disco el usuario debe cerrar y volver a abrir
+        el modal (eso genera una transición S3→otro→S3 que resetea el flag).
+        """
+        if self._processed_disc_state_code == state.code:
+            return
+        self._processed_disc_state_code = state.code
+        self._process_disc(frame, state)
 
     def _wait_cadence(self, state: ScreenState) -> None:
         cadence_ms = polling_cadence_ms(state)

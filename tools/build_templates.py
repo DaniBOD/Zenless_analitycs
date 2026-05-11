@@ -55,11 +55,14 @@ TEMPLATES = [
         "description": "S8 — hexagono DRIVER vista agente",
     },
     {
-        "name": "s9_personalizacion_pistas.png",
-        "source": "04_Inventario_Disco_Vista_Individual/Ejemplo_1.png",
-        # Header "Personalización de pistas de disco" — barra superior izquierda
-        "roi": [0.02, 0.04, 0.40, 0.06],
-        "description": "S9 — header inventario discos",
+        "name": "s9_inventario_general.png",
+        "source": "09_Inventario_discos_general/Ejemplo_1.png",
+        # Header "Pistas de disco [N/3000]" arriba-izquierda — texto estático
+        # "Pistas de disco" identifica al inventario general (no la pantalla de
+        # equipamiento del personaje, que es S8). Coords vía OCR (Pistas en
+        # x≈0.041,y≈0.122 — disco en x≈0.097,y≈0.122).
+        "roi": [0.035, 0.115, 0.110, 0.030],
+        "description": "S9 — header 'Pistas de disco' (inventario general)",
     },
     {
         "name": "s6_tienda_detalle_panel.png",
@@ -121,6 +124,15 @@ TEMPLATES = [
         # Header "Plan de entrenamiento" arriba-izquierda
         "roi": [0.05, 0.015, 0.22, 0.05],
         "description": "S15 — header 'Plan de entrenamiento' (menu personajes)",
+    },
+    {
+        "name": "s16_detalle_set_disco.png",
+        "source": "../Triggers_Generales/Falsos_positivos/Detalle_set_disco_ejemplo_1.png",
+        # Texto "Información de conjunto" del modal de detalle de set.
+        # Es ESTÁTICO entre todos los sets (a diferencia del nombre del set
+        # arriba) y aparece SOLO en este modal. Anti-FP crítico vs S3.
+        "roi": [0.325, 0.420, 0.180, 0.025],
+        "description": "S16 — 'Información de conjunto' (modal detalle set)",
     },
 ]
 

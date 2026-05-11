@@ -33,18 +33,19 @@ STATE_DESCRIPTIONS: dict[str, str] = {
     "S5":  "Resultado de afinación",
     "S6":  "Tienda música — panel detalle disco",
     "S7":  "Tienda música — detalle fullscreen",
-    "S8":  "Vista agente — equipamiento",
-    "S9":  "Inventario discos",
+    "S8":  "Equipamiento disco personaje",
+    "S9":  "Inventario general de discos",
     "S10": "Modal upgrade disco",
     "S11": "Pantalla desmontaje",
     "S12": "Sin coincidencia (estado no reconocido / pantalla intermedia)",
     "S13": "Selección de set de discos para farmear (nodo boss) — ANTELACIÓN A CAPTURA",
     "S14": "Selección de equipo (pre-combate) — ANTELACIÓN A CAPTURA",
     "S15": "Menú de personajes (plan de entrenamiento)",
+    "S16": "Detalle set de discos (modal 'Información de conjunto')",
 }
 
 # Estados donde NO hay disco para capturar (logging informativo, no error).
-NON_CAPTURE_STATES = {"S1", "S2", "S4", "S5", "S8", "S9", "S11", "S12", "S13", "S14", "S15"}
+NON_CAPTURE_STATES = {"S1", "S2", "S4", "S5", "S8", "S9", "S11", "S12", "S13", "S14", "S15", "S16"}
 # Estados donde SÍ hay un disco visible para parsear
 CAPTURE_DISC_STATES = {"S3", "S6", "S7"}
 # Estados de upgrade (PRE/POST sync, no es captura de drop)
@@ -69,12 +70,15 @@ class ScreenState:
 # generales). Si un template más genérico está antes y matchea, ya no se evalúan
 # los siguientes a menos que tengan conf más alta.
 _STATE_TEMPLATES: list[dict] = [
+    # S16 va PRIMERO porque su modal puede superponerse con elementos similares a
+    # S3/S6/S7 — si matchea, su match más alto debe ganar para evitar FP.
+    {"code": "S16", "template": "s16_detalle_set_disco.png",        "desc": "Detalle set de discos (modal Información de conjunto)"},
     {"code": "S2",  "template": "s2_resultado_desafio.png",        "desc": "Resultado del Desafio"},
     {"code": "S5",  "template": "s5_resultado_afinacion.png",       "desc": "Resultado de afinacion"},
-    {"code": "S9",  "template": "s9_personalizacion_pistas.png",    "desc": "Inventario discos"},
+    {"code": "S9",  "template": "s9_inventario_general.png",        "desc": "Inventario general de discos"},
     {"code": "S11", "template": "s11_desmontaje.png",               "desc": "Pantalla desmontaje"},
     {"code": "S10", "template": "s10_modal_upgrade.png",            "desc": "Modal upgrade"},
-    {"code": "S8",  "template": "s8_agente_driver.png",             "desc": "Vista agente equipamiento"},
+    {"code": "S8",  "template": "s8_agente_driver.png",             "desc": "Equipamiento disco personaje"},
     {"code": "S3",  "template": "s3_modal_detalle_drop.png",        "desc": "Modal detalle drop"},
     {"code": "S6",  "template": "s6_tienda_detalle_panel.png",      "desc": "Tienda musica panel"},
     {"code": "S7",  "template": "s7_tienda_detalle_full.png",       "desc": "Tienda musica fullscreen"},
