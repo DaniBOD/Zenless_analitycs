@@ -426,6 +426,17 @@ class MainWindow(QMainWindow):
         # Cableado toast.clicked → abrir panel principal
         self._toast.clicked.connect(self._show_and_raise)
 
+        # Auto-detect: el monitor arranca automáticamente cuando ZZZ corre.
+        # El botón "Iniciar captura" sigue disponible como override manual.
+        self._controller.auto_start_enabled.connect(
+            lambda enabled: self._live_panel.append_log(
+                "[auto] Watcher de ZZZ ACTIVO — el monitor arranca solo cuando detecta el juego."
+                if enabled else "[auto] Watcher de ZZZ desactivado."
+            )
+        )
+        # Habilitar auto-detect por default
+        self._controller.set_auto_detect(True)
+
         # Cableado controller → header indicator
         self._controller.monitor_started.connect(lambda: self._set_header_monitor("ON",  COLORS["ok"]))
         self._controller.monitor_stopped.connect(lambda: self._set_header_monitor("OFF", COLORS["text_sub"]))

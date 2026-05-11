@@ -16,7 +16,7 @@ import sqlite3
 from dataclasses import asdict
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +52,12 @@ class MonitorController(QObject):
     disc_detected = Signal(dict)             # payload listo para LivePanel + Toast
     error_occurred = Signal(str)
 
+    # Auto-start: el monitor arranca cuando se detecta el proceso de ZZZ
+    auto_start_enabled = Signal(bool)        # True cuando se habilita el auto-arranque
+
+    # Intervalo del watcher que detecta ZZZ corriendo (segundos)
+    AUTO_DETECT_INTERVAL_S = 3
+
     def __init__(self, db_path: Path | None = None, parent: QObject | None = None):
         super().__init__(parent)
         self._db_path = db_path
@@ -61,6 +67,14 @@ class MonitorController(QObject):
         self._archetype_repo = None
         self._disc_set_repo = None
         self._scoring_ctx = None
+
+        # Watcher de proceso ZZZ — arranca/detiene el monitor automáticamente
+        # según la presencia de la ventana del juego.
+        self._auto_detect_timer = QTimer(self)
+        self._auto_detect_timer.setInterval(self.AUTO_DETECT_INTERVAL_S * 1000)
+        self._auto_detect_timer.timeout.connect(self._check_zzz_window)
+        self._auto_detect_enabled = False
+        self._was_window_present = False
 
     # ---- Public API ----------------------------------------------------------
 
@@ -118,6 +132,14 @@ class MonitorController(QObject):
     @Slot()
     def force_scan(self):
         if self._monitor is None:
+            # Si auto-detect está activo y la ventana de ZZZ está abierta, arrancar.
+            if self._auto_detect_enabled:
+                from app.core.capturer import find_zzz_window
+                if find_zzz_window() is not None:
+                    self.start()
+                    if self._monitor is not None:
+                        self._monitor.force_scan()
+                    return
             self.error_occurred.emit("Iniciar captura primero (F8 sin monitor activo).")
             return
         try:
@@ -125,6 +147,43 @@ class MonitorController(QObject):
         except Exception as exc:
             log.exception("force_scan failed")
             self.error_occurred.emit(f"force_scan: {exc}")
+
+    # ---- Auto-detect (arranque automático cuando ZZZ está abierto) -------------
+
+    @Slot(bool)
+    def set_auto_detect(self, enabled: bool):
+        """Habilita/deshabilita el watcher que arranca el monitor al detectar ZZZ."""
+        self._auto_detect_enabled = enabled
+        if enabled:
+            self._was_window_present = False
+            self._auto_detect_timer.start()
+            self.auto_start_enabled.emit(True)
+            # Disparar primera verificación inmediata
+            self._check_zzz_window()
+        else:
+            self._auto_detect_timer.stop()
+            self.auto_start_enabled.emit(False)
+
+    def _check_zzz_window(self):
+        """Cada 3s: ¿está abierta la ventana de ZZZ? Sync el estado del monitor."""
+        try:
+            from app.core.capturer import find_zzz_window
+            window = find_zzz_window()
+        except Exception:
+            window = None
+
+        present = window is not None
+        if present and not self._was_window_present:
+            # Ventana apareció — arrancar monitor si no está activo
+            if self._monitor is None:
+                log.info("ZZZ detectado, arrancando monitor automaticamente")
+                self.start()
+        elif not present and self._was_window_present:
+            # Ventana desapareció — detener monitor
+            if self._monitor is not None:
+                log.info("ZZZ cerrado, deteniendo monitor")
+                self.stop()
+        self._was_window_present = present
 
     # ---- Init de dependencias --------------------------------------------------
 
