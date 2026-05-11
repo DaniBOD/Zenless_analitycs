@@ -47,7 +47,12 @@ hiddenimports = [
     # OCR / captura
     "pytesseract",
     "mss",
+    "mss.base",
+    "mss.tools",
     "mss.windows",
+    "mss.screenshot",
+    "mss.exception",
+    "mss.factory",
     # Win32
     "win32gui",
     "win32api",

@@ -112,8 +112,14 @@ def capture_window(window: WindowBounds | None = None) -> np.ndarray | None:
     try:
         import mss
         import mss.tools
-    except ImportError:
-        raise RuntimeError("mss no instalado. Ejecutar: pip install mss")
+    except ImportError as exc:
+        # En el .exe esto significa que faltó agregar submódulos a hiddenimports.
+        # En modo dev significa que el usuario no instaló la dep.
+        raise RuntimeError(
+            f"No se pudo importar mss ({exc}). "
+            f"Si estás en .exe: re-empaquetar con mss.tools/mss.base en hiddenimports. "
+            f"Si estás en modo dev: pip install mss."
+        )
 
     if window is None:
         window = find_zzz_window()
