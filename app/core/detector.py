@@ -43,13 +43,14 @@ STATE_DESCRIPTIONS: dict[str, str] = {
     "S15": "Menú de personajes (plan de entrenamiento)",
     "S16": "Detalle set de discos (modal 'Información de conjunto')",
     "S17": "Equipamiento PJ — vista detalle disco (Personalización pistas)",
+    "S18": "Perfil agente — pestaña Atributos base",
 }
 
 # Estados donde NO hay disco para capturar (logging informativo, no error).
 # S17 técnicamente muestra detalles de un disco equipado, pero por ahora lo
 # marcamos non-capture porque la captura desde esta pantalla requiere ROIs
 # nuevas y deteccion de slot 1-6 (pendiente).
-NON_CAPTURE_STATES = {"S1", "S2", "S4", "S5", "S8", "S9", "S11", "S12", "S13", "S14", "S15", "S16", "S17"}
+NON_CAPTURE_STATES = {"S1", "S2", "S4", "S5", "S8", "S9", "S11", "S12", "S13", "S14", "S15", "S16", "S17", "S18"}
 # Estados donde SÍ hay un disco visible para parsear
 CAPTURE_DISC_STATES = {"S3", "S6", "S7"}
 # Estados de upgrade (PRE/POST sync, no es captura de drop)
@@ -74,11 +75,17 @@ class ScreenState:
 # generales). Si un template más genérico está antes y matchea, ya no se evalúan
 # los siguientes a menos que tengan conf más alta.
 _STATE_TEMPLATES: list[dict] = [
-    # S16 y S17 van PRIMERO porque sus templates pueden superponerse con
+    # S16, S17, S18 van PRIMERO porque sus templates pueden superponerse con
     # elementos similares a S3/S6/S7/S8 — si matchean, su match más alto
     # debe ganar para evitar FP.
     {"code": "S16", "template": "s16_detalle_set_disco.png",        "desc": "Detalle set de discos (modal Información de conjunto)"},
     {"code": "S17", "template": "s17_personalizacion_pistas.png",   "desc": "Equipamiento PJ vista detalle (Personalización pistas)"},
+    # S18 tiene dos variantes (mismo code, distinto template) porque la
+    # card Agent Info muestra "Recomendación de mejora prioritaria" SI el
+    # PJ no tiene equipamiento full, o "Equipamiento completo" si lo tiene.
+    # Cualquiera de las dos basta para identificar la pantalla.
+    {"code": "S18", "template": "s18a_perfil_agente_recomendacion.png", "desc": "Perfil agente Atributos base (recomendación equipo)"},
+    {"code": "S18", "template": "s18b_perfil_agente_completo.png",      "desc": "Perfil agente Atributos base (equipamiento completo)"},
     {"code": "S2",  "template": "s2_resultado_desafio.png",        "desc": "Resultado del Desafio"},
     {"code": "S5",  "template": "s5_resultado_afinacion.png",       "desc": "Resultado de afinacion"},
     {"code": "S9",  "template": "s9_inventario_general.png",        "desc": "Inventario general de discos"},

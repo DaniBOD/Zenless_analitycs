@@ -135,11 +135,14 @@ TEMPLATES = [
     {
         "name": "s16_detalle_set_disco.png",
         "source": "../Triggers_Generales/Falsos_positivos/Detalle_set_disco_ejemplo_1.png",
-        # Texto "Información de conjunto" del modal de detalle de set.
-        # Es ESTÁTICO entre todos los sets (a diferencia del nombre del set
-        # arriba) y aparece SOLO en este modal. Anti-FP crítico vs S3.
-        "roi": [0.325, 0.420, 0.180, 0.025],
-        "description": "S16 — 'Información de conjunto' (modal detalle set)",
+        # Bloque "Información de conjunto" + primera linea "2 pistas:" del
+        # modal de detalle de set. La SUBTITLE 'Información de conjunto' es
+        # estática entre los 26 sets; el prefijo "2 pistas:" también lo es.
+        # ROI ampliada respecto a v anterior (0.025 tall → 0.060) para
+        # mayor tolerancia a desplazamientos del modal entre screens
+        # (transparencia/bleed del fondo puede shiftear ~3% el y_norm).
+        "roi": [0.310, 0.418, 0.200, 0.060],
+        "description": "S16 — 'Información de conjunto' + '2 pistas:' (modal detalle set)",
     },
     {
         "name": "s17_personalizacion_pistas.png",
@@ -151,6 +154,26 @@ TEMPLATES = [
         # los modales S3/S6/S7).
         "roi": [0.050, 0.935, 0.220, 0.040],
         "description": "S17 — footer 'Comparar / Recomendado' (vista detalle disco PJ)",
+    },
+    # === S18: Perfil agente · Atributos base — DOS variantes mutuamente
+    # excluyentes (la card Agent Info muestra una u otra según equipamiento):
+    {
+        "name": "s18a_perfil_agente_recomendacion.png",
+        "source": "../Triggers_Generales/Perfil_agente/atributos_base_ejemplo_1.png",
+        # PJ con algo subóptimo → "Recomendación de mejora prioritaria: ..."
+        # La segunda línea VARÍA ("Pistas de disco" o "Habilidades de agente")
+        # según qué falta, así que el ROI cubre SÓLO la primera línea
+        # estática "Recomendación de mejora prioritaria:" (y=0.745-0.765).
+        "roi": [0.565, 0.745, 0.220, 0.022],
+        "description": "S18 — variante 'Recomendación de mejora prioritaria:' (línea 1)",
+    },
+    {
+        "name": "s18b_perfil_agente_completo.png",
+        "source": "../Triggers_Generales/Perfil_agente/atributos_base_ejemplo_2.png",
+        # PJ con equipamiento completo → muestra "✓ Equipamiento completo"
+        # en la misma posición donde el otro variante muestra Recomendación.
+        "roi": [0.565, 0.748, 0.180, 0.040],
+        "description": "S18 — variante '✓ Equipamiento completo'",
     },
 ]
 
