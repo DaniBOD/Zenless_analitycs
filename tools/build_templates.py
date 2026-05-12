@@ -43,15 +43,17 @@ TEMPLATES = [
     {
         "name": "s3_modal_detalle_drop.png",
         "source": "02_Detalle_Disco_Desde_Resultado/Ejemplo_1.png",
-        # ROI previa [0.50, 0.08, 0.45, 0.08] era una franja de fondo negro
-        # texturado genérica → matcheaba cualquier panel oscuro (S16 set
-        # detail, perfil de PJ, etc) con conf 0.85+.
-        # Nueva ROI: footer "R Descartar / T Bloquear" del modal — texto
-        # estático que aparece ÚNICAMENTE en este modal post-farmeo (los
-        # otros modales similares como S16 'Información de conjunto' o el
-        # perfil del PJ no tienen ese footer).
-        "roi": [0.42, 0.870, 0.20, 0.030],
-        "description": "S3 — footer 'R Descartar / T Bloquear' (modal post-farmeo)",
+        # Historial de iteraciones:
+        # v1 [0.50, 0.08, 0.45, 0.08]: franja fondo negro generica -> FP con
+        #   S16 set detail / perfil PJ.
+        # v2 [0.42, 0.870, 0.20, 0.030]: footer "R Descartar / T Bloquear"
+        #   -> FP con S9-con-disco-seleccionado (mismo texto en panel der).
+        # v3 (QA 2026-05-12): texto "DISCO" grande gris en bottom-right del
+        #   modal — etiqueta de categoria UNICA al modal post-farmeo. No
+        #   aparece en S9 ni en otros modales (S16, S6, S7 usan layouts
+        #   distintos).
+        "roi": [0.625, 0.79, 0.105, 0.07],
+        "description": "S3 — etiqueta 'DISCO' bottom-right del modal post-farmeo",
     },
     {
         "name": "s8_agente_driver.png",
