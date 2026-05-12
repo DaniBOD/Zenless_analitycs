@@ -175,6 +175,19 @@ TEMPLATES = [
         "roi": [0.565, 0.748, 0.180, 0.040],
         "description": "S18 — variante '✓ Equipamiento completo'",
     },
+    {
+        "name": "s18c_perfil_agente_tab_atributos.png",
+        "source": "../Triggers_Generales/Perfil_agente/atributos_base_ejemplo_2.png",
+        # QA 2026-05-12: el usuario reportó que estando en Atributos base el
+        # S18 no disparó (templates s18a/s18b matchearon en diagnóstico contra
+        # los screenshots guardados pero no en runtime). Agregamos un tercer
+        # trigger SIEMPRE presente cuando estás en la pestaña Atributos base:
+        # el TAB INFERIOR "Atributos base" con su SUBRAYADO AMARILLO. Esto
+        # cubre cualquier PJ y cualquier estado de equipamiento.
+        # ROI cubre la palabra "Atributos base" + subrayado amarillo bajo ella.
+        "roi": [0.640, 0.915, 0.170, 0.060],
+        "description": "S18 — tab 'Atributos base' con subrayado amarillo (siempre presente)",
+    },
 ]
 
 
