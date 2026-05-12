@@ -230,17 +230,20 @@ class MonitorController(QObject):
         self.state_changed.emit(state.code, state.confidence)
         desc = describe_state(state.code)
 
+        # Sufijo "slot N" si el estado tiene info de slot (S17 actualmente)
+        slot_suffix = f" · slot {state.slot}" if getattr(state, "slot", None) else ""
+
         if state.code == "S12":
             tmpl_hint = f" (mejor match parcial: {state.template_name}, conf={state.confidence:.2f})" if state.template_name else ""
             self.log_message.emit(f"[pantalla] no reconocida — posible menú/transición{tmpl_hint}")
         elif state.code in CAPTURE_DISC_STATES:
-            self.log_message.emit(f"[pantalla] {state.code} — {desc} · CAPTURABLE (conf {state.confidence:.2f})")
+            self.log_message.emit(f"[pantalla] {state.code} — {desc}{slot_suffix} · CAPTURABLE (conf {state.confidence:.2f})")
         elif state.code in UPGRADE_STATES:
             self.log_message.emit(f"[pantalla] {state.code} — {desc} · UPGRADE sync (conf {state.confidence:.2f})")
         elif state.code in NON_CAPTURE_STATES:
-            self.log_message.emit(f"[pantalla] {state.code} — {desc} · sin disco visible (conf {state.confidence:.2f})")
+            self.log_message.emit(f"[pantalla] {state.code} — {desc}{slot_suffix} · sin disco visible (conf {state.confidence:.2f})")
         else:
-            self.log_message.emit(f"[pantalla] {state.code} — {desc} (conf {state.confidence:.2f})")
+            self.log_message.emit(f"[pantalla] {state.code} — {desc}{slot_suffix} (conf {state.confidence:.2f})")
 
     def _on_disc_rejected_from_monitor(self, disc, state, reason: str):
         """Disco parseado pero descartado por baja confianza u otro motivo."""
