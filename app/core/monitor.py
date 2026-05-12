@@ -21,8 +21,6 @@ log = logging.getLogger(__name__)
 
 # Estado que requiere captura de disco
 _DISC_DETAIL_STATES = {"S3", "S6", "S7"}
-# Intervalo mínimo entre dos capturas del mismo estado (evitar parsear el mismo disco dos veces)
-_SAME_STATE_COOLDOWN_S = 2.0
 
 
 @dataclass
@@ -48,7 +46,9 @@ class Monitor:
         on_state_change: Callable[[ScreenState], None] | None = None,
         on_toggle_panel: Callable[[], None] | None = None,
         set_repo=None,
-        upgrade_syncer=None,   # UpgradeSyncer opcional (Hito 2.5.2)
+        upgrade_syncer=None,                                   # UpgradeSyncer opcional
+        on_disc_rejected: Callable[[DiscParsed, ScreenState, str], None] | None = None,
+        on_diagnostic: Callable[[str], None] | None = None,
     ):
         self._ocr = ocr
         self._detector = detector
@@ -57,13 +57,23 @@ class Monitor:
         self._on_toggle_panel = on_toggle_panel
         self._set_repo = set_repo
         self._upgrade_syncer = upgrade_syncer
+        self._on_disc_rejected = on_disc_rejected
+        # Callback para mensajes de diagnóstico (heartbeat, fallos de captura, etc).
+        # Permite que la UI muestre por qué el monitor "está silencioso".
+        self._on_diagnostic = on_diagnostic
+        # Tracking interno para el heartbeat
+        self._last_diagnostic_msg: str | None = None
+        self._loop_ticks: int = 0
 
         self._stop = threading.Event()
         self._paused = threading.Event()
         self._paused.set()          # no paused by default (set = can run)
         self._thread: threading.Thread | None = None
         self._last_state: ScreenState | None = None
-        self._last_disc_state_time: float = 0.0
+        # Código del estado en el que ya emitimos un evento de captura. Sólo
+        # disparamos `_process_disc` al ENTRAR a un disc-state (transición),
+        # no en cada tick. Se resetea cuando salimos del estado.
+        self._processed_disc_state_code: str | None = None
         self._window: WindowBounds | None = None
 
     # ---- Control ----------------------------------------------------------------
@@ -107,6 +117,7 @@ class Monitor:
 
     def _run(self) -> None:
         self._force_event = threading.Event()
+        last_heartbeat = time.monotonic()
         while not self._stop.is_set():
             if not self._paused.is_set():
                 time.sleep(0.5)
@@ -114,20 +125,58 @@ class Monitor:
             frame = self._get_frame()
             if frame is None:
                 continue
+            self._loop_ticks += 1
             state = self._detector.classify(frame)
             self._notify_state_change(state)
             self._dispatch_state(frame, state)
+
+            # Heartbeat cada 15s para confirmar que el loop está vivo
+            now = time.monotonic()
+            if now - last_heartbeat >= 15.0:
+                last_heartbeat = now
+                self._emit_diagnostic(
+                    f"heartbeat: {self._loop_ticks} ticks, "
+                    f"último estado={state.code} (conf {state.confidence:.2f})"
+                )
+
             self._wait_cadence(state)
+
+    def _emit_diagnostic(self, msg: str) -> None:
+        """Emite mensaje de diagnóstico solo si cambió respecto al anterior (evita spam)."""
+        if msg == self._last_diagnostic_msg:
+            return
+        self._last_diagnostic_msg = msg
+        log.info("[diag] %s", msg)
+        if self._on_diagnostic:
+            try:
+                self._on_diagnostic(msg)
+            except Exception:
+                log.exception("Error en on_diagnostic")
 
     def _get_frame(self):
         """Captura el frame actual. Gestiona búsqueda y pérdida de ventana."""
         if self._window is None:
             self._window = find_zzz_window()
             if self._window is None:
+                self._emit_diagnostic("ventana ZZZ no encontrada — esperando...")
                 time.sleep(4.0)
                 return None
-        frame = capture_window(self._window)
+            self._emit_diagnostic(
+                f"ventana ZZZ encontrada: '{self._window.title}' "
+                f"({self._window.width}x{self._window.height})"
+            )
+
+        try:
+            frame = capture_window(self._window)
+        except Exception as exc:
+            log.exception("capture_window falló")
+            self._emit_diagnostic(f"error al capturar frame: {exc}")
+            self._window = None
+            time.sleep(2.0)
+            return None
+
         if frame is None:
+            self._emit_diagnostic("capture_window devolvió None — re-buscando ventana")
             self._window = None
             time.sleep(2.0)
         return frame
@@ -148,6 +197,9 @@ class Monitor:
         self._handle_upgrade(frame, state)
         if state.code in _DISC_DETAIL_STATES:
             self._maybe_process_disc(frame, state)
+        else:
+            # Salimos del disc-state — limpiar flag para permitir captura al volver
+            self._processed_disc_state_code = None
 
     def _handle_upgrade(self, frame, state: ScreenState) -> None:
         if self._upgrade_syncer is None:
@@ -162,10 +214,16 @@ class Monitor:
             self._upgrade_syncer.on_s10_exit()
 
     def _maybe_process_disc(self, frame, state: ScreenState) -> None:
-        now = time.monotonic()
-        if now - self._last_disc_state_time >= _SAME_STATE_COOLDOWN_S:
-            self._last_disc_state_time = now
-            self._process_disc(frame, state)
+        """
+        Dispara `_process_disc` UNA SOLA VEZ por entrada al estado.
+        Si seguimos en el mismo disc-state que ya procesamos, no re-emitimos.
+        Para re-capturar el mismo disco el usuario debe cerrar y volver a abrir
+        el modal (eso genera una transición S3→otro→S3 que resetea el flag).
+        """
+        if self._processed_disc_state_code == state.code:
+            return
+        self._processed_disc_state_code = state.code
+        self._process_disc(frame, state)
 
     def _wait_cadence(self, state: ScreenState) -> None:
         cadence_ms = polling_cadence_ms(state)
@@ -174,9 +232,18 @@ class Monitor:
 
     def _process_disc(self, frame, state: ScreenState) -> None:
         try:
-            disc = parse_modal_detalle(frame, self._ocr, self._set_repo)
+            disc = parse_modal_detalle(frame, self._ocr, self._set_repo, state_code=state.code)
             if disc.confianza_global < 0.7:
-                log.debug("Disco con baja confianza (%.2f) — ignorado.", disc.confianza_global)
+                reason = f"confianza OCR {disc.confianza_global:.2f} < 0.70"
+                log.info(
+                    "Disco descartado: %s (set_raw=%r slot=%d main_raw=%r notas=%s)",
+                    reason, disc.set_name_raw, disc.slot, disc.main_stat_raw, disc.notas,
+                )
+                if self._on_disc_rejected:
+                    try:
+                        self._on_disc_rejected(disc, state, reason)
+                    except Exception:
+                        log.exception("Error en on_disc_rejected")
                 return
             log.info(
                 "Disco detectado: set=%s slot=%d main=%s nivel=%d conf=%.2f",

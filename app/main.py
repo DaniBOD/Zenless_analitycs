@@ -378,6 +378,10 @@ class MainWindow(QMainWindow):
         self._setup_tray()
 
     def _setup_ui(self):
+        from app.ui.live_panel import LivePanel
+        from app.ui.controller import MonitorController
+        from app.ui.toast import DiscToast, ToastData
+
         central = QWidget()
         self.setCentralWidget(central)
         v = QVBoxLayout(central)
@@ -403,13 +407,58 @@ class MainWindow(QMainWindow):
         hl.addWidget(self._monitor_lbl)
         v.addWidget(header)
 
+        # ---- Componentes Live (controller + panel + toast) ----
+        self._live_panel = LivePanel()
+        self._controller = MonitorController(parent=self)
+        self._toast = DiscToast()
+
+        # Cableado controller → panel
+        self._controller.monitor_started.connect(self._live_panel.on_monitor_started)
+        self._controller.monitor_stopped.connect(self._live_panel.on_monitor_stopped)
+        self._controller.pause_changed.connect(self._live_panel.on_pause_changed)
+        self._controller.state_changed.connect(self._live_panel.on_state_changed)
+        self._controller.disc_detected.connect(self._live_panel.on_disc_detected)
+        self._controller.error_occurred.connect(self._live_panel.on_error)
+
+        # Cableado controller → toast
+        self._controller.disc_detected.connect(self._on_disc_show_toast)
+
+        # Cableado controller.log_message → live_panel.append_log
+        # (mensajes informativos: cambios de estado, capturas descartadas, etc)
+        self._controller.log_message.connect(self._live_panel.append_log)
+
+        # Cableado toast.clicked → abrir panel principal
+        self._toast.clicked.connect(self._show_and_raise)
+
+        # Auto-detect: el monitor arranca automáticamente cuando ZZZ corre.
+        # El botón "Iniciar captura" sigue disponible como override manual.
+        self._controller.auto_start_enabled.connect(
+            lambda enabled: self._live_panel.append_log(
+                "[auto] Watcher de ZZZ ACTIVO — el monitor arranca solo cuando detecta el juego."
+                if enabled else "[auto] Watcher de ZZZ desactivado."
+            )
+        )
+        # Habilitar auto-detect por default
+        self._controller.set_auto_detect(True)
+
+        # Cableado controller → header indicator
+        self._controller.monitor_started.connect(lambda: self._set_header_monitor("ON",  COLORS["ok"]))
+        self._controller.monitor_stopped.connect(lambda: self._set_header_monitor("OFF", COLORS["text_sub"]))
+        self._controller.pause_changed.connect(
+            lambda paused: self._set_header_monitor("PAUSADO" if paused else "ON",
+                                                    COLORS["warn"] if paused else COLORS["ok"])
+        )
+
+        # Cableado panel → controller
+        self._live_panel.start_monitor_requested.connect(self._controller.start)
+        self._live_panel.stop_monitor_requested.connect(self._controller.stop)
+        self._live_panel.pause_toggle_requested.connect(self._controller.toggle_pause)
+        self._live_panel.test_capture_requested.connect(self._controller.force_scan)
+
         # Tabs
         tabs = QTabWidget()
         tabs.addTab(_build_status_tab(),       "Estado")
-        tabs.addTab(_make_placeholder(
-            "Captura en Vivo",
-            "Hito 2.4 — OCR + Detector pendiente\nEl monitor detectará discos al farmear."
-        ), "Live")
+        tabs.addTab(self._live_panel,           "Live")
         tabs.addTab(_build_discos_tab(),       "Discos")
         tabs.addTab(_build_roster_tab(),       "Roster")
         tabs.addTab(_make_placeholder(
@@ -463,8 +512,42 @@ class MainWindow(QMainWindow):
 
     def _on_tray_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._show_and_raise()
+
+    def _show_and_raise(self):
+        """Trae la ventana al frente (desde tray o click en toast)."""
+        if self.isHidden() or self.isMinimized():
+            self.showNormal()
+        else:
             self.show()
-            self.activateWindow()
+        self.raise_()
+        self.activateWindow()
+
+    def _set_header_monitor(self, label: str, color: str):
+        self._monitor_lbl.setText(f"● Monitor: {label}")
+        self._monitor_lbl.setStyleSheet(f"color: {color}; font-size: 12px;")
+
+    def _on_disc_show_toast(self, payload: dict):
+        """Slot: convierte payload del controller a ToastData y muestra el toast."""
+        from app.ui.toast import ToastData
+        td = ToastData(
+            variant=payload.get("variant", "reserva"),
+            set_name=payload.get("set", "?"),
+            slot=payload.get("slot", 0),
+            rarity=payload.get("rarity", "S"),
+            main_stat=payload.get("main", "?"),
+            main_value=payload.get("main_value", ""),
+            subs_summary=payload.get("subs", ""),
+            target_agent=payload.get("target", "—"),
+            target_mind=payload.get("mind", 0),
+            target_avatar=payload.get("target_avatar"),
+            set_logo=payload.get("set_logo"),
+            score=payload.get("score", 0.0),
+            urgency=payload.get("urgency", 0.7),
+            threshold=payload.get("threshold", 0.75),
+            timeout_secs=4.0,
+        )
+        self._toast.show_recommendation(td)
 
     def closeEvent(self, event):
         event.ignore()

@@ -74,7 +74,7 @@ Sistema de análisis y optimización de cuenta para ZZZ porque el juego carece d
 | 8 | `prydwen_weapon_recommendations_snapshots` | 0 | Snapshot semanal scraper |
 | 8 | `pj_weapon_synergy` | **276** | 46 PJs × 6 categorías de pasiva |
 
-**Migraciones aplicadas:** 6/6 (`01_archetypes_and_scoring`, `02_optimizer_pending`, `03_team_synergies`, `04_lategame_validation`, `05_weapon_optimizer`, `06_onboarding_cissia`). Integrity OK, 0 FK violations.
+**Migraciones aplicadas:** 9/9 (`01_archetypes_and_scoring`, `02_optimizer_pending`, `03_team_synergies`, `04_lategame_validation`, `05_weapon_optimizer`, `06_onboarding_cissia`, `07_re_estandarizacion`, `08_fix_archetypes_mains`, `09_add_protected_build`). Integrity OK, 0 FK violations.
 
 **FK con CASCADE** (resto sin CASCADE para preservar histórico): `enemy_resistances.enemy_id`, `lategame_run_damage.run_id`, `team_synergy_adjustments.synergy_id`, `weapon_passives_structured.weapon_id`.
 
@@ -89,12 +89,12 @@ Sistema de análisis y optimización de cuenta para ZZZ porque el juego carece d
 | RF-01 | Estado completo del roster (45 PJs, stats, armas, discos, thresholds, awakenings) | ✅ Cerrado (gap: 4 awakenings con texto pendiente + Harumasa/N.°11 sin nivel) | README §3.1 |
 | RF-02 | Inventario discos equipados + no equipados | ✅ Cerrado · 332 totales | README §3.1 |
 | RF-03 | Inventario W-Engines | ✅ Cerrado · 50 totales | README §3.1 |
-| RF-04 | Sync automático al cambiar discos en juego | 🟦 Diseño cerrado | `Documentacion/RF_Captura_Discos/RF-Logic_Captura_Discos.md` |
-| RF-05 | Sync automático al mejorar discos (PRE/POST) | 🟦 Diseño cerrado | mismo doc, §upgrade |
+| RF-04 | Sync automático al cambiar discos en juego | 🟡 Implementado, pendiente QA en juego 2026-05-10 | `Documentacion/RF_Captura_Discos/RF-Logic_Captura_Discos.md` |
+| RF-05 | Sync automático al mejorar discos (PRE/POST) | 🟡 Implementado, pendiente QA en juego 2026-05-10 | mismo doc, §upgrade |
 | RF-06 | Optimizador build por PJ (greedy + bonus pass, top 3) | 🟦 Diseño cerrado | `Documentacion/RF_Optimizador/RF-Logic_Optimizador_Build.md` |
 | RF-07/08/10 | ❌ Descartados de v1 | — | (preservados como IDs vacíos) |
 | RF-09 | OCR híbrido Tesseract (texto) + PaddleOCR (números), interfaz abstracta | 🟦 Diseño cerrado | RF-Captura_Discos §3.1 |
-| RF-11 | UI standalone `.exe` (PySide6 + PyInstaller, tray + toast + panel 5 tabs) | 🟦 Diseño cerrado | README §3.1 RF-11 |
+| RF-11 | UI standalone `.exe` (PySide6 + PyInstaller, tray + toast + panel 5 tabs) | 🟡 Implementado básico (.exe + tray + 5 tabs + toast 4 variants + LivePanel). Pendiente Hito 2.7: set logos + avatares target + click toast→panel | README §3.1 RF-11 |
 | RF-12 | Optimizador team-aware (Claude API catalogadora offline + lookup determinista <50 ms) | 🟦 Diseño cerrado | `Documentacion/RF_Optimizador_Equipos/RF-Logic_Optimizador_Equipos.md` |
 | RF-13 | Validación lategame (F11 OCR breakdown DMG) + tier list calibrada vs Prydwen + retro-feedback bayesiano | 🟦 Diseño cerrado | `Documentacion/RF_Lategame_Validation/RF-Logic_Lategame_Validation.md` |
 | RF-14 | Optimizador W-Engines con scoring contextual + build full coordinada con RF-06 | 🟦 Diseño cerrado | `Documentacion/RF_Optimizador_Armas/RF-Logic_Optimizador_Armas.md` |
@@ -118,13 +118,21 @@ RF-14 coordina con RF-06 (build full = arma + 6 discos)
 | 1.5 | Inventario completo (equipados + no equipados) | ✅ Cerrada |
 | 1.6 | Schema arquetipos + scoring (mig 01) | ✅ Cerrada |
 | 1.7 | Migraciones 02-05 + seeds iniciales (enemies, content_profiles, pj_weapon_synergy) | ✅ Cerrada |
-| 2 | RF-04/05/06/09 implementación (captura + scoring + optimizador) | 📋 Pendiente |
+| 2 | RF-04/05/06/09 implementación (captura + scoring + optimizador) | ✅ Cerrada (Hitos 2.0–2.6) |
 | 3 | RF-12 implementación (team-aware + IA) | 📋 Pendiente |
 | 4 | RF-13 implementación (lategame + tier list + bayesiano) | 📋 Pendiente |
 | 5 | RF-14 implementación (W-Engines optimizer) | 📋 Pendiente |
 | Transversal | RF-11 UI `.exe` | 📋 Pendiente |
 
-**Estado actual real:** TODO el diseño cerrado, NADA del código del `.exe` implementado todavía. La DB está completa estructuralmente; falta el motor.
+**Estado actual real (2026-05-08):** Fase 2 completa + UI capturador básico + `.exe` empaquetado.
+- Motor de captura: detector (9 templates), parser_disc por estado (S3/S6/S7/S10), monitor con polling adaptativo + hotkeys F8/F10, sync_equip + sync_upgrade.
+- ROIs calibrados visualmente sobre 31 screenshots reales: secciones separadas `modal_detalle_s3` / `s6` / `s7` / `modal_upgrade_s10` en `rois.toml`. Tool `tools/annotate_rois.py` para validar.
+- Pipeline E2E con OCR: tool `tools/run_pipeline_on_screenshots.py` listo (bloqueado por instalación de Tesseract).
+- UI: `app/ui/{tokens.py, toast.py, live_panel.py, controller.py}` portados desde mockups con fidelidad alta. Toast con 4 variants + chamfered corners + glow + urgency bar animada.
+- `.exe` standalone: 5.9 MB exe + 246 MB onedir, compilado con PyInstaller spec en `app/build/main.spec`. Shortcut al escritorio via `tools/create_shortcut.ps1`.
+- 42 tests pasan (34 originales + 5 nuevos de mapping ROIs por estado + 3 de geometría).
+
+**Siguiente:** QA en juego 2026-05-10 (ver `Documentacion/QA/Guia_QA_Domingo.md`). Pre-requisito: instalar Tesseract con `winget install UB-Mannheim.TesseractOCR`.
 
 ---
 
@@ -171,7 +179,7 @@ D:\Proyectos\Zenless_analitycs\
 ├── db/
 │   ├── danibod_zzz_v2.db                  ← DB activa
 │   ├── danibod_zzz_v2.backup_*.db         ← backups pre-merge
-│   └── migrations/                        ← 5 SQL aplicadas
+│   └── migrations/                        ← 9 SQL aplicadas (última: 09_add_protected_build)
 ├── Documentacion/
 │   ├── Modelo_Relacional/                 ← schema canónico + diagrama ER
 │   ├── QA/                                ← plan maestro QA + 7 sub-docs (ETL, scoring, OCR, IA, lategame, performance, regresión)
@@ -211,13 +219,23 @@ D:\Proyectos\Zenless_analitycs\
 
 ---
 
-## 10. Tareas pendientes inmediatas (cierre Fase 1)
+## 10. Tareas pendientes inmediatas
 
-1. Capturar texto in-game de awakenings nv1-6 para Lycaon, Ellen, Grace, N.°0:Anby (reemplaza placeholder `pending_capture`).
-2. Confirmar nivel exacto de awakening de Asaba Harumasa y N.°11; insertar fila correspondiente.
-3. (Opcional) Cargar `agent_substat_preferences` (~225 filas) desde Prydwen — desbloquea scoring engine RF-06.
+**Pre-QA del 2026-05-10:**
+1. **Instalar Tesseract OCR** — `winget install UB-Mannheim.TesseractOCR` + descargar `spa.traineddata` (3 min). Bloquea todo el pipeline OCR en vivo.
+2. Correr `python tools/run_pipeline_on_screenshots.py` para generar reporte `audit/calibracion_<TS>.md` y validar OCR offline.
+3. Ejecutar la **Guía QA del Domingo** (`Documentacion/QA/Guia_QA_Domingo.md`) paso a paso.
 
-**Después de Fase 1:** arrancar Fase 2 (scaffold `app/` + `ocr_backend.py` + `scoring.py` + `optimizer.py`) — primer hito de codeo del `.exe`.
+**Post-QA (Hito 2.7 — pulido UI):**
+- Cargar set logos reales en `DiscThumb` (de `Documentacion/Interfaz/Sets_Logos/`).
+- Cargar avatar real del target agent en el toast.
+- Wiring: click en toast abre el panel principal.
+- Re-ajustar coords de label vs chevron del toast si el QA detectó overlap.
+
+**Backlog cierre Fase 1 (heredado):**
+- Capturar texto in-game de awakenings nv1-6 para Lycaon, Ellen, Grace, N.°0:Anby.
+- Confirmar nivel exacto de awakening de Asaba Harumasa y N.°11.
+- Cargar `agent_substat_preferences` (~225 filas) desde Prydwen.
 
 ---
 
