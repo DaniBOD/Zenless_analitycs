@@ -236,6 +236,9 @@ class ScreenDetector:
 def polling_cadence_ms(state: ScreenState) -> int:
     """
     Devuelve el intervalo de polling en ms según el estado actual (RF-04 §5).
+    QA 2026-05-12: bajadas las cadencias de S13/S14/S15/S16/S17/S18 a
+    1000-1500ms porque el usuario reportaba pasar por menu personajes y
+    atributos sin que el detector alcanzara a clasificarlos.
     """
     cadence = {
         "S1":  4000,  # Patrulla — idle
@@ -245,10 +248,16 @@ def polling_cadence_ms(state: ScreenState) -> int:
         "S5":  1000,  # Tienda — resultado afinacion
         "S6":   500,  # Tienda — panel detalle
         "S7":   500,  # Tienda — fullscreen detalle
-        "S8":  2000,  # Agente — equipamiento
-        "S9":  2000,  # Inventario discos
+        "S8":  1500,  # Agente — equipamiento (preview)
+        "S9":  1500,  # Inventario discos
         "S10":  500,  # Modal upgrade — critico
         "S11": 5000,  # Desmontaje — ignorar
-        "S12": 4000,  # Negativo — idle
+        "S12": 2000,  # Negativo — pollear seguido para cazar transiciones
+        "S13": 1000,  # Selección set farmeo — pantalla intermedia
+        "S14": 1000,  # Selección equipo pre-combate — idem
+        "S15": 1000,  # Menú personajes — usuario pasa rápido a Atributos
+        "S16": 1500,  # Detalle set disco
+        "S17": 1000,  # Detalle disco PJ — clickea entre slots
+        "S18": 1500,  # Perfil agente Atributos base
     }
-    return cadence.get(state.code, 3000)
+    return cadence.get(state.code, 2000)

@@ -134,13 +134,16 @@ class Monitor:
             self._notify_state_change(state)
             self._dispatch_state(frame, state)
 
-            # Heartbeat cada 15s para confirmar que el loop está vivo
+            # Heartbeat cada 5s para confirmar que el loop está vivo.
+            # QA 2026-05-12: bajado de 15s porque el usuario pasaba por estados
+            # clave (S13/S15/S18) sin tiempo a ver feedback de actividad.
             now = time.monotonic()
-            if now - last_heartbeat >= 15.0:
+            if now - last_heartbeat >= 5.0:
                 last_heartbeat = now
                 self._emit_diagnostic(
                     f"heartbeat: {self._loop_ticks} ticks, "
-                    f"último estado={state.code} (conf {state.confidence:.2f})"
+                    f"último estado={state.code} slot={state.slot} "
+                    f"(conf {state.confidence:.2f})"
                 )
 
             self._wait_cadence(state)
