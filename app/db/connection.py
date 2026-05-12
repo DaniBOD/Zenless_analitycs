@@ -1,14 +1,75 @@
 """
 Conexión SQLite con foreign_keys ON y row_factory por defecto.
+
+Resolución de path de la DB:
+- Modo dev (corriendo `python -m app.main`): usa `db/danibod_zzz_v2.db` relativo al cwd.
+- Modo .exe (PyInstaller --onedir): copia la DB empaquetada a
+  `%LOCALAPPDATA%/DaniBOD_ZZZ_Analytics/db/danibod_zzz_v2.db` en el primer
+  arranque, y de ahí en adelante usa esa copia (writable, persistente entre
+  ejecuciones, sobrevive a actualizaciones del .exe).
 """
+from __future__ import annotations
+
+import os
+import shutil
 import sqlite3
+import sys
 from pathlib import Path
 
-_DEFAULT_DB = Path("db/danibod_zzz_v2.db")
+_APP_DIRNAME = "DaniBOD_ZZZ_Analytics"
+_DB_FILENAME = "danibod_zzz_v2.db"
+
+
+def _user_data_dir() -> Path:
+    """Directorio writable persistente para datos del usuario (Windows)."""
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    return Path(base) / _APP_DIRNAME
+
+
+def _bundled_db_path() -> Path | None:
+    """Path a la DB empaquetada en el bundle PyInstaller, o None si no es bundle."""
+    if not getattr(sys, "frozen", False):
+        return None
+    meipass = getattr(sys, "_MEIPASS", None)
+    if not meipass:
+        return None
+    bundled = Path(meipass) / "db" / _DB_FILENAME
+    return bundled if bundled.exists() else None
+
+
+def _resolve_db_path() -> Path:
+    """
+    Determina dónde está la DB activa.
+    - Si está corriendo desde el .exe (PyInstaller): usa %LOCALAPPDATA% writable.
+      Copia desde el bundle en primer arranque.
+    - Si está corriendo desde source: usa db/<file> relativo al cwd.
+    """
+    bundled = _bundled_db_path()
+    if bundled is not None:
+        # Estamos en el .exe. Asegurar copia writable.
+        user_dir = _user_data_dir() / "db"
+        user_dir.mkdir(parents=True, exist_ok=True)
+        user_db = user_dir / _DB_FILENAME
+        if not user_db.exists():
+            shutil.copy2(bundled, user_db)
+        return user_db
+
+    # Modo dev: cwd-relative
+    return Path("db") / _DB_FILENAME
+
+
+def get_db_path() -> Path:
+    """Devuelve el path actualmente resuelto (sin abrir conexión)."""
+    return _resolve_db_path()
 
 
 def get_connection(db_path: Path | str | None = None) -> sqlite3.Connection:
-    path = Path(db_path) if db_path else _DEFAULT_DB
+    path = Path(db_path) if db_path else _resolve_db_path()
+    if not path.exists():
+        raise FileNotFoundError(
+            f"DB no encontrada en {path}. "
+            f"Si corres desde source, asegurate de estar en la raíz del repo."
+        )
     con = sqlite3.connect(str(path))
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")

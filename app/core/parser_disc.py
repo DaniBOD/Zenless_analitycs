@@ -34,6 +34,19 @@ _RE_SUBSTAT_LINE = re.compile(
 # Regex para extraer valor numérico solo
 _RE_NUMERO = re.compile(r"(\d+(?:\.\d+)?)(%?)")
 
+# Mapeo de estado de pantalla a sección de ROIs en rois.toml
+_STATE_TO_ROI_SECTION: dict[str, str] = {
+    "S3":  "modal_detalle_s3",
+    "S6":  "modal_detalle_s6",
+    "S7":  "modal_detalle_s7",
+    "S10": "modal_upgrade_s10",
+}
+
+
+def roi_section_for_state(state_code: str) -> str:
+    """Devuelve la sección de rois.toml a usar según el estado detectado."""
+    return _STATE_TO_ROI_SECTION.get(state_code, "modal_detalle_s3")
+
 
 @dataclass
 class SubstatParsed:
@@ -136,19 +149,23 @@ def parse_modal_detalle(
     frame: np.ndarray,
     ocr: "OcrBackend",
     set_repo=None,
+    state_code: str = "S3",
 ) -> DiscParsed:
     """
     Extrae todos los campos del modal de detalle del disco.
 
-    frame  : screenshot completo (BGR numpy array)
-    ocr    : backend OCR configurado (Tesseract o Paddle)
-    set_repo: optional DiscSetRepo para validar el nombre del set (puede ser None)
+    frame      : screenshot completo (BGR numpy array)
+    ocr        : backend OCR configurado (Tesseract o Paddle)
+    set_repo   : optional DiscSetRepo para validar el nombre del set
+    state_code : estado detectado (S3 / S6 / S7 / S10). Define qué sección de
+                 rois.toml usar — cada estado tiene layout distinto.
     """
     notas: list[str] = []
     confianzas: list[float] = []
+    section = roi_section_for_state(state_code)
 
     # --- Título (set + slot) ---
-    roi_titulo = crop_named_roi(frame, "modal_detalle", "titulo")
+    roi_titulo = crop_named_roi(frame, section, "titulo")
     titulo_raw, c_titulo = ocr.text(roi_titulo, psm=7)
     set_name_raw, slot = _parse_titulo(titulo_raw)
     confianzas.append(c_titulo)
@@ -157,37 +174,47 @@ def parse_modal_detalle(
         notas.append("slot_no_detectado")
 
     # --- Nivel ---
-    roi_nivel = crop_named_roi(frame, "modal_detalle", "nivel")
-    nivel_raw, c_nivel = ocr.text(roi_nivel, psm=7)
-    nivel = _parse_nivel(nivel_raw)
-    confianzas.append(c_nivel)
+    # En S10 (upgrade) NO hay un campo "Nivel X/15" textual; se infiere de exp_actual.
+    nivel = 0
+    if state_code == "S10":
+        try:
+            roi_exp = crop_named_roi(frame, section, "exp_actual")
+            exp_raw, c_exp = ocr.text(roi_exp, psm=7)
+            nivel = _parse_nivel(exp_raw) if "/" in exp_raw else (int(re.search(r"\d+", exp_raw).group()) if re.search(r"\d+", exp_raw) else 0)
+            confianzas.append(c_exp)
+        except Exception:
+            pass
+    else:
+        roi_nivel = crop_named_roi(frame, section, "nivel")
+        nivel_raw, c_nivel = ocr.text(roi_nivel, psm=7)
+        nivel = _parse_nivel(nivel_raw)
+        confianzas.append(c_nivel)
 
     # --- Rareza ---
-    roi_rareza = crop_named_roi(frame, "modal_detalle", "rareza_borde")
+    roi_rareza = crop_named_roi(frame, section, "rareza_borde")
     rareza = _detect_rareza(roi_rareza)
 
     # --- Main stat ---
-    roi_main_n = crop_named_roi(frame, "modal_detalle", "main_stat_nombre")
-    roi_main_v = crop_named_roi(frame, "modal_detalle", "main_stat_valor")
+    roi_main_n = crop_named_roi(frame, section, "main_stat_nombre")
+    roi_main_v = crop_named_roi(frame, section, "main_stat_valor")
     main_raw, c_main_n = ocr.text(roi_main_n, psm=7)
     main_val_raw, c_main_v = ocr.number(roi_main_v)
     confianzas.extend([c_main_n, c_main_v])
 
     main_canon = normalize_stat_name(main_raw)
-    # Determinar unidad desde el nombre del stat
     main_unidad = "%" if (main_canon or main_raw or "").endswith("%") else "flat"
     if main_canon and slot >= 1:
         if not is_valid_main_for_slot(slot, main_canon):
             notas.append(f"main_invalido_slot_{slot}:{main_canon}")
 
-    # --- Substats (hasta 4) ---
+    # --- Substats (hasta 4 en grilla 2×2) ---
     sub_keys = ["sub1", "sub2", "sub3", "sub4"]
     subs: list[SubstatParsed] = []
 
     for key in sub_keys:
         try:
-            roi_sn = crop_named_roi(frame, "modal_detalle", f"{key}_nombre")
-            roi_sv = crop_named_roi(frame, "modal_detalle", f"{key}_valor")
+            roi_sn = crop_named_roi(frame, section, f"{key}_nombre")
+            roi_sv = crop_named_roi(frame, section, f"{key}_valor")
         except (KeyError, Exception):
             break
 
@@ -196,7 +223,7 @@ def parse_modal_detalle(
         confianzas.extend([c_sn, c_sv])
 
         if not sub_name_raw.strip():
-            break  # no hay más substats
+            continue  # slot vacío en disco con <4 substats; seguir intentando los demás
 
         nombre, rolls, valor, unidad = _parse_substat_line(f"{sub_name_raw} {sub_val_raw}")
         canon = normalize_stat_name(nombre)
@@ -223,7 +250,6 @@ def parse_modal_detalle(
     if set_repo is not None:
         try:
             sets = {s.nombre: s.id for s in set_repo.get_all()}
-            # Match exacto o fuzzy simple (strip + lower)
             for sn in sets:
                 if sn.lower().strip() == set_name_raw.lower().strip():
                     set_canon = sn

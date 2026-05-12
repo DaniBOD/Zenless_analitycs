@@ -11,8 +11,29 @@ from typing import NamedTuple
 
 import numpy as np
 
-# Título de ventana del cliente ZZZ
-ZZZ_WINDOW_TITLE = "ZenlessZoneZero"
+# Nombres del ejecutable del juego (filtro principal — el más confiable).
+# Verificado en QA 2026-05-11: el proceso del juego es "ZenlessZoneZero.exe".
+ZZZ_EXECUTABLE_NAMES = (
+    "ZenlessZoneZero.exe",
+    "ZZZ.exe",
+)
+
+# Substrings que pueden aparecer en el título de la ventana de ZZZ.
+# Filtro secundario solo si no podemos verificar el proceso.
+ZZZ_WINDOW_TITLE_CANDIDATES = (
+    "ZenlessZoneZero",
+    "Zenless Zone Zero",
+)
+
+# Keywords que indican que la ventana NO es el juego (navegadores, editores
+# que pueden tener "Zenless" en el título cuando muestran este repo).
+EXCLUDED_TITLE_KEYWORDS = (
+    "opera", "chrome", "firefox", "edge", "brave", "safari", "vivaldi",
+    "code", "vscode", "visual studio", "github",
+    "explorer", "explorador", "powershell", "cmd", "terminal",
+    "discord", "telegram", "whatsapp", "spotify",
+    "notepad", "bloc de notas",
+)
 
 _ROIS: dict | None = None
 
@@ -35,22 +56,119 @@ class WindowBounds(NamedTuple):
     top: int
     width: int
     height: int
+    title: str = ""    # título real encontrado (para log/debug)
 
 
-def find_zzz_window(title: str = ZZZ_WINDOW_TITLE) -> WindowBounds | None:
-    """Busca la ventana del juego por título. Devuelve None si no está abierta."""
+def list_all_visible_windows() -> list[tuple[int, str]]:
+    """Devuelve [(hwnd, title)] de todas las ventanas visibles con título no vacío."""
+    if sys.platform != "win32":
+        return []
+    try:
+        import win32gui
+    except ImportError:
+        return []
+
+    found: list[tuple[int, str]] = []
+
+    def _enum_cb(hwnd: int, lparam: object) -> bool:
+        if win32gui.IsWindowVisible(hwnd):
+            title = win32gui.GetWindowText(hwnd)
+            if title:
+                found.append((hwnd, title))
+        return True
+
+    win32gui.EnumWindows(_enum_cb, None)
+    return found
+
+
+def _get_window_exe_name(hwnd: int) -> str:
+    """
+    Devuelve el nombre del ejecutable (basename) del proceso dueño del hwnd.
+    Vacío si no se puede determinar. Usa QueryFullProcessImageNameW (kernel32).
+    """
+    if sys.platform != "win32":
+        return ""
+    try:
+        import os as _os
+        import win32process
+        import win32api
+        import ctypes
+        from ctypes import wintypes, byref, create_unicode_buffer
+
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        if pid == 0:
+            return ""
+        # PROCESS_QUERY_LIMITED_INFORMATION = 0x1000 (funciona en procesos elevados)
+        h_proc = win32api.OpenProcess(0x1000, False, pid)
+        if not h_proc:
+            return ""
+        try:
+            kernel32 = ctypes.windll.kernel32
+            buf = create_unicode_buffer(1024)
+            size = wintypes.DWORD(1024)
+            ok = kernel32.QueryFullProcessImageNameW(int(h_proc), 0, buf, byref(size))
+            if not ok:
+                return ""
+            return _os.path.basename(buf.value)
+        finally:
+            win32api.CloseHandle(h_proc)
+    except Exception:
+        return ""
+
+
+def _is_excluded_title(title: str) -> bool:
+    """True si el título contiene keywords de navegadores/editores (no es el juego)."""
+    title_l = title.lower()
+    return any(kw in title_l for kw in EXCLUDED_TITLE_KEYWORDS)
+
+
+def find_zzz_window(title_substrings: tuple[str, ...] = ZZZ_WINDOW_TITLE_CANDIDATES) -> WindowBounds | None:
+    """
+    Busca la ventana del juego. Estrategia:
+    1. Enumerar TODAS las ventanas visibles.
+    2. Para cada una, verificar si el ejecutable es ZenlessZoneZero.exe (filtro definitivo).
+    3. Como fallback, si no podemos leer el proceso, filtrar por título y excluir
+       navegadores/editores que pueden contener 'Zenless' en el título.
+    """
     if sys.platform != "win32":
         return None
     try:
         import win32gui
-        hwnd = win32gui.FindWindow(None, title)
-        if not hwnd:
-            return None
-        rect = win32gui.GetWindowRect(hwnd)
-        left, top, right, bottom = rect
-        return WindowBounds(left, top, right - left, bottom - top)
     except ImportError:
         return None
+
+    # Estrategia 1: buscar por nombre del proceso (más confiable)
+    exe_candidates_lower = tuple(e.lower() for e in ZZZ_EXECUTABLE_NAMES)
+    for hwnd, title in list_all_visible_windows():
+        try:
+            rect = win32gui.GetWindowRect(hwnd)
+            left, top, right, bottom = rect
+            if right - left < 400 or bottom - top < 300:
+                continue
+            exe = _get_window_exe_name(hwnd).lower()
+            if exe and exe in exe_candidates_lower:
+                return WindowBounds(left, top, right - left, bottom - top, f"{title} [{exe}]")
+        except Exception:
+            continue
+
+    # Estrategia 2 (fallback): match por título con exclusiones
+    candidates_lower = tuple(s.lower() for s in title_substrings)
+    for hwnd, title in list_all_visible_windows():
+        if _is_excluded_title(title):
+            continue
+        title_l = title.lower()
+        for sub in candidates_lower:
+            if sub in title_l:
+                try:
+                    rect = win32gui.GetWindowRect(hwnd)
+                    left, top, right, bottom = rect
+                    if right - left < 400 or bottom - top < 300:
+                        continue
+                    return WindowBounds(left, top, right - left, bottom - top, title)
+                except Exception:
+                    continue
+
+    return None
 
 
 def capture_window(window: WindowBounds | None = None) -> np.ndarray | None:
@@ -61,8 +179,14 @@ def capture_window(window: WindowBounds | None = None) -> np.ndarray | None:
     try:
         import mss
         import mss.tools
-    except ImportError:
-        raise RuntimeError("mss no instalado. Ejecutar: pip install mss")
+    except ImportError as exc:
+        # En el .exe esto significa que faltó agregar submódulos a hiddenimports.
+        # En modo dev significa que el usuario no instaló la dep.
+        raise RuntimeError(
+            f"No se pudo importar mss ({exc}). "
+            f"Si estás en .exe: re-empaquetar con mss.tools/mss.base en hiddenimports. "
+            f"Si estás en modo dev: pip install mss."
+        )
 
     if window is None:
         window = find_zzz_window()
