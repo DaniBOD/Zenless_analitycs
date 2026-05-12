@@ -124,6 +124,10 @@ _STATE_TEMPLATES: list[dict] = [
     # Cualquiera de las dos basta para identificar la pantalla.
     {"code": "S18", "template": "s18a_perfil_agente_recomendacion.png", "desc": "Perfil agente Atributos base (recomendación equipo)"},
     {"code": "S18", "template": "s18b_perfil_agente_completo.png",      "desc": "Perfil agente Atributos base (equipamiento completo)"},
+    # QA 2026-05-12: tercer trigger universal — tab "Atributos base" con
+    # subrayado amarillo. Garantiza S18 cuando estás en esa pestaña, sin
+    # depender de qué card Agent Info muestre (recomendación/completo).
+    {"code": "S18", "template": "s18c_perfil_agente_tab_atributos.png",  "desc": "Perfil agente — tab 'Atributos base' subrayado amarillo"},
     {"code": "S2",  "template": "s2_resultado_desafio.png",        "desc": "Resultado del Desafio"},
     {"code": "S5",  "template": "s5_resultado_afinacion.png",       "desc": "Resultado de afinacion"},
     {"code": "S9",  "template": "s9_inventario_general.png",        "desc": "Inventario general de discos"},
