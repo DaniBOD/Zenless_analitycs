@@ -5,12 +5,19 @@ Templates en app/resources/templates/. Ver tools/build_templates.py para crearlo
 """
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
 import numpy as np
+
+# Regex para extraer el numero de slot del titulo S17 "Set Name (N)"
+_S17_SLOT_RE = re.compile(r"\((\d)\)")
+# ROI normalizada del titulo en la pantalla S17 (vista detalle disco en PJ).
+# Cubre la parte superior del panel central donde aparece "Set Name (N)".
+_S17_TITLE_ROI = (0.310, 0.115, 0.300, 0.070)
 
 # Directorio de templates (relativo al package app/)
 TEMPLATES_DIR = Path(__file__).parent.parent / "resources" / "templates"
@@ -62,12 +69,43 @@ def describe_state(code: str) -> str:
     return STATE_DESCRIPTIONS.get(code, code)
 
 
+def extract_s17_slot(frame: np.ndarray, ocr) -> int | None:
+    """
+    Cuando el detector clasifica un frame como S17, extrae el numero de
+    slot (1-6) del titulo del panel. El titulo es "Set Name (N)" donde N
+    es el slot — usamos OCR de tesseract (psm=6) y regex.
+
+    Devuelve int 1..6 o None si no se puede extraer.
+    """
+    if frame is None or frame.size == 0 or ocr is None:
+        return None
+    h, w = frame.shape[:2]
+    x, y, rw, rh = _S17_TITLE_ROI
+    crop = frame[int(y*h):int((y+rh)*h), int(x*w):int((x+rw)*w)]
+    if crop.size == 0:
+        return None
+    try:
+        text, _ = ocr.text(crop, psm=6, lang="spa")
+    except Exception:
+        return None
+    if not text:
+        return None
+    m = _S17_SLOT_RE.search(text)
+    if not m:
+        return None
+    slot = int(m.group(1))
+    return slot if 1 <= slot <= 6 else None
+
+
 @dataclass
 class ScreenState:
     """Resultado de la clasificación del frame."""
-    code: str          # S1-S12
+    code: str          # S1-S18
     confidence: float  # 0-1 (del template match)
     template_name: str # nombre del template que disparó el match
+    # Numero de slot 1-6 dentro de S17 (vista detalle disco en PJ).
+    # None para todos los demás estados o si OCR del titulo falla.
+    slot: int | None = None
 
 
 # Descripción de cada estado y su plantilla de detección.

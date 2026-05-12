@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from app.core.capturer import WindowBounds, capture_window, find_zzz_window
-from app.core.detector import ScreenDetector, ScreenState, polling_cadence_ms
+from app.core.detector import ScreenDetector, ScreenState, extract_s17_slot, polling_cadence_ms
 from app.core.parser_disc import DiscParsed, parse_modal_detalle
 from app.core.ocr_backend import OcrBackend
 
@@ -127,6 +127,10 @@ class Monitor:
                 continue
             self._loop_ticks += 1
             state = self._detector.classify(frame)
+            # Si estamos en S17 (vista detalle disco en PJ), extraer el
+            # número de slot 1-6 del título "Set Name (N)" via OCR.
+            if state.code == "S17":
+                state.slot = extract_s17_slot(frame, self._ocr)
             self._notify_state_change(state)
             self._dispatch_state(frame, state)
 
@@ -182,9 +186,15 @@ class Monitor:
         return frame
 
     def _notify_state_change(self, state: ScreenState) -> None:
-        if self._last_state is not None and state.code == self._last_state.code:
-            return
-        log.debug("Estado: %s (conf=%.2f)", state.code, state.confidence)
+        # Detectar cambio: code distinto, O mismo code S17 pero distinto slot
+        # (el usuario clickea otro disco equipado en el mismo PJ).
+        if self._last_state is not None:
+            same_code = state.code == self._last_state.code
+            same_slot = state.slot == self._last_state.slot
+            if same_code and same_slot:
+                return
+        log.debug("Estado: %s slot=%s (conf=%.2f)",
+                  state.code, state.slot, state.confidence)
         if self._on_state_change:
             try:
                 self._on_state_change(state)
