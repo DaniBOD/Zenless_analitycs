@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from app.core.capturer import WindowBounds, capture_window, find_zzz_window
-from app.core.detector import ScreenDetector, ScreenState, extract_s17_slot, polling_cadence_ms
+from app.core.detector import ScreenDetector, ScreenState, extract_s17_slot, extract_s9_slot, polling_cadence_ms
 from app.core.parser_disc import DiscParsed, parse_modal_detalle
 from app.core.ocr_backend import OcrBackend
 
@@ -127,10 +127,15 @@ class Monitor:
                 continue
             self._loop_ticks += 1
             state = self._detector.classify(frame)
-            # Si estamos en S17 (vista detalle disco en PJ), extraer el
-            # número de slot 1-6 del título "Set Name (N)" via OCR.
+            # Slot detection via OCR del titulo "Set Name (N)":
+            # - S17 (vista detalle disco en PJ): panel central
+            # - S9 (inventario con disco seleccionado): panel derecho
+            #   En S9-sin-seleccion el OCR retorna None y state.slot
+            #   queda None (eso es el indicador de "no hay disco activo").
             if state.code == "S17":
                 state.slot = extract_s17_slot(frame, self._ocr)
+            elif state.code == "S9":
+                state.slot = extract_s9_slot(frame, self._ocr)
             self._notify_state_change(state)
             self._dispatch_state(frame, state)
 

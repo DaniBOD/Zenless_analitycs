@@ -13,11 +13,21 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-# Regex para extraer el numero de slot del titulo S17 "Set Name (N)"
-_S17_SLOT_RE = re.compile(r"\((\d)\)")
-# ROI normalizada del titulo en la pantalla S17 (vista detalle disco en PJ).
-# Cubre la parte superior del panel central donde aparece "Set Name (N)".
+# Regex para extraer el numero de slot del titulo "Set Name (N)".
+# Compartido entre S17 (vista detalle disco en PJ) y S9 (inventario con
+# disco seleccionado) — ambas pantallas tienen el patron "(N)" en el
+# titulo donde N es el slot 1-6.
+_SLOT_RE = re.compile(r"\((\d)\)")
+# Alias retro-compat (algun test antiguo todavia usa _S17_SLOT_RE).
+_S17_SLOT_RE = _SLOT_RE
+
+# ROI normalizada del titulo en S17 (panel central):
 _S17_TITLE_ROI = (0.310, 0.115, 0.300, 0.070)
+# ROI normalizada del titulo en S9 (panel detalle derecho con disco
+# seleccionado). QA 2026-05-12: validado 6/6 contra ejemplos en
+# 09_Inventario_discos_general/ con conf 0.76-0.92.
+# El ROI evita el icono del disco a la derecha (esa region distorsiona OCR).
+_S9_TITLE_ROI = (0.680, 0.220, 0.200, 0.085)
 
 # Directorio de templates (relativo al package app/)
 TEMPLATES_DIR = Path(__file__).parent.parent / "resources" / "templates"
@@ -69,18 +79,17 @@ def describe_state(code: str) -> str:
     return STATE_DESCRIPTIONS.get(code, code)
 
 
-def extract_s17_slot(frame: np.ndarray, ocr) -> int | None:
+def _extract_slot_from_roi(frame: np.ndarray, ocr, roi: tuple[float, float, float, float]) -> int | None:
     """
-    Cuando el detector clasifica un frame como S17, extrae el numero de
-    slot (1-6) del titulo del panel. El titulo es "Set Name (N)" donde N
-    es el slot — usamos OCR de tesseract (psm=6) y regex.
+    Helper genérico: OCR del titulo "Set Name (N)" en una ROI normalizada
+    y extrae N (1-6) via regex. Compartido por S17 y S9.
 
     Devuelve int 1..6 o None si no se puede extraer.
     """
     if frame is None or frame.size == 0 or ocr is None:
         return None
     h, w = frame.shape[:2]
-    x, y, rw, rh = _S17_TITLE_ROI
+    x, y, rw, rh = roi
     crop = frame[int(y*h):int((y+rh)*h), int(x*w):int((x+rw)*w)]
     if crop.size == 0:
         return None
@@ -90,11 +99,31 @@ def extract_s17_slot(frame: np.ndarray, ocr) -> int | None:
         return None
     if not text:
         return None
-    m = _S17_SLOT_RE.search(text)
+    m = _SLOT_RE.search(text)
     if not m:
         return None
     slot = int(m.group(1))
     return slot if 1 <= slot <= 6 else None
+
+
+def extract_s17_slot(frame: np.ndarray, ocr) -> int | None:
+    """
+    S17 (vista detalle disco en PJ): OCR del titulo "Set Name (N)" del
+    panel central. Devuelve slot 1..6 o None.
+    """
+    return _extract_slot_from_roi(frame, ocr, _S17_TITLE_ROI)
+
+
+def extract_s9_slot(frame: np.ndarray, ocr) -> int | None:
+    """
+    S9 (inventario discos con disco seleccionado): OCR del titulo
+    "Set Name (N)" del panel detalle derecho. Devuelve slot 1..6 o None.
+
+    Si el inventario S9 no tiene disco seleccionado, este OCR retorna None
+    (no hay "(N)" en el panel). Eso permite distinguir S9-sin-seleccion
+    (state.slot == None) de S9-con-disco-seleccionado (state.slot 1-6).
+    """
+    return _extract_slot_from_roi(frame, ocr, _S9_TITLE_ROI)
 
 
 @dataclass

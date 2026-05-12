@@ -230,8 +230,9 @@ class MonitorController(QObject):
         self.state_changed.emit(state.code, state.confidence)
         desc = describe_state(state.code)
 
-        # Sufijo "slot N" si el estado tiene info de slot (S17 actualmente)
-        slot_suffix = f" · slot {state.slot}" if getattr(state, "slot", None) else ""
+        # Sufijo "slot N" si el estado tiene info de slot (S17, S9-con-seleccion)
+        has_slot = getattr(state, "slot", None) is not None
+        slot_suffix = f" · slot {state.slot}" if has_slot else ""
 
         if state.code == "S12":
             tmpl_hint = f" (mejor match parcial: {state.template_name}, conf={state.confidence:.2f})" if state.template_name else ""
@@ -241,7 +242,11 @@ class MonitorController(QObject):
         elif state.code in UPGRADE_STATES:
             self.log_message.emit(f"[pantalla] {state.code} — {desc} · UPGRADE sync (conf {state.confidence:.2f})")
         elif state.code in NON_CAPTURE_STATES:
-            self.log_message.emit(f"[pantalla] {state.code} — {desc}{slot_suffix} · sin disco visible (conf {state.confidence:.2f})")
+            # Si hay slot detectado (S9-con-disco-seleccionado, S17), el disco
+            # SÍ es visible aunque la pantalla siga siendo non-capture (todavia
+            # no la captura el flujo principal — eso es parser_disc en S3/S6/S7).
+            visibility = f" · disco slot {state.slot} seleccionado" if has_slot else " · sin disco visible"
+            self.log_message.emit(f"[pantalla] {state.code} — {desc}{visibility} (conf {state.confidence:.2f})")
         else:
             self.log_message.emit(f"[pantalla] {state.code} — {desc}{slot_suffix} (conf {state.confidence:.2f})")
 
