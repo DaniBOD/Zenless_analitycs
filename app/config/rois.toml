@@ -192,6 +192,33 @@ sub4_valor        = [0.625, 0.568, 0.080, 0.025]
 
 
 # ===========================================================================
+# S17 — Personalización de pistas (vista detalle disco en PJ)
+# ===========================================================================
+# Layout: panel central con detalle del disco equipado.
+# Título "Set Name (N)" arriba, main stat, substats en grilla 2×2, nivel.
+# El slot activo se detecta por OCR del título o glow ring HSV.
+# PENDIENTE CALIBRACIÓN — ROIs estimadas, ajustar con tools/annotate_rois.py
+[modal_detalle_s17]
+
+titulo            = [0.310, 0.115, 0.300, 0.050]  # "Set Name (N)" centrado
+nivel             = [0.310, 0.180, 0.120, 0.030]  # "Nivel X/15"
+rareza_borde      = [0.620, 0.150, 0.040, 0.040]  # borde del icono
+
+main_stat_nombre  = [0.310, 0.250, 0.160, 0.030]  # nombre mainstat
+main_stat_valor   = [0.460, 0.250, 0.110, 0.030]  # valor mainstat
+
+# Substats — grilla 2 cols × 2 filas
+sub1_nombre       = [0.310, 0.340, 0.160, 0.028]
+sub1_valor        = [0.460, 0.340, 0.080, 0.028]
+sub2_nombre       = [0.520, 0.340, 0.160, 0.028]
+sub2_valor        = [0.660, 0.340, 0.080, 0.028]
+sub3_nombre       = [0.310, 0.400, 0.160, 0.028]
+sub3_valor        = [0.460, 0.400, 0.080, 0.028]
+sub4_nombre       = [0.520, 0.400, 0.160, 0.028]
+sub4_valor        = [0.660, 0.400, 0.080, 0.028]
+
+
+# ===========================================================================
 # Compatibilidad legacy modal_upgrade
 # ===========================================================================
 [modal_upgrade]

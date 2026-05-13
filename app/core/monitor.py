@@ -19,8 +19,11 @@ from app.core.ocr_backend import OcrBackend
 
 log = logging.getLogger(__name__)
 
-# Estado que requiere captura de disco
-_DISC_DETAIL_STATES = {"S3", "S6", "S7"}
+# Estados donde hay un disco visible para parsear.
+# S17 = vista detalle disco en Personalización de pistas (equipamiento PJ).
+_NEW_DISC_STATES = {"S3", "S6", "S7"}       # discos nuevos (drop/tienda)
+_EQUIPPED_DISC_STATES = {"S17"}              # discos equipados (vista PJ)
+_DISC_DETAIL_STATES = _NEW_DISC_STATES | _EQUIPPED_DISC_STATES
 
 
 @dataclass
@@ -216,7 +219,6 @@ class Monitor:
         if state.code in _DISC_DETAIL_STATES:
             self._maybe_process_disc(frame, state)
         else:
-            # Salimos del disc-state — limpiar flag para permitir captura al volver
             self._processed_disc_state_code = None
 
     def _handle_upgrade(self, frame, state: ScreenState) -> None:
