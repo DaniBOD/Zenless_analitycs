@@ -40,6 +40,7 @@ _STATE_TO_ROI_SECTION: dict[str, str] = {
     "S6":  "modal_detalle_s6",
     "S7":  "modal_detalle_s7",
     "S10": "modal_upgrade_s10",
+    "S17": "modal_detalle_s17",
 }
 
 

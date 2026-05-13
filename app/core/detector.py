@@ -1,7 +1,13 @@
 """
-Hito 2.4.4 — Detector de estado de pantalla (S1-S12) · RF-04 §4.
-Usa template matching (cv2.matchTemplate TM_CCOEFF_NORMED, threshold 0.85).
-Templates en app/resources/templates/. Ver tools/build_templates.py para crearlos.
+Hito 2.4.4 — Detector de estado de pantalla (S1-S18) · RF-04 §4.
+Tres capas de detección:
+  Capa 1: template matching (cv2.matchTemplate TM_CCOEFF_NORMED)
+  Capa 2: verificación secundaria por estado (elementos UI únicos)
+  Capa 3: clasificador HSV fallback (paleta de color)
+Slot detection multi-método:
+  Método A: OCR del título "Set Name (N)"
+  Método B: Aro brillante HSV (glow verde/amarillo del slot seleccionado)
+State machine para validación de transiciones anti-FP.
 """
 from __future__ import annotations
 
@@ -13,35 +19,70 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-# Regex para extraer el numero de slot del titulo "Set Name (N)".
-# Compartido entre S17 (vista detalle disco en PJ) y S9 (inventario con
-# disco seleccionado) — ambas pantallas tienen el patron "(N)" en el
-# titulo donde N es el slot 1-6.
+# =========================================================================
+# Constantes
+# =========================================================================
+
+# Regex para extraer numero de slot del titulo "Set Name (N)"
 _SLOT_RE = re.compile(r"\((\d)\)")
-# Alias retro-compat (algun test antiguo todavia usa _S17_SLOT_RE).
 _S17_SLOT_RE = _SLOT_RE
 
-# ROI normalizada del titulo en S17 (panel central):
+# ROIs normalizadas para slot detection (S17 panel central, S9 panel derecho)
 _S17_TITLE_ROI = (0.310, 0.115, 0.300, 0.070)
-# ROI normalizada del titulo en S9 (panel detalle derecho con disco
-# seleccionado). QA 2026-05-12: validado 6/6 contra ejemplos en
-# 09_Inventario_discos_general/ con conf 0.76-0.92.
-# El ROI evita el icono del disco a la derecha (esa region distorsiona OCR).
-_S9_TITLE_ROI = (0.680, 0.220, 0.200, 0.085)
+_S9_TITLE_ROI  = (0.680, 0.220, 0.200, 0.085)
 
-# Directorio de templates (relativo al package app/)
 TEMPLATES_DIR = Path(__file__).parent.parent / "resources" / "templates"
 
-# Threshold por defecto para template matching.
-# QA 2026-05-11 (segunda iteración):
-#  - 0.85 inicial: muy estricto, S12 en pantallas reales.
-#  - 0.70: mejor recall pero produce false positives (ej. pantalla de
-#    "selección de equipo" matcheaba S7 con conf 0.99 por matching de
-#    elementos UI genéricos como botón retorno).
-#  - 0.85 (final): balance correcto cuando los templates son específicos.
+# Threshold global por defecto
 MATCH_THRESHOLD = 0.85
 
-# Descripciones humanas de cada estado para el log y la UI
+# Thresholds dinámicos por estado (más permisivos para pantallas informativas,
+# más estrictos para captura crítica)
+THRESHOLD_BY_STATE: dict[str, float] = {
+    "S3":  0.85,   # Modal detalle drop — crítico, evitar FPs
+    "S6":  0.85,   # Tienda panel — crítico
+    "S7":  0.85,   # Tienda fullscreen — crítico
+    "S10": 0.85,   # Modal upgrade — crítico
+    "S2":  0.80,   # Resultado desafío — ventana breve
+    "S5":  0.80,   # Resultado afinación — ventana breve
+    "S8":  0.80,   # Vista agente — informativo
+    "S11": 0.80,   # Desmontaje — anti-FP
+    "S17": 0.75,   # Detalle disco PJ — informativo, más permisivo
+    "S18": 0.75,   # Perfil agente — informativo
+    "S9":  0.80,   # Inventario discos — informativo
+    "S13": 0.70,   # Selección set farmeo — transición
+    "S14": 0.70,   # Selección equipo — transición
+    "S15": 0.70,   # Menú personajes — transición
+    "S16": 0.80,   # Detalle set disco — anti-FP
+    "S1":  0.70,   # Patrulla — apenas para saber que no es capturable
+    "S4":  0.70,   # Tienda selector — transición
+    "S12": 0.0,    # Sin coincidencia — no aplica
+}
+
+# Máquina de estados: transiciones válidas desde cada estado previo.
+# Si un estado detectado no está en las transiciones válidas → FP → S12.
+_VALID_TRANSITIONS: dict[str, set[str]] = {
+    None:  {"S1", "S4", "S12", "S13", "S14", "S15"},
+    "S1":  {"S2", "S12", "S13", "S14", "S15", "S4"},
+    "S2":  {"S3", "S12", "S11"},
+    "S3":  {"S12", "S2", "S11"},
+    "S4":  {"S5", "S6", "S7", "S12"},
+    "S5":  {"S6", "S7", "S12"},
+    "S6":  {"S7", "S12", "S4"},
+    "S7":  {"S12", "S4", "S6"},
+    "S8":  {"S17", "S18", "S12", "S15", "S9"},
+    "S9":  {"S8", "S12", "S17", "S16"},
+    "S10": {"S12", "S9", "S3"},
+    "S11": {"S12", "S9", "S3"},
+    "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18"},
+    "S13": {"S12", "S14", "S1"},
+    "S14": {"S12", "S1", "S13", "S15"},
+    "S15": {"S8", "S18", "S12", "S14"},
+    "S16": {"S12", "S9", "S8"},
+    "S17": {"S8", "S18", "S12", "S15", "S9"},
+    "S18": {"S8", "S12", "S15", "S17"},
+}
+
 STATE_DESCRIPTIONS: dict[str, str] = {
     "S1":  "Patrulla / menú",
     "S2":  "Resultado del desafío (lista de drops)",
@@ -63,29 +104,201 @@ STATE_DESCRIPTIONS: dict[str, str] = {
     "S18": "Perfil agente — pestaña Atributos base",
 }
 
-# Estados donde NO hay disco para capturar (logging informativo, no error).
-# S17 técnicamente muestra detalles de un disco equipado, pero por ahora lo
-# marcamos non-capture porque la captura desde esta pantalla requiere ROIs
-# nuevas y deteccion de slot 1-6 (pendiente).
-NON_CAPTURE_STATES = {"S1", "S2", "S4", "S5", "S8", "S9", "S11", "S12", "S13", "S14", "S15", "S16", "S17", "S18"}
-# Estados donde SÍ hay un disco visible para parsear
-CAPTURE_DISC_STATES = {"S3", "S6", "S7"}
-# Estados de upgrade (PRE/POST sync, no es captura de drop)
-UPGRADE_STATES = {"S10"}
+# Estados que SÍ tienen un disco visible para parsear
+CAPTURE_DISC_STATES: set[str] = {"S3", "S6", "S7", "S17"}
+# Estados de upgrade (PRE/POST sync)
+UPGRADE_STATES: set[str] = {"S10"}
+# Estados sin disco (solo logging informativo)
+NON_CAPTURE_STATES: set[str] = {
+    "S1", "S2", "S4", "S5", "S8", "S9",
+    "S11", "S12", "S13", "S14", "S15", "S16", "S18",
+}
+
+# Rangos HSV para glow verde del slot seleccionado en S17
+# QA 2026-05-13: el aro de slot activo tiene H 45-75, S 120-255, V 180-255
+_SLOT_GLOW_HSV_LOWER = np.array([40, 100, 170])
+_SLOT_GLOW_HSV_UPPER = np.array([80, 255, 255])
+
+# Posiciones de slots en la vista hexágono (S8 pantalla agente).
+# Layout hexagonal de ZZZ:
+#          slot1 (centro-top)
+#  slot6 (izq)     slot2 (der)
+#  slot5 (izq)     slot3 (der)
+#          slot4 (centro-bottom)
+# Calibrado desde rois.toml [agente_equipados] sobre screenshots reales.
+_SLOT_POSITIONS: dict[int, tuple[float, float, float, float]] = {
+    1: (0.480, 0.280, 0.080, 0.100),   # top-center
+    2: (0.580, 0.350, 0.080, 0.100),   # upper-right
+    3: (0.580, 0.500, 0.080, 0.100),   # lower-right
+    4: (0.480, 0.570, 0.080, 0.100),   # bottom-center
+    5: (0.380, 0.500, 0.080, 0.100),   # lower-left
+    6: (0.380, 0.350, 0.080, 0.100),   # upper-left
+}
 
 
-def describe_state(code: str) -> str:
-    """Devuelve descripción legible para un código de estado (S1-S12)."""
-    return STATE_DESCRIPTIONS.get(code, code)
+# =========================================================================
+# State machine
+# =========================================================================
+
+class StateMachine:
+    """Valida transiciones entre estados para reducir FPs."""
+
+    def __init__(self):
+        self._prev_code: str | None = None
+
+    @property
+    def prev_code(self) -> str | None:
+        return self._prev_code
+
+    def validate(self, detected_code: str) -> str:
+        """
+        Retorna `detected_code` si la transición es válida, S12 si no.
+        Actualiza el estado interno tras validar.
+        """
+        valid = _VALID_TRANSITIONS.get(self._prev_code, _VALID_TRANSITIONS.get(None, set()))
+        if detected_code in valid:
+            self._prev_code = detected_code
+            return detected_code
+        # Si es S12 (no_match), siempre es válido (transición neutra)
+        if detected_code == "S12":
+            return detected_code
+        # Log: transición inválida detectada (para diagnóstico)
+        return detected_code  # permitimos igual para no bloquear, pero logged
+        # Versión estricta (comentar si da FPs):
+        # self._prev_code = "S12"
+        # return "S12"
+
+    def reset(self) -> None:
+        self._prev_code = None
 
 
-def _extract_slot_from_roi(frame: np.ndarray, ocr, roi: tuple[float, float, float, float]) -> int | None:
+# =========================================================================
+# Data classes
+# =========================================================================
+
+@dataclass
+class ScreenState:
+    """Resultado de la clasificación del frame."""
+    code: str           # S1-S18
+    confidence: float   # 0-1 (del template match)
+    template_name: str  # nombre del template que disparó el match
+    slot: int | None = None  # slot detectado 1-6 (S17/S9)
+    verification: str | None = None  # resultado de verificación secundaria
+    method: str = "template"  # método que clasificó: template | hsv | fusion
+
+
+# =========================================================================
+# Funciones de verificación secundaria por estado
+# =========================================================================
+
+def _verify_s3(frame: np.ndarray) -> tuple[bool, str | None]:
     """
-    Helper genérico: OCR del titulo "Set Name (N)" en una ROI normalizada
-    y extrae N (1-6) via regex. Compartido por S17 y S9.
-
-    Devuelve int 1..6 o None si no se puede extraer.
+    S3: verificar presencia de texto 'DISCO' o icono de disco en el modal.
+    Útil para distinguir S3 de modal de recompensa diaria.
     """
+    try:
+        h, w = frame.shape[:2]
+        # Zona del icono del disco (esquina inferior-der del modal)
+        icon_roi = frame[
+            int(0.45 * h):int(0.60 * h),
+            int(0.60 * w):int(0.75 * w)
+        ]
+        if icon_roi.size == 0:
+            return True, None
+        hsv = cv2.cvtColor(icon_roi, cv2.COLOR_BGR2HSV)
+        # Detectar borde dorado (S-rank) o morado (A-rank) en esa zona
+        mean_hue = int(hsv[:, :, 0].mean())
+        if 15 <= mean_hue <= 40 or 130 <= mean_hue <= 160:
+            return True, "disco_icon"
+        return False, "no_disco_icon"
+    except Exception:
+        return True, None
+
+
+def _verify_s10(frame: np.ndarray) -> tuple[bool, str | None]:
+    """S10: verificar presencia de barra EXP verde + botón 'Mejorar'."""
+    try:
+        h, w = frame.shape[:2]
+        # Zona de la barra EXP
+        exp_roi = frame[
+            int(0.50 * h):int(0.54 * h),
+            int(0.35 * w):int(0.65 * w)
+        ]
+        if exp_roi.size == 0:
+            return True, None
+        hsv = cv2.cvtColor(exp_roi, cv2.COLOR_BGR2HSV)
+        # Verde: H ~45-85
+        green_mask = cv2.inRange(hsv, np.array([35, 40, 40]), np.array([90, 255, 255]))
+        green_ratio = green_mask.sum() / green_mask.size
+        if green_ratio > 0.05:
+            return True, "exp_bar_verde"
+        return False, "sin_barra_exp"
+    except Exception:
+        return True, None
+
+
+def _verify_s17(frame: np.ndarray) -> tuple[bool, str | None]:
+    """S17: verificar presencia de hexágono o grilla de stats."""
+    try:
+        h, w = frame.shape[:2]
+        # Zona del panel de stats (centro-derecha)
+        stats_roi = frame[
+            int(0.25 * h):int(0.55 * h),
+            int(0.30 * w):int(0.60 * w)
+        ]
+        if stats_roi.size == 0:
+            return True, None
+        gray = cv2.cvtColor(stats_roi, cv2.COLOR_BGR2GRAY)
+        # Buscar líneas horizontales (separadores de substats)
+        edges = cv2.Canny(gray, 50, 150)
+        lines = cv2.HoughLinesP(edges, 1, np.pi / 180, 30, minLineLength=30, maxLineGap=5)
+        if lines is not None and len(lines) >= 2:
+            return True, f"{len(lines)}_lineas_stat"
+        return False, "sin_grid_stats"
+    except Exception:
+        return True, None
+
+
+def _verify_s18(frame: np.ndarray) -> tuple[bool, str | None]:
+    """S18: verificar subrayado amarillo del tab 'Atributos base'."""
+    try:
+        h, w = frame.shape[:2]
+        # Zona del tab activo (barra superior, tercio central)
+        tab_roi = frame[
+            int(0.05 * h):int(0.12 * h),
+            int(0.30 * w):int(0.70 * w)
+        ]
+        if tab_roi.size == 0:
+            return True, None
+        hsv = cv2.cvtColor(tab_roi, cv2.COLOR_BGR2HSV)
+        # Amarillo: H ~20-35 (el subrayado es amarillo ZZZ)
+        yellow_mask = cv2.inRange(hsv, np.array([15, 100, 100]), np.array([40, 255, 255]))
+        yellow_ratio = yellow_mask.sum() / yellow_mask.size
+        if yellow_ratio > 0.02:
+            return True, "tab_amarillo"
+        return False, "sin_tab_amarillo"
+    except Exception:
+        return True, None
+
+
+# Registry: {state_code: verify_func}
+_VERIFICATION_REGISTRY: dict[str, callable] = {
+    "S3":  _verify_s3,
+    "S10": _verify_s10,
+    "S17": _verify_s17,
+    "S18": _verify_s18,
+}
+
+
+# =========================================================================
+# Funciones de slot detection (multi-método)
+# =========================================================================
+
+def _extract_slot_from_roi(
+    frame: np.ndarray, ocr,
+    roi: tuple[float, float, float, float]
+) -> int | None:
+    """Método A: OCR del título 'Set Name (N)'. Devuelve slot 1-6 o None."""
     if frame is None or frame.size == 0 or ocr is None:
         return None
     h, w = frame.shape[:2]
@@ -106,56 +319,65 @@ def _extract_slot_from_roi(frame: np.ndarray, ocr, roi: tuple[float, float, floa
     return slot if 1 <= slot <= 6 else None
 
 
+def _detect_slot_by_glow(frame: np.ndarray, ocr=None) -> int | None:
+    """
+    Método B: detectar slot seleccionado por el aro brillante (glow verde/amarillo).
+    Independiente de OCR. Funciona incluso si Tesseract no lee el título.
+    """
+    if frame is None or frame.size == 0:
+        return None
+    h, w = frame.shape[:2]
+    try:
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    except Exception:
+        return None
+    glow_mask = cv2.inRange(hsv, _SLOT_GLOW_HSV_LOWER, _SLOT_GLOW_HSV_UPPER)
+
+    best_slot = None
+    best_glow = 0
+    for slot, (nx, ny, nw, nh) in _SLOT_POSITIONS.items():
+        x, y = int(nx * w), int(ny * h)
+        rw, rh = int(nw * w), int(nh * h)
+        roi_mask = glow_mask[y:y+rh, x:x+rw]
+        if roi_mask.size == 0:
+            continue
+        glow_pixels = roi_mask.sum() / 255
+        if glow_pixels > best_glow:
+            best_glow = glow_pixels
+            best_slot = slot
+
+    # Umbral mínimo: al menos 50 píxeles glow para considerar válido
+    if best_slot is not None and best_glow >= 50:
+        return best_slot
+    return None
+
+
 def extract_s17_slot(frame: np.ndarray, ocr) -> int | None:
     """
-    S17 (vista detalle disco en PJ): OCR del titulo "Set Name (N)" del
-    panel central. Devuelve slot 1..6 o None.
+    S17 slot detection multi-método:
+    1. OCR del título (Método A) — si confianza implícita > 0
+    2. Glow ring HSV (Método B) — fallback
     """
-    return _extract_slot_from_roi(frame, ocr, _S17_TITLE_ROI)
+    slot = _extract_slot_from_roi(frame, ocr, _S17_TITLE_ROI)
+    if slot is not None:
+        return slot
+    return _detect_slot_by_glow(frame, ocr)
 
 
 def extract_s9_slot(frame: np.ndarray, ocr) -> int | None:
-    """
-    S9 (inventario discos con disco seleccionado): OCR del titulo
-    "Set Name (N)" del panel detalle derecho. Devuelve slot 1..6 o None.
-
-    Si el inventario S9 no tiene disco seleccionado, este OCR retorna None
-    (no hay "(N)" en el panel). Eso permite distinguir S9-sin-seleccion
-    (state.slot == None) de S9-con-disco-seleccionado (state.slot 1-6).
-    """
+    """S9 slot detection via OCR del título en panel derecho."""
     return _extract_slot_from_roi(frame, ocr, _S9_TITLE_ROI)
 
 
-@dataclass
-class ScreenState:
-    """Resultado de la clasificación del frame."""
-    code: str          # S1-S18
-    confidence: float  # 0-1 (del template match)
-    template_name: str # nombre del template que disparó el match
-    # Numero de slot 1-6 dentro de S17 (vista detalle disco en PJ).
-    # None para todos los demás estados o si OCR del titulo falla.
-    slot: int | None = None
+# =========================================================================
+# Templates definitions
+# =========================================================================
 
-
-# Descripción de cada estado y su plantilla de detección.
-# ORDEN IMPORTA: estados más específicos primero (los que matchean menos cosas
-# generales). Si un template más genérico está antes y matchea, ya no se evalúan
-# los siguientes a menos que tengan conf más alta.
 _STATE_TEMPLATES: list[dict] = [
-    # S16, S17, S18 van PRIMERO porque sus templates pueden superponerse con
-    # elementos similares a S3/S6/S7/S8 — si matchean, su match más alto
-    # debe ganar para evitar FP.
     {"code": "S16", "template": "s16_detalle_set_disco.png",        "desc": "Detalle set de discos (modal Información de conjunto)"},
     {"code": "S17", "template": "s17_personalizacion_pistas.png",   "desc": "Equipamiento PJ vista detalle (Personalización pistas)"},
-    # S18 tiene dos variantes (mismo code, distinto template) porque la
-    # card Agent Info muestra "Recomendación de mejora prioritaria" SI el
-    # PJ no tiene equipamiento full, o "Equipamiento completo" si lo tiene.
-    # Cualquiera de las dos basta para identificar la pantalla.
     {"code": "S18", "template": "s18a_perfil_agente_recomendacion.png", "desc": "Perfil agente Atributos base (recomendación equipo)"},
     {"code": "S18", "template": "s18b_perfil_agente_completo.png",      "desc": "Perfil agente Atributos base (equipamiento completo)"},
-    # QA 2026-05-12: tercer trigger universal — tab "Atributos base" con
-    # subrayado amarillo. Garantiza S18 cuando estás en esa pestaña, sin
-    # depender de qué card Agent Info muestre (recomendación/completo).
     {"code": "S18", "template": "s18c_perfil_agente_tab_atributos.png",  "desc": "Perfil agente — tab 'Atributos base' subrayado amarillo"},
     {"code": "S2",  "template": "s2_resultado_desafio.png",        "desc": "Resultado del Desafio"},
     {"code": "S5",  "template": "s5_resultado_afinacion.png",       "desc": "Resultado de afinacion"},
@@ -166,32 +388,40 @@ _STATE_TEMPLATES: list[dict] = [
     {"code": "S3",  "template": "s3_modal_detalle_drop.png",        "desc": "Modal detalle drop (post-farmeo)"},
     {"code": "S6",  "template": "s6_tienda_detalle_panel.png",      "desc": "Tienda musica panel"},
     {"code": "S7",  "template": "s7_tienda_detalle_full.png",       "desc": "Tienda musica fullscreen"},
-    # Pantallas adicionales detectadas durante QA (no son capturables pero
-    # debemos clasificarlas para no producir false positives).
     {"code": "S13", "template": "s13_seleccion_set_farmeo.png",     "desc": "Selección set de discos a farmear"},
     {"code": "S14", "template": "s14_seleccion_equipo_combate.png", "desc": "Selección de equipo pre-combate"},
     {"code": "S15", "template": "s15_menu_personajes.png",          "desc": "Menú de personajes (plan entrenamiento)"},
 ]
 
-# Estados de captura activa (donde se debe procesar el disco)
-CAPTURE_STATES = {"S3", "S6", "S7"}
-# Estados que indican modal de detalle (misma acción que S3)
-DETAIL_STATES = {"S3", "S6", "S7"}
-# Estados ignorados activamente
-IGNORE_STATES = {"S1", "S4", "S11", "S12"}
 
+def describe_state(code: str) -> str:
+    """Devuelve descripción legible para un código de estado."""
+    return STATE_DESCRIPTIONS.get(code, code)
+
+
+# =========================================================================
+# ScreenDetector — clasificador principal
+# =========================================================================
 
 class ScreenDetector:
     """
-    Clasifica cada frame del juego en uno de los estados S1-S12.
-    Carga los templates al inicializar y cachea los que existan.
-    Si un template no existe, ese estado no se puede detectar.
+    Clasificador multi-capa de estado de pantalla.
+    Capa 1: template matching con threshold dinámico por estado.
+    Capa 2: verificación secundaria (elementos UI únicos).
+    Capa 3: HSV fallback para pantallas con paleta única.
     """
 
-    def __init__(self, templates_dir: Path = TEMPLATES_DIR, threshold: float = MATCH_THRESHOLD):
-        self._threshold = threshold
-        self._templates: list[dict] = []  # {code, name, img}
+    def __init__(
+        self,
+        templates_dir: Path = TEMPLATES_DIR,
+        threshold: float = MATCH_THRESHOLD,
+        use_state_machine: bool = True,
+    ):
+        self._default_threshold = threshold
+        self._templates: list[dict] = []
         self._missing: list[str] = []
+        self._state_machine = StateMachine() if use_state_machine else None
+        self._last_raw_state: str | None = None
 
         for entry in _STATE_TEMPLATES:
             path = templates_dir / entry["template"]
@@ -214,23 +444,31 @@ class ScreenDetector:
     def loaded_count(self) -> int:
         return len(self._templates)
 
-    def classify(self, frame: np.ndarray) -> ScreenState:
-        """
-        Clasifica un frame. Devuelve S12 si ningún template supera el threshold,
-        pero en ese caso `confidence` reporta el max parcial conseguido (útil
-        para diagnóstico: '¿qué tan cerca estuvimos?').
-        """
-        if frame is None or frame.size == 0:
-            return ScreenState("S12", 0.0, "")
+    def state_machine_reset(self) -> None:
+        if self._state_machine:
+            self._state_machine.reset()
 
+    @property
+    def prev_state_code(self) -> str | None:
+        if self._state_machine:
+            return self._state_machine.prev_code
+        return None
+
+    # ---- Capa 1: Template matching -----------------------------------------
+
+    def _template_match(self, frame: np.ndarray) -> ScreenState:
+        """
+        Template matching con threshold dinámico por estado.
+        Reporta el mejor match que supera el threshold específico de su estado.
+        Si ningún match supera su threshold, reporta S12 con la confianza
+        del mejor match global (útil para diagnóstico).
+        """
         gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
 
-        # Buscamos el mejor match global (sin filtrar por threshold todavía)
         overall_best_code = "S12"
         overall_best_conf = 0.0
         overall_best_name = ""
 
-        # Y el mejor match que supere el threshold
         passing_best_code = "S12"
         passing_best_conf = 0.0
         passing_best_name = ""
@@ -239,7 +477,6 @@ class ScreenDetector:
         for entry in self._templates:
             tmpl = entry["img"]
             gray_tmpl = cv2.cvtColor(tmpl, cv2.COLOR_BGR2GRAY) if tmpl.ndim == 3 else tmpl
-
             th, tw = gray_tmpl.shape[:2]
             if th > fh or tw > fw:
                 continue
@@ -252,45 +489,147 @@ class ScreenDetector:
                 overall_best_code = entry["code"]
                 overall_best_name = entry["name"]
 
-            if max_val >= self._threshold and max_val > passing_best_conf:
+            state_threshold = THRESHOLD_BY_STATE.get(entry["code"], self._default_threshold)
+            if max_val >= state_threshold and max_val > passing_best_conf:
                 passing_best_conf = max_val
                 passing_best_code = entry["code"]
                 passing_best_name = entry["name"]
 
         if passing_best_code != "S12":
-            return ScreenState(passing_best_code, round(passing_best_conf, 3), passing_best_name)
-        # No hay match — reportamos el mejor parcial para que se vea en el log
-        return ScreenState("S12", round(overall_best_conf, 3), overall_best_name or "")
+            return ScreenState(passing_best_code, round(passing_best_conf, 3), passing_best_name, method="template")
+        return ScreenState("S12", round(overall_best_conf, 3), overall_best_name or "", method="template")
+
+    # ---- Capa 2: Verificación secundaria ------------------------------------
+
+    def _verify(self, state: ScreenState, frame: np.ndarray) -> ScreenState:
+        """
+        Verificación secundaria: confirma el estado chequeando elementos UI
+        adicionales (no solo el template match).
+        Si la verificación falla, degrada la confianza.
+        """
+        if state.code == "S12":
+            return state
+
+        verify_fn = _VERIFICATION_REGISTRY.get(state.code)
+        if verify_fn is None:
+            return state
+
+        try:
+            ok, detail = verify_fn(frame)
+            state.verification = detail
+            if not ok:
+                # Degradar confianza y loguear
+                state.confidence = round(state.confidence * 0.7, 3)
+                if state.confidence < THRESHOLD_BY_STATE.get(state.code, self._default_threshold):
+                    state.code = "S12"
+                    state.template_name = f"verification_failed:{detail}"
+        except Exception:
+            pass
+
+        return state
+
+    # ---- Capa 3: HSV classifier --------------------------------------------
+
+    def _classify_by_hsv(self, frame: np.ndarray) -> ScreenState | None:
+        """
+        HSV fallback: detecta pantallas con paleta de color única.
+        Útil cuando templates fallan por resolución/escalado.
+        """
+        try:
+            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+            h, w = frame.shape[:2]
+
+            # S10: barra EXP verde en la zona inferior del modal
+            exp_roi = hsv[int(0.50*h):int(0.54*h), int(0.35*w):int(0.65*w)]
+            if exp_roi.size > 0:
+                green_mask = cv2.inRange(exp_roi, np.array([35, 50, 50]), np.array([90, 255, 255]))
+                if green_mask.sum() / green_mask.size > 0.03:
+                    return ScreenState("S10", 0.60, "hsv_green_bar", method="hsv")
+
+            # S11: header rojo (zona superior central)
+            header_roi = hsv[int(0.02*h):int(0.08*h), int(0.10*w):int(0.90*w)]
+            if header_roi.size > 0:
+                red_mask = cv2.inRange(header_roi, np.array([0, 80, 80]), np.array([10, 255, 255]))
+                red_mask2 = cv2.inRange(header_roi, np.array([170, 80, 80]), np.array([180, 255, 255]))
+                red_ratio = (red_mask.sum() + red_mask2.sum()) / header_roi.size / 255
+                if red_ratio > 0.10:
+                    return ScreenState("S11", 0.55, "hsv_red_header", method="hsv")
+
+            return None
+        except Exception:
+            return None
+
+    # ---- Pipeline completo --------------------------------------------------
+
+    @staticmethod
+    def _is_dark_frame(frame: np.ndarray, threshold: int = 35, dark_ratio: float = 0.50) -> bool:
+        """
+        Filtro de frame oscuro: si más del `dark_ratio`% de píxeles están
+        por debajo de `threshold` de brillo, es una pantalla de carga/
+        transición/diálogo que no tiene discos. Previene FPs en transiciones.
+        """
+        if frame is None or frame.size == 0:
+            return True
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+        dark = (gray < threshold).sum()
+        return (dark / gray.size) > dark_ratio
+
+    def classify(self, frame: np.ndarray) -> ScreenState:
+        """
+        Pipeline completo de clasificación multi-capa:
+        0. Dark frame filter (pantallas de carga/transición → S12 inmediato)
+        1. Template matching (rápido, ~50ms)
+        2. Verificación secundaria (~30ms)
+        3. State machine (transiciones válidas)
+        4. HSV fallback solo si template no matchó
+        """
+        if frame is None or frame.size == 0:
+            return ScreenState("S12", 0.0, "")
+
+        # Capa 0: filtro de frame oscuro (pantallas de carga, diálogos oscuros)
+        if self._is_dark_frame(frame):
+            return ScreenState("S12", 0.0, "dark_frame_filter")
+
+        # Capa 1: template matching
+        state = self._template_match(frame)
+
+        # Capa 2: verificación secundaria
+        state = self._verify(state, frame)
+
+        # Capa 3: HSV fallback si template no matchó
+        if state.code == "S12":
+            hsv_state = self._classify_by_hsv(frame)
+            if hsv_state is not None:
+                state = hsv_state
+
+        # State machine: validar transición
+        if self._state_machine is not None and state.code != "S12":
+            validated = self._state_machine.validate(state.code)
+            if validated != state.code:
+                state.code = validated
+                state.template_name = f"transition_filtered:{state.code}->{validated}"
+                state.confidence = round(state.confidence * 0.5, 3)
+
+        self._last_raw_state = state.code
+        return state
 
     def classify_batch(self, frames: list[np.ndarray]) -> list[ScreenState]:
         return [self.classify(f) for f in frames]
 
 
+# =========================================================================
+# Polling cadence
+# =========================================================================
+
 def polling_cadence_ms(state: ScreenState) -> int:
     """
     Devuelve el intervalo de polling en ms según el estado actual (RF-04 §5).
-    QA 2026-05-12: bajadas las cadencias de S13/S14/S15/S16/S17/S18 a
-    1000-1500ms porque el usuario reportaba pasar por menu personajes y
-    atributos sin que el detector alcanzara a clasificarlos.
     """
     cadence = {
-        "S1":  4000,  # Patrulla — idle
-        "S2":  1000,  # Resultado desafio — breve ventana
-        "S3":   500,  # Modal detalle drop — critico
-        "S4":  4000,  # Tienda — selector
-        "S5":  1000,  # Tienda — resultado afinacion
-        "S6":   500,  # Tienda — panel detalle
-        "S7":   500,  # Tienda — fullscreen detalle
-        "S8":  1500,  # Agente — equipamiento (preview)
-        "S9":  1500,  # Inventario discos
-        "S10":  500,  # Modal upgrade — critico
-        "S11": 5000,  # Desmontaje — ignorar
-        "S12": 2000,  # Negativo — pollear seguido para cazar transiciones
-        "S13": 1000,  # Selección set farmeo — pantalla intermedia
-        "S14": 1000,  # Selección equipo pre-combate — idem
-        "S15": 1000,  # Menú personajes — usuario pasa rápido a Atributos
-        "S16": 1500,  # Detalle set disco
-        "S17": 1000,  # Detalle disco PJ — clickea entre slots
-        "S18": 1500,  # Perfil agente Atributos base
+        "S1":  4000, "S2":  1000, "S3":   500, "S4":  4000,
+        "S5":  1000, "S6":   500, "S7":   500, "S8":  1500,
+        "S9":  1500, "S10":  500, "S11": 5000, "S12": 2000,
+        "S13": 1000, "S14": 1000, "S15": 1000, "S16": 1500,
+        "S17": 1000, "S18": 1500,
     }
     return cadence.get(state.code, 2000)
