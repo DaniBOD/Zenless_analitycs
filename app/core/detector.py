@@ -137,6 +137,75 @@ _SLOT_POSITIONS: dict[int, tuple[float, float, float, float]] = {
 
 
 # =========================================================================
+# Temporal Buffer — majority voting multi-frame
+# =========================================================================
+
+class TemporalBuffer:
+    """
+    Rolling window de las últimas N clasificaciones.
+    Solo emite un estado cuando la mayoría de frames coincide.
+    Elimina FPs transitorios de un solo frame ruidoso.
+
+    window_size: 3 por defecto (requiere 2/3 para confirmar).
+    S12 requiere consenso total (3/3) para evitar quedar pegado en
+    "no match" durante transiciones.
+    """
+
+    def __init__(self, window_size: int = 3):
+        self._window: list[ScreenState] = []
+        self._window_size = window_size
+        self._last_emitted: str | None = None
+        self._last_voted: ScreenState | None = None
+
+    @property
+    def last_emitted(self) -> str | None:
+        return self._last_emitted
+
+    def add(self, state: ScreenState) -> ScreenState | None:
+        """
+        Agrega una clasificación al buffer.
+        Devuelve un ScreenState confirmado si hay mayoría, o None si aún
+        no hay suficiente consenso o es el mismo estado ya emitido.
+        """
+        self._window.append(state)
+        if len(self._window) > self._window_size:
+            self._window = self._window[-self._window_size:]
+
+        if len(self._window) < self._window_size:
+            return None  # buffer llenándose
+
+        from collections import Counter
+        codes = Counter(s.code for s in self._window)
+        winner_code, count = codes.most_common(1)[0]
+
+        # Majority needed es ceil(window_size/2), ej 2/3 o 3/5
+        # S12 usa el mismo threshold (no requiere consenso total)
+        majority_needed = (self._window_size // 2) + 1
+
+        if count < majority_needed:
+            return None  # sin mayoría clara
+
+        # No re-emitir si es el mismo estado que ya emitimos
+        if winner_code == self._last_emitted:
+            return None
+
+        self._last_emitted = winner_code
+
+        winner_states = [s for s in self._window if s.code == winner_code]
+        avg_conf = sum(s.confidence for s in winner_states) / len(winner_states)
+        best = max(winner_states, key=lambda s: s.confidence)
+        best.confidence = round(avg_conf, 3)
+        self._last_voted = best
+        return best
+
+    def reset(self) -> None:
+        """Limpia el buffer. Útil tras transiciones rápidas."""
+        self._window.clear()
+        self._last_emitted = None
+        self._last_voted = None
+
+
+# =========================================================================
 # State machine
 # =========================================================================
 
@@ -260,25 +329,74 @@ def _verify_s17(frame: np.ndarray) -> tuple[bool, str | None]:
 
 
 def _verify_s18(frame: np.ndarray) -> tuple[bool, str | None]:
-    """S18: verificar subrayado amarillo del tab 'Atributos base'."""
+    """
+    S18: verificar por múltiples indicadores (cualquiera basta):
+    1. Subrayado amarillo del tab 'Atributos base'
+    2. Grilla de stats (6-7 filas de texto HP/ATK/DEF/CRIT/etc)
+    3. Layout de dos columnas de valores (stat nombre izq, valor der)
+    """
+    h, w = frame.shape[:2]
+    reasons = []
+
+    # --- Indicador 1: subrayado amarillo del tab ---
     try:
-        h, w = frame.shape[:2]
-        # Zona del tab activo (barra superior, tercio central)
         tab_roi = frame[
             int(0.05 * h):int(0.12 * h),
             int(0.30 * w):int(0.70 * w)
         ]
-        if tab_roi.size == 0:
-            return True, None
-        hsv = cv2.cvtColor(tab_roi, cv2.COLOR_BGR2HSV)
-        # Amarillo: H ~20-35 (el subrayado es amarillo ZZZ)
-        yellow_mask = cv2.inRange(hsv, np.array([15, 100, 100]), np.array([40, 255, 255]))
-        yellow_ratio = yellow_mask.sum() / yellow_mask.size
-        if yellow_ratio > 0.02:
-            return True, "tab_amarillo"
-        return False, "sin_tab_amarillo"
+        if tab_roi.size > 0:
+            hsv_tab = cv2.cvtColor(tab_roi, cv2.COLOR_BGR2HSV)
+            yellow_mask = cv2.inRange(hsv_tab, np.array([15, 100, 100]), np.array([40, 255, 255]))
+            yellow_ratio = yellow_mask.sum() / yellow_mask.size / 255
+            if yellow_ratio > 0.02:
+                reasons.append("tab_amarillo")
     except Exception:
-        return True, None
+        pass
+
+    # --- Indicador 2: grilla de stats en el panel central ---
+    # S18 tiene filas de stat como "HP 12345 / ATK 2345 / ..." en el centro
+    try:
+        stats_roi = frame[
+            int(0.20 * h):int(0.55 * h),
+            int(0.15 * w):int(0.85 * w)
+        ]
+        if stats_roi.size > 0:
+            gray = cv2.cvtColor(stats_roi, cv2.COLOR_BGR2GRAY)
+            # Detectar líneas horizontales (separadores entre filas de stats)
+            edges = cv2.Canny(gray, 40, 120)
+            lines = cv2.HoughLinesP(edges, 1, np.pi / 180, 40,
+                                    minLineLength=int(0.3 * stats_roi.shape[1]),
+                                    maxLineGap=8)
+            if lines is not None:
+                # Filtrar líneas cercanas en Y (son filas de stats consecutivas)
+                ys = sorted(set(l[0][1] for l in lines))
+                # Si hay 4+ líneas separadas uniformemente → grilla de stats
+                if len(ys) >= 4:
+                    gaps = [ys[i+1] - ys[i] for i in range(len(ys)-1)]
+                    avg_gap = sum(gaps) / len(gaps)
+                    uniform_gaps = sum(1 for g in gaps if abs(g - avg_gap) < 10)
+                    if uniform_gaps >= len(gaps) * 0.5:
+                        reasons.append(f"grid_{len(ys)}_stats")
+    except Exception:
+        pass
+
+    # --- Indicador 3: zona de valores numéricos en columna derecha ---
+    try:
+        val_roi = gray = cv2.cvtColor(
+            frame[int(0.22*h):int(0.50*h), int(0.65*w):int(0.80*w)],
+            cv2.COLOR_BGR2GRAY
+        )
+        if val_roi.size > 0:
+            # Los valores de stat suelen ser brillantes sobre fondo oscuro
+            bright = (val_roi > 150).sum() / val_roi.size
+            if bright > 0.20:
+                reasons.append("valores_brillantes")
+    except Exception:
+        pass
+
+    if reasons:
+        return True, "+".join(reasons)
+    return False, "sin_indicadores_s18"
 
 
 # Registry: {state_code: verify_func}
@@ -554,6 +672,24 @@ class ScreenDetector:
                 red_ratio = (red_mask.sum() + red_mask2.sum()) / header_roi.size / 255
                 if red_ratio > 0.10:
                     return ScreenState("S11", 0.55, "hsv_red_header", method="hsv")
+
+            # S18: grilla de stats en panel central con texto claro
+            # (fallback cuando templates S18 no matchean pero layout coincide)
+            try:
+                center_roi = frame[int(0.20*h):int(0.55*h), int(0.15*w):int(0.85*w)]
+                gray = cv2.cvtColor(center_roi, cv2.COLOR_BGR2GRAY)
+                # 4+ líneas horizontales paralelas → probable grilla de stats
+                edges = cv2.Canny(gray, 40, 120)
+                lines = cv2.HoughLinesP(edges, 1, np.pi/180, 40,
+                                        minLineLength=int(0.3*center_roi.shape[1]),
+                                        maxLineGap=8)
+                if lines is not None and len(lines) >= 4:
+                    ys = sorted(set(int(l[0][1]) for l in lines))
+                    # Al menos 4 líneas en filas ≈ uniformes
+                    if len(ys) >= 4:
+                        return ScreenState("S18", 0.55, "hsv_stats_grid", method="hsv")
+            except Exception:
+                pass
 
             return None
         except Exception:
