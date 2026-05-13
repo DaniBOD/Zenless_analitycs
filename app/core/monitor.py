@@ -13,7 +13,10 @@ from dataclasses import dataclass
 from typing import Callable
 
 from app.core.capturer import WindowBounds, capture_window, find_zzz_window
-from app.core.detector import ScreenDetector, ScreenState, extract_s17_slot, extract_s9_slot, polling_cadence_ms
+from app.core.detector import (
+    ScreenDetector, ScreenState, TemporalBuffer,
+    extract_s17_slot, extract_s9_slot, polling_cadence_ms,
+)
 from app.core.parser_disc import DiscParsed, parse_modal_detalle
 from app.core.ocr_backend import OcrBackend
 
@@ -24,6 +27,12 @@ log = logging.getLogger(__name__)
 _NEW_DISC_STATES = {"S3", "S6", "S7"}       # discos nuevos (drop/tienda)
 _EQUIPPED_DISC_STATES = {"S17"}              # discos equipados (vista PJ)
 _DISC_DETAIL_STATES = _NEW_DISC_STATES | _EQUIPPED_DISC_STATES
+
+# Intervalo de captura rápida (entre frames para buffer, sin procesar)
+_FAST_CAPTURE_MS = 100  # 10 fps — MSS captura en ~20ms, template match en ~50ms
+
+# Heartbeat intervalo (logging de diagnóstico)
+_HEARTBEAT_S = 2.0
 
 
 @dataclass
@@ -110,51 +119,77 @@ class Monitor:
             return False
 
     def force_scan(self) -> None:
-        """Fuerza un scan inmediato (F8 o evento de foreground)."""
-        self._stop.wait(0)          # no-op si no está parado
+        """
+        Fuerza un scan inmediato (F8 o evento de foreground).
+        Resetea buffer y fuerza un ciclo de proceso inmediato.
+        """
         if self._thread and self._thread.is_alive():
-            # Señalamos con un evento interno; el loop lo consume en el siguiente tick
             self._force_event.set()
 
     # ---- Internals --------------------------------------------------------------
 
     def _run(self) -> None:
+        """
+        Loop principal — dos velocidades:
+        1. Captura rápida cada ~100ms para alimentar buffer temporal.
+        2. Procesamiento (OCR + parseo + notify) solo cuando el buffer
+           confirma un estado por mayoría de votos.
+        """
         self._force_event = threading.Event()
         last_heartbeat = time.monotonic()
+        last_process_time = 0.0
+        buffer = TemporalBuffer(window_size=3)
+
         while not self._stop.is_set():
             if not self._paused.is_set():
                 time.sleep(0.5)
+                buffer.reset()
                 continue
+
             frame = self._get_frame()
             if frame is None:
+                buffer.reset()
                 continue
-            self._loop_ticks += 1
-            state = self._detector.classify(frame)
-            # Slot detection via OCR del titulo "Set Name (N)":
-            # - S17 (vista detalle disco en PJ): panel central
-            # - S9 (inventario con disco seleccionado): panel derecho
-            #   En S9-sin-seleccion el OCR retorna None y state.slot
-            #   queda None (eso es el indicador de "no hay disco activo").
-            if state.code == "S17":
-                state.slot = extract_s17_slot(frame, self._ocr)
-            elif state.code == "S9":
-                state.slot = extract_s9_slot(frame, self._ocr)
-            self._notify_state_change(state)
-            self._dispatch_state(frame, state)
 
-            # Heartbeat cada 5s para confirmar que el loop está vivo.
-            # QA 2026-05-12: bajado de 15s porque el usuario pasaba por estados
-            # clave (S13/S15/S18) sin tiempo a ver feedback de actividad.
+            self._loop_ticks += 1
             now = time.monotonic()
-            if now - last_heartbeat >= 5.0:
+
+            # ---- Paso 1: clasificar frame individual ----
+            raw_state = self._detector.classify(frame)
+
+            # Slot detection
+            if raw_state.code == "S17":
+                raw_state.slot = extract_s17_slot(frame, self._ocr)
+            elif raw_state.code == "S9":
+                raw_state.slot = extract_s9_slot(frame, self._ocr)
+
+            # ---- Paso 2: alimentar buffer temporal ----
+            voted_state = buffer.add(raw_state)
+
+            # ---- Paso 3: emitir SOLO cuando buffer confirma ----
+            if voted_state is not None:
+                self._notify_state_change(voted_state)
+
+                # Heavy processing solo a cierta cadencia
+                cadence_ms = polling_cadence_ms(voted_state)
+                elapsed_ms = (now - last_process_time) * 1000
+                if elapsed_ms >= cadence_ms or self._force_event.is_set():
+                    last_process_time = now
+                    self._dispatch_state(frame, voted_state)
+
+            # ---- Heartbeat cada 2s ----
+            if now - last_heartbeat >= _HEARTBEAT_S:
                 last_heartbeat = now
+                state_for_log = voted_state or raw_state
                 self._emit_diagnostic(
-                    f"heartbeat: {self._loop_ticks} ticks, "
-                    f"último estado={state.code} slot={state.slot} "
-                    f"(conf {state.confidence:.2f})"
+                    f"heartbeat: {self._loop_ticks} capturas, "
+                    f"estado={state_for_log.code} slot={state_for_log.slot} "
+                    f"conf={state_for_log.confidence:.2f} "
+                    f"tmpl={state_for_log.template_name}"
                 )
 
-            self._wait_cadence(state)
+            # ---- Espera corta entre capturas (fast polling) ----
+            self._wait_fast()
 
     def _emit_diagnostic(self, msg: str) -> None:
         """Emite mensaje de diagnóstico solo si cambió respecto al anterior (evita spam)."""
@@ -245,9 +280,9 @@ class Monitor:
         self._processed_disc_state_code = state.code
         self._process_disc(frame, state)
 
-    def _wait_cadence(self, state: ScreenState) -> None:
-        cadence_ms = polling_cadence_ms(state)
-        if self._force_event.wait(timeout=cadence_ms / 1000.0):
+    def _wait_fast(self) -> None:
+        """Espera corta entre capturas rápidas (para alimentar buffer)."""
+        if self._force_event.wait(timeout=_FAST_CAPTURE_MS / 1000.0):
             self._force_event.clear()
 
     def _process_disc(self, frame, state: ScreenState) -> None:
