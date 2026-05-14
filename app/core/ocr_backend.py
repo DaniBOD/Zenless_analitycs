@@ -26,6 +26,19 @@ class OcrBackend(ABC):
         Optimizado para ROIs que contienen solo dígitos/porcentaje.
         """
 
+    def text_with_bboxes(self, img: np.ndarray) -> list[tuple[str, float, tuple[int, int, int, int]]]:
+        """
+        Devuelve [(texto, confianza, (x1,y1,x2,y2)), ...] desde el frame completo.
+        No es abstracta: por defecto llama a text() y devuelve un solo entry
+        con bbox = (0,0,w,h). Backends que soporten detección (PaddleOCR)
+        deben override para devolver bboxes reales.
+        """
+        text, conf = self.text(img)
+        if not text or conf == 0.0:
+            return []
+        h, w = img.shape[:2] if img.ndim >= 2 else (0, 0)
+        return [(text, conf, (0, 0, w, h))]
+
     @staticmethod
     def preprocess(img: np.ndarray) -> np.ndarray:
         """
