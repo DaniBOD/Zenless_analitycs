@@ -2,11 +2,19 @@
 Fixtures compartidos para tests.
 DB en memoria con schema mínimo para unit tests (sin depender del archivo .db real).
 """
+import os
 import sqlite3
 import json
 import pytest
 import sys
 from pathlib import Path
+
+# D:\paddle_site contiene numpy 1.26.4 + paddlepaddle 2.6.2 + paddleocr 2.8.1.
+# Debe estar al frente de sys.path antes de cualquier `import numpy` para que
+# paddle no se rompa contra numpy 2.x del user-site (np.sctypes removido).
+_PADDLE_SITE = r"D:\paddle_site"
+if os.path.isdir(_PADDLE_SITE) and _PADDLE_SITE not in sys.path:
+    sys.path.insert(0, _PADDLE_SITE)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
