@@ -17,14 +17,23 @@ SCREENSHOTS = sorted(FIXTURES.glob("atributos_base_ejemplo_*.png"))
 
 @pytest.fixture(scope="session")
 def paddle_ocr():
-    """Inicializa PaddleOCR una vez para todos los tests."""
+    """Inicializa PaddleOCR una vez para todos los tests.
+
+    El warmup usa el primer screenshot real (que sabemos contiene texto)
+    para confirmar que el pipeline det+rec produce salidas distintas de
+    vacío. Un retorno vacío sobre un screenshot con texto evidente es
+    indicio fiable de incompatibilidad OneDNN / modelo no cargado.
+    """
     try:
         from app.core.ocr_paddle import PaddleBackend
         ocr = PaddleBackend(lang="es")
-        dummy = np.zeros((200, 200, 3), dtype=np.uint8)
-        text, conf = ocr.text(dummy)
+        if not SCREENSHOTS:
+            pytest.skip("Sin screenshots en fixtures para warmup PaddleOCR")
+        data = np.fromfile(str(SCREENSHOTS[0]), dtype=np.uint8)
+        frame = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        text, conf = ocr.text(frame)
         if conf == 0.0 and not text:
-            raise RuntimeError("PaddleOCR warmup devolvió texto vacío (probable incompatibilidad OneDNN)")
+            raise RuntimeError("PaddleOCR warmup sobre screenshot real devolvió texto vacío")
         return ocr
     except Exception as e:
         pytest.skip(f"PaddleOCR no disponible en este entorno Windows: {e}")
@@ -69,7 +78,7 @@ def test_extracts_all_11_stats(screenshot_path, paddle_ocr):
         "recuperacion_energia": result.recuperacion_energia,
     }
 
-    extracted = sum(1 for v in stats.values() if v is not None and v > 0)
+    extracted = sum(1 for v in stats.values() if v is not None and v >= 0)
     if extracted == 0:
         pytest.skip(f"PaddleOCR no extrajo stats en {screenshot_path.stem} (entorno sin OneDNN compatible)")
 

@@ -24,12 +24,39 @@ from app.core.ocr_backend import OcrBackend
 UPSCALE_FACTOR = 3
 
 
+def _autodetect_tesseract_cmd() -> str | None:
+    """Busca tesseract.exe en rutas Windows típicas + env var TESSERACT_CMD."""
+    import os
+    import shutil
+
+    env_cmd = os.environ.get("TESSERACT_CMD")
+    if env_cmd and os.path.isfile(env_cmd):
+        return env_cmd
+
+    found = shutil.which("tesseract")
+    if found:
+        return found
+
+    candidates = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Tesseract-OCR\tesseract.exe"),
+        os.path.expandvars(r"%USERPROFILE%\AppData\Local\Programs\Tesseract-OCR\tesseract.exe"),
+    ]
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    return None
+
+
 class TesseractBackend(OcrBackend):
     """Adapter sobre pytesseract con preprocesado para UI de ZZZ."""
 
     def __init__(self, tesseract_cmd: str | None = None):
         try:
             import pytesseract
+            if tesseract_cmd is None:
+                tesseract_cmd = _autodetect_tesseract_cmd()
             if tesseract_cmd:
                 pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
             self._tess = pytesseract
@@ -92,6 +119,10 @@ class TesseractBackend(OcrBackend):
         text = " ".join(words).strip()
         avg_conf = (sum(confs) / len(confs) / 100.0) if confs else 0.0
         return text, round(avg_conf, 3)
+
+    def text_with_bboxes(self, img: np.ndarray) -> list[tuple[str, float, tuple[int, int, int, int]]]:
+        """Tesseract no expone bboxes de detección — devuelve vacío."""
+        return []
 
     def number(self, img: np.ndarray) -> tuple[float, float]:
         processed = self.preprocess(img)

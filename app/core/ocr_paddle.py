@@ -92,6 +92,39 @@ class PaddleBackend(OcrBackend):
         avg_conf = (sum(confs) / len(confs)) if confs else 0.0
         return text, round(avg_conf, 3)
 
+    def text_with_bboxes(self, img: np.ndarray) -> list[tuple[str, float, tuple[int, int, int, int]]]:
+        """
+        Devuelve [(texto, confianza, (x1,y1,x2,y2)), ...] con bboxes reales
+        detectados por PaddleOCR. Cada bbox es la bounding box del polígono
+        cuadrilátero que devuelve el detector DBNet.
+        """
+        ocr = self._get_ocr()
+        try:
+            result = ocr.ocr(img, cls=False)
+        except Exception:
+            return []
+
+        if not result or not result[0]:
+            return []
+
+        out: list[tuple[str, float, tuple[int, int, int, int]]] = []
+        for line in result[0]:
+            if not line or len(line) < 2:
+                continue
+            polygon, (text, conf) = line[0], line[1]
+            if not polygon or len(polygon) < 4:
+                continue
+            xs = [int(p[0]) for p in polygon]
+            ys = [int(p[1]) for p in polygon]
+            x1, y1 = min(xs), min(ys)
+            x2, y2 = max(xs), max(ys)
+            txt = str(text).strip()
+            conf_val = float(conf) if conf else 0.5
+            if txt:
+                out.append((txt, conf_val, (x1, y1, x2, y2)))
+
+        return out
+
     def number(self, img: np.ndarray) -> tuple[float, float]:
         import re
         text, conf = self.text(img)
