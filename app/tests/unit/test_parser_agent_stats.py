@@ -82,9 +82,9 @@ def test_extracts_all_11_stats(screenshot_path, paddle_ocr):
     if extracted == 0:
         pytest.skip(f"PaddleOCR no extrajo stats en {screenshot_path.stem} (entorno sin OneDNN compatible)")
 
-    # Para agentes Anomalia/Disruptivos, Tasa de Perforacion no aplica
-    # (tienen "Fuerza Bruta" en su lugar). Permitimos 10/11 en ese caso.
-    min_expected = 11 if (result.rol not in ("anomalia", "disruptivos")) else 10
+    # Para agentes Disruptivos, Tasa de Perforacion se reemplaza por
+    # Fuerza Bruta. Permitimos 10/11 en ese caso.
+    min_expected = 11 if result.rol != "disruptivos" else 10
 
     assert extracted >= min_expected, (
         f"Stats faltantes o cero en {screenshot_path.stem}: "
@@ -106,6 +106,7 @@ def test_agent_stats_parsed_fields():
         "nivel", "pv", "ataque", "defensa", "impacto",
         "prob_crit", "dano_crit", "tasa_anomalia", "maestria_anomalia",
         "tasa_perforacion", "recuperacion_energia",
+        "fuerza_bruta",
         "confianza_global", "notas",
         "agente_nombre", "rol", "elemento",
     ]
@@ -177,6 +178,7 @@ def test_parse_agent_stats_returns_defaults_with_empty_ocr():
     assert result.maestria_anomalia is None
     assert result.tasa_perforacion is None
     assert result.recuperacion_energia is None
+    assert result.fuerza_bruta is None
     assert result.confianza_global == 0.0
 
 
