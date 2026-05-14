@@ -14,10 +14,11 @@ from typing import Callable
 
 from app.core.capturer import WindowBounds, capture_window, find_zzz_window
 from app.core.detector import (
-    ScreenDetector, ScreenState, TemporalBuffer,
+    ScreenDetector, ScreenState, TemporalBuffer, AGENT_STATS_STATES,
     extract_s17_slot, extract_s9_slot, polling_cadence_ms,
 )
 from app.core.parser_disc import DiscParsed, parse_modal_detalle
+from app.core.parser_agent_stats import AgentStatsParsed, parse_agent_stats
 from app.core.ocr_backend import OcrBackend
 
 log = logging.getLogger(__name__)
@@ -37,9 +38,10 @@ _HEARTBEAT_S = 2.0
 
 @dataclass
 class MonitorEvent:
-    kind: str            # "disc_detected" | "state_change" | "error"
+    kind: str            # "disc_detected" | "state_change" | "agent_stats" | "error"
     state: ScreenState
     disc: DiscParsed | None = None
+    agent_stats: AgentStatsParsed | None = None
     error: str | None = None
 
 
@@ -60,6 +62,7 @@ class Monitor:
         set_repo=None,
         upgrade_syncer=None,                                   # UpgradeSyncer opcional
         on_disc_rejected: Callable[[DiscParsed, ScreenState, str], None] | None = None,
+        on_agent_stats: Callable[[AgentStatsParsed, ScreenState], None] | None = None,
         on_diagnostic: Callable[[str], None] | None = None,
     ):
         self._ocr = ocr
@@ -70,6 +73,7 @@ class Monitor:
         self._set_repo = set_repo
         self._upgrade_syncer = upgrade_syncer
         self._on_disc_rejected = on_disc_rejected
+        self._on_agent_stats = on_agent_stats
         # Callback para mensajes de diagnóstico (heartbeat, fallos de captura, etc).
         # Permite que la UI muestre por qué el monitor "está silencioso".
         self._on_diagnostic = on_diagnostic
@@ -86,6 +90,7 @@ class Monitor:
         # disparamos `_process_disc` al ENTRAR a un disc-state (transición),
         # no en cada tick. Se resetea cuando salimos del estado.
         self._processed_disc_state_code: str | None = None
+        self._reported_agent_stats_state_code: str | None = None
         self._window: WindowBounds | None = None
 
     # ---- Control ----------------------------------------------------------------
@@ -253,6 +258,8 @@ class Monitor:
         self._handle_upgrade(frame, state)
         if state.code in _DISC_DETAIL_STATES:
             self._maybe_process_disc(frame, state)
+        elif state.code in AGENT_STATS_STATES:
+            self._maybe_process_agent_stats(frame, state)
         else:
             self._processed_disc_state_code = None
 
@@ -279,6 +286,25 @@ class Monitor:
             return
         self._processed_disc_state_code = state.code
         self._process_disc(frame, state)
+
+    def _maybe_process_agent_stats(self, frame, state: ScreenState) -> None:
+        """Dispara `_process_agent_stats` UNA SOLA VEZ por entrada al estado."""
+        if self._reported_agent_stats_state_code == state.code:
+            return
+        self._reported_agent_stats_state_code = state.code
+        self._process_agent_stats(frame, state)
+
+    def _process_agent_stats(self, frame, state: ScreenState) -> None:
+        try:
+            stats = parse_agent_stats(frame, self._ocr)
+            log.info(
+                "Stats agente: Nv=%s PV=%s ATK=%s DEF=%s conf=%.2f",
+                stats.nivel, stats.pv, stats.ataque, stats.defensa, stats.confianza_global,
+            )
+            if self._on_agent_stats:
+                self._on_agent_stats(stats, state)
+        except Exception as exc:
+            log.exception("Error parseando stats de agente: %s", exc)
 
     def _wait_fast(self) -> None:
         """Espera corta entre capturas rápidas (para alimentar buffer)."""

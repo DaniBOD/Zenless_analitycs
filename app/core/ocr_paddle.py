@@ -1,12 +1,39 @@
 """
 Hito 2.4.3 — Backend OCR: PaddleOCR (números densos, substats con dígitos).
 Lazy-load: solo inicializa en primera invocación para no bloquear el arranque.
+
+Nota: en sistemas Windows con MAX_PATH limitado, paddlepaddle/paddleocr
+se instalan en un path corto (D:\\paddle_site). Este módulo agrega ese
+path automáticamente si paddleocr no es importable desde site-packages.
 """
 from __future__ import annotations
+
+import sys
 
 import numpy as np
 
 from app.core.ocr_backend import OcrBackend
+
+_PADDLE_SITE = r"D:\paddle_site"
+
+
+def _ensure_paddle_site() -> bool:
+    """Agrega D:\\paddle_site a sys.path si existe y paddleocr no es importable."""
+    if _PADDLE_SITE in sys.path:
+        return True
+    try:
+        import paddleocr  # noqa: F401
+        return True
+    except ImportError:
+        pass
+    import os
+    if os.path.isdir(_PADDLE_SITE):
+        sys.path.insert(0, _PADDLE_SITE)
+        return True
+    return False
+
+
+_ensure_paddle_site()
 
 
 class PaddleBackend(OcrBackend):
@@ -24,12 +51,17 @@ class PaddleBackend(OcrBackend):
         if self._ocr is None:
             try:
                 from paddleocr import PaddleOCR
-                self._ocr = PaddleOCR(
-                    use_angle_cls=False,
+                _ensure_paddle_site()
+                kwargs = dict(
+                    use_textline_orientation=False,
                     lang=self._lang,
-                    use_gpu=self._use_gpu,
-                    show_log=False,
                 )
+                # Detectar parámetros soportados por la versión instalada
+                import inspect
+                sig = inspect.signature(PaddleOCR.__init__)
+                if "use_gpu" in sig.parameters:
+                    kwargs["use_gpu"] = self._use_gpu
+                self._ocr = PaddleOCR(**kwargs)
             except ImportError as e:
                 raise RuntimeError(
                     "paddleocr no instalado. Ejecutar: pip install paddleocr"

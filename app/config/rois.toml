@@ -219,6 +219,58 @@ sub4_valor        = [0.660, 0.400, 0.080, 0.028]
 
 
 # ===========================================================================
+# S18 — Perfil agente / Atributos base (stat grid)
+# ===========================================================================
+# Layout: panel izquierdo-centro con grilla de stats del personaje.
+# Columna izquierda: Nivel | PV | Defensa | Prob. CRIT | Tasa Anomalía | Tasa Perforación
+# Columna derecha:  (vacio) | Ataque | Impacto | Daño CRIT | Maestría Anomalía | Recup. Energía
+# Resolución de referencia: 2560x1440 (varía ±20px en h por captura manual).
+# ROIs generosas para cubrir texto OCR. Calibradas sobre 6 screenshots reales.
+# NOTA: Algunos nombres largos (Maestría de Anomalía, Recuperación de Energía)
+# aparecen en 2 líneas en el juego. Las ROIs cubren ambas líneas.
+[perfil_agente_atributos]
+
+# "AGENT INFO" — texto sutil arriba del nombre de facción. Indicador exclusivo de S18.
+agent_info = [0.040, 0.077, 0.160, 0.030]
+
+# --- Fila 1: Nivel (solo en columna izquierda) ---
+nivel_nombre = [0.050, 0.195, 0.080, 0.030]
+nivel_valor  = [0.140, 0.195, 0.120, 0.030]
+
+# --- Columna izquierda ---
+pv_nombre           = [0.050, 0.242, 0.070, 0.030]
+pv_valor            = [0.130, 0.242, 0.120, 0.030]
+
+defensa_nombre      = [0.050, 0.289, 0.100, 0.030]
+defensa_valor       = [0.160, 0.289, 0.120, 0.030]
+
+prob_crit_nombre    = [0.050, 0.336, 0.220, 0.030]
+prob_crit_valor     = [0.240, 0.336, 0.100, 0.030]
+
+tasa_anomalia_nombre = [0.050, 0.383, 0.180, 0.030]
+tasa_anomalia_valor  = [0.240, 0.383, 0.120, 0.030]
+
+tasa_perforacion_nombre = [0.050, 0.430, 0.180, 0.030]
+tasa_perforacion_valor  = [0.240, 0.430, 0.120, 0.030]
+
+# --- Columna derecha ---
+ataque_nombre           = [0.370, 0.242, 0.100, 0.030]
+ataque_valor            = [0.470, 0.242, 0.120, 0.030]
+
+impacto_nombre          = [0.370, 0.289, 0.100, 0.030]
+impacto_valor           = [0.470, 0.289, 0.120, 0.030]
+
+dano_crit_nombre        = [0.370, 0.336, 0.140, 0.030]
+dano_crit_valor         = [0.510, 0.336, 0.100, 0.030]
+
+maestria_anomalia_nombre = [0.370, 0.383, 0.220, 0.035]  # multilínea, más alto
+maestria_anomalia_valor  = [0.580, 0.383, 0.100, 0.035]
+
+recup_energia_nombre    = [0.370, 0.430, 0.230, 0.035]  # multilínea, más alto
+recup_energia_valor     = [0.580, 0.430, 0.100, 0.035]
+
+
+# ===========================================================================
 # Compatibilidad legacy modal_upgrade
 # ===========================================================================
 [modal_upgrade]
