@@ -50,6 +50,7 @@ class MonitorController(QObject):
 
     # Eventos de captura
     disc_detected = Signal(dict)             # payload listo para LivePanel + Toast
+    agent_stats_detected = Signal(dict)      # stats de agente desde S18
     error_occurred = Signal(str)
     # Mensaje informativo crudo para el log (estado, captura descartada, etc).
     log_message = Signal(str)
@@ -103,6 +104,7 @@ class MonitorController(QObject):
             on_disc=self._on_disc_from_monitor,
             on_state_change=self._on_state_from_monitor,
             on_disc_rejected=self._on_disc_rejected_from_monitor,
+            on_agent_stats=self._on_agent_stats_from_monitor,
             on_diagnostic=self._on_diagnostic_from_monitor,
             set_repo=self._disc_set_repo,
         )
@@ -263,6 +265,31 @@ class MonitorController(QObject):
     def _on_diagnostic_from_monitor(self, msg: str):
         """Mensajes de diagnóstico del loop (heartbeat, ventana no encontrada, etc)."""
         self.log_message.emit(f"[diag] {msg}")
+
+    def _on_agent_stats_from_monitor(self, stats, state):
+        """Stats de agente extraídos desde S18 (Atributos base)."""
+        from dataclasses import asdict
+        log.info(
+            "Stats agente %s (%s/%s): Nv=%s PV=%s ATK=%s DEF=%s "
+            "CR=%.1f%% CD=%.1f%% TA=%s MA=%s TP=%s FB=%s ER=%s",
+            stats.agente_nombre or "?",
+            stats.rol or "?", stats.elemento or "?",
+            stats.nivel, stats.pv, stats.ataque, stats.defensa,
+            (stats.prob_crit or 0) * 100,
+            (stats.dano_crit or 0) * 100,
+            stats.tasa_anomalia, stats.maestria_anomalia,
+            stats.tasa_perforacion, stats.fuerza_bruta,
+            stats.recuperacion_energia,
+        )
+        payload = asdict(stats)
+        payload["state_code"] = state.code
+        self.agent_stats_detected.emit(payload)
+        self.log_message.emit(
+            f"[stats] {stats.agente_nombre or 'Agente'} "
+            f"PV={stats.pv} ATK={stats.ataque} DEF={stats.defensa} "
+            f"CR={(stats.prob_crit or 0)*100:.0f}% "
+            f"CD={(stats.dano_crit or 0)*100:.0f}%"
+        )
 
     def _on_disc_from_monitor(self, disc_parsed, state):
         """
