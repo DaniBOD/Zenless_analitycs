@@ -111,8 +111,11 @@ UPGRADE_STATES: set[str] = {"S10"}
 # Estados sin disco (solo logging informativo)
 NON_CAPTURE_STATES: set[str] = {
     "S1", "S2", "S4", "S5", "S8", "S9",
-    "S11", "S12", "S13", "S14", "S15", "S16", "S18",
+    "S11", "S12", "S13", "S14", "S15", "S16",
 }
+
+# Estados donde hay stats de agente visibles (Atributos base)
+AGENT_STATS_STATES: set[str] = {"S18"}
 
 # Rangos HSV para glow verde del slot seleccionado en S17
 # QA 2026-05-13: el aro de slot activo tiene H 45-75, S 120-255, V 180-255
@@ -332,8 +335,9 @@ def _verify_s18(frame: np.ndarray) -> tuple[bool, str | None]:
     """
     S18: verificar por múltiples indicadores (cualquiera basta):
     1. Subrayado amarillo del tab 'Atributos base'
-    2. Grilla de stats (6-7 filas de texto HP/ATK/DEF/CRIT/etc)
-    3. Layout de dos columnas de valores (stat nombre izq, valor der)
+    2. Grilla de stats (4+ líneas separadoras horizontales)
+    3. Zona de valores numéricos brillantes en columna derecha
+    4. "AGENT INFO" — texto sutil sobre el nombre de facción (exclusivo S18)
     """
     h, w = frame.shape[:2]
     reasons = []
@@ -354,7 +358,6 @@ def _verify_s18(frame: np.ndarray) -> tuple[bool, str | None]:
         pass
 
     # --- Indicador 2: grilla de stats en el panel central ---
-    # S18 tiene filas de stat como "HP 12345 / ATK 2345 / ..." en el centro
     try:
         stats_roi = frame[
             int(0.20 * h):int(0.55 * h),
@@ -362,15 +365,12 @@ def _verify_s18(frame: np.ndarray) -> tuple[bool, str | None]:
         ]
         if stats_roi.size > 0:
             gray = cv2.cvtColor(stats_roi, cv2.COLOR_BGR2GRAY)
-            # Detectar líneas horizontales (separadores entre filas de stats)
             edges = cv2.Canny(gray, 40, 120)
             lines = cv2.HoughLinesP(edges, 1, np.pi / 180, 40,
                                     minLineLength=int(0.3 * stats_roi.shape[1]),
                                     maxLineGap=8)
             if lines is not None:
-                # Filtrar líneas cercanas en Y (son filas de stats consecutivas)
                 ys = sorted(set(l[0][1] for l in lines))
-                # Si hay 4+ líneas separadas uniformemente → grilla de stats
                 if len(ys) >= 4:
                     gaps = [ys[i+1] - ys[i] for i in range(len(ys)-1)]
                     avg_gap = sum(gaps) / len(gaps)
@@ -382,15 +382,29 @@ def _verify_s18(frame: np.ndarray) -> tuple[bool, str | None]:
 
     # --- Indicador 3: zona de valores numéricos en columna derecha ---
     try:
-        val_roi = gray = cv2.cvtColor(
-            frame[int(0.22*h):int(0.50*h), int(0.65*w):int(0.80*w)],
-            cv2.COLOR_BGR2GRAY
-        )
+        val_roi = frame[int(0.22*h):int(0.50*h), int(0.65*w):int(0.80*w)]
         if val_roi.size > 0:
-            # Los valores de stat suelen ser brillantes sobre fondo oscuro
-            bright = (val_roi > 150).sum() / val_roi.size
+            gray_val = cv2.cvtColor(val_roi, cv2.COLOR_BGR2GRAY)
+            bright = (gray_val > 150).sum() / gray_val.size
             if bright > 0.20:
                 reasons.append("valores_brillantes")
+    except Exception:
+        pass
+
+    # --- Indicador 4: "AGENT INFO" texto sutil ---
+    try:
+        ai_roi = frame[
+            int(0.077 * h):int(0.107 * h),
+            int(0.040 * w):int(0.200 * w)
+        ]
+        if ai_roi.size > 0:
+            ai_gray = cv2.cvtColor(ai_roi, cv2.COLOR_BGR2GRAY)
+            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+            ai_enhanced = clahe.apply(ai_gray)
+            _, ai_binary = cv2.threshold(ai_enhanced, 100, 255, cv2.THRESH_BINARY)
+            text_area = (ai_binary == 0).sum() / ai_binary.size
+            if text_area > 0.03:
+                reasons.append("agent_info_text")
     except Exception:
         pass
 

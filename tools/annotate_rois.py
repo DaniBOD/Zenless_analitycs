@@ -26,6 +26,7 @@ import numpy as np
 
 REPO = Path(__file__).resolve().parent.parent
 SCREENSHOTS_ROOT = REPO / "Documentacion" / "Screenshots_Triggers" / "Discos_Triggers"
+SCREENSHOTS_ROOT_ALT = REPO / "Documentacion" / "Screenshots_Triggers" / "Triggers_Generales"
 ROIS_TOML = REPO / "app" / "config" / "rois.toml"
 OUTPUT_ROOT = REPO / "Documentacion" / "QA" / "calibracion_visual"
 
@@ -43,7 +44,12 @@ FOLDER_TO_STATE: dict[str, tuple[str, str]] = {
     "08_Pantallas_Menu_Transicion":           ("S1", None),
     "11_Tienda_Musica_Afinacion":             ("S5", None),
     "12_Desmontaje":                          ("S11", None),
+    "Triggers_Generales/Perfil_agente":       ("S18", "perfil_agente_atributos"),
 }
+
+# Override: si un archivo está dentro de la carpeta Perfil_agente,
+# la ruta base incluye "Triggers_Generales". Necesitamos parsear folder_name.
+# Esto se maneja en process_folder abajo — ignorar overrides de nombre para S18.
 
 # Override por nombre de archivo: cuando el detector y el parser deben tratar
 # una imagen dentro de una carpeta como un estado distinto al default de la carpeta.
@@ -214,7 +220,10 @@ def main():
     for folder_name, (state, section) in FOLDER_TO_STATE.items():
         folder = SCREENSHOTS_ROOT / folder_name
         if not folder.exists():
-            continue
+            # Intentar con root alternativo (Triggers_Generales)
+            folder = SCREENSHOTS_ROOT_ALT / folder_name.replace("Triggers_Generales/", "")
+            if not folder.exists():
+                continue
         if args.state and state != args.state:
             continue
 
