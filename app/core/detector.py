@@ -712,15 +712,22 @@ class ScreenDetector:
     # ---- Pipeline completo --------------------------------------------------
 
     @staticmethod
-    def _is_dark_frame(frame: np.ndarray, threshold: int = 35, dark_ratio: float = 0.50) -> bool:
+    def _is_dark_frame(frame: np.ndarray, threshold: int = 35, dark_ratio: float = 0.60) -> bool:
         """
         Filtro de frame oscuro: si más del `dark_ratio`% de píxeles están
         por debajo de `threshold` de brillo, es una pantalla de carga/
         transición/diálogo que no tiene discos. Previene FPs en transiciones.
+
+        Solo analiza el 60% central del ancho (x=0.20 a x=0.80) para evitar
+        que personajes con fondo oscuro en los bordes disparen el filtro.
+        dark_ratio subido a 0.60 para ser más permisivo con pantallas informativas.
         """
         if frame is None or frame.size == 0:
             return True
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+        h, w = frame.shape[:2]
+        # Solo región central donde aparece UI
+        center = frame[:, int(0.20*w):int(0.80*w)]
+        gray = cv2.cvtColor(center, cv2.COLOR_BGR2GRAY) if center.ndim == 3 else center
         dark = (gray < threshold).sum()
         return (dark / gray.size) > dark_ratio
 
