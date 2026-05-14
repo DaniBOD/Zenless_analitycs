@@ -62,7 +62,7 @@ _RE_PERCENT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 _STAT_KEYS = [
     "nivel", "pv", "ataque", "defensa", "impacto",
     "prob_crit", "dano_crit", "tasa_anomalia", "maestria_anomalia",
-    "tasa_perforacion", "recup_energia",
+    "tasa_perforacion", "recup_energia", "fuerza_bruta",
 ]
 
 # Keywords para matchear nombres de stat contra texto OCR.
@@ -128,6 +128,7 @@ class AgentStatsParsed:
     maestria_anomalia: int | None = None
     tasa_perforacion: float | None = None
     recuperacion_energia: float | None = None
+    fuerza_bruta: int | None = None
     confianza_global: float = 0.0
     notas: list[str] = field(default_factory=list)
     # Identificacion del agente (extraida del OCR + validada contra DB)
@@ -254,6 +255,8 @@ _RE_PROB_CRIT = re.compile(r"(?:Probabilidad|Prob\.?)\s*(?:de\s*)?(\d+(?:\.\d+)?
 _RE_DANO_CRIT = re.compile(r"(?:Dano|Danio)\s*Critico\s+(\d+(?:\.\d+)?)\s*%")
 _RE_TASA_ANOMALIA = re.compile(r"Tasa\s+de\s+Anomalia\s+(\d+)")
 _RE_MAESTRIA_ANOMALIA = re.compile(r"Maestria\s+de\s+Anomalia\s+(\d+)")
+# Fuerza Bruta: stat de Anomalia/Disruptivos en reemplazo de Tasa de Perforacion
+_RE_FUERZA_BRUTA = re.compile(r"Fuerza\s+Bruta\s+(\d+)")
 # Agente: ultimo nombre/palabra antes de "Nivel" (captura multi-word)
 _RE_AGENTE_NOMBRE = re.compile(
     r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+Nivel\s+\d+"
@@ -295,6 +298,7 @@ def _extract_by_regex(text: str) -> dict[str, str | None]:
         ("maestria_anomalia", _RE_MAESTRIA_ANOMALIA),
         ("tasa_perforacion", _RE_TASA_PERFORACION),
         ("recup_energia", _RE_RECUP_ENERGIA),
+        ("fuerza_bruta", _RE_FUERZA_BRUTA),
     ]:
         m = regex.search(text)
         if m:
@@ -375,16 +379,16 @@ def _parse_via_full_frame(
     tasa_anomalia = _parse_int(extracted["tasa_anomalia"])
     maestria_anomalia = _parse_int(extracted["maestria_anomalia"])
 
-    # Tasa de Perforacion: para Anomalia/Disruptivos el slot bottom-left
-    # es "Fuerza Bruta" (stat diferente), ignoramos ese valor.
-    # Para roles desconocidos (None) intentamos extraer igual.
+    # Fuerza Bruta: stat exclusivo de Disruptivos en el slot bottom-left.
+    # Reemplaza a Tasa de Perforacion solo para ese rol.
     tasa_perforacion = None
-    if rol_db in ("anomalia", "disruptivos"):
+    fuerza_bruta = None
+    if rol_db == "disruptivos":
+        fuerza_bruta = _parse_int(extracted["fuerza_bruta"])
         if extracted["tasa_perforacion"] is not None:
             notas.append(f"tp_ignorada_rol_{rol_db}")
     else:
         tasa_perforacion = _normalize_percent(_parse_float(extracted["tasa_perforacion"]))
-
     recuperacion_energia = _parse_float(extracted["recup_energia"])
 
     if nombre_db is not None and rol_db is not None:
@@ -396,6 +400,7 @@ def _parse_via_full_frame(
         tasa_anomalia=tasa_anomalia, maestria_anomalia=maestria_anomalia,
         tasa_perforacion=tasa_perforacion,
         recuperacion_energia=recuperacion_energia,
+        fuerza_bruta=fuerza_bruta,
         confianza_global=round(ocr_conf, 3),
         notas=notas,
         agente_nombre=nombre_db,
@@ -446,6 +451,9 @@ def _parse_via_rois(frame: np.ndarray, ocr: OcrBackend) -> AgentStatsParsed:
     text, c1, c2 = _parse_stat("tasa_perforacion"); confianzas.extend([c1, c2]); tasa_perforacion = _normalize_percent(_parse_float(text))
     text, c1, c2 = _parse_stat("recup_energia"); confianzas.extend([c1, c2]); recuperacion_energia = _parse_float(text)
 
+    # Fuerza Bruta no aplica en per-ROI (Tesseract no puede extraerlo de crops)
+    fuerza_bruta = None
+
     confianza_global = (sum(confianzas) / len(confianzas)) if confianzas else 0.0
     return AgentStatsParsed(
         nivel=nivel, pv=pv, ataque=ataque, defensa=defensa,
@@ -453,6 +461,7 @@ def _parse_via_rois(frame: np.ndarray, ocr: OcrBackend) -> AgentStatsParsed:
         tasa_anomalia=tasa_anomalia, maestria_anomalia=maestria_anomalia,
         tasa_perforacion=tasa_perforacion,
         recuperacion_energia=recuperacion_energia,
+        fuerza_bruta=fuerza_bruta,
         confianza_global=round(confianza_global, 3), notas=notas,
     )
 
