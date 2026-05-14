@@ -82,9 +82,13 @@ def test_extracts_all_11_stats(screenshot_path, paddle_ocr):
     if extracted == 0:
         pytest.skip(f"PaddleOCR no extrajo stats en {screenshot_path.stem} (entorno sin OneDNN compatible)")
 
-    assert extracted >= 11, (
+    # Para agentes Anomalia/Disruptivos, Tasa de Perforacion no aplica
+    # (tienen "Fuerza Bruta" en su lugar). Permitimos 10/11 en ese caso.
+    min_expected = 11 if (result.rol not in ("anomalia", "disruptivos")) else 10
+
+    assert extracted >= min_expected, (
         f"Stats faltantes o cero en {screenshot_path.stem}: "
-        f"solo {extracted}/11. "
+        f"solo {extracted}/11 (rol={result.rol}, min_expected={min_expected}). "
         f"nivel={result.nivel} pv={result.pv} atk={result.ataque} "
         f"def={result.defensa} imp={result.impacto} "
         f"crit_rate={result.prob_crit} crit_dmg={result.dano_crit} "
@@ -103,6 +107,7 @@ def test_agent_stats_parsed_fields():
         "prob_crit", "dano_crit", "tasa_anomalia", "maestria_anomalia",
         "tasa_perforacion", "recuperacion_energia",
         "confianza_global", "notas",
+        "agente_nombre", "rol", "elemento",
     ]
     for f in expected:
         assert f in fields, f"Campo '{f}' faltante en AgentStatsParsed"

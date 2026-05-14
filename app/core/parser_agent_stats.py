@@ -1,20 +1,25 @@
 """
 Hito 2.8 — Parser de stats de agente: frame OCR -> AgentStatsParsed.
-Extrae los 11 atributos base del personaje desde la pantalla S18
-(Perfil agente -> pestaña Atributos base).
+Extrae los 11 atributos base + nombre + rol + elemento del personaje
+desde la pantalla S18 (Perfil agente -> pestaña Atributos base).
 
 Dos modos de operacion:
-- Backend PaddleOCR (text_with_bboxes): OCR una sola vez sobre frame completo,
-  mapea cada bbox a su stat por keyword matching + solapamiento geometrico.
-- Backend Tesseract/otro (sin bboxes): OCR per-ROI (22 crops individuales).
+- Backend PaddleOCR: OCR una sola vez sobre frame completo, extrae por regex
+  del texto concatenado. Valida rol contra DB para filtrar stats segun tipo.
+- Backend Tesseract/otro: OCR per-ROI (22 crops individuales).
 
-Layout (confirmado por DaniBOD):
-  Columna izquierda:  Nivel | PV | Defensa | Prob. CRIT | Tasa Anomalia | Tasa Perforacion
+Layout de columnas (confirmado por DaniBOD):
+  Columna izquierda:  Nivel | PV | Defensa | Prob. CRIT | Tasa Anomalia | [varia segun rol]
   Columna derecha:    (vacio) | Ataque | Impacto | Dano CRIT | Maestria Anomalia | Recup. Energia
+
+  El slot bottom-left varia segun el rol:
+  - Atacante/Aturdimiento/Defensa/Soporte: Tasa de Perforacion
+  - Anomalia/Disruptivos: Fuerza Bruta (ignorada por el parser actual)
 """
 from __future__ import annotations
 
 import re
+import sqlite3
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,6 +31,22 @@ if TYPE_CHECKING:
     from app.core.ocr_backend import OcrBackend
 
 from app.core.capturer import crop_named_roi
+
+# Roles validos en DB
+_ROLES_DB: set[str] = {
+    "ataque", "anomalia", "anomalia", "aturdimiento", "defensa",
+    "soporte", "disruptivos",
+}
+_ELEMENTOS_DB: set[str] = {
+    "fisico", "fuego", "hielo", "electrico", "eter",
+}
+# Mapping OCR noise -> roles canonicales
+_ROL_OCR_MAP: dict[str, str] = {
+    "auxiliar": "soporte",
+    "aturdidor": "aturdimiento",
+    "anomalo": "anomalia",
+    "disruptivo": "disruptivos",
+}
 
 # ---------------------------------------------------------------------------
 # Regex
@@ -109,6 +130,10 @@ class AgentStatsParsed:
     recuperacion_energia: float | None = None
     confianza_global: float = 0.0
     notas: list[str] = field(default_factory=list)
+    # Identificacion del agente (extraida del OCR + validada contra DB)
+    agente_nombre: str | None = None
+    rol: str | None = None
+    elemento: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +181,68 @@ def _normalize_percent(val: float | None) -> float | None:
 # Modo 1: PaddleOCR full-frame
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# DB lookup
+# ---------------------------------------------------------------------------
+
+_DB_PATH = Path(__file__).resolve().parent.parent.parent / "db" / "danibod_zzz_v2.db"
+
+
+def _normalizar_rol(ocr_text: str) -> str | None:
+    """Normaliza texto OCR a rol canonico de DB."""
+    t = ocr_text.lower().strip()
+    if t in _ROLES_DB:
+        return t
+    for alias, canon in _ROL_OCR_MAP.items():
+        if alias in t:
+            return canon
+    return None
+
+
+def _lookup_agent(nombre_ocr: str) -> tuple[str | None, str | None, str | None]:
+    """
+    Busca un agente en la DB por nombre aproximado.
+    Prueba multiples variantes: raw, sin espacios, con split camelCase
+    (para OCR que pega palabras: "NangongYu" -> "nangong yu").
+    Retorna (nombre_canon, rol, elemento) o (None, None, None).
+    """
+    if not nombre_ocr:
+        return (None, None, None)
+    try:
+        conn = sqlite3.connect(f"file:{_DB_PATH}?mode=ro", uri=True)
+        raw = nombre_ocr.strip()
+        base = raw.lower()
+
+        candidates = {base, base.replace(" ", "")}
+
+        # Split camelCase: "NangongYu" -> "Nangong Yu" (preserving case first)
+        # Luego lowercased: "nangong yu"
+        split_camel = re.sub(r"([a-z])([A-Z])", r"\1 \2", raw).lower()
+        candidates.add(split_camel)
+        # split_camel without spaces too
+        candidates.add(split_camel.replace(" ", ""))
+
+        for c in candidates:
+            if not c:
+                continue
+            cursor = conn.execute(
+                "SELECT nombre, rol, elemento FROM agents WHERE LOWER(nombre) LIKE ?",
+                (f"%{c}%",),
+            )
+            row = cursor.fetchone()
+            if row:
+                conn.close()
+                return (row[0], row[1], row[2])
+        conn.close()
+    except Exception:
+        pass
+    return (None, None, None)
+
+
+# ---------------------------------------------------------------------------
+# Regex para PaddleOCR full-frame
+# ---------------------------------------------------------------------------
+
 _RE_NIVEL = re.compile(r"(?:Nivel|Nv\.?)\s*(\d{1,2})")
 _RE_PV = re.compile(r"PV\s+(\d+(?:\s+\d+)?)")
 _RE_ATAQUE = re.compile(r"Ataque\s+(\d+)")
@@ -167,9 +254,15 @@ _RE_PROB_CRIT = re.compile(r"(?:Probabilidad|Prob\.?)\s*(?:de\s*)?(\d+(?:\.\d+)?
 _RE_DANO_CRIT = re.compile(r"(?:Dano|Danio)\s*Critico\s+(\d+(?:\.\d+)?)\s*%")
 _RE_TASA_ANOMALIA = re.compile(r"Tasa\s+de\s+Anomalia\s+(\d+)")
 _RE_MAESTRIA_ANOMALIA = re.compile(r"Maestria\s+de\s+Anomalia\s+(\d+)")
-# PEN rate: "Tasa de Perforacion 0 %" (comes before Recup Energia in the text)
+# Agente: ultimo nombre/palabra antes de "Nivel" (captura multi-word)
+_RE_AGENTE_NOMBRE = re.compile(
+    r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+Nivel\s+\d+"
+)
+# Rol: texto entre "MAX" y "PV"
+_RE_ROL_OCR = re.compile(r"MAX\s+(.+?)\s+PV\b")
+# PEN rate: SOLO "Tasa de Perforacion" (excluye "Fuerza Bruta" que es de Disruptivos)
 _RE_TASA_PERFORACION = re.compile(
-    r"(?:Tasa\s+de\s+Perforacion\s*|Fuerza\s+Bruta\s*)(\d+(?:\.\d+)?)\s*%?"
+    r"Tasa\s+de\s+Perforacion\s*(\d+(?:\.\d+)?)\s*%?"
 )
 _RE_RECUP_ENERGIA = re.compile(
     r"(?:\b(\d+(?:\.\d+)?)\s*(?:V\s+)?(?:Energia|Adrenalina)"
@@ -212,14 +305,50 @@ def _extract_by_regex(text: str) -> dict[str, str | None]:
     return result
 
 
+def _extract_agent_info(full_text: str) -> tuple[str | None, str | None, str | None, str | None]:
+    """
+    Extrae nombre, rol y elemento del texto OCR.
+    Retorna (nombre_ocr, nombre_db, rol_db, elemento_db).
+    """
+    nombre_ocr = None
+    m = _RE_AGENTE_NOMBRE.search(full_text)
+    if m:
+        nombre_ocr = m.group(1).strip()
+        # Ignorar capturas demasiado cortas (el OCR suele fragmentar nombres
+        # tipo "Yu" del camelCase "NangongYu", o "Tinta" que no es agente)
+        if len(nombre_ocr) <= 2 or not any(c.islower() for c in nombre_ocr):
+            nombre_ocr = None
+
+    rol_ocr_raw = None
+    m = _RE_ROL_OCR.search(full_text)
+    if m:
+        rol_ocr_raw = m.group(1).strip()
+
+    # Buscar en DB por nombre OCR
+    nombre_db, rol_db, elemento_db = _lookup_agent(nombre_ocr or "")
+
+    # Si no hay match en DB, intentar extraer rol del texto OCR
+    if rol_db is None and rol_ocr_raw:
+        rol_db = _normalizar_rol(rol_ocr_raw)
+
+    # Extraer elemento del texto OCR si no vino de DB
+    if elemento_db is None and rol_ocr_raw:
+        t = rol_ocr_raw.lower()
+        for elem in _ELEMENTOS_DB:
+            if elem in t:
+                elemento_db = elem.capitalize()
+                break
+
+    return (nombre_ocr, nombre_db, rol_db, elemento_db)
+
+
 def _parse_via_full_frame(
     frame: np.ndarray,
     ocr: OcrBackend,
 ) -> AgentStatsParsed:
     """
     OCR sobre frame completo, extrae stats por regex del texto concatenado.
-    Mucho mas robusto que mapeo bbox a bbox porque PaddleOCR detecta nombres
-    y valores en posiciones inconsistentes pero el texto completo es legible.
+    Valida rol contra DB para filtrar stats segun tipo de agente.
     """
     notas: list[str] = []
 
@@ -227,6 +356,9 @@ def _parse_via_full_frame(
     if not full_text or ocr_conf == 0.0:
         notas.append("ocr_no_detecto_texto")
         return AgentStatsParsed(confianza_global=0.0, notas=notas)
+
+    # Extraer agente + rol
+    nombre_ocr, nombre_db, rol_db, elemento_db = _extract_agent_info(full_text)
 
     extracted = _extract_by_regex(full_text)
 
@@ -242,8 +374,21 @@ def _parse_via_full_frame(
     dano_crit = _normalize_percent(_parse_float(extracted["dano_crit"]))
     tasa_anomalia = _parse_int(extracted["tasa_anomalia"])
     maestria_anomalia = _parse_int(extracted["maestria_anomalia"])
-    tasa_perforacion = _normalize_percent(_parse_float(extracted["tasa_perforacion"]))
+
+    # Tasa de Perforacion: para Anomalia/Disruptivos el slot bottom-left
+    # es "Fuerza Bruta" (stat diferente), ignoramos ese valor.
+    # Para roles desconocidos (None) intentamos extraer igual.
+    tasa_perforacion = None
+    if rol_db in ("anomalia", "disruptivos"):
+        if extracted["tasa_perforacion"] is not None:
+            notas.append(f"tp_ignorada_rol_{rol_db}")
+    else:
+        tasa_perforacion = _normalize_percent(_parse_float(extracted["tasa_perforacion"]))
+
     recuperacion_energia = _parse_float(extracted["recup_energia"])
+
+    if nombre_db is not None and rol_db is not None:
+        notas.append(f"agente_{nombre_db}_rol_{rol_db}")
 
     return AgentStatsParsed(
         nivel=nivel, pv=pv, ataque=ataque, defensa=defensa,
@@ -253,6 +398,9 @@ def _parse_via_full_frame(
         recuperacion_energia=recuperacion_energia,
         confianza_global=round(ocr_conf, 3),
         notas=notas,
+        agente_nombre=nombre_db,
+        rol=rol_db,
+        elemento=elemento_db,
     )
 
 
