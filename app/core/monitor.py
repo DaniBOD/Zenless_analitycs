@@ -16,6 +16,7 @@ from app.core.capturer import WindowBounds, capture_window, find_zzz_window
 from app.core.detector import (
     ScreenDetector, ScreenState, TemporalBuffer, AGENT_STATS_STATES,
     extract_s17_slot, extract_s9_slot, polling_cadence_ms,
+    _deep_detect_s18,
 )
 from app.core.parser_disc import DiscParsed, parse_modal_detalle
 from app.core.parser_agent_stats import AgentStatsParsed, parse_agent_stats
@@ -162,6 +163,15 @@ class Monitor:
             # ---- Paso 1: clasificar frame individual ----
             raw_state = self._detector.classify(frame)
 
+            # Fallback deep detect S18: si classify se quedó en S12, intentar
+            # detección independiente de templates con 3 indicadores visuales
+            # + 2 OCR. Cierra el gap en .exe a 2560x1440 donde las templates
+            # S18 no matchean (ver Documentacion/Dev_IA/2026-05-15_*.md).
+            if raw_state.code == "S12":
+                deep = _deep_detect_s18(frame, self._ocr)
+                if deep is not None:
+                    raw_state = deep
+
             # Slot detection
             if raw_state.code == "S17":
                 raw_state.slot = extract_s17_slot(frame, self._ocr)
@@ -169,7 +179,12 @@ class Monitor:
                 raw_state.slot = extract_s9_slot(frame, self._ocr)
 
             # ---- Paso 2: alimentar buffer temporal ----
-            voted_state = buffer.add(raw_state)
+            # Deep detect con alta confianza salta la votación 2/3 para
+            # responder en el primer frame (UX < 500 ms).
+            if raw_state.method == "deep_detect" and raw_state.confidence >= 0.75:
+                voted_state = buffer.promote_now(raw_state)
+            else:
+                voted_state = buffer.add(raw_state)
 
             # ---- Paso 3: emitir SOLO cuando buffer confirma ----
             if voted_state is not None:

@@ -75,10 +75,10 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     "S10": {"S12", "S9", "S3"},
     "S11": {"S12", "S9", "S3"},
     "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18"},
-    "S13": {"S12", "S14", "S1"},
-    "S14": {"S12", "S1", "S13", "S15"},
+    "S13": {"S12", "S14", "S1", "S18"},
+    "S14": {"S12", "S1", "S13", "S15", "S18"},
     "S15": {"S8", "S18", "S12", "S14"},
-    "S16": {"S12", "S9", "S8"},
+    "S16": {"S12", "S9", "S8", "S18"},
     "S17": {"S8", "S18", "S12", "S15", "S9"},
     "S18": {"S8", "S12", "S15", "S17"},
 }
@@ -207,6 +207,23 @@ class TemporalBuffer:
         self._last_emitted = None
         self._last_voted = None
 
+    def promote_now(self, state: ScreenState) -> ScreenState | None:
+        """
+        Emite un estado inmediatamente, saltando la votación 2/3.
+        Útil para detecciones de alta confianza (e.g. deep_detect S18) que
+        no deben esperar 3 frames para confirmarse. Mantiene `_last_emitted`
+        coherente para evitar re-emisiones del mismo estado (devuelve None
+        si ya emitimos ese código previamente, igual que `add`).
+        """
+        self._window.append(state)
+        if len(self._window) > self._window_size:
+            self._window = self._window[-self._window_size:]
+        if self._last_emitted == state.code:
+            return None
+        self._last_emitted = state.code
+        self._last_voted = state
+        return state
+
 
 # =========================================================================
 # State machine
@@ -331,86 +348,329 @@ def _verify_s17(frame: np.ndarray) -> tuple[bool, str | None]:
         return True, None
 
 
+def _s18_visual_tab_amarillo(frame: np.ndarray) -> tuple[bool, str | None]:
+    """Indicador visual: subrayado amarillo del tab 'Atributos base'."""
+    try:
+        h, w = frame.shape[:2]
+        tab_roi = frame[int(0.05 * h):int(0.12 * h), int(0.30 * w):int(0.70 * w)]
+        if tab_roi.size == 0:
+            return False, None
+        hsv_tab = cv2.cvtColor(tab_roi, cv2.COLOR_BGR2HSV)
+        yellow_mask = cv2.inRange(hsv_tab, np.array([15, 100, 100]), np.array([40, 255, 255]))
+        yellow_ratio = yellow_mask.sum() / yellow_mask.size / 255
+        if yellow_ratio > 0.02:
+            return True, "tab_amarillo"
+        return False, None
+    except Exception:
+        return False, None
+
+
+def _s18_visual_grilla_stats(frame: np.ndarray) -> tuple[bool, str | None]:
+    """Indicador visual: grilla de stats (4+ líneas separadoras horizontales)."""
+    try:
+        h, w = frame.shape[:2]
+        stats_roi = frame[int(0.20 * h):int(0.55 * h), int(0.15 * w):int(0.85 * w)]
+        if stats_roi.size == 0:
+            return False, None
+        gray = cv2.cvtColor(stats_roi, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, 40, 120)
+        lines = cv2.HoughLinesP(edges, 1, np.pi / 180, 40,
+                                minLineLength=int(0.3 * stats_roi.shape[1]),
+                                maxLineGap=8)
+        if lines is None:
+            return False, None
+        ys = sorted(set(l[0][1] for l in lines))
+        if len(ys) < 4:
+            return False, None
+        gaps = [ys[i + 1] - ys[i] for i in range(len(ys) - 1)]
+        avg_gap = sum(gaps) / len(gaps)
+        uniform_gaps = sum(1 for g in gaps if abs(g - avg_gap) < 10)
+        if uniform_gaps >= len(gaps) * 0.5:
+            return True, f"grid_{len(ys)}_stats"
+        return False, None
+    except Exception:
+        return False, None
+
+
+def _s18_visual_valores_brillantes(frame: np.ndarray) -> tuple[bool, str | None]:
+    """Indicador visual: zona de valores numéricos brillantes en columna derecha."""
+    try:
+        h, w = frame.shape[:2]
+        val_roi = frame[int(0.22 * h):int(0.50 * h), int(0.65 * w):int(0.80 * w)]
+        if val_roi.size == 0:
+            return False, None
+        gray_val = cv2.cvtColor(val_roi, cv2.COLOR_BGR2GRAY)
+        bright = (gray_val > 150).sum() / gray_val.size
+        if bright > 0.20:
+            return True, "valores_brillantes"
+        return False, None
+    except Exception:
+        return False, None
+
+
+def _s18_visual_agent_info_clahe(frame: np.ndarray) -> tuple[bool, str | None]:
+    """
+    Indicador visual: 'AGENT INFO' texto sutil detectado por CLAHE + threshold.
+
+    Calibración empírica (QA 2026-05-15):
+      - S18 fixtures reales (2559×1439): std 38-103, text_area 0.50-0.74
+      - FPs modal Info conjunto (S16):    std  7-8,  text_area 1.00
+      - Frame negro/carga uniforme:       std  0,    text_area 1.00
+
+    Filtros aplicados:
+      - std > 15 → descarta regiones uniformes oscuras (FPs S16, cargas)
+      - 0.03 < text_area < 0.95 → descarta frames totalmente oscuros
+    """
+    try:
+        h, w = frame.shape[:2]
+        ai_roi = frame[int(0.077 * h):int(0.107 * h), int(0.040 * w):int(0.200 * w)]
+        if ai_roi.size == 0:
+            return False, None
+        ai_gray = cv2.cvtColor(ai_roi, cv2.COLOR_BGR2GRAY)
+        if float(ai_gray.std()) < 15.0:
+            return False, None
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        ai_enhanced = clahe.apply(ai_gray)
+        _, ai_binary = cv2.threshold(ai_enhanced, 100, 255, cv2.THRESH_BINARY)
+        text_area = (ai_binary == 0).sum() / ai_binary.size
+        if 0.03 < text_area < 0.95:
+            return True, "agent_info_text"
+        return False, None
+    except Exception:
+        return False, None
+
+
 def _verify_s18(frame: np.ndarray) -> tuple[bool, str | None]:
     """
-    S18: verificar por múltiples indicadores (cualquiera basta):
+    S18: verificar por múltiples indicadores visuales (cualquiera basta):
     1. Subrayado amarillo del tab 'Atributos base'
     2. Grilla de stats (4+ líneas separadoras horizontales)
     3. Zona de valores numéricos brillantes en columna derecha
     4. "AGENT INFO" — texto sutil sobre el nombre de facción (exclusivo S18)
+
+    Esta función corre como confirmación post-template-match en `ScreenDetector._verify()`.
+    Para detección INDEPENDIENTE de templates (usada como fallback en monitor cuando
+    classify() devuelve S12) ver `_deep_detect_s18()`.
     """
-    h, w = frame.shape[:2]
-    reasons = []
-
-    # --- Indicador 1: subrayado amarillo del tab ---
-    try:
-        tab_roi = frame[
-            int(0.05 * h):int(0.12 * h),
-            int(0.30 * w):int(0.70 * w)
-        ]
-        if tab_roi.size > 0:
-            hsv_tab = cv2.cvtColor(tab_roi, cv2.COLOR_BGR2HSV)
-            yellow_mask = cv2.inRange(hsv_tab, np.array([15, 100, 100]), np.array([40, 255, 255]))
-            yellow_ratio = yellow_mask.sum() / yellow_mask.size / 255
-            if yellow_ratio > 0.02:
-                reasons.append("tab_amarillo")
-    except Exception:
-        pass
-
-    # --- Indicador 2: grilla de stats en el panel central ---
-    try:
-        stats_roi = frame[
-            int(0.20 * h):int(0.55 * h),
-            int(0.15 * w):int(0.85 * w)
-        ]
-        if stats_roi.size > 0:
-            gray = cv2.cvtColor(stats_roi, cv2.COLOR_BGR2GRAY)
-            edges = cv2.Canny(gray, 40, 120)
-            lines = cv2.HoughLinesP(edges, 1, np.pi / 180, 40,
-                                    minLineLength=int(0.3 * stats_roi.shape[1]),
-                                    maxLineGap=8)
-            if lines is not None:
-                ys = sorted(set(l[0][1] for l in lines))
-                if len(ys) >= 4:
-                    gaps = [ys[i+1] - ys[i] for i in range(len(ys)-1)]
-                    avg_gap = sum(gaps) / len(gaps)
-                    uniform_gaps = sum(1 for g in gaps if abs(g - avg_gap) < 10)
-                    if uniform_gaps >= len(gaps) * 0.5:
-                        reasons.append(f"grid_{len(ys)}_stats")
-    except Exception:
-        pass
-
-    # --- Indicador 3: zona de valores numéricos en columna derecha ---
-    try:
-        val_roi = frame[int(0.22*h):int(0.50*h), int(0.65*w):int(0.80*w)]
-        if val_roi.size > 0:
-            gray_val = cv2.cvtColor(val_roi, cv2.COLOR_BGR2GRAY)
-            bright = (gray_val > 150).sum() / gray_val.size
-            if bright > 0.20:
-                reasons.append("valores_brillantes")
-    except Exception:
-        pass
-
-    # --- Indicador 4: "AGENT INFO" texto sutil ---
-    try:
-        ai_roi = frame[
-            int(0.077 * h):int(0.107 * h),
-            int(0.040 * w):int(0.200 * w)
-        ]
-        if ai_roi.size > 0:
-            ai_gray = cv2.cvtColor(ai_roi, cv2.COLOR_BGR2GRAY)
-            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-            ai_enhanced = clahe.apply(ai_gray)
-            _, ai_binary = cv2.threshold(ai_enhanced, 100, 255, cv2.THRESH_BINARY)
-            text_area = (ai_binary == 0).sum() / ai_binary.size
-            if text_area > 0.03:
-                reasons.append("agent_info_text")
-    except Exception:
-        pass
-
+    reasons: list[str] = []
+    for indicator in (
+        _s18_visual_tab_amarillo,
+        _s18_visual_grilla_stats,
+        _s18_visual_valores_brillantes,
+        _s18_visual_agent_info_clahe,
+    ):
+        ok, reason = indicator(frame)
+        if ok and reason:
+            reasons.append(reason)
     if reasons:
         return True, "+".join(reasons)
     return False, "sin_indicadores_s18"
+
+
+# =========================================================================
+# Deep S18 multi-trigger detector (resolución-agnóstico, usa OCR)
+# =========================================================================
+
+# Banner superior-izquierdo donde aparece "AGENT INFO" / "INFO AGENTE" / nombre facción.
+# ROI más amplia que la visual CLAHE para dar margen al OCR.
+_S18_OCR_BANNER_ROI = (0.030, 0.045, 0.230, 0.090)  # (x, y, w, h) normalizados
+
+# Panel central donde caen los 11 stats con labels.
+_S18_OCR_STATS_ROI = (0.150, 0.200, 0.700, 0.450)
+
+# Grupos de keywords de stats (case-insensitive, sin acentos).
+# Cada grupo cuenta como UNA aparición si cualquiera de sus términos
+# está en el OCR del panel central. Score = grupos distintos detectados.
+_S18_STAT_KEYWORD_GROUPS: list[list[str]] = [
+    ["pv", "hp"],
+    ["ataque", "atq", "atk"],
+    ["defensa", "def"],
+    ["impacto", "imp"],
+    ["prob", "crit"],
+    ["dano critico", "dano crit", "dmg crit"],
+    ["tasa anomalia", "anomalia"],
+    ["maestria"],
+    ["perforacion", "pen"],
+    ["recuperacion", "energia", "recup"],
+]
+
+# Palabras que indican AGENT INFO banner (variantes ES/EN).
+_S18_AGENT_INFO_KEYWORDS: tuple[str, ...] = (
+    "agent info",
+    "agent",
+    "info agente",
+    "perfil agente",
+    "atributos base",
+)
+
+
+def _strip_accents_lower(text: str) -> str:
+    """Normaliza texto: minúsculas + remueve acentos comunes ES."""
+    if not text:
+        return ""
+    repl = {
+        "á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ñ": "n",
+        "Á": "a", "É": "e", "Í": "i", "Ó": "o", "Ú": "u", "Ñ": "n",
+    }
+    out = text.lower()
+    for k, v in repl.items():
+        out = out.replace(k, v)
+    return out
+
+
+def _ocr_crop(frame: np.ndarray, ocr, roi: tuple[float, float, float, float], psm: int = 6) -> str:
+    """OCR de una ROI normalizada. Devuelve string vacío si falla."""
+    if frame is None or frame.size == 0 or ocr is None:
+        return ""
+    try:
+        h, w = frame.shape[:2]
+        x, y, rw, rh = roi
+        crop = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
+        if crop.size == 0:
+            return ""
+        text, _conf = ocr.text(crop, psm=psm, lang="spa")
+        return text or ""
+    except Exception:
+        return ""
+
+
+def _s18_ocr_agent_info(frame: np.ndarray, ocr) -> tuple[bool, str | None]:
+    """Indicador OCR (peso 2): banner 'AGENT INFO' / 'INFO AGENTE' / 'Atributos base'."""
+    raw = _ocr_crop(frame, ocr, _S18_OCR_BANNER_ROI, psm=7)
+    norm = _strip_accents_lower(raw)
+    for kw in _S18_AGENT_INFO_KEYWORDS:
+        if kw in norm:
+            return True, f"ocr_agent_info({kw})"
+    return False, None
+
+
+def _s18_ocr_stat_keywords(frame: np.ndarray, ocr) -> tuple[int, str | None]:
+    """
+    Indicador OCR (peso 2 si >=3 grupos): keywords de stats en panel central.
+    Devuelve (count_grupos_detectados, reason).
+    """
+    raw = _ocr_crop(frame, ocr, _S18_OCR_STATS_ROI, psm=6)
+    norm = _strip_accents_lower(raw)
+    if not norm:
+        return 0, None
+    hits = 0
+    matched_groups: list[str] = []
+    for group in _S18_STAT_KEYWORD_GROUPS:
+        for kw in group:
+            if kw in norm:
+                hits += 1
+                matched_groups.append(group[0])
+                break
+    if hits == 0:
+        return 0, None
+    return hits, f"ocr_stats_{hits}grp:{','.join(matched_groups[:5])}"
+
+
+def _deep_detect_s18(frame: np.ndarray, ocr=None) -> "ScreenState | None":
+    """
+    Detector independiente de S18 (Perfil agente — Atributos base).
+
+    Diseñado para correr como FALLBACK en `monitor._run()` cuando
+    `ScreenDetector.classify()` devuelve S12 (templates no matchean a la
+    resolución del usuario, etc.). A diferencia de `_verify_s18`, esta
+    función no requiere un template match previo y agrega 2 indicadores
+    OCR que son exclusivos de S18.
+
+    Scoring (6 indicadores, max 9 puntos):
+      Visuales peso 1 c/u:
+        - tab_amarillo
+        - grilla_stats
+        - valores_brillantes
+      Visual peso 2 (firma fuerte pero ruidosa en modales con texto):
+        - agent_info_clahe  (texto sutil detectado por CLAHE+threshold)
+      OCR peso 2 c/u (opcionales, solo si ocr está disponible):
+        - ocr_agent_info  ("AGENT INFO" / "INFO AGENTE" / "Atributos base")
+        - ocr_stats_kw    (≥3 grupos de keywords stats)
+
+    Anti-FP — promoción a alta confianza requiere al menos 1 indicador OCR
+    (ocr_score ≥ 2). Razón: el CLAHE + grilla disparan también en S16
+    (Detalle set disco) que comparte layout con grilla y texto en banner
+    superior. Sin OCR, los visuales no pueden distinguir S18 de otros
+    modales con grilla. La señal textual "AGENT INFO" / "Atributos base"
+    sí es exclusiva.
+
+    Decisión:
+      ocr_score ≥ 2 AND total ≥ 3 → S18 conf 0.75 method="deep_detect"
+      total ≥ 2                    → S18 conf 0.55 method="deep_detect_tentativo"
+      total < 2                    → None
+
+    Calibración (QA sobre 7 fixtures 2559×1439 + 5 FPs):
+      - S18 fixtures, sin OCR: 7/7 disparan CLAHE → tentativo conf 0.55
+      - S18 fixtures, con OCR: 7/7 deberían llegar a deep_detect (conf 0.75)
+      - FP modales, sin OCR: pueden dar tentativo (filtrados por buffer 2/3)
+      - FP modales, con OCR no-S18: máximo tentativo (no promueven)
+
+    Path tentativo: el monitor enruta el state al `TemporalBuffer.add()`
+    normal (2/3 votos), no a `promote_now()`. Latencia ~300 ms adicional
+    pero respeta el anti-FP por mayoría de frames.
+    """
+    if frame is None or frame.size == 0:
+        return None
+
+    visual_score = 0
+    ocr_score = 0
+    reasons: list[str] = []
+
+    # Visuales peso 1
+    for indicator in (
+        _s18_visual_tab_amarillo,
+        _s18_visual_grilla_stats,
+        _s18_visual_valores_brillantes,
+    ):
+        ok, reason = indicator(frame)
+        if ok and reason:
+            visual_score += 1
+            reasons.append(reason)
+
+    # Visual peso 2 (CLAHE — firma fuerte pero comparte con modales con texto)
+    ok, reason = _s18_visual_agent_info_clahe(frame)
+    if ok and reason:
+        visual_score += 2
+        reasons.append(reason)
+
+    # Indicadores OCR (peso 2 c/u). Cualquier excepción se ignora silenciosamente
+    # para no romper la pipeline si Tesseract está mal configurado.
+    if ocr is not None:
+        try:
+            ok, reason = _s18_ocr_agent_info(frame, ocr)
+            if ok and reason:
+                ocr_score += 2
+                reasons.append(reason)
+        except Exception:
+            pass
+        try:
+            hits, reason = _s18_ocr_stat_keywords(frame, ocr)
+            if hits >= 3 and reason:
+                ocr_score += 2
+                reasons.append(reason)
+        except Exception:
+            pass
+
+    total = visual_score + ocr_score
+
+    # Promoción a alta confianza requiere señal OCR confirmatoria
+    if ocr_score >= 2 and total >= 3:
+        return ScreenState(
+            code="S18",
+            confidence=0.75,
+            template_name="deep_detect:" + "+".join(reasons),
+            verification=f"vis={visual_score} ocr={ocr_score}",
+            method="deep_detect",
+        )
+    if total >= 2:
+        return ScreenState(
+            code="S18",
+            confidence=0.55,
+            template_name="deep_detect_tentativo:" + "+".join(reasons),
+            verification=f"vis={visual_score} ocr={ocr_score}",
+            method="deep_detect_tentativo",
+        )
+    return None
 
 
 # Registry: {state_code: verify_func}
