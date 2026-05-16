@@ -2,8 +2,51 @@
 DaniBOD ZZZ Analytics — Entrypoint principal.
 Fase 2 placeholder: ventana con tabs, tray icon y panel de scoring.
 """
+import logging
+import os
 import sys
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
+
+
+def _setup_file_logging() -> Path | None:
+    """
+    Configura un RotatingFileHandler en %LOCALAPPDATA%/DaniBOD_ZZZ_Analytics/app.log.
+
+    Indispensable para el .exe --windowed (console=False) donde stderr no
+    es visible. Todas las llamadas a log.info/log.exception del proyecto
+    quedan persistentes y pueden inspeccionarse con:
+        Get-Content "$env:LOCALAPPDATA\\DaniBOD_ZZZ_Analytics\\app.log" -Tail 50
+
+    Si la configuración falla (carpeta read-only, permisos, etc.) el
+    arranque continúa sin file logging — no es bloqueante.
+    """
+    try:
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/AppData/Local")
+        log_dir = Path(base) / "DaniBOD_ZZZ_Analytics"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "app.log"
+
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.INFO)
+
+        # Evitar duplicados si _setup_file_logging se llama dos veces
+        for h in root_logger.handlers:
+            if isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", "") == str(log_file):
+                return log_file
+
+        fh = RotatingFileHandler(log_file, maxBytes=2_000_000, backupCount=3, encoding="utf-8")
+        fh.setLevel(logging.INFO)
+        fh.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)-8s %(name)s :: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        ))
+        root_logger.addHandler(fh)
+        root_logger.info("Logging a archivo iniciado en %s", log_file)
+        return log_file
+    except Exception:
+        # Sin file logging es peor pero arranque debe continuar
+        return None
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPalette
@@ -568,6 +611,7 @@ class MainWindow(QMainWindow):
 # ---------------------------------------------------------------------------
 
 def main():
+    _setup_file_logging()
     app = QApplication(sys.argv)
     app.setApplicationName("DaniBOD ZZZ Analytics")
     app.setQuitOnLastWindowClosed(False)
