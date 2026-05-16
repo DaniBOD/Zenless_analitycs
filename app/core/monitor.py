@@ -310,16 +310,40 @@ class Monitor:
         self._process_agent_stats(frame, state)
 
     def _process_agent_stats(self, frame, state: ScreenState) -> None:
+        """
+        Parsea stats S18 y dispara callback. Cualquier excepción se reporta
+        al LivePanel vía `_on_diagnostic` (con prefijo `[diag] error...`) para
+        que sea visible incluso en `.exe --windowed` donde stderr está
+        suprimido. El `log.exception` complementario va al RotatingFileHandler.
+        """
         try:
             stats = parse_agent_stats(frame, self._ocr)
             log.info(
                 "Stats agente: Nv=%s PV=%s ATK=%s DEF=%s conf=%.2f",
                 stats.nivel, stats.pv, stats.ataque, stats.defensa, stats.confianza_global,
             )
-            if self._on_agent_stats:
-                self._on_agent_stats(stats, state)
         except Exception as exc:
-            log.exception("Error parseando stats de agente: %s", exc)
+            log.exception("Error parseando stats de agente")
+            if self._on_diagnostic:
+                try:
+                    self._on_diagnostic(
+                        f"error parseando stats S18: {type(exc).__name__}: {exc}"
+                    )
+                except Exception:
+                    log.exception("Error en on_diagnostic callback (parse_agent_stats)")
+            return
+        if self._on_agent_stats:
+            try:
+                self._on_agent_stats(stats, state)
+            except Exception as exc:
+                log.exception("Error en on_agent_stats callback")
+                if self._on_diagnostic:
+                    try:
+                        self._on_diagnostic(
+                            f"error en callback agent_stats: {type(exc).__name__}: {exc}"
+                        )
+                    except Exception:
+                        log.exception("Error en on_diagnostic callback (on_agent_stats)")
 
     def _wait_fast(self) -> None:
         """Espera corta entre capturas rápidas (para alimentar buffer)."""
