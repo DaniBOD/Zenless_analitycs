@@ -68,6 +68,7 @@ hiddenimports = mss_hiddenimports + pyside_hiddenimports + pytess_hiddenimports 
     "app.core.monitor",
     "app.core.detector",
     "app.core.parser_disc",
+    "app.core.parser_agent_stats",
     "app.core.recommender",
     "app.core.scoring",
     "app.core.score_normalizer",
