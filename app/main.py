@@ -550,14 +550,17 @@ class MainWindow(QMainWindow):
         self._toast.show_recommendation(td)
 
     def closeEvent(self, event):
-        event.ignore()
-        self.hide()
-        self._tray.showMessage(
-            "DaniBOD ZZZ Analytics",
-            "Minimizado al tray. Doble-click para restaurar.",
-            QSystemTrayIcon.MessageIcon.Information,
-            2000,
-        )
+        """
+        X cierra la app completamente. Minimizar (botón `_`) NO pasa por
+        este handler — usa changeEvent(WindowStateChange) y queda en la
+        barra de tareas sin disparar cierre.
+
+        Para volver al pattern "X minimiza al tray" usar el menú del tray
+        opción 'Mostrar panel' tras cerrar, o ejecutar la app de nuevo.
+        """
+        self._tray.hide()
+        event.accept()
+        QApplication.quit()
 
 
 # ---------------------------------------------------------------------------
