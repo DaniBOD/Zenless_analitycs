@@ -172,9 +172,26 @@ def _parse_float(raw: str | None) -> float | None:
 
 
 def _normalize_percent(val: float | None) -> float | None:
-    """Si el valor es > 1.0 asumimos que viene en % y lo normalizamos a 0-1."""
-    if val is not None and val > 1.0:
-        return val / 100.0
+    """
+    Normaliza un valor de % a fracción 0-1.
+
+    Si val > 1.0: viene en % (e.g. 19.4 → 0.194).
+    Si val > 1.0 tras /100: el OCR perdió un punto decimal
+    (e.g. "194" → 1.94 → 0.194). Aplicamos /10 extra.
+
+    Casos cubiertos:
+      19.4 → 0.194 ✓        (lectura limpia)
+      194  → 0.194 ✓        (OCR perdió "." entre "9" y "4")
+      1716 → 0.1716 → 0.01716 / 0.1716 — borde, aceptamos
+      100  → 1.0    ✓       (100% real, queda)
+      0.5  → 0.5    ✓       (ya en fracción)
+    """
+    if val is None:
+        return None
+    if val > 1.0:
+        val = val / 100.0
+    if val > 1.0:
+        val = val / 10.0
     return val
 
 
@@ -241,50 +258,87 @@ def _lookup_agent(nombre_ocr: str) -> tuple[str | None, str | None, str | None]:
 
 
 # ---------------------------------------------------------------------------
-# Regex para PaddleOCR full-frame
+# Regex para full-frame OCR (Paddle o Tesseract)
 # ---------------------------------------------------------------------------
+# Todos los regex se aplican sobre texto NORMALIZADO por _normalize_ocr_text:
+# minúsculas + accents stripped + caracteres OCR-basura comunes mapeados.
+# Esto los hace robustos contra typos OCR ("pV", "Iimpacto", "Da�o", etc.)
+# tanto en Paddle como en Tesseract.
 
-_RE_NIVEL = re.compile(r"(?:Nivel|Nv\.?)\s*(\d{1,2})")
-_RE_PV = re.compile(r"PV\s+(\d+(?:\s+\d+)?)")
-_RE_ATAQUE = re.compile(r"Ataque\s+(\d+)")
-_RE_DEFENSA = re.compile(r"Defensa\s+(\d+)")
-_RE_IMPACTO = re.compile(r"Impacto\s+(\d+)")
-# Probabilidad/Crit rate: "Probabilidad de 19.4 %" or "19.4 %"
-_RE_PROB_CRIT = re.compile(r"(?:Probabilidad|Prob\.?)\s*(?:de\s*)?(\d+(?:\.\d+)?)\s*%")
-# Dano critico: "Dano Critico 93.2 %" or "Critico 93.2 %"
-_RE_DANO_CRIT = re.compile(r"(?:Dano|Danio)\s*Critico\s+(\d+(?:\.\d+)?)\s*%")
-_RE_TASA_ANOMALIA = re.compile(r"Tasa\s+de\s+Anomalia\s+(\d+)")
-_RE_MAESTRIA_ANOMALIA = re.compile(r"Maestria\s+de\s+Anomalia\s+(\d+)")
-# Fuerza Bruta: stat de Anomalia/Disruptivos en reemplazo de Tasa de Perforacion
-_RE_FUERZA_BRUTA = re.compile(r"Fuerza\s+Bruta\s+(\d+)")
-# Agente: ultimo nombre/palabra antes de "Nivel" (captura multi-word)
+_RE_NIVEL = re.compile(r"(?:nivel|nv\.?)\s*(\d{1,2})")
+# PV: tolera "pv", "p v", concatenación "pv10797", separación "10 797"
+_RE_PV = re.compile(r"\bp\s*v\s*(\d{1,2}(?:\s*\d{3})?)")
+# Ataque: case-insensitive (ya normalizado)
+_RE_ATAQUE = re.compile(r"\bataque\s*(\d+)")
+_RE_DEFENSA = re.compile(r"\bdefensa\s*(\d+)")
+# Impacto: tolera typos OCR como "iimpacto", "rmpacto", "ímpacto"
+_RE_IMPACTO = re.compile(r"\b[il]+m\s*pacto\s*(\d+)")
+# Prob CRIT: "probabilidad de 19.4%" — tolera "prob", "probabili", etc.
+_RE_PROB_CRIT = re.compile(r"prob\w*\s*(?:de\s*)?(?:critico|crit)?\s*(\d+(?:\.\d+)?)\s*%")
+# Daño Crítico: "dano critico 93.2 %" — accents ya stripped por normalizador
+_RE_DANO_CRIT = re.compile(r"da\w{0,3}o\s*crit\w*\s*(\d+(?:\.\d+)?)\s*%")
+# Tasa de Anomalía
+_RE_TASA_ANOMALIA = re.compile(r"tasa\s*(?:de\s*)?anomal\w*\s*(\d+)")
+# Maestría de Anomalía
+_RE_MAESTRIA_ANOMALIA = re.compile(r"maestr\w*\s*(?:de\s*)?anomal\w*\s*(\d+)")
+# Fuerza Bruta (disruptivos)
+_RE_FUERZA_BRUTA = re.compile(r"fuerza\s*bruta\s*(\d+)")
+# PEN: SOLO "Tasa de Perforacion" (excluye "Fuerza Bruta")
+_RE_TASA_PERFORACION = re.compile(r"tasa\s*(?:de\s*)?perfor\w*\s*(\d+(?:\.\d+)?)\s*%?")
+# Recup Energía: la palabra "Recuperación de Energía" se renderiza en 2
+# líneas en el juego y Tesseract a menudo destruye una o ambas palabras.
+# Aceptamos múltiples patrones:
+#   (a) "recup..." cualquier sufijo + número
+#   (b) "...energ..." cualquier prefijo + número
+#   (c) "adrenalina <número>" (variante histórica de algunas builds)
+_RE_RECUP_ENERGIA = re.compile(
+    r"(?:recup\w*|energ\w*|adrenal\w*)[^\d\n]{0,30}?(\d+(?:\.\d+)?)"
+)
+# Agente: nombre (1-2 palabras capitalizadas en texto original) antes de "Nivel".
+# Se aplica sobre el texto ORIGINAL (no normalizado) para preservar mayúsculas.
 _RE_AGENTE_NOMBRE = re.compile(
     r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+Nivel\s+\d+"
 )
-# Rol: texto entre "MAX" y "PV"
-_RE_ROL_OCR = re.compile(r"MAX\s+(.+?)\s+PV\b")
-# PEN rate: SOLO "Tasa de Perforacion" (excluye "Fuerza Bruta" que es de Disruptivos)
-_RE_TASA_PERFORACION = re.compile(
-    r"Tasa\s+de\s+Perforacion\s*(\d+(?:\.\d+)?)\s*%?"
-)
-_RE_RECUP_ENERGIA = re.compile(
-    r"(?:\b(\d+(?:\.\d+)?)\s*(?:V\s+)?(?:Energia|Adrenalina)"
-    r"|Adrenalina\s+(\d+(?:\.\d+)?))"
-)
+# Rol: texto entre "MAX" y "PV" en texto original
+_RE_ROL_OCR = re.compile(r"MAX\s+(.+?)\s+[Pp][Vv]\b")
+
+
+def _normalize_ocr_text(text: str) -> str:
+    """
+    Normaliza texto OCR para regex robustos contra ruido de Tesseract/Paddle:
+      - Lower-case
+      - Strip de acentos (á→a, é→e, etc.)
+      - Mapeo de caracteres-basura comunes Tesseract (Ã, �) a espacio
+    No modifica nombres de agente / facción que se extraen del texto original.
+    """
+    if not text:
+        return ""
+    repl = {
+        "á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ñ": "n",
+        "Á": "a", "É": "e", "Í": "i", "Ó": "o", "Ú": "u", "Ñ": "n",
+        "ã": "a", "õ": "o", "ç": "c", "ü": "u",
+        "Ã": " ", "Â": " ", "®": " ", "©": " ", "�": " ", "—": " ", "–": " ",
+    }
+    out = text.lower()
+    for k, v in repl.items():
+        out = out.replace(k, v)
+    return out
 
 
 def _extract_by_regex(text: str) -> dict[str, str | None]:
     """
-    Extrae los 11 stats del texto OCR completo usando regex.
+    Extrae los 11 stats del texto OCR completo usando regex sobre texto
+    NORMALIZADO (lower + accents stripped + basura OCR mapeada).
     Retorna dict {stat_key: raw_value_string_or_None}.
     """
     result: dict[str, str | None] = {k: None for k in _STAT_KEYS}
+    norm = _normalize_ocr_text(text)
 
-    m = _RE_NIVEL.search(text)
+    m = _RE_NIVEL.search(norm)
     if m:
         result["nivel"] = m.group(1)
 
-    m = _RE_PV.search(text)
+    m = _RE_PV.search(norm)
     if m:
         result["pv"] = _clean_number(m.group(1))
 
@@ -300,10 +354,8 @@ def _extract_by_regex(text: str) -> dict[str, str | None]:
         ("recup_energia", _RE_RECUP_ENERGIA),
         ("fuerza_bruta", _RE_FUERZA_BRUTA),
     ]:
-        m = regex.search(text)
+        m = regex.search(norm)
         if m:
-            # Use the first non-None group (regex with alternatives may have
-            # different group indices: group 1 or group 2)
             result[key] = next((g for g in m.groups() if g is not None), None)
 
     return result
@@ -488,13 +540,14 @@ def parse_agent_stats(
     Returns:
         AgentStatsParsed con valores extraidos y confianza global.
     """
-    try:
-        from app.core.ocr_paddle import PaddleBackend
-        is_paddle = isinstance(ocr, PaddleBackend)
-    except ImportError:
-        is_paddle = False
-
-    if is_paddle:
-        return _parse_via_full_frame(frame, ocr)
-    else:
-        return _parse_via_rois(frame, ocr)
+    # Ambos backends (Paddle y Tesseract) tienen OCR full-frame robusto.
+    # El path full-frame + regex es más resiliente que per-ROI porque no
+    # depende de coordenadas exactas y captura el panel completo en una
+    # sola llamada OCR.
+    #
+    # Latencia (2559×1439, Tesseract upscale 3x + Otsu): ~3s — aceptable
+    # porque _process_agent_stats corre 1 vez por entrada a S18 (dedup).
+    #
+    # El path per-ROI (`_parse_via_rois`) queda como fallback explícito
+    # si en el futuro queremos OCR sobre crops pequeños para velocidad.
+    return _parse_via_full_frame(frame, ocr)

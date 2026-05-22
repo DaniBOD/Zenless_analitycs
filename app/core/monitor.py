@@ -273,10 +273,20 @@ class Monitor:
         self._handle_upgrade(frame, state)
         if state.code in _DISC_DETAIL_STATES:
             self._maybe_process_disc(frame, state)
+            # Salimos de un agent-stats state → reset para que la próxima
+            # entrada a S18 re-emita stats (otro PJ, o el mismo tras
+            # navegar afuera y volver).
+            self._reported_agent_stats_state_code = None
         elif state.code in AGENT_STATS_STATES:
             self._maybe_process_agent_stats(frame, state)
-        else:
+            # Si salimos de un disc-state, reseteamos su dedup también
             self._processed_disc_state_code = None
+        else:
+            # Estado intermedio (S1/S12/S15/etc.) — resetear AMBOS dedup
+            # flags para que la próxima entrada a un capturable o agent_stats
+            # state re-dispare.
+            self._processed_disc_state_code = None
+            self._reported_agent_stats_state_code = None
 
     def _handle_upgrade(self, frame, state: ScreenState) -> None:
         if self._upgrade_syncer is None:
