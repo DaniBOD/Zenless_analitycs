@@ -19,7 +19,7 @@ from app.core.detector import (
     _deep_detect_s18,
 )
 from app.core.parser_disc import DiscParsed, parse_modal_detalle
-from app.core.parser_agent_stats import AgentStatsParsed, parse_agent_stats
+from app.core.parser_agent_stats import AgentStatsParsed, parse_agent_stats, AgentStatsAggregator
 from app.core.ocr_backend import OcrBackend
 
 log = logging.getLogger(__name__)
@@ -93,6 +93,14 @@ class Monitor:
         self._processed_disc_state_code: str | None = None
         self._reported_agent_stats_state_code: str | None = None
         self._window: WindowBounds | None = None
+        # TemporalBuffer del loop _run(). Instance var para que force_scan()
+        # pueda resetearlo y permitir re-emisión de [reconocido]/[stats].
+        self._buffer: TemporalBuffer | None = None
+        # Aggregator de stats S18: madura la extracción entre capturas
+        # consecutivas. OCR es no-determinista frame-a-frame; tras 2-3 F8
+        # los stats convergen a sus valores reales aunque cada captura sea
+        # parcial. Se resetea automáticamente cuando cambia el agente.
+        self._stats_aggregator = AgentStatsAggregator()
 
     # ---- Control ----------------------------------------------------------------
 
@@ -128,8 +136,31 @@ class Monitor:
         """
         Fuerza un scan inmediato (F8 o evento de foreground).
         Resetea buffer y fuerza un ciclo de proceso inmediato.
+
+        TAMBIÉN resetea los dedup flags (`_processed_disc_state_code` y
+        `_reported_agent_stats_state_code`) — útil para iterar QA del
+        parser S18: el usuario presiona F8 y se vuelve a extraer stats
+        sin necesidad de salir y volver a entrar al perfil del PJ.
+
+        Emite un diagnóstico visible en el LivePanel para confirmar
+        que F8 disparó (antes era silencioso, sin feedback al usuario).
         """
         if self._thread and self._thread.is_alive():
+            self._processed_disc_state_code = None
+            self._reported_agent_stats_state_code = None
+            # Resetear también el TemporalBuffer del loop. Sin esto, F8
+            # quedaba sin emitir [reconocido]/[stats] porque `buffer.add`
+            # devuelve None para el mismo código ya emitido. El buffer
+            # vive en _run() como `self._buffer` (instance var, ver _run).
+            if self._buffer is not None:
+                self._buffer.reset()
+                log.info("force_scan: TemporalBuffer reseteado para re-emitir")
+            log.info("force_scan: dedup flags reseteados, scan forzado")
+            if self._on_diagnostic:
+                try:
+                    self._on_diagnostic("F8: scan manual forzado (dedup reseteado)")
+                except Exception:
+                    log.exception("Error en on_diagnostic (force_scan)")
             self._force_event.set()
 
     # ---- Internals --------------------------------------------------------------
@@ -140,11 +171,17 @@ class Monitor:
         1. Captura rápida cada ~100ms para alimentar buffer temporal.
         2. Procesamiento (OCR + parseo + notify) solo cuando el buffer
            confirma un estado por mayoría de votos.
+
+        El TemporalBuffer es instance var (self._buffer) para que
+        force_scan() pueda resetearlo desde otros threads (F8, hook
+        de foreground), permitiendo re-emitir [reconocido]/[stats]
+        sin necesidad de cambio de estado real.
         """
         self._force_event = threading.Event()
         last_heartbeat = time.monotonic()
         last_process_time = 0.0
-        buffer = TemporalBuffer(window_size=3)
+        self._buffer = TemporalBuffer(window_size=3)
+        buffer = self._buffer  # alias local para el loop
 
         while not self._stop.is_set():
             if not self._paused.is_set():
@@ -313,23 +350,91 @@ class Monitor:
         self._process_disc(frame, state)
 
     def _maybe_process_agent_stats(self, frame, state: ScreenState) -> None:
-        """Dispara `_process_agent_stats` UNA SOLA VEZ por entrada al estado."""
+        """
+        Dispara `_process_agent_stats` UNA SOLA VEZ por entrada al estado,
+        PERO solo "compromete" el dedup si la extracción dio resultados
+        utilizables. Si la confianza es muy baja o todos los stats clave
+        son None (frame en transición), no marcar como procesado y además
+        resetear el TemporalBuffer para que el siguiente frame de S18 se
+        trate como cambio de estado nuevo y vuelva a llamar al dispatch.
+
+        Sin el reset del buffer, los frames subsecuentes con voted_state
+        S18 quedan deduplicados (buffer.add devuelve None) y el dispatch
+        no se llama nunca más hasta que el usuario salga del perfil del PJ.
+        """
         if self._reported_agent_stats_state_code == state.code:
             return
-        self._reported_agent_stats_state_code = state.code
-        self._process_agent_stats(frame, state)
+        result = self._process_agent_stats(frame, state)
+        if self._stats_result_is_useful(result):
+            # Stats utilizables → comprometer dedup. No re-emitir.
+            self._reported_agent_stats_state_code = state.code
+        else:
+            # Frame inestable. NO comprometer dedup + resetear el buffer
+            # para que el próximo frame estable dispare nuevo dispatch.
+            log.info("Stats no útiles (frame transición), reset buffer para retry")
+            if self._buffer is not None:
+                self._buffer.reset()
 
-    def _process_agent_stats(self, frame, state: ScreenState) -> None:
+    @staticmethod
+    def _stats_result_is_useful(stats) -> bool:
         """
-        Parsea stats S18 y dispara callback. Cualquier excepción se reporta
-        al LivePanel vía `_on_diagnostic` (con prefijo `[diag] error...`) para
-        que sea visible incluso en `.exe --windowed` donde stderr está
-        suprimido. El `log.exception` complementario va al RotatingFileHandler.
+        Heurística: el resultado es útil si al menos uno de PV/Ataque/Defensa
+        salió OK. Estos son los más fáciles de leer (números grandes en su
+        línea propia) — si todos fallan, el frame estaba en transición.
         """
+        if stats is None:
+            return False
+        return any(getattr(stats, k, None) is not None for k in ("pv", "ataque", "defensa"))
+
+    def _dump_frame_if_enabled(self, frame, state: ScreenState) -> None:
+        """
+        Si DANIBOD_DUMP_FRAMES=1, guarda el frame en
+        %LOCALAPPDATA%/DaniBOD_ZZZ_Analytics/debug_frames/<state>_<ts>.png.
+        Permite QA offline comparando el frame runtime con los fixtures.
+        """
+        import os
+        if os.environ.get("DANIBOD_DUMP_FRAMES") != "1":
+            return
         try:
-            stats = parse_agent_stats(frame, self._ocr)
+            import cv2
+            from pathlib import Path
+            base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/AppData/Local")
+            dump_dir = Path(base) / "DaniBOD_ZZZ_Analytics" / "debug_frames"
+            dump_dir.mkdir(parents=True, exist_ok=True)
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            path = dump_dir / f"{state.code}_{ts}_conf{state.confidence:.2f}.png"
+            # cv2.imwrite no tolera paths con caracteres especiales — usar imencode + tofile
+            import numpy as np
+            buf = cv2.imencode(".png", frame)[1]
+            buf.tofile(str(path))
+            log.info("debug frame dumped: %s", path)
+            if self._on_diagnostic:
+                self._on_diagnostic(f"frame dumped: {path.name}")
+        except Exception as exc:
+            log.exception("Error dumping debug frame: %s", exc)
+
+    def _process_agent_stats(self, frame, state: ScreenState):
+        """
+        Parsea stats S18 y dispara callback. Devuelve el `AgentStatsParsed`
+        resultante (o None si hubo excepción) para que el caller
+        `_maybe_process_agent_stats` pueda decidir si el resultado es
+        utilizable y comprometer el dedup.
+
+        Cualquier excepción se reporta al LivePanel vía `_on_diagnostic`
+        (con prefijo `[diag] error...`) para que sea visible incluso en
+        `.exe --windowed` donde stderr está suprimido.
+
+        Si DANIBOD_DUMP_FRAMES=1, el frame raw se guarda a
+        %LOCALAPPDATA%/DaniBOD_ZZZ_Analytics/debug_frames/.
+        """
+        self._dump_frame_if_enabled(frame, state)
+        try:
+            raw_stats = parse_agent_stats(frame, self._ocr)
+            # Pasar por el aggregator: si esta captura tiene campos None pero
+            # capturas previas del MISMO agente tenían valor, se preservan.
+            stats = self._stats_aggregator.merge(raw_stats)
             log.info(
-                "Stats agente: Nv=%s PV=%s ATK=%s DEF=%s conf=%.2f",
+                "Stats agente (post-merge): Nv=%s PV=%s ATK=%s DEF=%s conf=%.2f",
                 stats.nivel, stats.pv, stats.ataque, stats.defensa, stats.confianza_global,
             )
         except Exception as exc:
@@ -341,7 +446,7 @@ class Monitor:
                     )
                 except Exception:
                     log.exception("Error en on_diagnostic callback (parse_agent_stats)")
-            return
+            return None
         if self._on_agent_stats:
             try:
                 self._on_agent_stats(stats, state)
@@ -354,6 +459,7 @@ class Monitor:
                         )
                     except Exception:
                         log.exception("Error en on_diagnostic callback (on_agent_stats)")
+        return stats
 
     def _wait_fast(self) -> None:
         """Espera corta entre capturas rápidas (para alimentar buffer)."""

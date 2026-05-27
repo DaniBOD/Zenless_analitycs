@@ -267,29 +267,107 @@ class MonitorController(QObject):
         self.log_message.emit(f"[diag] {msg}")
 
     def _on_agent_stats_from_monitor(self, stats, state):
-        """Stats de agente extraídos desde S18 (Atributos base)."""
+        """Stats de agente extraídos desde S18 (Atributos base).
+
+        Emite TRES líneas al LivePanel:
+          [reconocido] S18 perfil agente: <nombre> (conf X.XX)
+          [stats] Nv=N PV=X ATK=X ... ER=X
+          [completo] / [parcial] estado de la extracción
+
+        Los 11 atributos base están siempre presentes (None se muestra como '-').
+        El último mensaje indica si la extracción es completa o si faltan
+        campos a re-intentar con F8 (el aggregator los completará).
+
+        Madurez role-aware:
+          - Roles Disruptivos requieren `fuerza_bruta` (no `tasa_perforacion`).
+          - Resto de roles (Ataque, Aturdimiento, Anomalía, Defensa, Soporte)
+            requieren `tasa_perforacion` (no `fuerza_bruta`).
+          - Si el rol no se identificó todavía, asumimos NO-disruptivo (caso
+            mayoritario en el roster).
+        """
         from dataclasses import asdict
+
+        # Helper: formato consistente para valor o '-' si es None
+        def _v(x):
+            return "-" if x is None else x
+
+        def _pct(x):
+            return "-" if x is None else f"{x * 100:.1f}%"
+
+        # ---- Determinar stats requeridos según rol ----
+        rol_norm = (stats.rol or "").lower()
+        is_disruptivo = "disruptiv" in rol_norm
+        required_keys = [
+            "nivel", "pv", "ataque", "defensa", "impacto",
+            "prob_crit", "dano_crit",
+            "tasa_anomalia", "maestria_anomalia",
+            "recuperacion_energia",
+        ]
+        if is_disruptivo:
+            required_keys.append("fuerza_bruta")
+        else:
+            required_keys.append("tasa_perforacion")
+
+        # Mapeo a etiquetas legibles para mostrar al usuario
+        _LABELS = {
+            "nivel": "Nv", "pv": "PV", "ataque": "ATK", "defensa": "DEF",
+            "impacto": "IMP", "prob_crit": "CR", "dano_crit": "CD",
+            "tasa_anomalia": "TA", "maestria_anomalia": "MA",
+            "tasa_perforacion": "TP", "fuerza_bruta": "FB",
+            "recuperacion_energia": "ER",
+        }
+        missing = [k for k in required_keys if getattr(stats, k) is None]
+        missing_labels = [_LABELS.get(k, k) for k in missing]
+
         log.info(
-            "Stats agente %s (%s/%s): Nv=%s PV=%s ATK=%s DEF=%s "
-            "CR=%.1f%% CD=%.1f%% TA=%s MA=%s TP=%s FB=%s ER=%s",
+            "Stats agente %s (%s/%s): Nv=%s PV=%s ATK=%s DEF=%s IMP=%s "
+            "CR=%s CD=%s TA=%s MA=%s TP=%s FB=%s ER=%s conf=%.2f missing=%s",
             stats.agente_nombre or "?",
             stats.rol or "?", stats.elemento or "?",
-            stats.nivel, stats.pv, stats.ataque, stats.defensa,
-            (stats.prob_crit or 0) * 100,
-            (stats.dano_crit or 0) * 100,
-            stats.tasa_anomalia, stats.maestria_anomalia,
-            stats.tasa_perforacion, stats.fuerza_bruta,
-            stats.recuperacion_energia,
+            _v(stats.nivel), _v(stats.pv), _v(stats.ataque), _v(stats.defensa),
+            _v(stats.impacto),
+            _pct(stats.prob_crit), _pct(stats.dano_crit),
+            _v(stats.tasa_anomalia), _v(stats.maestria_anomalia),
+            _pct(stats.tasa_perforacion), _v(stats.fuerza_bruta),
+            _v(stats.recuperacion_energia),
+            stats.confianza_global,
+            missing_labels,
         )
+
         payload = asdict(stats)
         payload["state_code"] = state.code
         self.agent_stats_detected.emit(payload)
+
+        # Línea 1: pantalla reconocida + nombre agente (si OCR lo extrajo)
+        nombre = stats.agente_nombre or "agente"
+        rol_str = f" · {stats.rol}" if stats.rol else ""
         self.log_message.emit(
-            f"[stats] {stats.agente_nombre or 'Agente'} "
-            f"PV={stats.pv} ATK={stats.ataque} DEF={stats.defensa} "
-            f"CR={(stats.prob_crit or 0)*100:.0f}% "
-            f"CD={(stats.dano_crit or 0)*100:.0f}%"
+            f"[reconocido] S18 perfil agente: {nombre}{rol_str} "
+            f"(conf {state.confidence:.2f})"
         )
+
+        # Línea 2: TODOS los 11 stats con placeholder '-' para None
+        self.log_message.emit(
+            f"[stats] Nv={_v(stats.nivel)} PV={_v(stats.pv)} "
+            f"ATK={_v(stats.ataque)} DEF={_v(stats.defensa)} "
+            f"IMP={_v(stats.impacto)} "
+            f"CR={_pct(stats.prob_crit)} CD={_pct(stats.dano_crit)} "
+            f"TA={_v(stats.tasa_anomalia)} MA={_v(stats.maestria_anomalia)} "
+            f"TP={_pct(stats.tasa_perforacion)} FB={_v(stats.fuerza_bruta)} "
+            f"ER={_v(stats.recuperacion_energia)}"
+        )
+
+        # Línea 3: estado de la extracción
+        if not missing:
+            self.log_message.emit(
+                f"[completo] extracción exitosa - {len(required_keys)}/{len(required_keys)} stats capturados"
+            )
+        else:
+            self.log_message.emit(
+                f"[parcial] extracción incompleta - faltan {len(missing)}/"
+                f"{len(required_keys)}: {', '.join(missing_labels)} "
+                f"- apretá F8 para reintentar (el aggregator va a completar)"
+            )
 
     def _on_disc_from_monitor(self, disc_parsed, state):
         """

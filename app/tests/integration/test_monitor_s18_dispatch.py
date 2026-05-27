@@ -258,8 +258,12 @@ def test_monitor_dispatch_invoca_on_agent_stats():
     assert state.code == "S18"
 
 
-def test_monitor_dispatch_dedup_no_re_invoca_mismo_estado():
-    """Dos `_dispatch_state(frame, S18)` consecutivos disparan UNA sola vez."""
+def test_monitor_dispatch_dedup_no_re_invoca_mismo_estado(monkeypatch):
+    """
+    Dos `_dispatch_state(frame, S18)` consecutivos disparan UNA sola vez
+    SI el primer resultado fue 'útil' (al menos un stat clave no-None).
+    Si fue todo None, se permite retry — esto se cubre en el otro test.
+    """
     if not S18_FIXTURES:
         pytest.skip("Sin fixtures S18")
     frame = _read_frame(S18_FIXTURES[0])
@@ -268,6 +272,14 @@ def test_monitor_dispatch_dedup_no_re_invoca_mismo_estado():
 
     from app.core.detector import ScreenState
     from app.core.monitor import Monitor
+    from app.core import monitor as monitor_mod
+
+    # Mockear parse_agent_stats para devolver un stats útil (PV no-None)
+    # así el dedup se compromete tras la primera llamada.
+    monkeypatch.setattr(
+        monitor_mod, "parse_agent_stats",
+        lambda f, o: AgentStatsParsed(nivel=60, pv=10797, ataque=2531, defensa=925),
+    )
 
     received: list = []
     ocr = _StubOcr(banner_text="AGENT INFO", stats_text="PV Ataque Defensa")
@@ -282,5 +294,42 @@ def test_monitor_dispatch_dedup_no_re_invoca_mismo_estado():
     monitor._dispatch_state(frame, s18)
 
     assert len(received) == 1, (
-        f"Dedup roto: {len(received)} invocaciones para 2 dispatch del mismo estado."
+        f"Dedup roto: {len(received)} invocaciones para 2 dispatch del mismo estado "
+        f"(con stats útiles, el segundo NO debe re-emitir)."
+    )
+
+
+def test_monitor_dispatch_retry_si_stats_son_none(monkeypatch):
+    """
+    Si la primera extracción dio todos None (frame en transición), el dedup
+    NO se compromete y el siguiente dispatch SÍ vuelve a procesar.
+    """
+    if not S18_FIXTURES:
+        pytest.skip("Sin fixtures S18")
+    frame = _read_frame(S18_FIXTURES[0])
+    if frame is None:
+        pytest.skip("No se pudo cargar fixture")
+
+    from app.core.detector import ScreenState
+    from app.core.monitor import Monitor
+    from app.core import monitor as monitor_mod
+
+    monkeypatch.setattr(
+        monitor_mod, "parse_agent_stats",
+        lambda f, o: AgentStatsParsed(),  # todos None
+    )
+
+    received: list = []
+    monitor = Monitor(
+        ocr=_StubOcr(banner_text="", stats_text=""),
+        detector=ScreenDetector(),
+        on_agent_stats=lambda stats, st: received.append((stats, st)),
+    )
+    s18 = ScreenState("S18", 0.75, "deep_detect", method="deep_detect")
+    monitor._dispatch_state(frame, s18)
+    monitor._dispatch_state(frame, s18)
+
+    assert len(received) == 2, (
+        f"Retry roto: esperaba 2 invocaciones (stats None permite retry), "
+        f"recibió {len(received)}"
     )

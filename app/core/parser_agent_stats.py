@@ -137,6 +137,118 @@ class AgentStatsParsed:
     elemento: str | None = None
 
 
+# Campos numericos que el aggregator merge entre capturas. agente_nombre/rol/
+# elemento se manejan especialmente (cambio de agente = reset). confianza_global
+# y notas no se mergean — se toma el valor de la captura mas reciente.
+_AGGREGATABLE_FIELDS: tuple[str, ...] = (
+    "nivel", "pv", "ataque", "defensa", "impacto",
+    "prob_crit", "dano_crit",
+    "tasa_anomalia", "maestria_anomalia",
+    "tasa_perforacion", "recuperacion_energia", "fuerza_bruta",
+)
+
+
+class AgentStatsAggregator:
+    """
+    Acumula stats por agente entre capturas consecutivas para madurar la
+    extraccion.
+
+    Tesseract es no-deterministico frame-a-frame: cada F8 puede capturar
+    distintos stats correctamente, otros None. El aggregator preserva los
+    "best-known" valores: si la nueva captura tiene un campo None pero el
+    aggregator ya tenia valor previo (mismo agente), se conserva el previo.
+
+    Reset implicito cuando cambia el agente_nombre (e.g. de Nangong Yu a
+    Yuzuha) — los stats anteriores no aplican.
+
+    El campo `confianza_global` y `notas` se sobreescriben con la captura
+    nueva. El nombre/rol/elemento se preservan solo mientras el agente sea
+    el mismo (con fallback a la nueva captura si esa lo identifico mejor).
+    """
+
+    def __init__(self) -> None:
+        self._best: AgentStatsParsed | None = None
+        # Tracker de cuantas veces cada campo ha sido emitido (debug)
+        self._field_hits: dict[str, int] = {}
+
+    @property
+    def has_any(self) -> bool:
+        return self._best is not None
+
+    @property
+    def current_agent(self) -> str | None:
+        return self._best.agente_nombre if self._best else None
+
+    def reset(self) -> None:
+        self._best = None
+        self._field_hits.clear()
+
+    def merge(self, new: AgentStatsParsed) -> AgentStatsParsed:
+        """
+        Mezcla `new` con el estado acumulado y devuelve el resultado.
+
+        Reglas:
+          1. Si el agente cambia (nuevo nombre OCR distinto y se identificó
+             en DB), resetear y empezar fresh con `new`.
+          2. Para cada campo aggregatable: si `new.field` no es None, usar ese
+             valor. Si es None, conservar el del aggregator (si tenia).
+          3. Si `new.agente_nombre` está poblado y el aggregator no tiene
+             nombre todavia, adoptarlo (junto a rol/elemento).
+        """
+        if new is None:
+            return self._best if self._best else AgentStatsParsed()
+
+        # Detectar cambio de agente: si tanto el aggregator como new tienen
+        # nombre identificado y son distintos -> reset.
+        if (self._best is not None
+                and self._best.agente_nombre
+                and new.agente_nombre
+                and self._best.agente_nombre != new.agente_nombre):
+            self.reset()
+
+        if self._best is None:
+            # Primera captura — clonar new como punto de partida
+            self._best = AgentStatsParsed(
+                nivel=new.nivel, pv=new.pv, ataque=new.ataque,
+                defensa=new.defensa, impacto=new.impacto,
+                prob_crit=new.prob_crit, dano_crit=new.dano_crit,
+                tasa_anomalia=new.tasa_anomalia,
+                maestria_anomalia=new.maestria_anomalia,
+                tasa_perforacion=new.tasa_perforacion,
+                recuperacion_energia=new.recuperacion_energia,
+                fuerza_bruta=new.fuerza_bruta,
+                confianza_global=new.confianza_global,
+                notas=list(new.notas),
+                agente_nombre=new.agente_nombre,
+                rol=new.rol,
+                elemento=new.elemento,
+            )
+            for k in _AGGREGATABLE_FIELDS:
+                if getattr(self._best, k) is not None:
+                    self._field_hits[k] = 1
+            return self._best
+
+        # Merge: nuevo valor gana solo si no es None
+        for k in _AGGREGATABLE_FIELDS:
+            new_val = getattr(new, k)
+            if new_val is not None:
+                setattr(self._best, k, new_val)
+                self._field_hits[k] = self._field_hits.get(k, 0) + 1
+
+        # Si el aggregator no tenia nombre pero new lo extrajo, adoptarlo
+        if not self._best.agente_nombre and new.agente_nombre:
+            self._best.agente_nombre = new.agente_nombre
+        if not self._best.rol and new.rol:
+            self._best.rol = new.rol
+        if not self._best.elemento and new.elemento:
+            self._best.elemento = new.elemento
+
+        # Siempre overwrite confianza/notas con la captura mas reciente
+        self._best.confianza_global = new.confianza_global
+        self._best.notas = list(new.notas)
+        return self._best
+
+
 # ---------------------------------------------------------------------------
 # Parsers de valor
 # ---------------------------------------------------------------------------
@@ -220,8 +332,15 @@ def _normalizar_rol(ocr_text: str) -> str | None:
 def _lookup_agent(nombre_ocr: str) -> tuple[str | None, str | None, str | None]:
     """
     Busca un agente en la DB por nombre aproximado.
-    Prueba multiples variantes: raw, sin espacios, con split camelCase
-    (para OCR que pega palabras: "NangongYu" -> "nangong yu").
+
+    Estrategia: la DB usa "Yuzuha", "Yanagi", "Cissia" — pero el juego
+    muestra "Ukinami Yuzuha", "Tsukishiro Yanagi". El OCR captura la
+    versión del juego (2 palabras). Probamos:
+      1. Nombre completo (raw, sin espacios, camelCase).
+      2. Cada PALABRA individual del nombre (si tiene 2+).
+      3. Cada palabra split por camelCase.
+
+    El primer LIKE que matchea gana.
     Retorna (nombre_canon, rol, elemento) o (None, None, None).
     """
     if not nombre_ocr:
@@ -231,18 +350,31 @@ def _lookup_agent(nombre_ocr: str) -> tuple[str | None, str | None, str | None]:
         raw = nombre_ocr.strip()
         base = raw.lower()
 
-        candidates = {base, base.replace(" ", "")}
+        # Set ordenado de candidatos: primero los más específicos, luego
+        # palabras individuales. Usamos list para preservar orden.
+        candidates: list[str] = []
 
-        # Split camelCase: "NangongYu" -> "Nangong Yu" (preserving case first)
-        # Luego lowercased: "nangong yu"
+        def _add(c: str) -> None:
+            c = c.strip()
+            if c and len(c) >= 3 and c not in candidates:
+                candidates.append(c)
+
+        _add(base)
+        _add(base.replace(" ", ""))
+
+        # Split camelCase: "NangongYu" -> "Nangong Yu"
         split_camel = re.sub(r"([a-z])([A-Z])", r"\1 \2", raw).lower()
-        candidates.add(split_camel)
-        # split_camel without spaces too
-        candidates.add(split_camel.replace(" ", ""))
+        _add(split_camel)
+        _add(split_camel.replace(" ", ""))
+
+        # Cada palabra individual del nombre completo
+        for word in re.split(r"\s+", base):
+            _add(word)
+        # Cada palabra del camelCase split
+        for word in re.split(r"\s+", split_camel):
+            _add(word)
 
         for c in candidates:
-            if not c:
-                continue
             cursor = conn.execute(
                 "SELECT nombre, rol, elemento FROM agents WHERE LOWER(nombre) LIKE ?",
                 (f"%{c}%",),
@@ -284,7 +416,12 @@ _RE_MAESTRIA_ANOMALIA = re.compile(r"maestr\w*\s*(?:de\s*)?anomal\w*\s*(\d+)")
 # Fuerza Bruta (disruptivos)
 _RE_FUERZA_BRUTA = re.compile(r"fuerza\s*bruta\s*(\d+)")
 # PEN: SOLO "Tasa de Perforacion" (excluye "Fuerza Bruta")
-_RE_TASA_PERFORACION = re.compile(r"tasa\s*(?:de\s*)?perfor\w*\s*(\d+(?:\.\d+)?)\s*%?")
+# El número debe estar dentro de ~10 chars del label y seguido por '%'
+# para evitar capturar números de otras filas (e.g. el "20" del "X 20%" de
+# Y Pistas de disco que aparece más abajo en el panel).
+_RE_TASA_PERFORACION = re.compile(
+    r"tasa\s*(?:de\s*)?perfor\w*[^\d%\n]{0,10}(\d+(?:\.\d+)?)\s*%"
+)
 # Recup Energía: la palabra "Recuperación de Energía" se renderiza en 2
 # líneas en el juego y Tesseract a menudo destruye una o ambas palabras.
 # Aceptamos múltiples patrones:
@@ -296,8 +433,19 @@ _RE_RECUP_ENERGIA = re.compile(
 )
 # Agente: nombre (1-2 palabras capitalizadas en texto original) antes de "Nivel".
 # Se aplica sobre el texto ORIGINAL (no normalizado) para preservar mayúsculas.
+# Tolera hasta 60 chars de basura OCR entre el nombre y "Nivel" — Tesseract
+# suele intercalar garbage entre tokens en frames con animaciones (e.g.
+# "Nangong YU �� ! '$ � Nivel 60"). Captura 1-2 palabras Capitalizadas y
+# acepta variantes como "Nombre YU" (segunda palabra mayúscula completa).
 _RE_AGENTE_NOMBRE = re.compile(
-    r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+Nivel\s+\d+"
+    r"([A-Z][a-z]+(?:\s+(?:[A-Z][a-z]+|[A-Z]{2,}))?)"
+    r"(?:[^A-Za-z\n]{0,60}?Nivel\s+\d+|\s+Nivel\s+\d+)"
+)
+# Variante alternativa: nombre como palabra capitalizada cerca del comienzo,
+# útil cuando "Nivel" se destruye en el OCR pero el nombre se preserva.
+# Limitada a primeras 200 chars del texto para evitar capturar texto del UI.
+_RE_AGENTE_FALLBACK = re.compile(
+    r"\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]+)?)\b"
 )
 # Rol: texto entre "MAX" y "PV" en texto original
 _RE_ROL_OCR = re.compile(r"MAX\s+(.+?)\s+[Pp][Vv]\b")
@@ -364,36 +512,62 @@ def _extract_by_regex(text: str) -> dict[str, str | None]:
 def _extract_agent_info(full_text: str) -> tuple[str | None, str | None, str | None, str | None]:
     """
     Extrae nombre, rol y elemento del texto OCR.
+
+    Estrategia robusta:
+      1. Busca TODOS los nombres capitalizados (1-2 palabras) en el texto.
+      2. Cada candidato se valida contra la DB de agentes (LIKE).
+      3. El primero que matchea gana. Esto descarta automáticamente nombres
+         de facciones, bangboos (Tinta), texto random del UI, etc.
+
     Retorna (nombre_ocr, nombre_db, rol_db, elemento_db).
     """
     nombre_ocr = None
-    m = _RE_AGENTE_NOMBRE.search(full_text)
-    if m:
-        nombre_ocr = m.group(1).strip()
-        # Ignorar capturas demasiado cortas (el OCR suele fragmentar nombres
-        # tipo "Yu" del camelCase "NangongYu", o "Tinta" que no es agente)
-        if len(nombre_ocr) <= 2 or not any(c.islower() for c in nombre_ocr):
-            nombre_ocr = None
+    nombre_db = None
+    rol_db = None
+    elemento_db = None
 
-    rol_ocr_raw = None
-    m = _RE_ROL_OCR.search(full_text)
-    if m:
-        rol_ocr_raw = m.group(1).strip()
+    # Candidatos: nombres capitalizados 1-2 palabras en las primeras 500 chars
+    # (donde está el banner del agente). Soporta "Nombre Apellido", "Nombre YU"
+    # (segundo palabra en mayúsculas) y "Nombre".
+    candidates = re.findall(
+        r"\b([A-Z][a-z]{2,}(?:\s+(?:[A-Z][a-z]+|[A-Z]{2,}))?)\b",
+        full_text[:500],
+    )
 
-    # Buscar en DB por nombre OCR
-    nombre_db, rol_db, elemento_db = _lookup_agent(nombre_ocr or "")
+    # Probar cada candidato contra la DB hasta encontrar match
+    for candidate in candidates:
+        if len(candidate) < 3:
+            continue
+        n_db, r_db, e_db = _lookup_agent(candidate)
+        if n_db:
+            nombre_ocr = candidate
+            nombre_db = n_db
+            rol_db = r_db
+            elemento_db = e_db
+            break
 
-    # Si no hay match en DB, intentar extraer rol del texto OCR
-    if rol_db is None and rol_ocr_raw:
-        rol_db = _normalizar_rol(rol_ocr_raw)
+    # Fallback al regex viejo si no hubo match en DB
+    if nombre_db is None:
+        m = _RE_AGENTE_NOMBRE.search(full_text)
+        if m:
+            candidate = m.group(1).strip()
+            if len(candidate) > 2 and any(c.islower() for c in candidate):
+                nombre_ocr = candidate
+                nombre_db, rol_db, elemento_db = _lookup_agent(candidate)
 
-    # Extraer elemento del texto OCR si no vino de DB
-    if elemento_db is None and rol_ocr_raw:
-        t = rol_ocr_raw.lower()
-        for elem in _ELEMENTOS_DB:
-            if elem in t:
-                elemento_db = elem.capitalize()
-                break
+    # Rol/Elemento desde regex MAX..PV (si no vinieron de DB)
+    if rol_db is None or elemento_db is None:
+        m = _RE_ROL_OCR.search(full_text)
+        if m:
+            rol_ocr_raw = m.group(1).strip()
+            if rol_db is None:
+                rol_db = _normalizar_rol(rol_ocr_raw)
+            if elemento_db is None:
+                t = rol_ocr_raw.lower()
+                for elem in _ELEMENTOS_DB:
+                    if elem in t:
+                        elemento_db = elem.capitalize()
+                        break
 
     return (nombre_ocr, nombre_db, rol_db, elemento_db)
 
