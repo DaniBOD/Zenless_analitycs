@@ -163,10 +163,12 @@ Tarda ~3-5 min (PySide6 pesa 200 MB).
 ### 3.3 Instalar PaddleOCR (versiones validadas)
 
 ```powershell
-pip install paddlepaddle==2.6.2 paddleocr==2.8.2
+pip install paddlepaddle==2.6.2 paddleocr==2.8.1
 ```
 
 Tarda ~2-3 min. Bajan ~500 MB combinado (paddlepaddle es grande).
+
+> **Nota sobre el pin:** la versión `2.8.2` que figuraba en versiones previas de este doc **no existe en PyPI** (la lista de paddleocr salta de 2.8.1 directo a 2.9.0). Usar `2.8.1` que es del mismo ciclo de release y compatible con paddlepaddle 2.6.2.
 
 ### 3.4 Instalar PyInstaller (para build .exe)
 
@@ -300,7 +302,7 @@ Esto es lo que pasó al dev. Solución: bajar versiones:
 
 ```powershell
 pip uninstall -y paddlepaddle paddleocr
-pip install paddlepaddle==2.6.2 paddleocr==2.8.2 --no-cache-dir
+pip install paddlepaddle==2.6.2 paddleocr==2.8.1 --no-cache-dir
 ```
 
 Si ya las tenés y aún falla, podés probar:
