@@ -83,8 +83,13 @@ def test_extracts_all_11_stats(screenshot_path, paddle_ocr):
         pytest.skip(f"PaddleOCR no extrajo stats en {screenshot_path.stem} (entorno sin OneDNN compatible)")
 
     # Para agentes Disruptivos, Tasa de Perforacion se reemplaza por
-    # Fuerza Bruta. Permitimos 10/11 en ese caso.
-    min_expected = 11 if result.rol != "disruptivos" else 10
+    # Fuerza Bruta en pantalla. Permitimos 10/11 en ese caso porque
+    # el dict no incluye fuerza_bruta. Usamos la misma normalizacion
+    # rol-aware que el controller (case-insensitive + substring match)
+    # para tolerar variantes "Disruptivos" / "Disruptivo" / casos OCR.
+    rol_norm = (result.rol or "").lower()
+    is_disruptivo = "disruptiv" in rol_norm
+    min_expected = 10 if is_disruptivo else 11
 
     assert extracted >= min_expected, (
         f"Stats faltantes o cero en {screenshot_path.stem}: "
