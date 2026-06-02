@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import tomllib
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -39,14 +40,123 @@ _ROLES_DB: set[str] = {
 }
 _ELEMENTOS_DB: set[str] = {
     "fisico", "fuego", "hielo", "electrico", "eter",
+    # Viento (Wind): elemento estándar nuevo, incorporado proactivamente al
+    # dominio para PJs futuros (decisión DaniBOD 2026-06-01). Aún sin agentes.
+    "viento",
 }
-# Mapping OCR noise -> roles canonicales
+# Mapping OCR noise -> roles canonicales (legacy, lowercase)
 _ROL_OCR_MAP: dict[str, str] = {
     "auxiliar": "soporte",
     "aturdidor": "aturdimiento",
     "anomalo": "anomalia",
     "disruptivo": "disruptivos",
 }
+
+# ---------------------------------------------------------------------------
+# R1 (2026-05-31) — Rol + elemento desde PANTALLA (ground truth, autoritativo).
+# La pantalla muestra el nombre display ZZZ ("Ígneo", "Aturdidor", "Tinta
+# áurica"); la DB guarda otra forma ("Fuego", "Aturdimiento") y a veces tiene
+# data vieja/placeholder (ej.: Ju Fufu figuraba "Soporte" en DB pero la pantalla
+# dice "Aturdidor"). Por RNF-02, la PANTALLA manda; la DB queda como respaldo si
+# el OCR no lee. Las llaves están sin acentos y en minúscula (se matchea sobre
+# texto normalizado con _strip_accents); el valor es la forma canónica de la DB.
+#
+# POLÍTICA DE ELEMENTOS (DaniBOD 2026-06-01, mig 08): los atributos "especiales"
+# del juego se mapean a su EQUIVALENTE ESTÁNDAR, porque heredan los modificadores
+# del estándar y el resto del sistema razona sobre los 6 estándar:
+#   Tinta áurica (Auric Ink, Yixuan)   -> Éter
+#   Escarcha/Frost (Miyabi)            -> Hielo
+#   Honed Edge (Ye Shunguang)          -> Físico
+# Viento (Wind) SÍ es un estándar nuevo (no equivalente a otro) y tiene su propia
+# entrada para PJs futuros.
+# ---------------------------------------------------------------------------
+_ELEMENTO_SCREEN_MAP: dict[str, str] = {
+    "fisico":       "Físico",
+    "igneo":        "Fuego",
+    "gelido":       "Hielo",
+    "escarcha":     "Hielo",      # Frost (Miyabi) ≡ Hielo
+    "electrico":    "Eléctrico",
+    "eter":         "Éter",
+    "tinta aurica": "Éter",       # Auric Ink (Yixuan) ≡ Éter
+    "aurica":       "Éter",
+    "viento":       "Viento",     # Wind (PJs futuros) — estándar nuevo
+}
+_ROL_SCREEN_MAP: dict[str, str] = {
+    "ataque":       "Ataque",
+    "aturdidor":    "Aturdimiento",
+    "aturdimiento": "Aturdimiento",
+    "anomalia":     "Anomalía",
+    "anomalo":      "Anomalía",
+    "soporte":      "Soporte",
+    "auxiliar":     "Soporte",
+    "defensa":      "Defensa",
+    "disruptivo":   "Disruptivos",
+    "disruptivos":  "Disruptivos",
+    "destrozo":     "Disruptivos",
+}
+
+
+def _strip_accents(s: str) -> str:
+    """Quita tildes/diacríticos para matchear OCR con/sin acentos."""
+    return "".join(
+        c for c in unicodedata.normalize("NFD", s)
+        if unicodedata.category(c) != "Mn"
+    )
+
+
+def _canon_elemento(text: str) -> str | None:
+    """Detecta el elemento display ZZZ en `text` y devuelve la forma canónica DB."""
+    t = _strip_accents(text).lower()
+    for key, canon in _ELEMENTO_SCREEN_MAP.items():
+        if key in t:
+            return canon
+    return None
+
+
+def _canon_rol(text: str) -> str | None:
+    """Detecta el rol display ZZZ en `text` y devuelve la forma canónica DB."""
+    t = _strip_accents(text).lower()
+    for key, canon in _ROL_SCREEN_MAP.items():
+        if key in t:
+            return canon
+    return None
+
+
+def _banner_rol_elem_region(full_text: str) -> str:
+    """
+    Región del banner que contiene elemento + rol: desde 'MAX' (o inicio) hasta
+    el primer 'PV'. Se corta antes de los stats para NO capturar 'Anomalía' de
+    los labels 'Tasa/Maestría de Anomalía' (que contaminarían el rol).
+    """
+    idx_pv = full_text.find("PV")
+    region = full_text[:idx_pv] if idx_pv > 0 else full_text[:200]
+    mi = region.rfind("MAX")
+    if mi >= 0:
+        return region[mi + 3:]
+    return region
+
+
+def _name_region(full_text: str) -> str:
+    """Región del nombre: desde el inicio hasta 'Nivel'/'MAX'."""
+    for anchor in ("Nivel", "NIVEL", "Nivol", "MAX"):
+        idx = full_text.find(anchor)
+        if idx > 0:
+            return full_text[:idx]
+    return full_text[:120]
+
+
+def _name_appears_twice(full_text: str, candidate: str) -> bool:
+    """
+    R2: el nombre aparece DOS veces en el banner (blanco grande + gris tenue,
+    a veces con letras espaciadas 'J u F u f u'). Colapsamos espacios y acentos
+    para que ambas variantes matcheen. >=2 ocurrencias ⇒ nombre de alta
+    confianza (descarta facciones/UI que aparecen una sola vez).
+    """
+    cand = _strip_accents(candidate).lower().replace(" ", "")
+    if len(cand) < 3:
+        return False
+    region = _strip_accents(_name_region(full_text)).lower().replace(" ", "")
+    return region.count(cand) >= 2
 
 # ---------------------------------------------------------------------------
 # Regex
@@ -62,7 +172,7 @@ _RE_PERCENT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 _STAT_KEYS = [
     "nivel", "pv", "ataque", "defensa", "impacto",
     "prob_crit", "dano_crit", "tasa_anomalia", "maestria_anomalia",
-    "tasa_perforacion", "recup_energia", "fuerza_bruta",
+    "tasa_perforacion", "recup_energia", "fuerza_bruta", "adrenalina",
 ]
 
 # Keywords para matchear nombres de stat contra texto OCR.
@@ -129,6 +239,10 @@ class AgentStatsParsed:
     tasa_perforacion: float | None = None
     recuperacion_energia: float | None = None
     fuerza_bruta: int | None = None
+    # Acumulación Automática de Adrenalina — slot inferior-derecho EXCLUSIVO de
+    # Disruptivos (reemplaza a recuperacion_energia, igual que fuerza_bruta
+    # reemplaza a tasa_perforacion). Hito 2.8 QA 2026-05-31.
+    acumulacion_adrenalina: int | None = None
     confianza_global: float = 0.0
     notas: list[str] = field(default_factory=list)
     # Identificacion del agente (extraida del OCR + validada contra DB)
@@ -145,6 +259,7 @@ _AGGREGATABLE_FIELDS: tuple[str, ...] = (
     "prob_crit", "dano_crit",
     "tasa_anomalia", "maestria_anomalia",
     "tasa_perforacion", "recuperacion_energia", "fuerza_bruta",
+    "acumulacion_adrenalina",
 )
 
 
@@ -217,6 +332,7 @@ class AgentStatsAggregator:
                 tasa_perforacion=new.tasa_perforacion,
                 recuperacion_energia=new.recuperacion_energia,
                 fuerza_bruta=new.fuerza_bruta,
+                acumulacion_adrenalina=new.acumulacion_adrenalina,
                 confianza_global=new.confianza_global,
                 notas=list(new.notas),
                 agente_nombre=new.agente_nombre,
@@ -285,25 +401,28 @@ def _parse_float(raw: str | None) -> float | None:
 
 def _normalize_percent(val: float | None) -> float | None:
     """
-    Normaliza un valor de % a fracción 0-1.
+    Normaliza un valor de % a fracción 0-1+ (la fracción puede ser >1 para
+    stats como Daño Crítico, que legítimamente supera 100%).
 
-    Si val > 1.0: viene en % (e.g. 19.4 → 0.194).
-    Si val > 1.0 tras /100: el OCR perdió un punto decimal
-    (e.g. "194" → 1.94 → 0.194). Aplicamos /10 extra.
+    Regla: si val > 1.0 viene expresado en % → dividir por 100.
+      19.4 → 0.194 ✓   (Prob. Crítico)
+      93.2 → 0.932 ✓   (Daño Crítico < 100%)
+      162  → 1.62  ✓   (Daño Crítico > 100% — fracción válida >1)
+      65   → 0.65  ✓
+      0.5  → 0.5   ✓   (ya en fracción)
 
-    Casos cubiertos:
-      19.4 → 0.194 ✓        (lectura limpia)
-      194  → 0.194 ✓        (OCR perdió "." entre "9" y "4")
-      1716 → 0.1716 → 0.01716 / 0.1716 — borde, aceptamos
-      100  → 1.0    ✓       (100% real, queda)
-      0.5  → 0.5    ✓       (ya en fracción)
+    NOTA (Hito 2.8, QA 2026-05-31): se eliminó el `/10` extra que intentaba
+    "recuperar" un punto decimal perdido por OCR (194→19.4). Ese heurístico
+    corrompía valores legítimos ≥100% (Daño Crítico 162% → 0.162). Con
+    PaddleOCR los decimales se leen de forma confiable, así que el hack ya
+    no aporta y violaba RNF-02 (inyectaba un valor concreto incorrecto). Si
+    el OCR llegara a perder un decimal, el valor resultante queda visiblemente
+    fuera de rango y se detecta, en vez de corromperse en silencio.
     """
     if val is None:
         return None
     if val > 1.0:
         val = val / 100.0
-    if val > 1.0:
-        val = val / 10.0
     return val
 
 
@@ -422,15 +541,31 @@ _RE_FUERZA_BRUTA = re.compile(r"fuerza\s*bruta\s*(\d+)")
 _RE_TASA_PERFORACION = re.compile(
     r"tasa\s*(?:de\s*)?perfor\w*[^\d%\n]{0,10}(\d+(?:\.\d+)?)\s*%"
 )
-# Recup Energía: la palabra "Recuperación de Energía" se renderiza en 2
-# líneas en el juego y Tesseract a menudo destruye una o ambas palabras.
-# Aceptamos múltiples patrones:
-#   (a) "recup..." cualquier sufijo + número
-#   (b) "...energ..." cualquier prefijo + número
-#   (c) "adrenalina <número>" (variante histórica de algunas builds)
+# Recup Energía: "Recuperación de Energía" se renderiza en 2 LÍNEAS en el
+# juego ("Recuperación de" / "Energía") y PaddleOCR las lee por filas, así que
+# el VALOR (e.g. "1.2") suele quedar JUSTO ANTES del token "energia" en el
+# texto concatenado: "...perforacion 0 % 1.2 energia...".
+#
+# Bug histórico (QA 2026-05-31): el patrón viejo `(?:recup|energ|adrenal)...(\d)`
+# matcheaba "recuperacion" y luego agarraba el PRIMER dígito siguiente, que era
+# el "0" de "Tasa de Perforación 0 %" de la fila de al lado → ER=0.0 (mal).
+#
+# Orden de alternativas (re.search devuelve el match más a la izquierda; el loop
+# de extracción toma el primer grupo no-None):
+#   (a) "<valor> energia"          — layout 2-líneas real (caso principal)
+#   (b) "recup... <valor>"         — fallback si el valor va después del label
+#                                     (ventana corta {0,12} para no cruzar filas)
+#   (c) "adrenalina <N>"           — Disruptivos: el slot inferior-derecho es
+#                                     "Acumulación Automática de Adrenalina"
 _RE_RECUP_ENERGIA = re.compile(
-    r"(?:recup\w*|energ\w*|adrenal\w*)[^\d\n]{0,30}?(\d+(?:\.\d+)?)"
+    r"(\d+(?:\.\d+)?)[^\d\n]{0,4}?energ\w*"   # "<valor> [ruido] energia" ("2.5 v energia")
+    r"|recup\w*[^\d\n]{0,12}?(\d+(?:\.\d+)?)"  # "recup... <valor>"
 )
+# Acumulación Automática de Adrenalina (slot inferior-derecho de Disruptivos).
+# Es un campo SEPARADO de recuperacion_energia: aparece SOLO en Disruptivos y
+# tiene escala distinta (entero pequeño, e.g. 2). El label se renderiza como
+# "Acumulación Automática de / Adrenalina" → el valor suele quedar tras el token.
+_RE_ADRENALINA = re.compile(r"adrenal\w*[^\d\n]{0,20}?(\d+)")
 # Agente: nombre (1-2 palabras capitalizadas en texto original) antes de "Nivel".
 # Se aplica sobre el texto ORIGINAL (no normalizado) para preservar mayúsculas.
 # Tolera hasta 60 chars de basura OCR entre el nombre y "Nivel" — Tesseract
@@ -501,6 +636,7 @@ def _extract_by_regex(text: str) -> dict[str, str | None]:
         ("tasa_perforacion", _RE_TASA_PERFORACION),
         ("recup_energia", _RE_RECUP_ENERGIA),
         ("fuerza_bruta", _RE_FUERZA_BRUTA),
+        ("adrenalina", _RE_ADRENALINA),
     ]:
         m = regex.search(norm)
         if m:
@@ -509,67 +645,91 @@ def _extract_by_regex(text: str) -> dict[str, str | None]:
     return result
 
 
-def _extract_agent_info(full_text: str) -> tuple[str | None, str | None, str | None, str | None]:
+def _extract_agent_info(
+    full_text: str,
+) -> tuple[str | None, str | None, str | None, list[str]]:
     """
     Extrae nombre, rol y elemento del texto OCR.
 
-    Estrategia robusta:
-      1. Busca TODOS los nombres capitalizados (1-2 palabras) en el texto.
-      2. Cada candidato se valida contra la DB de agentes (LIKE).
-      3. El primero que matchea gana. Esto descarta automáticamente nombres
-         de facciones, bangboos (Tinta), texto random del UI, etc.
+    Estrategia (2026-05-31, R1/R2):
+      1. ROL + ELEMENTO desde PANTALLA (banner MAX..PV) → autoritativo (RNF-02).
+         La DB puede tener data vieja; la pantalla es ground truth.
+      2. NOMBRE: candidatos capitalizados validados contra DB (LIKE). Se
+         prefiere el que aparece DOS veces en el banner (blanco + gris, R2),
+         lo que descarta facciones/UI. La DB aporta el nombre canónico; si no
+         hay match pero el nombre está dual-validado, se usa el OCR igual.
+      3. La DB queda como RESPALDO de rol/elemento solo si el OCR no los leyó.
 
-    Retorna (nombre_ocr, nombre_db, rol_db, elemento_db).
+    Retorna (nombre_final, rol, elemento, notas_extra).
     """
-    nombre_ocr = None
-    nombre_db = None
-    rol_db = None
-    elemento_db = None
+    notas: list[str] = []
 
-    # Candidatos: nombres capitalizados 1-2 palabras en las primeras 500 chars
-    # (donde está el banner del agente). Soporta "Nombre Apellido", "Nombre YU"
-    # (segundo palabra en mayúsculas) y "Nombre".
+    # --- 1) Rol + elemento desde pantalla (autoritativo) ---
+    banner = _banner_rol_elem_region(full_text)
+    rol_screen = _canon_rol(banner)
+    elem_screen = _canon_elemento(banner)
+
+    # --- 2) Nombre: candidatos capitalizados (1-2 palabras) en la REGIÓN del
+    # nombre (antes de 'Nivel'/'MAX'). Restringir acá evita que el regex fusione
+    # el nombre con 'Nivel'/elemento/rol (ej. "Lucia Nivel") y permite detectar
+    # la doble aparición (blanco + gris). ---
     candidates = re.findall(
         r"\b([A-Z][a-z]{2,}(?:\s+(?:[A-Z][a-z]+|[A-Z]{2,}))?)\b",
-        full_text[:500],
+        _name_region(full_text),
     )
+    candidates = [c for c in candidates if len(c) >= 3]
+    # R2: priorizar candidatos que aparecen 2x en el banner (nombre real).
+    dual = [c for c in candidates if _name_appears_twice(full_text, c)]
+    ordered = dual + [c for c in candidates if c not in dual]
 
-    # Probar cada candidato contra la DB hasta encontrar match
-    for candidate in candidates:
-        if len(candidate) < 3:
-            continue
+    nombre_ocr: str | None = None
+    nombre_db: str | None = None
+    rol_db: str | None = None
+    elemento_db: str | None = None
+    name_validated = False
+
+    for candidate in ordered:
         n_db, r_db, e_db = _lookup_agent(candidate)
         if n_db:
             nombre_ocr = candidate
             nombre_db = n_db
             rol_db = r_db
             elemento_db = e_db
+            name_validated = candidate in dual
             break
 
-    # Fallback al regex viejo si no hubo match en DB
-    if nombre_db is None:
+    # Si no hubo match en DB pero hay candidato dual-validado, usarlo (agente
+    # fuera de la DB, ej. Lucia: igual mostramos el nombre leído de pantalla).
+    if nombre_db is None and dual:
+        nombre_ocr = dual[0]
+        name_validated = True
+
+    # Último recurso: regex legacy nombre-antes-de-Nivel (OCR sin doble lectura).
+    if nombre_ocr is None:
         m = _RE_AGENTE_NOMBRE.search(full_text)
         if m:
             candidate = m.group(1).strip()
             if len(candidate) > 2 and any(c.islower() for c in candidate):
                 nombre_ocr = candidate
                 nombre_db, rol_db, elemento_db = _lookup_agent(candidate)
+                name_validated = _name_appears_twice(full_text, candidate)
 
-    # Rol/Elemento desde regex MAX..PV (si no vinieron de DB)
-    if rol_db is None or elemento_db is None:
-        m = _RE_ROL_OCR.search(full_text)
-        if m:
-            rol_ocr_raw = m.group(1).strip()
-            if rol_db is None:
-                rol_db = _normalizar_rol(rol_ocr_raw)
-            if elemento_db is None:
-                t = rol_ocr_raw.lower()
-                for elem in _ELEMENTOS_DB:
-                    if elem in t:
-                        elemento_db = elem.capitalize()
-                        break
+    # --- 3) Resolución autoritativa: PANTALLA gana sobre DB ---
+    rol = rol_screen or rol_db
+    elemento = elem_screen or elemento_db
+    nombre_final = nombre_db or (nombre_ocr if name_validated else None)
 
-    return (nombre_ocr, nombre_db, rol_db, elemento_db)
+    # Notas de diagnóstico (surfacing de discrepancias DB vs pantalla)
+    if rol_screen and rol_db and rol_screen != rol_db:
+        notas.append(f"rol_pantalla={rol_screen}_vs_db={rol_db}")
+    if elem_screen and elemento_db and elem_screen != elemento_db:
+        notas.append(f"elem_pantalla={elem_screen}_vs_db={elemento_db}")
+    if name_validated:
+        notas.append("nombre_doble_validado")
+    if nombre_final and rol:
+        notas.append(f"agente_{nombre_final}_rol_{rol}")
+
+    return (nombre_final, rol, elemento, notas)
 
 
 def _parse_via_full_frame(
@@ -587,8 +747,9 @@ def _parse_via_full_frame(
         notas.append("ocr_no_detecto_texto")
         return AgentStatsParsed(confianza_global=0.0, notas=notas)
 
-    # Extraer agente + rol
-    nombre_ocr, nombre_db, rol_db, elemento_db = _extract_agent_info(full_text)
+    # Extraer agente + rol + elemento (R1: pantalla autoritativa, R2: doble nombre)
+    nombre_db, rol_db, elemento_db, info_notas = _extract_agent_info(full_text)
+    notas.extend(info_notas)
 
     extracted = _extract_by_regex(full_text)
 
@@ -605,20 +766,32 @@ def _parse_via_full_frame(
     tasa_anomalia = _parse_int(extracted["tasa_anomalia"])
     maestria_anomalia = _parse_int(extracted["maestria_anomalia"])
 
-    # Fuerza Bruta: stat exclusivo de Disruptivos en el slot bottom-left.
-    # Reemplaza a Tasa de Perforacion solo para ese rol.
-    tasa_perforacion = None
-    fuerza_bruta = None
-    if rol_db == "disruptivos":
-        fuerza_bruta = _parse_int(extracted["fuerza_bruta"])
+    # Fuerza Bruta vs Tasa de Perforación: son mutuamente excluyentes por rol.
+    # "Fuerza Bruta" es un label EXCLUSIVO de Disruptivos, así que su sola
+    # presencia en el OCR identifica el caso — NO dependemos de que rol_db ya
+    # esté resuelto (Bug C, QA 2026-05-31: el lookup de rol podía no haber
+    # corrido en el frame del merge → fuerza_bruta quedaba None aunque el valor
+    # estuviera en pantalla). Si aparece Fuerza Bruta, TP no aplica.
+    fuerza_bruta = _parse_int(extracted["fuerza_bruta"])
+    if fuerza_bruta is not None:
+        tasa_perforacion = None
         if extracted["tasa_perforacion"] is not None:
-            notas.append(f"tp_ignorada_rol_{rol_db}")
+            notas.append("tp_ignorada_disruptivo")
     else:
         tasa_perforacion = _normalize_percent(_parse_float(extracted["tasa_perforacion"]))
-    recuperacion_energia = _parse_float(extracted["recup_energia"])
 
-    if nombre_db is not None and rol_db is not None:
-        notas.append(f"agente_{nombre_db}_rol_{rol_db}")
+    # Recup. Energía vs Acumulación de Adrenalina: mutuamente excluyentes por
+    # rol (igual que TP vs FB). "adrenalina" es label EXCLUSIVO de Disruptivos;
+    # su presencia identifica el caso sin depender de rol_db. Si hay adrenalina,
+    # recuperacion_energia NO aplica (y viceversa). Esto evita meter el valor de
+    # adrenalina en el campo de energy regen (Bug D, QA 2026-05-31).
+    acumulacion_adrenalina = _parse_int(extracted["adrenalina"])
+    if acumulacion_adrenalina is not None:
+        recuperacion_energia = None
+        if extracted["recup_energia"] is not None:
+            notas.append("er_ignorada_disruptivo")
+    else:
+        recuperacion_energia = _parse_float(extracted["recup_energia"])
 
     return AgentStatsParsed(
         nivel=nivel, pv=pv, ataque=ataque, defensa=defensa,
@@ -627,6 +800,7 @@ def _parse_via_full_frame(
         tasa_perforacion=tasa_perforacion,
         recuperacion_energia=recuperacion_energia,
         fuerza_bruta=fuerza_bruta,
+        acumulacion_adrenalina=acumulacion_adrenalina,
         confianza_global=round(ocr_conf, 3),
         notas=notas,
         agente_nombre=nombre_db,
@@ -677,8 +851,10 @@ def _parse_via_rois(frame: np.ndarray, ocr: OcrBackend) -> AgentStatsParsed:
     text, c1, c2 = _parse_stat("tasa_perforacion"); confianzas.extend([c1, c2]); tasa_perforacion = _normalize_percent(_parse_float(text))
     text, c1, c2 = _parse_stat("recup_energia"); confianzas.extend([c1, c2]); recuperacion_energia = _parse_float(text)
 
-    # Fuerza Bruta no aplica en per-ROI (Tesseract no puede extraerlo de crops)
+    # Fuerza Bruta / Adrenalina no aplican en per-ROI (path Tesseract fallback;
+    # son stats role-specific de Disruptivos que el modo full-frame maneja).
     fuerza_bruta = None
+    acumulacion_adrenalina = None
 
     confianza_global = (sum(confianzas) / len(confianzas)) if confianzas else 0.0
     return AgentStatsParsed(
@@ -688,6 +864,7 @@ def _parse_via_rois(frame: np.ndarray, ocr: OcrBackend) -> AgentStatsParsed:
         tasa_perforacion=tasa_perforacion,
         recuperacion_energia=recuperacion_energia,
         fuerza_bruta=fuerza_bruta,
+        acumulacion_adrenalina=acumulacion_adrenalina,
         confianza_global=round(confianza_global, 3), notas=notas,
     )
 

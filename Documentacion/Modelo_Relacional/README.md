@@ -54,10 +54,22 @@ Este documento describe el modelo relacional completo de la base, post-aplicaci�
 
 | Tabla | Filas iniciales | Descripción |
 |-------|-----------------|-------------|
-| `agents` | 45 | Roster completo. Stats efectivos de HoYoLAB, mindscape, FK a `weapons` y `disc_sets` (4p/2p equipados) |
+| `agents` | 46 | Roster completo (46 post-Cissia mig 06). Stats efectivos de HoYoLAB, mindscape, FK a `weapons` y `disc_sets` (4p/2p equipados) |
 | `weapons` | 49 + extensiones (mig 05) | Catálogo de W-Engines con `pasiva_tipo` semi-estructurado. Mig 05 agrega `pasiva_modelada` y `sensibilidad_contexto` |
 | `disc_sets` | 26 | Catálogo de sets con `bonus_2p` y `bonus_4p_desc` |
 | `agent_awakenings` | 1 cargado / 7 confirmados | Despertares con `version_juego` para escalabilidad. Pendiente: capturar texto de Lycaon/Ellen/Grace/N.º 0: Anby (Task #12) |
+
+> **Dominio de `agents.elemento`** (TEXT libre, sin CHECK; valores canónicos):
+> `Físico` · `Fuego` · `Hielo` · `Eléctrico` · `Éter` · `Viento` (Wind, sin agentes aún).
+> **Política (DaniBOD 2026-06-01, mig 08):** los atributos "especiales" del juego se guardan
+> como su **equivalente estándar** (heredan sus modificadores): *Tinta áurica*/Auric Ink
+> (Yixuan) → `Éter`; *Escarcha*/Frost (Miyabi) → `Hielo`; *Honed Edge* (Ye Shunguang) →
+> `Físico`. *Viento* sí es un estándar nuevo (no equivalente a otro) → se incorpora al
+> dominio de forma proactiva para PJs futuros. El parser (`_ELEMENTO_SCREEN_MAP`) hace el
+> mapeo pantalla→estándar.
+>
+> **Dominio de `agents.rol`** (TEXT libre, sin CHECK): `Ataque` · `Aturdimiento` ·
+> `Anomalía` · `Soporte` · `Defensa` · `Disruptivos` (Rupture).
 
 ### Capa 2 — Inventarios
 

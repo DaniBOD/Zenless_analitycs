@@ -138,8 +138,16 @@ RF-14 coordina con RF-06 (build full = arma + 6 discos)
 
 ## 6. Roster (rápido)
 
-**45 PJs** · Distribución elemento: Físico 13 · Eléctrico 11 · Fuego 9 · Éter 7 · Hielo 5
-**Distribución rol:** Ataque 16 · Anomalía 10 · Soporte 7 · Defensa 7 · Aturdimiento 5
+**46 PJs** · Distribución elemento: Físico 13 · Eléctrico 12 · Fuego 9 · Éter 7 · Hielo 5
+**Distribución rol:** Ataque 14 · Aturdimiento 9 · Anomalía 8 · Soporte 8 · Defensa 5 · Disruptivos 2
+
+> Corrección rol/elemento mig 07+08 (2026-06-01): se reasignaron 6 roles mal seedeados
+> (Pulchra→Aturdimiento, Lucía→Soporte, Ye Shunguang→Ataque, Yuzuha→Soporte, Dialyn→
+> Aturdimiento, Ju Fufu→Aturdimiento). Synergy remapeada al rol corregido; thresholds de
+> Ju Fufu/Yuzuha/Dialyn re-derivados (Prydwen/Game8). **Política de elementos:** atributos
+> especiales se guardan como su equivalente estándar (Auric Ink→Éter, Frost→Hielo, Honed
+> Edge→Físico); **Viento** agregado al dominio para PJs futuros. Ground truth pantalla S18
+> QA 2026-05-31. Ver `audit/correccion_roles_elementos_20260601.md`.
 
 **Niveles:** 41 en nv60 · 4 en nv55 (Harumasa, Seth, Ben, Antón, Corin)
 **Performance:** Defensa Shiyu 94 809 (top 31.35 %) · Simulación Umbral 185 006 (top 43.21 %)
