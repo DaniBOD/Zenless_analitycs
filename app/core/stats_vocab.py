@@ -34,7 +34,12 @@ CANONICAL_MAINS_VARIABLE: dict[int, frozenset[str]] = {
     }),
     6: frozenset({
         "HP%", "ATK%", "DEF%",
-        "Maestría de Anomalía",
+        # Slot VI lleva la variante PORCENTUAL del stat de anomalía: "Tasa de
+        # Anomalía" (Anomaly Mastery %), NO la flat "Maestría de Anomalía"
+        # (esa es main de slot IV + substat). Corregido 2026-06-02 contra
+        # capturas reales (slot 6 main = "Tasa de Anomalía 30 %") tras detectar
+        # que el modelo viejo las conflaba. Ver audit/correccion_tasa_anomalia_*.
+        "Tasa de Anomalía",
         "Impacto",
         "Recarga de Energía",
     }),
@@ -90,16 +95,21 @@ ALIASES: dict[str, str] = {
 
     # Daño Crítico
     "Daño Crítico ":    "Daño Crítico",
+    "Dafo Crítico":     "Daño Crítico",   # OCR: ñ→f (patrón recurrente)
     "Crit DMG":         "Daño Crítico",
     "CD":               "Daño Crítico",
 
-    # Maestría de Anomalía
+    # Maestría de Anomalía (Anomaly Mastery, FLAT — substat + main slot IV)
     "Maestría Anomalía":       "Maestría de Anomalía",
     "Maestría Anom":           "Maestría de Anomalía",
     "Anom":                    "Maestría de Anomalía",
-    "Tasa Anomalía":           "Maestría de Anomalía",  # OCR error frecuente
-    "Tasa de Anomalía":        "Maestría de Anomalía",  # OCR error frecuente
-    "Tasa Anomalía 30%":       "Maestría de Anomalía",  # ids 54, 185
+
+    # Tasa de Anomalía (Anomaly Mastery %, PORCENTUAL — main slot VI + bonus set)
+    # NO es lo mismo que "Maestría de Anomalía": son dos stats distintas (una
+    # flat, otra %). El modelo viejo las conflaba como error de OCR; corregido
+    # 2026-06-02 contra capturas reales. Ver audit/correccion_tasa_anomalia_*.
+    "Tasa Anomalía":           "Tasa de Anomalía",
+    "Tasa Anom":               "Tasa de Anomalía",
 
     # Perforación
     "Pen":              "Perforación",
@@ -126,25 +136,44 @@ ALIASES: dict[str, str] = {
 }
 
 
+import re as _re
+import unicodedata as _ud
+
+
+def _norm_key(s: str) -> str:
+    """
+    Clave de matching robusta: sin acentos, minúscula, sin espacios. Hace que
+    el OCR (que suele perder tildes y alterar mayúsculas) matchee igual:
+      'Daño Crítico' == 'Dano Critico' == 'dano critico'  → 'danocritico'
+      'PV %' == 'PV%'                                       → 'pv%'
+    Preserva el '%' porque distingue stats (HP vs HP%).
+    """
+    s = "".join(
+        c for c in _ud.normalize("NFD", s or "")
+        if _ud.category(c) != "Mn"
+    ).lower()
+    return _re.sub(r"\s+", "", s)
+
+
+# Lookup precompilado clave-normalizada → canónico, desde canónicos + aliases.
+# Los canónicos se agregan primero; los aliases NO los pisan (un canónico nunca
+# debe re-mapearse a otra cosa por un alias homónimo).
+_NORM_LOOKUP: dict[str, str] = {}
+for _canon in ALL_CANONICAL:
+    _NORM_LOOKUP.setdefault(_norm_key(_canon), _canon)
+for _alias, _canon in ALIASES.items():
+    _NORM_LOOKUP.setdefault(_norm_key(_alias), _canon)
+
+
 def normalize_stat_name(raw: str | None) -> str | None:
-    """Devuelve el nombre canónico del stat, o None si es completamente desconocido."""
+    """
+    Devuelve el nombre canónico del stat, o None si es desconocido.
+
+    Insensible a acentos, mayúsculas y espacios (robusto a OCR). Ver _norm_key.
+    """
     if raw is None:
         return None
-    s = raw.strip()
-    if s in ALL_CANONICAL:
-        return s
-    canon = ALIASES.get(s)
-    if canon is not None:
-        return canon
-    # Segundo intento: normalizar espacios y mayúsculas
-    s_normalized = " ".join(s.split())
-    if s_normalized != s:
-        if s_normalized in ALL_CANONICAL:
-            return s_normalized
-        canon = ALIASES.get(s_normalized)
-        if canon is not None:
-            return canon
-    return None
+    return _NORM_LOOKUP.get(_norm_key(raw))
 
 
 def parse_value(raw: str | float | int | None) -> tuple[float, str] | None:

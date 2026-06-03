@@ -38,7 +38,13 @@ class TestNormalizeStatName:
         assert normalize_stat_name("PV %") == "HP%"
         assert normalize_stat_name("Prob Crítico") == "Prob. Crítica"
         assert normalize_stat_name("Maestría Anomalía") == "Maestría de Anomalía"
-        assert normalize_stat_name("Tasa Anomalía") == "Maestría de Anomalía"
+        # Tasa de Anomalía (Anomaly Mastery %) es una stat DISTINTA de Maestría
+        # de Anomalía (flat) — corregido 2026-06-02 contra capturas reales.
+        assert normalize_stat_name("Tasa Anomalía") == "Tasa de Anomalía"
+        assert normalize_stat_name("Tasa de Anomalía") == "Tasa de Anomalía"
+        # Insensible a acentos/mayúsculas (robustez OCR)
+        assert normalize_stat_name("Dano Critico") == "Daño Crítico"
+        assert normalize_stat_name("maestria de anomalia") == "Maestría de Anomalía"
         assert normalize_stat_name("Bono Daño Glacial") == "Bono Daño Hielo"
         assert normalize_stat_name("Bono Daño Ígneo") == "Bono Daño Fuego"
         assert normalize_stat_name("Rec Energía") == "Recarga de Energía"
@@ -111,13 +117,15 @@ class TestIsValidMainForSlot:
 
     def test_slot6_valid(self):
         assert is_valid_main_for_slot(6, "HP%") is True
-        assert is_valid_main_for_slot(6, "Maestría de Anomalía") is True
+        # Slot VI lleva la variante % ("Tasa de Anomalía"), no la flat "Maestría".
+        assert is_valid_main_for_slot(6, "Tasa de Anomalía") is True
+        assert is_valid_main_for_slot(6, "Tasa Anomalía") is True   # alias OCR
         assert is_valid_main_for_slot(6, "Recarga de Energía") is True
         assert is_valid_main_for_slot(6, "Impacto") is True
 
     def test_slot6_invalid(self):
-        # "Tasa Anomalía" es alias → "Maestría de Anomalía" que SÍ es válida en slot 6
-        assert is_valid_main_for_slot(6, "Tasa Anomalía") is True
+        # "Maestría de Anomalía" (flat) es main de slot IV, NO de slot VI.
+        assert is_valid_main_for_slot(6, "Maestría de Anomalía") is False
         # Bono Daño solo es válido en slot 5
         assert is_valid_main_for_slot(6, "Bono Daño Fuego") is False
         # Prob. Crítica solo es válida en slot 4

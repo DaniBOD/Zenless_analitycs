@@ -198,9 +198,17 @@ Cada set tiene uno o más arquetipos asignados en `disc_set_archetype`. Cada arq
 
 | Slot | Mains posibles |
 |------|----------------|
-| IV | Prob. Crítica, Daño Crítico, Maestría de Anomalía, HP%, ATK%, DEF%, Tasa de Perforación |
+| IV | Prob. Crítica, Daño Crítico, Maestría de Anomalía (flat), HP%, ATK%, DEF%, Tasa de Perforación |
 | V | Bono Daño [elemento], HP%, ATK%, DEF%, Tasa de Perforación |
-| VI | HP%, ATK%, DEF%, Maestría de Anomalía, Impacto (%), Recarga de Energía (%) |
+| VI | HP%, ATK%, DEF%, Tasa de Anomalía (%), Impacto (%), Recarga de Energía (%) |
+
+> **Corrección 2026-06-03 (mig 09):** el main de anomalía de slot VI es **Tasa de
+> Anomalía (%)**, NO "Maestría de Anomalía" (flat). Son dos stats distintas:
+> *Maestría de Anomalía* es flat (main slot IV + substat); *Tasa de Anomalía* es %
+> (main slot VI + bonus de set). El modelo viejo las conflaba (las trataba como el
+> mismo stat). Verificado contra capturas reales (slot VI main = "Tasa de Anomalía
+> 30 %") y por valor en DB (Maestría flat ≈ 92; Tasa % = 30). 11 discos slot-6
+> corregidos. Ver `audit/correccion_tasa_anomalia_20260603.md`.
 
 **Substats válidos** (10 en total):
 
