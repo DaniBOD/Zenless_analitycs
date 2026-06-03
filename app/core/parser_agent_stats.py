@@ -23,6 +23,7 @@ import sqlite3
 import tomllib
 import unicodedata
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -313,6 +314,22 @@ class AgentStatsAggregator:
         if new is None:
             return self._best if self._best else AgentStatsParsed()
 
+        # Detección de cambio de agente por DIVERGENCIA DE STATS (defensa en
+        # profundidad, 2026-06-02). Aunque el OCR del nombre falle en un frame
+        # (None), un salto grande de PV o Ataque implica que es OTRO agente: hay
+        # que resetear para NO heredar la identidad del agente anterior (bug QA
+        # 2026-06-02: Lucy se mostraba como "Anby" porque el aggregator conservó
+        # el nombre viejo y solo actualizó los números). La pantalla S18 es
+        # estática, así que entre frames del MISMO agente el PV es idéntico; un
+        # salto >6% es inequívocamente otro personaje.
+        if self._best is not None:
+            for f in ("pv", "ataque"):
+                a = getattr(self._best, f)
+                b = getattr(new, f)
+                if a and b and abs(b - a) / a > 0.06:
+                    self.reset()
+                    break
+
         # Detectar cambio de agente: si tanto el aggregator como new tienen
         # nombre identificado y son distintos -> reset.
         if (self._best is not None
@@ -448,64 +465,216 @@ def _normalizar_rol(ocr_text: str) -> str | None:
     return None
 
 
-def _lookup_agent(nombre_ocr: str) -> tuple[str | None, str | None, str | None]:
-    """
-    Busca un agente en la DB por nombre aproximado.
+# ---------------------------------------------------------------------------
+# Matcher de agente (Capas 1+2+3, 2026-06-01)
+#   Capa 1: matching NORMALIZADO (sin acentos / case-insensitive). El LIKE de
+#           SQLite es sensible a acentos → "Lucia"!="Lucía", "Cesar"!="César".
+#   Capa 2: matching DIFUSO (token-subset + ratio de edición) contra TODO el
+#           roster → tolera misreads de OCR (Shunguang, Nekomata) y elimina los
+#           falsos positivos del LIKE-substring (Nekomata->Manato).
+#   Capa 3: DESAMBIGUACIÓN por rol+elemento de pantalla → resuelve homónimos
+#           (Anby vs N.º 0: Anby, variantes de Billy) eligiendo el agente cuyo
+#           rol/elemento coincide con lo leído de pantalla.
+# ---------------------------------------------------------------------------
 
-    Estrategia: la DB usa "Yuzuha", "Yanagi", "Cissia" — pero el juego
-    muestra "Ukinami Yuzuha", "Tsukishiro Yanagi". El OCR captura la
-    versión del juego (2 palabras). Probamos:
-      1. Nombre completo (raw, sin espacios, camelCase).
-      2. Cada PALABRA individual del nombre (si tiene 2+).
-      3. Cada palabra split por camelCase.
+# Umbral mínimo de similitud de nombre para considerar un match (0..1).
+_NAME_MIN_SIM = 0.55
+# Pesos del bonus de desambiguación por rol/elemento.
+_ROL_MATCH_BONUS = 0.30
+_ROL_MISS_PENALTY = 0.20
+_ELEM_MATCH_BONUS = 0.20
+_ELEM_MISS_PENALTY = 0.15
 
-    El primer LIKE que matchea gana.
-    Retorna (nombre_canon, rol, elemento) o (None, None, None).
+
+def _norm_name(s: str) -> str:
+    """Normaliza un nombre para matching: sin acentos, minúscula, alfanumérico."""
+    s = _strip_accents(s or "").lower()
+    s = re.sub(r"[^a-z0-9]+", " ", s)
+    return s.strip()
+
+
+_ROSTER_CACHE: list[dict] | None = None
+
+
+def _get_roster() -> list[dict]:
     """
-    if not nombre_ocr:
+    Carga (y cachea) el roster de la DB: lista de dicts con nombre/rol/elemento
+    + forma normalizada y tokens. Read-only. Si la DB no se puede abrir,
+    devuelve lista vacía (el caller cae a OCR puro).
+    """
+    global _ROSTER_CACHE
+    if _ROSTER_CACHE is None:
+        roster: list[dict] = []
+        try:
+            conn = sqlite3.connect(f"file:{_DB_PATH}?mode=ro", uri=True)
+            for (nombre, rol, elemento, pv, ataque, defensa,
+                 prob_critico, dano_critico) in conn.execute(
+                "SELECT nombre, rol, elemento, pv, ataque, defensa, "
+                "prob_critico, dano_critico FROM agents"
+            ):
+                norm = _norm_name(nombre)
+                roster.append({
+                    "nombre": nombre, "rol": rol, "elemento": elemento,
+                    "norm": norm, "tokens": set(norm.split()),
+                    # Stats del build del usuario (autoritativo) para
+                    # identificación por vector — ver _identify_by_stats.
+                    # prob/dano_critico se guardan como FRACCIÓN (DB usa %)
+                    # para comparar con los stats parseados (ya en fracción).
+                    "pv": pv, "ataque": ataque, "defensa": defensa,
+                    "prob_crit": (prob_critico / 100.0) if prob_critico is not None else None,
+                    "dano_crit": (dano_critico / 100.0) if dano_critico is not None else None,
+                })
+            conn.close()
+        except Exception:
+            roster = []
+        _ROSTER_CACHE = roster
+    return _ROSTER_CACHE
+
+
+def _name_similarity(ocr_tokens: set[str], ocr_norm: str,
+                     db_tokens: set[str], db_norm: str) -> float:
+    """
+    Similitud de nombre 0..1. 1.0 si un conjunto de tokens contiene al otro
+    (nombre DB ⊆ OCR, o OCR ⊆ nombre DB — cubre "Anby" vs "N.º 0: Anby" y
+    nombres display con prefijo de facción). Si no, max(ratio de edición,
+    jaccard de tokens).
+    """
+    if not db_tokens or not ocr_tokens:
+        return 0.0
+    if db_tokens <= ocr_tokens or ocr_tokens <= db_tokens:
+        return 1.0
+    ratio = SequenceMatcher(None, db_norm, ocr_norm).ratio()
+    jaccard = len(db_tokens & ocr_tokens) / len(db_tokens | ocr_tokens)
+    return max(ratio, jaccard)
+
+
+def _match_agent(
+    name_text: str,
+    rol_screen: str | None = None,
+    elem_screen: str | None = None,
+) -> tuple[str | None, str | None, str | None]:
+    """
+    Identifica al agente contra el roster (Capas 1+2+3).
+
+    `name_text` es la región del nombre OCR (puede traer facción + nombre 2x).
+    `rol_screen`/`elem_screen` son el rol/elemento leídos de pantalla (R1), que
+    desambiguan homónimos. Retorna (nombre_canon, rol_db, elemento_db) del mejor
+    match, o (None, None, None) si ninguno supera el umbral de similitud.
+    """
+    ocr_norm = _norm_name(name_text)
+    if not ocr_norm:
         return (None, None, None)
-    try:
-        conn = sqlite3.connect(f"file:{_DB_PATH}?mode=ro", uri=True)
-        raw = nombre_ocr.strip()
-        base = raw.lower()
+    ocr_tokens = set(ocr_norm.split())
 
-        # Set ordenado de candidatos: primero los más específicos, luego
-        # palabras individuales. Usamos list para preservar orden.
-        candidates: list[str] = []
+    rol_s = _strip_accents(rol_screen).lower() if rol_screen else None
+    elem_s = _strip_accents(elem_screen).lower() if elem_screen else None
 
-        def _add(c: str) -> None:
-            c = c.strip()
-            if c and len(c) >= 3 and c not in candidates:
-                candidates.append(c)
+    best = None
+    best_score = -1.0
+    for ag in _get_roster():
+        name_sim = _name_similarity(ocr_tokens, ocr_norm, ag["tokens"], ag["norm"])
+        if name_sim < _NAME_MIN_SIM:
+            continue
+        # Capa 3: bonus/penalización por rol + elemento de pantalla.
+        bonus = 0.0
+        if rol_s and ag["rol"]:
+            bonus += _ROL_MATCH_BONUS if _strip_accents(ag["rol"]).lower() == rol_s else -_ROL_MISS_PENALTY
+        if elem_s and ag["elemento"]:
+            bonus += _ELEM_MATCH_BONUS if _strip_accents(ag["elemento"]).lower() == elem_s else -_ELEM_MISS_PENALTY
+        score = name_sim + bonus
+        if score > best_score:
+            best_score = score
+            best = ag
+    if best is None:
+        return (None, None, None)
+    return (best["nombre"], best["rol"], best["elemento"])
 
-        _add(base)
-        _add(base.replace(" ", ""))
 
-        # Split camelCase: "NangongYu" -> "Nangong Yu"
-        split_camel = re.sub(r"([a-z])([A-Z])", r"\1 \2", raw).lower()
-        _add(split_camel)
-        _add(split_camel.replace(" ", ""))
+def _lookup_agent(nombre_ocr: str) -> tuple[str | None, str | None, str | None]:
+    """Compat: match por nombre sin contexto de rol/elemento (Capas 1+2)."""
+    return _match_agent(nombre_ocr)
 
-        # Cada palabra individual del nombre completo
-        for word in re.split(r"\s+", base):
-            _add(word)
-        # Cada palabra del camelCase split
-        for word in re.split(r"\s+", split_camel):
-            _add(word)
 
-        for c in candidates:
-            cursor = conn.execute(
-                "SELECT nombre, rol, elemento FROM agents WHERE LOWER(nombre) LIKE ?",
-                (f"%{c}%",),
-            )
-            row = cursor.fetchone()
-            if row:
-                conn.close()
-                return (row[0], row[1], row[2])
-        conn.close()
-    except Exception:
-        pass
-    return (None, None, None)
+# ---------------------------------------------------------------------------
+# Capa 4 (2026-06-02) — Identificación por STATS (backbone determinista).
+#
+# Hallazgo QA 2026-06-02: el OCR del nombre estilizado falla para homónimos
+# (N.º 0: Anby vs Anby) y nombres display largos (Lucy se muestra como
+# "Luciana de Montefio"). PERO los stats en pantalla coinciden EXACTO con el
+# build guardado en la DB del usuario (dato autoritativo, RNF-02). El vector
+# (pv, ataque, prob_crit, dano_crit) identifica al agente con margen amplio
+# incluso entre DPS de stats parecidos — verificado contra los 46 del roster:
+# el 2do mejor candidato queda a >5% para Soldier 0 Anby y >14% para Lucy.
+#
+# Se usa como señal PRIMARIA cuando hay stats suficientes (pv+atk+algún crit).
+# El matcher de nombre (Capas 1/2/3) queda de fallback para agentes no
+# sincronizados (stats DB desactualizados) o fuera del roster.
+# ---------------------------------------------------------------------------
+
+# Error relativo medio máximo para aceptar un match por stats.
+_STATS_ID_MAX_DIST = 0.045
+# El 2do mejor candidato debe estar al menos esto más lejos (evita ambigüedad
+# entre dos agentes de stats parecidos cuando el build difiere del de la DB).
+_STATS_ID_MIN_GAP = 0.030
+
+
+def _stat_rel_err(x: float | None, a: float | None) -> float | None:
+    """Error relativo |x-a|/|a|, o None si falta algún operando."""
+    if x is None or a is None or a == 0:
+        return None
+    return abs(x - a) / abs(a)
+
+
+def _stats_distance(stats: dict, ag: dict) -> float | None:
+    """
+    Error relativo medio entre los stats de pantalla y los del agente (DB).
+
+    Requiere PV + Ataque como ancla y al menos un crit (Prob/Daño) para
+    discriminar entre DPS de PV/ATK parecidos. Devuelve None si no hay
+    suficientes campos comparables (el agente cae al matcher de nombre).
+    """
+    if stats.get("pv") is None or stats.get("ataque") is None:
+        return None
+    if stats.get("prob_crit") is None and stats.get("dano_crit") is None:
+        return None
+    pairs = [
+        (stats.get("pv"), ag.get("pv")),
+        (stats.get("ataque"), ag.get("ataque")),
+        (stats.get("defensa"), ag.get("defensa")),
+        (stats.get("prob_crit"), ag.get("prob_crit")),
+        (stats.get("dano_crit"), ag.get("dano_crit")),
+    ]
+    errs = [e for e in (_stat_rel_err(x, a) for x, a in pairs) if e is not None]
+    if len(errs) < 3:
+        return None
+    return sum(errs) / len(errs)
+
+
+def _identify_by_stats(stats: dict | None) -> dict | None:
+    """
+    Identifica al agente por su vector de stats contra el roster.
+
+    Retorna el dict del agente (con nombre/rol/elemento canónicos de la DB)
+    o None si: faltan stats, ningún agente del roster tiene stats comparables,
+    el mejor match supera el umbral de error, o hay ambigüedad (2 agentes
+    igual de cerca). Conservador por RNF-02: ante la duda, None → fallback.
+    """
+    if not stats:
+        return None
+    ranked: list[tuple[float, dict]] = []
+    for ag in _get_roster():
+        d = _stats_distance(stats, ag)
+        if d is not None:
+            ranked.append((d, ag))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda t: t[0])
+    best_d, best_ag = ranked[0]
+    if best_d > _STATS_ID_MAX_DIST:
+        return None
+    if len(ranked) > 1 and (ranked[1][0] - best_d) < _STATS_ID_MIN_GAP:
+        return None  # ambiguo: dos agentes igual de cerca
+    return best_ag
 
 
 # ---------------------------------------------------------------------------
@@ -647,17 +816,23 @@ def _extract_by_regex(text: str) -> dict[str, str | None]:
 
 def _extract_agent_info(
     full_text: str,
+    stats: dict | None = None,
 ) -> tuple[str | None, str | None, str | None, list[str]]:
     """
-    Extrae nombre, rol y elemento del texto OCR.
+    Extrae nombre, rol y elemento del texto OCR (+ stats parseados).
 
-    Estrategia (2026-05-31, R1/R2):
+    Estrategia (2026-05-31 R1/R2 + 2026-06-01 Capas 1/2/3 + 2026-06-02 Capa 4):
+      0. STATS: si se pasan stats suficientes (pv+atk+crit), identificar al
+         agente por su vector contra el roster (`_identify_by_stats`). Es la
+         señal MÁS confiable: los stats de pantalla == build de la DB del
+         usuario, y resuelve homónimos (N.º 0: Anby) y nombres display largos
+         (Lucy="Luciana de Montefio") que el OCR del nombre no capta. Se
+         cross-checkea contra el rol/elemento de pantalla si éstos se leyeron.
       1. ROL + ELEMENTO desde PANTALLA (banner MAX..PV) → autoritativo (RNF-02).
-         La DB puede tener data vieja; la pantalla es ground truth.
-      2. NOMBRE: candidatos capitalizados validados contra DB (LIKE). Se
-         prefiere el que aparece DOS veces en el banner (blanco + gris, R2),
-         lo que descarta facciones/UI. La DB aporta el nombre canónico; si no
-         hay match pero el nombre está dual-validado, se usa el OCR igual.
+      2. NOMBRE: matcher difuso (`_match_agent`) sobre TODO el roster (fallback
+         si la identificación por stats no fue concluyente). Normalizado, con
+         desambiguación por rol+elemento. Tolera misreads. Si no matchea pero
+         el nombre está dual-validado (R2), se usa el OCR (PJ fuera del roster).
       3. La DB queda como RESPALDO de rol/elemento solo si el OCR no los leyó.
 
     Retorna (nombre_final, rol, elemento, notas_extra).
@@ -669,61 +844,63 @@ def _extract_agent_info(
     rol_screen = _canon_rol(banner)
     elem_screen = _canon_elemento(banner)
 
-    # --- 2) Nombre: candidatos capitalizados (1-2 palabras) en la REGIÓN del
-    # nombre (antes de 'Nivel'/'MAX'). Restringir acá evita que el regex fusione
-    # el nombre con 'Nivel'/elemento/rol (ej. "Lucia Nivel") y permite detectar
-    # la doble aparición (blanco + gris). ---
+    name_reg = _name_region(full_text)
+
+    # --- 0) Identificación por STATS (señal primaria si hay datos) ---
+    stat_ag = _identify_by_stats(stats)
+    if stat_ag is not None:
+        # Cross-check: si el banner se leyó y contradice al agente identificado
+        # por stats (rol o elemento), descartar la identificación por stats y
+        # caer al matcher de nombre (conservador, RNF-02).
+        sa_rol = _strip_accents(stat_ag.get("rol") or "").lower()
+        sa_elem = _strip_accents(stat_ag.get("elemento") or "").lower()
+        if rol_screen and sa_rol and _strip_accents(rol_screen).lower() != sa_rol:
+            stat_ag = None
+        elif elem_screen and sa_elem and _strip_accents(elem_screen).lower() != sa_elem:
+            stat_ag = None
+
+    if stat_ag is not None:
+        nombre_db, rol_db, elemento_db = (
+            stat_ag["nombre"], stat_ag["rol"], stat_ag["elemento"],
+        )
+        notas.append(f"identificado_por_stats_{nombre_db}")
+    else:
+        # --- 2) Nombre: matcher difuso sobre el roster, desambiguado por rol/elem ---
+        nombre_db, rol_db, elemento_db = _match_agent(name_reg, rol_screen, elem_screen)
+
+    # R2: candidatos dual-validados (blanco + gris). Sirven para confianza y para
+    # mostrar el nombre de PJs fuera del roster (sin match en DB).
     candidates = re.findall(
         r"\b([A-Z][a-z]{2,}(?:\s+(?:[A-Z][a-z]+|[A-Z]{2,}))?)\b",
-        _name_region(full_text),
+        name_reg,
     )
     candidates = [c for c in candidates if len(c) >= 3]
-    # R2: priorizar candidatos que aparecen 2x en el banner (nombre real).
     dual = [c for c in candidates if _name_appears_twice(full_text, c)]
-    ordered = dual + [c for c in candidates if c not in dual]
+    name_validated = bool(dual)
 
-    nombre_ocr: str | None = None
-    nombre_db: str | None = None
-    rol_db: str | None = None
-    elemento_db: str | None = None
-    name_validated = False
-
-    for candidate in ordered:
-        n_db, r_db, e_db = _lookup_agent(candidate)
-        if n_db:
-            nombre_ocr = candidate
-            nombre_db = n_db
-            rol_db = r_db
-            elemento_db = e_db
-            name_validated = candidate in dual
-            break
-
-    # Si no hubo match en DB pero hay candidato dual-validado, usarlo (agente
-    # fuera de la DB, ej. Lucia: igual mostramos el nombre leído de pantalla).
-    if nombre_db is None and dual:
-        nombre_ocr = dual[0]
-        name_validated = True
-
-    # Último recurso: regex legacy nombre-antes-de-Nivel (OCR sin doble lectura).
-    if nombre_ocr is None:
+    # Si no hubo match en DB, último recurso: regex legacy nombre-antes-de-Nivel.
+    if nombre_db is None and not dual:
         m = _RE_AGENTE_NOMBRE.search(full_text)
         if m:
-            candidate = m.group(1).strip()
-            if len(candidate) > 2 and any(c.islower() for c in candidate):
-                nombre_ocr = candidate
-                nombre_db, rol_db, elemento_db = _lookup_agent(candidate)
-                name_validated = _name_appears_twice(full_text, candidate)
+            cand = m.group(1).strip()
+            if len(cand) > 2 and any(c.islower() for c in cand) and _name_appears_twice(full_text, cand):
+                dual = [cand]
+                name_validated = True
 
     # --- 3) Resolución autoritativa: PANTALLA gana sobre DB ---
+    # (excepto rol/elem que vienen de la identificación por stats, que ya son
+    # los canónicos correctos de la DB; el banner solo rellena si stats no IDó).
     rol = rol_screen or rol_db
     elemento = elem_screen or elemento_db
-    nombre_final = nombre_db or (nombre_ocr if name_validated else None)
+    nombre_final = nombre_db or (dual[0] if dual else None)
 
-    # Notas de diagnóstico (surfacing de discrepancias DB vs pantalla)
-    if rol_screen and rol_db and rol_screen != rol_db:
+    # Notas de diagnóstico
+    if rol_screen and rol_db and _norm_name(rol_screen) != _norm_name(rol_db):
         notas.append(f"rol_pantalla={rol_screen}_vs_db={rol_db}")
-    if elem_screen and elemento_db and elem_screen != elemento_db:
+    if elem_screen and elemento_db and _norm_name(elem_screen) != _norm_name(elemento_db):
         notas.append(f"elem_pantalla={elem_screen}_vs_db={elemento_db}")
+    if nombre_db is None and nombre_final is not None:
+        notas.append("nombre_fuera_de_roster")
     if name_validated:
         notas.append("nombre_doble_validado")
     if nombre_final and rol:
@@ -747,10 +924,6 @@ def _parse_via_full_frame(
         notas.append("ocr_no_detecto_texto")
         return AgentStatsParsed(confianza_global=0.0, notas=notas)
 
-    # Extraer agente + rol + elemento (R1: pantalla autoritativa, R2: doble nombre)
-    nombre_db, rol_db, elemento_db, info_notas = _extract_agent_info(full_text)
-    notas.extend(info_notas)
-
     extracted = _extract_by_regex(full_text)
 
     nivel = _parse_int(extracted["nivel"])
@@ -765,6 +938,19 @@ def _parse_via_full_frame(
     dano_crit = _normalize_percent(_parse_float(extracted["dano_crit"]))
     tasa_anomalia = _parse_int(extracted["tasa_anomalia"])
     maestria_anomalia = _parse_int(extracted["maestria_anomalia"])
+
+    # Extraer agente: identificación por STATS (Capa 4, primaria) con fallback a
+    # nombre/banner. Se hace DESPUÉS de parsear los stats para poder pasarle el
+    # vector (pv/atk/crit) — los stats de pantalla == build de la DB del usuario,
+    # lo que resuelve homónimos y nombres display largos que el OCR no capta.
+    stats_para_id = {
+        "pv": pv, "ataque": ataque, "defensa": defensa,
+        "prob_crit": prob_crit, "dano_crit": dano_crit,
+    }
+    nombre_db, rol_db, elemento_db, info_notas = _extract_agent_info(
+        full_text, stats_para_id,
+    )
+    notas.extend(info_notas)
 
     # Fuerza Bruta vs Tasa de Perforación: son mutuamente excluyentes por rol.
     # "Fuerza Bruta" es un label EXCLUSIVO de Disruptivos, así que su sola

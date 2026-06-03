@@ -14,7 +14,7 @@ Comandos:
 """
 import sys
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metadata
 
 # El spec se ejecuta con cwd = directorio donde se invoca PyInstaller.
 # Asumimos que se ejecuta desde la raíz del repo (cwd = repo root).
@@ -27,6 +27,50 @@ pyside_datas, pyside_binaries, pyside_hiddenimports = collect_all("PySide6")
 pytess_datas, pytess_binaries, pytess_hiddenimports = collect_all("pytesseract")
 pynput_datas, pynput_binaries, pynput_hiddenimports = collect_all("pynput")
 win32_hiddenimports = collect_submodules("win32com") + collect_submodules("win32")
+
+# --- PaddleOCR stack (Hito 2.8 — migración Python normal 2026-05-31) -----------
+# PaddleOCR carga submódulos + DLLs nativas dinámicamente; collect_all es la única
+# forma robusta de capturarlos. El path de inferencia real (verificado por trace)
+# arrastra: paddle, paddleocr, shapely (GEOS dll), skimage, scipy, imgaug, pyclipper,
+# lmdb. matplotlib/pandas NO se cargan en inferencia → siguen excluidos.
+paddle_datas, paddle_binaries, paddle_hiddenimports = collect_all("paddle")
+paddleocr_datas, paddleocr_binaries, paddleocr_hiddenimports = collect_all("paddleocr")
+shapely_datas, shapely_binaries, shapely_hiddenimports = collect_all("shapely")
+skimage_datas, skimage_binaries, skimage_hiddenimports = collect_all("skimage")
+scipy_datas, scipy_binaries, scipy_hiddenimports = collect_all("scipy")
+imgaug_datas, imgaug_binaries, imgaug_hiddenimports = collect_all("imgaug")
+# Cython: el stack de paddle (skimage/scipy/imgaug) lee plantillas de
+# Cython/Utility/*.cpp en runtime. PyInstaller solo trae los .py por defecto;
+# collect_all incluye los data files (.cpp/.pyx/.h) que faltaban → sin esto
+# `import paddleocr` falla en el .exe con FileNotFoundError CppSupport.cpp.
+cython_datas, cython_binaries, cython_hiddenimports = collect_all("Cython")
+# imageio: paddleocr → imgaug → imageio, que lee su propia metadata
+# (importlib.metadata.version) al importarse + carga plugins dinámicos.
+# collect_all trae plugins; copy_metadata trae el .dist-info que faltaba
+# → sin esto `import paddleocr` falla con PackageNotFoundError: imageio.
+imageio_datas, imageio_binaries, imageio_hiddenimports = collect_all("imageio")
+# Metadata (.dist-info) de paquetes que hacen importlib.metadata.version()
+# en su import. Faltaba imageio; agrego los vecinos de la cadena por defensa.
+metadata_datas = []
+for _pkg in ("imageio", "imgaug", "scikit-image", "paddleocr", "paddlepaddle"):
+    try:
+        metadata_datas += copy_metadata(_pkg)
+    except Exception:
+        pass
+
+# Deps externas que paddleocr importa en profundidad (ppocr.utils.network →
+# requests + árbol). PyInstaller no las traza desde los módulos traídos por
+# collect_all, así que las colecto explícitamente. certifi además trae su
+# cacert.pem como data file. Sin esto: ModuleNotFoundError 'requests'.
+net_datas, net_binaries, net_hiddenimports = [], [], []
+for _dep in ("requests", "urllib3", "certifi", "charset_normalizer", "idna"):
+    try:
+        _d, _b, _h = collect_all(_dep)
+        net_datas += _d
+        net_binaries += _b
+        net_hiddenimports += _h
+    except Exception:
+        pass
 
 # ---------------------------------------------------------------------------
 # Data files que tienen que ir adentro del bundle
@@ -44,14 +88,23 @@ datas = [
     (str(REPO / "Documentacion" / "Interfaz" / "Set_Discos_Logo"), "Documentacion/Interfaz/Set_Discos_Logo"),
     (str(REPO / "Documentacion" / "Interfaz" / "splash_arts"),     "Documentacion/Interfaz/splash_arts"),
     (str(REPO / "Pj_stats"),                                       "Pj_stats"),
-] + mss_datas + pyside_datas + pytess_datas + pynput_datas
+] + mss_datas + pyside_datas + pytess_datas + pynput_datas \
+  + paddle_datas + paddleocr_datas + shapely_datas + skimage_datas + scipy_datas + imgaug_datas + cython_datas \
+  + imageio_datas + metadata_datas + net_datas
 
-binaries = mss_binaries + pyside_binaries + pytess_binaries + pynput_binaries
+binaries = mss_binaries + pyside_binaries + pytess_binaries + pynput_binaries \
+    + paddle_binaries + paddleocr_binaries + shapely_binaries + skimage_binaries + scipy_binaries + imgaug_binaries + cython_binaries + imageio_binaries + net_binaries
 
 # ---------------------------------------------------------------------------
 # Hidden imports — módulos que PyInstaller no detecta automáticamente
 # ---------------------------------------------------------------------------
-hiddenimports = mss_hiddenimports + pyside_hiddenimports + pytess_hiddenimports + pynput_hiddenimports + win32_hiddenimports + [
+hiddenimports = mss_hiddenimports + pyside_hiddenimports + pytess_hiddenimports + pynput_hiddenimports + win32_hiddenimports \
+    + paddle_hiddenimports + paddleocr_hiddenimports + shapely_hiddenimports + skimage_hiddenimports + scipy_hiddenimports + imgaug_hiddenimports + cython_hiddenimports + imageio_hiddenimports + net_hiddenimports + [
+    # PaddleOCR deps con carga dinámica que collect_all puede no resolver solo
+    "pyclipper",
+    "lmdb",
+    "skimage.filters.rank.core_cy_3d",
+    "scipy.special.cython_special",
     # PySide6 plugins
     "PySide6.QtSvg",
     "PySide6.QtNetwork",
@@ -91,9 +144,8 @@ hiddenimports = mss_hiddenimports + pyside_hiddenimports + pytess_hiddenimports 
 # Excluir módulos pesados que no usamos
 # ---------------------------------------------------------------------------
 excludes = [
-    "matplotlib",
-    "scipy",
-    "pandas",
+    "matplotlib",   # no se carga en inferencia paddleocr (verificado por trace)
+    "pandas",       # idem
     "tkinter",
     "test",
     "tests",

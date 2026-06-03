@@ -77,6 +77,22 @@ def test_aggregator_no_reset_when_new_has_no_name():
     assert result.agente_nombre == "Nangong Yu"  # preservado
 
 
+def test_aggregator_resets_on_stats_divergence_even_without_name():
+    """
+    Bug QA 2026-06-02: al cambiar de agente, si el OCR del nombre del nuevo
+    frame falla (None), el aggregator NO debe heredar la identidad del agente
+    anterior. Un salto grande de PV/Ataque (pantalla S18 estática) implica otro
+    personaje → reset. (Lucy se mostraba como 'N.º 0: Anby' por esta herencia.)
+    """
+    agg = AgentStatsAggregator()
+    # Frame 1: N.º 0: Anby identificado
+    agg.merge(_stats(pv=10558, ataque=2630, agente_nombre="N.º 0: Anby"))
+    # Frame 2: stats de Lucy pero nombre OCR falló (None)
+    result = agg.merge(_stats(pv=12392, ataque=1774, agente_nombre=None))
+    assert result.pv == 12392
+    assert result.agente_nombre != "N.º 0: Anby", "heredó identidad vieja (bug)"
+
+
 def test_aggregator_progressively_completes_stats():
     """
     Tres capturas parciales del mismo agente → aggregator converge a stats

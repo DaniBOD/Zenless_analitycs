@@ -194,16 +194,32 @@ class MonitorController(QObject):
     # ---- Init de dependencias --------------------------------------------------
 
     def _init_dependencies(self):
-        # OCR
-        tess = _find_tesseract()
-        if tess is None:
-            raise RuntimeError(
-                "Tesseract OCR no esta instalado. Ejecutar:\n"
-                "    winget install UB-Mannheim.TesseractOCR\n"
-                "Despues reiniciar la app."
+        # OCR — PaddleOCR es el backend PRIMARIO (Hito 2.8, 2026-05-31):
+        # determinístico sobre S18 (11/11 stats en los 7 fixtures), resuelve
+        # el no-determinismo de Tesseract. Tesseract queda como fallback solo
+        # si PaddleOCR no está disponible en el entorno.
+        self._ocr = None
+        try:
+            import paddleocr  # noqa: F401  — verifica disponibilidad antes de elegir
+            from app.core.ocr_paddle import PaddleBackend
+            self._ocr = PaddleBackend(lang="es")
+            log.info("OCR backend: PaddleOCR (primario) — lang=es")
+        except Exception as e:  # ImportError u otro fallo de entorno
+            log.warning(
+                "PaddleOCR no disponible (%s); cayendo a Tesseract fallback",
+                e, exc_info=True,
             )
-        from app.core.ocr_tesseract import TesseractBackend
-        self._ocr = TesseractBackend(tesseract_cmd=tess)
+            tess = _find_tesseract()
+            if tess is None:
+                raise RuntimeError(
+                    "Ni PaddleOCR ni Tesseract estan disponibles.\n"
+                    "PaddleOCR es el backend esperado. Reinstalar con:\n"
+                    "    pip install paddlepaddle==2.6.2 paddleocr==2.8.1\n"
+                    "O instalar Tesseract: winget install UB-Mannheim.TesseractOCR"
+                )
+            from app.core.ocr_tesseract import TesseractBackend
+            self._ocr = TesseractBackend(tesseract_cmd=tess)
+            log.info("OCR backend: Tesseract (fallback) — %s", tess)
 
         # Detector
         from app.core.detector import ScreenDetector
@@ -297,16 +313,18 @@ class MonitorController(QObject):
         # ---- Determinar stats requeridos según rol ----
         rol_norm = (stats.rol or "").lower()
         is_disruptivo = "disruptiv" in rol_norm
+        # Los dos slots inferiores son role-specific y mutuamente excluyentes:
+        #   Disruptivos:  Fuerza Bruta (FB)        + Acumulación Adrenalina (AD)
+        #   Resto:        Tasa de Perforación (TP) + Recuperación de Energía (ER)
         required_keys = [
             "nivel", "pv", "ataque", "defensa", "impacto",
             "prob_crit", "dano_crit",
             "tasa_anomalia", "maestria_anomalia",
-            "recuperacion_energia",
         ]
         if is_disruptivo:
-            required_keys.append("fuerza_bruta")
+            required_keys += ["fuerza_bruta", "acumulacion_adrenalina"]
         else:
-            required_keys.append("tasa_perforacion")
+            required_keys += ["tasa_perforacion", "recuperacion_energia"]
 
         # Mapeo a etiquetas legibles para mostrar al usuario
         _LABELS = {
@@ -314,14 +332,14 @@ class MonitorController(QObject):
             "impacto": "IMP", "prob_crit": "CR", "dano_crit": "CD",
             "tasa_anomalia": "TA", "maestria_anomalia": "MA",
             "tasa_perforacion": "TP", "fuerza_bruta": "FB",
-            "recuperacion_energia": "ER",
+            "recuperacion_energia": "ER", "acumulacion_adrenalina": "AD",
         }
         missing = [k for k in required_keys if getattr(stats, k) is None]
         missing_labels = [_LABELS.get(k, k) for k in missing]
 
         log.info(
             "Stats agente %s (%s/%s): Nv=%s PV=%s ATK=%s DEF=%s IMP=%s "
-            "CR=%s CD=%s TA=%s MA=%s TP=%s FB=%s ER=%s conf=%.2f missing=%s",
+            "CR=%s CD=%s TA=%s MA=%s TP=%s FB=%s ER=%s AD=%s conf=%.2f missing=%s",
             stats.agente_nombre or "?",
             stats.rol or "?", stats.elemento or "?",
             _v(stats.nivel), _v(stats.pv), _v(stats.ataque), _v(stats.defensa),
@@ -329,7 +347,7 @@ class MonitorController(QObject):
             _pct(stats.prob_crit), _pct(stats.dano_crit),
             _v(stats.tasa_anomalia), _v(stats.maestria_anomalia),
             _pct(stats.tasa_perforacion), _v(stats.fuerza_bruta),
-            _v(stats.recuperacion_energia),
+            _v(stats.recuperacion_energia), _v(stats.acumulacion_adrenalina),
             stats.confianza_global,
             missing_labels,
         )
@@ -338,11 +356,12 @@ class MonitorController(QObject):
         payload["state_code"] = state.code
         self.agent_stats_detected.emit(payload)
 
-        # Línea 1: pantalla reconocida + nombre agente (si OCR lo extrajo)
+        # Línea 1: pantalla reconocida + nombre + rol + elemento (de pantalla)
         nombre = stats.agente_nombre or "agente"
         rol_str = f" · {stats.rol}" if stats.rol else ""
+        elem_str = f" · {stats.elemento}" if stats.elemento else ""
         self.log_message.emit(
-            f"[reconocido] S18 perfil agente: {nombre}{rol_str} "
+            f"[reconocido] S18 perfil agente: {nombre}{rol_str}{elem_str} "
             f"(conf {state.confidence:.2f})"
         )
 
@@ -354,7 +373,7 @@ class MonitorController(QObject):
             f"CR={_pct(stats.prob_crit)} CD={_pct(stats.dano_crit)} "
             f"TA={_v(stats.tasa_anomalia)} MA={_v(stats.maestria_anomalia)} "
             f"TP={_pct(stats.tasa_perforacion)} FB={_v(stats.fuerza_bruta)} "
-            f"ER={_v(stats.recuperacion_energia)}"
+            f"ER={_v(stats.recuperacion_energia)} AD={_v(stats.acumulacion_adrenalina)}"
         )
 
         # Línea 3: estado de la extracción
@@ -366,7 +385,7 @@ class MonitorController(QObject):
             self.log_message.emit(
                 f"[parcial] extracción incompleta - faltan {len(missing)}/"
                 f"{len(required_keys)}: {', '.join(missing_labels)} "
-                f"- apretá F8 para reintentar (el aggregator va a completar)"
+                f"- el aggregator completa en los próximos ciclos (extracción continua)"
             )
 
     def _on_disc_from_monitor(self, disc_parsed, state):

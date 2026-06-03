@@ -27,8 +27,15 @@ def qapp():
     yield app
 
 
-def test_controller_emits_error_when_tesseract_missing(qapp):
-    """Si no hay Tesseract, start() debe emitir error_occurred (no crashear)."""
+def test_controller_emits_error_when_no_ocr_backend(qapp):
+    """Si NINGUN backend OCR está disponible (ni PaddleOCR ni Tesseract),
+    start() debe emitir error_occurred (no crashear).
+
+    Hito 2.8 (2026-05-31): PaddleOCR pasó a ser el backend primario. El error
+    solo ocurre cuando AMBOS backends faltan. Para simularlo: forzar que el
+    import de paddleocr falle + _find_tesseract devuelva None.
+    """
+    import builtins
     from app.ui.controller import MonitorController
 
     received_errors = []
@@ -36,13 +43,20 @@ def test_controller_emits_error_when_tesseract_missing(qapp):
     ctrl = MonitorController()
     ctrl.error_occurred.connect(lambda msg: received_errors.append(msg))
 
-    # Mockear find_tesseract para que devuelva None
-    with patch("app.ui.controller._find_tesseract", return_value=None):
+    _real_import = builtins.__import__
+
+    def _fake_import(name, *args, **kwargs):
+        if name == "paddleocr" or name.startswith("paddleocr."):
+            raise ImportError("simulated: paddleocr no disponible")
+        return _real_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=_fake_import), \
+         patch("app.ui.controller._find_tesseract", return_value=None):
         ctrl.start()
 
     assert len(received_errors) == 1, "Debe emitir exactamente 1 error"
+    assert "PaddleOCR" in received_errors[0]
     assert "Tesseract" in received_errors[0]
-    assert "winget" in received_errors[0]
     assert ctrl._monitor is None, "El monitor NO debe haberse creado"
 
 

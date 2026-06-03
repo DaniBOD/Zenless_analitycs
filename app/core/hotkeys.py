@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import Callable
 
 log = logging.getLogger(__name__)
@@ -50,10 +51,16 @@ class HotkeyManager:
     def __init__(self):
         self._handlers: dict[str, list[Callable]] = {k: [] for k in _KEY_NAMES}
         self._lock = threading.Lock()
-        # Backend activo (uno solo): win32 o pynput
+        # Ambos backends corren EN SIMULTÁNEO (win32 + pynput) para máxima
+        # robustez: Win32 RegisterHotKey cubre el caso general; pynput
+        # (WH_KEYBOARD_LL) cubre modos fullscreen donde RegisterHotKey a veces
+        # no recibe la tecla. El debounce evita doble-disparo del mismo press.
         self._win32_thread: threading.Thread | None = None
         self._win32_stop: threading.Event | None = None
         self._pynput_listener = None
+        # Debounce anti doble-disparo (mismo press capturado por ambos backends).
+        self._last_fire: dict[str, float] = {}
+        self._debounce_s: float = 0.25
 
     def on(self, key_name: str, callback: Callable) -> None:
         """Registra callback para key_name (f8, f9, f10, f11)."""
@@ -64,8 +71,19 @@ class HotkeyManager:
             self._handlers[key_name].append(callback)
 
     def _fire(self, name: str) -> None:
-        """Invoca callbacks registrados para `name` con manejo de excepciones."""
+        """
+        Invoca callbacks registrados para `name` con manejo de excepciones.
+
+        Aplica debounce: si el mismo `name` ya se disparó hace < _debounce_s,
+        se ignora. Esto evita que un único press físico se procese dos veces
+        cuando ambos backends (win32 + pynput) capturan la misma tecla.
+        """
+        now = time.monotonic()
         with self._lock:
+            last = self._last_fire.get(name, 0.0)
+            if now - last < self._debounce_s:
+                return
+            self._last_fire[name] = now
             callbacks = list(self._handlers[name])
         for cb in callbacks:
             try:
@@ -75,18 +93,55 @@ class HotkeyManager:
 
     def start(self) -> bool:
         """
-        Arranca el backend de hotkeys. Devuelve True si alguno arrancó.
-        Intenta Win32 primero (RegisterHotKey, robusto contra fullscreen),
-        cae a pynput si pywin32 no está disponible.
+        Arranca los backends de hotkeys EN SIMULTÁNEO (win32 + pynput) para
+        máxima robustez. Devuelve True si al menos uno arrancó.
+
+        - Win32 RegisterHotKey: hotkey a nivel SO, robusto en ventana/borderless.
+        - pynput (WH_KEYBOARD_LL): hook global, cubre fullscreen exclusivo donde
+          RegisterHotKey a veces no recibe la tecla.
+
+        El debounce en `_fire` evita doble-disparo del mismo press.
         """
+        started: list[str] = []
         if self._start_win32():
-            log.info("HotkeyManager activo (Win32 RegisterHotKey): F8=captura F9=panel F10=pausa F11=run")
-            return True
+            started.append("Win32 RegisterHotKey")
         if self._start_pynput():
-            log.info("HotkeyManager activo (pynput fallback): F8=captura F9=panel F10=pausa F11=run")
+            started.append("pynput WH_KEYBOARD_LL")
+
+        if started:
+            log.info(
+                "HotkeyManager activo (%s): F8=captura F9=panel F10=pausa F11=run",
+                " + ".join(started),
+            )
+            self._warn_if_not_elevated()
             return True
+
         log.warning("HotkeyManager: ningún backend disponible. Hotkeys deshabilitados.")
         return False
+
+    @staticmethod
+    def _warn_if_not_elevated() -> None:
+        """
+        Si la app NO corre elevada y el juego sí (caso común en HoYoverse),
+        Windows (UIPI) puede suprimir las hotkeys globales mientras el juego
+        tiene el foco. Avisamos para que el usuario sepa la causa/solución.
+        La extracción continua de S18 NO depende de F8, así que esto es solo
+        para la captura manual explícita.
+        """
+        try:
+            import ctypes
+            is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            return
+        if not is_admin:
+            log.warning(
+                "App NO elevada: si el juego corre como administrador, F8 puede "
+                "no dispararse con el juego en foco (UIPI de Windows). Solución: "
+                "ejecutar la app como administrador. La extracción CONTINUA de "
+                "stats S18 funciona igual sin F8."
+            )
+        else:
+            log.info("App elevada (admin): hotkeys globales robustas con el juego en foco.")
 
     # ---- Backend 1: Win32 RegisterHotKey (preferido) ------------------------
 
