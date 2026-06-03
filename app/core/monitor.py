@@ -19,6 +19,7 @@ from app.core.detector import (
     _deep_detect_s18,
 )
 from app.core.parser_disc import DiscParsed, parse_modal_detalle
+from app.core.parser_disc_s17 import parse_disc_s17
 from app.core.parser_agent_stats import AgentStatsParsed, parse_agent_stats, AgentStatsAggregator
 from app.core.ocr_backend import OcrBackend
 
@@ -511,7 +512,13 @@ class Monitor:
 
     def _process_disc(self, frame, state: ScreenState) -> None:
         try:
-            disc = parse_modal_detalle(frame, self._ocr, self._set_repo, state_code=state.code)
+            # S17 (disco equipado, "Personalización de pistas") usa el parser
+            # ESPACIAL full-frame — más robusto que el per-ROI a 2560×1440.
+            # El resto de disc-states (S3/S6/S7) sigue con parse_modal_detalle.
+            if state.code == "S17":
+                disc = parse_disc_s17(frame, self._ocr)
+            else:
+                disc = parse_modal_detalle(frame, self._ocr, self._set_repo, state_code=state.code)
             if disc.confianza_global < 0.7:
                 reason = f"confianza OCR {disc.confianza_global:.2f} < 0.70"
                 log.info(
