@@ -392,13 +392,54 @@ class MonitorController(QObject):
         """
         El monitor parseó un disco. Calculamos la recomendación y emitimos
         el payload listo para que LivePanel + Toast lo consuman.
+
+        S17 (disco equipado) es EXTRACCIÓN PURA: se loguea el disco completo
+        (set/slot/nivel/main/substats) sin invocar el recommender (scoring es
+        fase posterior). El resto (S3/S6/S7, discos nuevos) sí va al recommender.
         """
         try:
+            if state.code == "S17":
+                self._log_s17_extraction(disc_parsed)
+                return
             payload = self._build_payload(disc_parsed, state)
             self.disc_detected.emit(payload)
         except Exception as exc:
             log.exception("Error procesando disco capturado")
             self.error_occurred.emit(f"Procesando disco: {exc}")
+
+    @staticmethod
+    def _fmt_sub(s) -> str:
+        """Formatea un substat: 'ATK +1 38' · 'ATK% 3%' · 'Daño Crítico +1 9.6%'."""
+        nombre = s.nombre_canon or s.nombre_raw or "?"
+        roll = f" +{s.rolls}" if s.rolls else ""
+        val = ""
+        if s.valor is not None:
+            unit = "%" if s.unidad == "%" else ""
+            val = f" {s.valor:g}{unit}"
+        return f"{nombre}{roll}{val}"
+
+    def _log_s17_extraction(self, disc) -> None:
+        """Loguea la extracción completa de un disco equipado S17 (estilo S18)."""
+        set_name = disc.set_name_canon or disc.set_name_raw or "?"
+        rareza = f" · {disc.rareza}-rank" if disc.rareza in ("S", "A", "B") else ""
+        nivel = f"Nivel {disc.nivel}/15" if disc.nivel else "Nivel ?"
+        self.log_message.emit(
+            f"[reconocido] S17 disco equipado: {set_name} (slot {disc.slot}) · "
+            f"{nivel}{rareza} (conf {disc.confianza_global:.2f})"
+        )
+        main = disc.main_stat_canon or disc.main_stat_raw or "?"
+        mval = ""
+        if disc.main_valor is not None:
+            unit = "%" if disc.main_unidad == "%" else ""
+            mval = f" {disc.main_valor:g}{unit}"
+        self.log_message.emit(f"[disco] main: {main}{mval}")
+        if disc.subs:
+            self.log_message.emit(
+                "[disco] subs: " + " · ".join(self._fmt_sub(s) for s in disc.subs)
+            )
+        self.log_message.emit(f"[completo] disco extraído — {len(disc.subs)}/4 substats")
+        if disc.notas:
+            self.log_message.emit(f"[disco] notas: {', '.join(disc.notas)}")
 
     def _build_payload(self, disc_parsed, state) -> dict:
         from app.core.recommender import recomendar
