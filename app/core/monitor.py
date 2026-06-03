@@ -92,6 +92,16 @@ class Monitor:
         # no en cada tick. Se resetea cuando salimos del estado.
         self._processed_disc_state_code: str | None = None
         self._reported_agent_stats_state_code: str | None = None
+        # Último estado confirmado por votación. Persiste aunque el buffer
+        # dedupee (devuelva None por mismo estado), para permitir
+        # re-extracción CONTINUA de S18 sin requerir cambio de estado ni F8.
+        self._confirmed_state: ScreenState | None = None
+        # Flag para loggear "[S18] perfil reconocido" una sola vez por entrada
+        # (el log de stats sí se repite en cada ciclo de extracción).
+        self._agent_stats_screen_logged: bool = False
+        # Nombre del agente del último ciclo de extracción S18, para detectar
+        # y loggear cambios de agente (navegación entre perfiles sin salir de S18).
+        self._last_agent_name: str | None = None
         self._window: WindowBounds | None = None
         # TemporalBuffer del loop _run(). Instance var para que force_scan()
         # pueda resetearlo y permitir re-emisión de [reconocido]/[stats].
@@ -223,16 +233,31 @@ class Monitor:
             else:
                 voted_state = buffer.add(raw_state)
 
-            # ---- Paso 3: emitir SOLO cuando buffer confirma ----
+            # ---- Paso 3: emitir cuando buffer confirma + re-extraer S18 ----
             if voted_state is not None:
                 self._notify_state_change(voted_state)
+                self._confirmed_state = voted_state
 
-                # Heavy processing solo a cierta cadencia
-                cadence_ms = polling_cadence_ms(voted_state)
+            # Estado activo: el recién votado, o el último confirmado si el
+            # buffer dedupeó (devolvió None por mismo estado). Esto habilita
+            # la EXTRACCIÓN CONTINUA de S18: aunque el estado no cambie,
+            # re-procesamos en cada ciclo de cadencia para reflejar cambios
+            # de agente y re-loggear stats sin requerir F8.
+            active_state = voted_state if voted_state is not None else self._confirmed_state
+            if active_state is not None:
+                cadence_ms = polling_cadence_ms(active_state)
                 elapsed_ms = (now - last_process_time) * 1000
-                if elapsed_ms >= cadence_ms or self._force_event.is_set():
+                forced = self._force_event.is_set()
+                # S18 (stats de agente) se re-extrae en cada ciclo de cadencia
+                # aunque el estado no cambie. El resto de estados procesa solo
+                # en la transición (voted_state no nulo) o por F8 forzado.
+                continuous = active_state.code in AGENT_STATS_STATES
+                should_dispatch = forced or (
+                    elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
+                )
+                if should_dispatch:
                     last_process_time = now
-                    self._dispatch_state(frame, voted_state)
+                    self._dispatch_state(frame, active_state)
 
             # ---- Heartbeat cada 2s ----
             if now - last_heartbeat >= _HEARTBEAT_S:
@@ -311,19 +336,21 @@ class Monitor:
         if state.code in _DISC_DETAIL_STATES:
             self._maybe_process_disc(frame, state)
             # Salimos de un agent-stats state → reset para que la próxima
-            # entrada a S18 re-emita stats (otro PJ, o el mismo tras
-            # navegar afuera y volver).
+            # entrada a S18 vuelva a loggear "perfil reconocido".
             self._reported_agent_stats_state_code = None
+            self._agent_stats_screen_logged = False
         elif state.code in AGENT_STATS_STATES:
-            self._maybe_process_agent_stats(frame, state)
+            # Extracción CONTINUA: se invoca en cada ciclo de cadencia mientras
+            # se está en S18 (no una sola vez). Auto-detecta cambio de agente.
+            self._process_agent_stats_continuous(frame, state)
             # Si salimos de un disc-state, reseteamos su dedup también
             self._processed_disc_state_code = None
         else:
-            # Estado intermedio (S1/S12/S15/etc.) — resetear AMBOS dedup
-            # flags para que la próxima entrada a un capturable o agent_stats
-            # state re-dispare.
+            # Estado intermedio (S1/S12/S15/etc.) — resetear dedup flags para
+            # que la próxima entrada a un capturable o S18 re-dispare/re-loggee.
             self._processed_disc_state_code = None
             self._reported_agent_stats_state_code = None
+            self._agent_stats_screen_logged = False
 
     def _handle_upgrade(self, frame, state: ScreenState) -> None:
         if self._upgrade_syncer is None:
@@ -349,31 +376,47 @@ class Monitor:
         self._processed_disc_state_code = state.code
         self._process_disc(frame, state)
 
-    def _maybe_process_agent_stats(self, frame, state: ScreenState) -> None:
+    def _process_agent_stats_continuous(self, frame, state: ScreenState) -> None:
         """
-        Dispara `_process_agent_stats` UNA SOLA VEZ por entrada al estado,
-        PERO solo "compromete" el dedup si la extracción dio resultados
-        utilizables. Si la confianza es muy baja o todos los stats clave
-        son None (frame en transición), no marcar como procesado y además
-        resetear el TemporalBuffer para que el siguiente frame de S18 se
-        trate como cambio de estado nuevo y vuelva a llamar al dispatch.
+        Extracción CONTINUA de stats S18 (punto 2 de la sesión 2026-05-31).
 
-        Sin el reset del buffer, los frames subsecuentes con voted_state
-        S18 quedan deduplicados (buffer.add devuelve None) y el dispatch
-        no se llama nunca más hasta que el usuario salga del perfil del PJ.
+        A diferencia del comportamiento viejo (one-shot por entrada al estado),
+        esto se invoca en cada ciclo de cadencia (~1500ms) mientras el usuario
+        está en el perfil del agente, y emite los 3 niveles de log pedidos:
+
+          2a) reconocimiento de la pantalla de stats (una vez por entrada)
+          2b) extracción de los datos en pantalla (cada ciclo)
+          2c) re-log de los stats (vía callback del controller, cada ciclo)
+
+        Además auto-detecta cambio de agente (navegación entre perfiles sin
+        salir de S18): el AgentStatsAggregator resetea por cambio de nombre,
+        y acá logueamos la transición de forma explícita.
         """
-        if self._reported_agent_stats_state_code == state.code:
-            return
+        # 2a) Reconocimiento de pantalla — una sola vez por entrada a S18.
+        if not self._agent_stats_screen_logged:
+            self._agent_stats_screen_logged = True
+            log.info(
+                "[S18] Perfil de agente reconocido — extracción continua activa "
+                "(conf=%.2f)", state.confidence,
+            )
+
+        # 2b) Extracción de datos en pantalla (cada ciclo).
+        log.info("[S18] Extrayendo stats de pantalla...")
         result = self._process_agent_stats(frame, state)
-        if self._stats_result_is_useful(result):
-            # Stats utilizables → comprometer dedup. No re-emitir.
-            self._reported_agent_stats_state_code = state.code
-        else:
-            # Frame inestable. NO comprometer dedup + resetear el buffer
-            # para que el próximo frame estable dispare nuevo dispatch.
-            log.info("Stats no útiles (frame transición), reset buffer para retry")
-            if self._buffer is not None:
-                self._buffer.reset()
+
+        # Detección explícita de cambio de agente para el log.
+        if result is not None and getattr(result, "agente_nombre", None):
+            nombre = result.agente_nombre
+            if self._last_agent_name and nombre != self._last_agent_name:
+                log.info(
+                    "[S18] Cambio de agente detectado: %s → %s (re-extracción)",
+                    self._last_agent_name, nombre,
+                )
+            self._last_agent_name = nombre
+
+        # 2c) El re-log de stats lo emite el controller en on_agent_stats
+        # ([reconocido]/[stats]/[completo]) y _process_agent_stats loggea el
+        # post-merge — ambos se repiten en cada ciclo, según lo pedido.
 
     @staticmethod
     def _stats_result_is_useful(stats) -> bool:

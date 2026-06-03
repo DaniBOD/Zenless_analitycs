@@ -386,7 +386,8 @@ class TestRolElementoDesdePantalla:
         txt = ("Pinaculo Yunkui Ju Fufu Ju Fufu Nivel 60 60 MAX "
                "Igneo Aturdidor PV 11146 Ataque 3286 Defensa 925")
         # DB sucia: rol 'Soporte' (≠ pantalla 'Aturdimiento'), elemento 'Fuego'.
-        with patch.object(p, "_lookup_agent",
+        # Se patchea _match_agent (el matcher difuso que usa _extract_agent_info).
+        with patch.object(p, "_match_agent",
                           return_value=("Ju Fufu", "Soporte", "Fuego")):
             nombre, rol, elemento, notas = p._extract_agent_info(txt)
         assert rol == "Aturdimiento", f"rol={rol} (debió ganar pantalla sobre DB Soporte)"
@@ -394,15 +395,20 @@ class TestRolElementoDesdePantalla:
         assert nombre == "Ju Fufu"
         assert any("rol_pantalla=Aturdimiento_vs_db=Soporte" in n for n in notas), notas
 
-    def test_agente_fuera_de_db_usa_nombre_y_rol_de_pantalla(self):
-        """Lucia no está en DB: igual se extrae nombre (doble) + rol + elemento."""
-        from app.core.parser_agent_stats import _extract_agent_info
-        txt = ("Vidente Lucia Lucia Nivel 60 60 MAX "
+    def test_agente_fuera_de_roster_usa_nombre_de_pantalla(self):
+        """PJ fuera del roster (sin match en DB): igual se extrae nombre (doble) +
+        rol + elemento de pantalla. Se patchea _match_agent->None para simular
+        un PJ no registrado (ej. uno de un banner que el jugador aún no tiene)."""
+        from unittest.mock import patch
+        import app.core.parser_agent_stats as p
+        txt = ("Banner Zephyrine Zephyrine Nivel 60 60 MAX "
                "Electrico Anomalia PV 10000 Ataque 2000 Defensa 700")
-        nombre, rol, elemento, notas = _extract_agent_info(txt)
-        assert nombre == "Lucia", f"nombre={nombre} (dual-validado debió usarse)"
+        with patch.object(p, "_match_agent", return_value=(None, None, None)):
+            nombre, rol, elemento, notas = p._extract_agent_info(txt)
+        assert nombre == "Zephyrine", f"nombre={nombre} (dual-validado debió usarse)"
         assert rol == "Anomalía"
         assert elemento == "Eléctrico"
+        assert "nombre_fuera_de_roster" in notas
         assert "nombre_doble_validado" in notas
 
 
@@ -424,3 +430,171 @@ class TestDobleNombre:
         from app.core.parser_agent_stats import _name_appears_twice
         txt = "Pinaculo Yunkui Ju Fufu Nivel 60"
         assert _name_appears_twice(txt, "Yunkui") is False
+
+
+# ---------------------------------------------------------------------------
+# Capas 1/2/3 (2026-06-01): matcher de agente difuso + desambiguación
+#   Capa 1: acentos/case  ·  Capa 2: fuzzy  ·  Capa 3: rol+elemento de pantalla
+# ---------------------------------------------------------------------------
+
+class TestMatchAgentCapas123:
+    """Identificación robusta del agente contra un roster sintético determinista."""
+
+    _ROWS = [
+        ("Anby",         "Aturdimiento", "Eléctrico"),
+        ("N.º 0: Anby",  "Ataque",       "Eléctrico"),
+        ("Nekomata",     "Ataque",       "Físico"),
+        ("Manato",       "Disruptivos",  "Fuego"),
+        ("Lucía",        "Soporte",      "Éter"),
+        ("Lucy",         "Soporte",      "Fuego"),
+        ("César",        "Defensa",      "Físico"),
+        ("Antón",        "Ataque",       "Eléctrico"),
+        ("Ye Shunguang", "Ataque",       "Físico"),
+        ("Ju Fufu",      "Aturdimiento", "Fuego"),
+    ]
+
+    @pytest.fixture(autouse=True)
+    def _patch_roster(self, monkeypatch):
+        import app.core.parser_agent_stats as p
+        roster = []
+        for nombre, rol, elem in self._ROWS:
+            norm = p._norm_name(nombre)
+            roster.append({"nombre": nombre, "rol": rol, "elemento": elem,
+                           "norm": norm, "tokens": set(norm.split())})
+        monkeypatch.setattr(p, "_get_roster", lambda: roster)
+
+    def _m(self, *a):
+        from app.core.parser_agent_stats import _match_agent
+        return _match_agent(*a)
+
+    # --- Capa 1: acentos / case ---
+    def test_capa1_lucia_sin_acento(self):
+        assert self._m("Lucia", "Soporte", "Éter")[0] == "Lucía"
+
+    def test_capa1_cesar_con_apellido(self):
+        assert self._m("Cesar King", "Defensa", "Físico")[0] == "César"
+
+    def test_capa1_anton_sin_acento(self):
+        assert self._m("Anton", "Ataque", "Eléctrico")[0] == "Antón"
+
+    # --- Capa 2: fuzzy / sin falsos positivos ---
+    def test_capa2_nekomata_no_es_manato(self):
+        assert self._m("Nekomata", "Ataque", "Físico")[0] == "Nekomata"
+
+    def test_capa2_shunguang_misread(self):
+        assert self._m("Ye Shunguanq", "Ataque", "Físico")[0] == "Ye Shunguang"
+
+    def test_capa2_desconocido_devuelve_none(self):
+        # RNF-02: no inventar identidad si no hay similitud de nombre.
+        assert self._m("Zephyrine", "Ataque", "Físico")[0] is None
+
+    # --- Capa 3: desambiguación por rol+elemento ---
+    def test_capa3_anby_normal_por_rol(self):
+        assert self._m("Anby", "Aturdimiento", "Eléctrico")[0] == "Anby"
+
+    def test_capa3_anby_soldado0_por_rol(self):
+        # Mismo "Anby" en pantalla, pero rol Ataque -> N.º 0: Anby (homónimo).
+        assert self._m("Anby", "Ataque", "Eléctrico")[0] == "N.º 0: Anby"
+
+    def test_capa3_lucy_vs_lucia_por_elemento(self):
+        assert self._m("Lucy", "Soporte", "Fuego")[0] == "Lucy"
+        assert self._m("Lucia", "Soporte", "Éter")[0] == "Lucía"
+
+
+# ---------------------------------------------------------------------------
+# Capa 4 (2026-06-02): identificación por STATS (vector pv/atk/crit).
+#   Backbone determinista — resuelve homónimos (N.º 0: Anby) y nombres display
+#   largos (Lucy="Luciana de Montefio") que el OCR del nombre estilizado falla.
+#   Los stats de pantalla == build de la DB del usuario (autoritativo, RNF-02).
+# ---------------------------------------------------------------------------
+
+class TestIdentifyByStatsCapa4:
+    """Identificación por vector de stats contra un roster sintético con stats."""
+
+    # Vectores reales del build de DaniBOD (DB danibod_zzz_v2) — los crit van
+    # como FRACCIÓN igual que el roster cacheado (DB % / 100).
+    _ROWS = [
+        # nombre, rol, elemento, pv, ataque, defensa, prob_crit, dano_crit
+        ("Anby",        "Aturdimiento", "Eléctrico", 11161, 1169, 1018, 0.434, 0.836),
+        ("N.º 0: Anby", "Ataque",       "Eléctrico", 10558, 2630,  914, 0.538, 1.764),
+        ("Lucy",        "Soporte",      "Fuego",     12392, 1774, 1003, 0.242, 0.836),
+        ("Lucía",       "Soporte",      "Éter",      23214, 2041,  995, 0.170, 0.548),
+        ("Zhu Yuan",    "Ataque",       "Éter",      11200, 2600,  900, 0.500, 1.700),
+    ]
+
+    @pytest.fixture(autouse=True)
+    def _patch_roster(self, monkeypatch):
+        import app.core.parser_agent_stats as p
+        roster = []
+        for nombre, rol, elem, pv, atk, dfn, cr, cd in self._ROWS:
+            norm = p._norm_name(nombre)
+            roster.append({
+                "nombre": nombre, "rol": rol, "elemento": elem,
+                "norm": norm, "tokens": set(norm.split()),
+                "pv": pv, "ataque": atk, "defensa": dfn,
+                "prob_crit": cr, "dano_crit": cd,
+            })
+        monkeypatch.setattr(p, "_get_roster", lambda: roster)
+
+    def _id(self, **stats):
+        from app.core.parser_agent_stats import _identify_by_stats
+        return _identify_by_stats(stats)
+
+    def test_soldier0_anby_por_stats(self):
+        # Stats exactos de N.º 0: Anby — debe resolver al homónimo correcto,
+        # no al Anby normal (mismo nombre OCR, distinto agente).
+        ag = self._id(pv=10558, ataque=2630, defensa=914, prob_crit=0.538, dano_crit=1.764)
+        assert ag is not None and ag["nombre"] == "N.º 0: Anby"
+
+    def test_lucy_por_stats_pese_a_nombre_largo(self):
+        # Lucy se identifica por stats aunque el OCR lea "Luciana de Montefio".
+        ag = self._id(pv=12392, ataque=1774, defensa=1003, prob_crit=0.242, dano_crit=0.836)
+        assert ag is not None and ag["nombre"] == "Lucy"
+
+    def test_anby_normal_por_stats(self):
+        ag = self._id(pv=11161, ataque=1169, defensa=1018, prob_crit=0.434, dano_crit=0.836)
+        assert ag is not None and ag["nombre"] == "Anby"
+
+    def test_tolera_drift_pequeno(self):
+        # Un disco cambiado mueve PV/ATK unos puntos: igual debe identificar.
+        ag = self._id(pv=10600, ataque=2615, defensa=914, prob_crit=0.540, dano_crit=1.760)
+        assert ag is not None and ag["nombre"] == "N.º 0: Anby"
+
+    def test_sin_crit_no_identifica(self):
+        # Sin ningún crit no se puede discriminar DPS parecidos → None (fallback).
+        assert self._id(pv=10558, ataque=2630, defensa=914) is None
+
+    def test_sin_pv_no_identifica(self):
+        assert self._id(ataque=2630, prob_crit=0.538, dano_crit=1.764) is None
+
+    def test_stats_none_no_identifica(self):
+        from app.core.parser_agent_stats import _identify_by_stats
+        assert _identify_by_stats(None) is None
+        assert _identify_by_stats({}) is None
+
+    def test_extract_agent_info_usa_stats_sobre_nombre_malo(self):
+        # Integración: el OCR del nombre dice "Anby" (mal) pero los stats son de
+        # Lucy → _extract_agent_info debe devolver "Lucy" gracias a Capa 4.
+        from app.core.parser_agent_stats import _extract_agent_info
+        full_text = "Anby Anby Nivel 60 60 MAX PV 12392 Ataque 1774 Defensa 1003"
+        stats = {"pv": 12392, "ataque": 1774, "defensa": 1003,
+                 "prob_crit": 0.242, "dano_crit": 0.836}
+        nombre, rol, elemento, notas = _extract_agent_info(full_text, stats)
+        assert nombre == "Lucy", f"nombre={nombre}"
+        assert rol == "Soporte"
+        assert elemento == "Fuego"
+        assert any("identificado_por_stats" in n for n in notas), notas
+
+    def test_banner_contradice_stats_cae_a_nombre(self):
+        # Si el banner se leyó y su rol contradice al agente identificado por
+        # stats, se descarta la ID por stats (cross-check conservador).
+        from app.core.parser_agent_stats import _extract_agent_info
+        # Banner dice rol Ataque (Hielo Ataque), pero los stats son de Lucy
+        # (Soporte). El cross-check descarta stats → cae a matcher de nombre.
+        full_text = "Zephyr Zephyr Nivel 60 60 MAX Hielo Ataque PV 12392 Ataque 1774"
+        stats = {"pv": 12392, "ataque": 1774, "defensa": 1003,
+                 "prob_crit": 0.242, "dano_crit": 0.836}
+        nombre, rol, elemento, notas = _extract_agent_info(full_text, stats)
+        # No debe afirmar "Lucy" (Soporte) cuando el banner dice Ataque.
+        assert nombre != "Lucy"
+        assert rol == "Ataque"

@@ -42,6 +42,16 @@ def _setup_file_logging() -> Path | None:
             datefmt="%Y-%m-%d %H:%M:%S",
         ))
         root_logger.addHandler(fh)
+
+        # Hito 2.8 (QA 2026-05-31): `import paddleocr` SUBE el nivel del root
+        # logger a WARNING, lo que silenciaba todos nuestros INFO (heartbeats,
+        # [stats], [completo], "Monitor arrancado"...) una vez activado Paddle.
+        # Fijar el nivel del logger raíz del proyecto ("app") a INFO lo hace
+        # INMUNE a que paddle toque el nivel del root: el level-check ocurre en
+        # el logger de origen (app.*), y los records propagan a los handlers del
+        # root sin re-filtrarse por el nivel del root.
+        logging.getLogger("app").setLevel(logging.INFO)
+
         root_logger.info("Logging a archivo iniciado en %s", log_file)
         return log_file
     except Exception:
@@ -50,6 +60,7 @@ def _setup_file_logging() -> Path | None:
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPalette
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -558,7 +569,8 @@ class MainWindow(QMainWindow):
             self._show_and_raise()
 
     def _show_and_raise(self):
-        """Trae la ventana al frente (desde tray o click en toast)."""
+        """Trae la ventana al frente (desde tray, click en toast, o
+        segunda instancia que pide foco — ver single-instance en main())."""
         if self.isHidden() or self.isMinimized():
             self.showNormal()
         else:
@@ -607,6 +619,57 @@ class MainWindow(QMainWindow):
 
 
 # ---------------------------------------------------------------------------
+# Single-instance (una sola sesión activa)
+# ---------------------------------------------------------------------------
+
+# Nombre del socket local. Único por usuario+app; si algún día corren dos
+# cuentas de Windows en paralelo, cada sesión tiene su propio namespace de
+# QLocalServer, así que no colisionan.
+_SINGLE_INSTANCE_KEY = "DaniBOD_ZZZ_Analytics_SingleInstance"
+
+
+def _try_signal_existing_instance() -> bool:
+    """
+    Intenta contactar a una instancia ya corriendo.
+
+    Devuelve True si HABÍA otra instancia (le mandamos 'show' y esta debe
+    abortar su arranque). Devuelve False si somos la primera instancia.
+    """
+    socket = QLocalSocket()
+    socket.connectToServer(_SINGLE_INSTANCE_KEY)
+    if socket.waitForConnected(300):
+        # Ya hay una instancia: pedirle que se muestre y salir.
+        socket.write(b"show")
+        socket.flush()
+        socket.waitForBytesWritten(300)
+        socket.disconnectFromServer()
+        return True
+    return False
+
+
+def _install_instance_server(window: "MainWindow") -> QLocalServer:
+    """
+    Crea el QLocalServer que escucha pedidos de 'foco' de instancias nuevas.
+    Cuando llega una conexión, trae la ventana de esta instancia al frente.
+    """
+    # Limpiar un socket huérfano de un crash anterior antes de escuchar.
+    QLocalServer.removeServer(_SINGLE_INSTANCE_KEY)
+    server = QLocalServer()
+    server.listen(_SINGLE_INSTANCE_KEY)
+
+    def _on_new_connection():
+        conn = server.nextPendingConnection()
+        if conn is not None:
+            # No hace falta leer el payload: cualquier conexión = "traeme al frente".
+            conn.readyRead.connect(lambda: conn.readAll())
+            window._show_and_raise()
+            conn.disconnectFromServer()
+
+    server.newConnection.connect(_on_new_connection)
+    return server
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -615,12 +678,25 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("DaniBOD ZZZ Analytics")
     app.setQuitOnLastWindowClosed(False)
+
+    # --- Single-instance guard ---------------------------------------------
+    # Si ya hay una sesión abierta, le pedimos que se muestre y abortamos:
+    # nunca quedan dos ventanas/tray del sistema a la vez.
+    if _try_signal_existing_instance():
+        logging.getLogger("app").info(
+            "Ya hay una instancia corriendo — se le pidió foco y esta sale."
+        )
+        return
+
     apply_dark_palette(app)
 
     font = QFont("Segoe UI", 10)
     app.setFont(font)
 
     window = MainWindow()
+    # Mantener una referencia viva al server en el window para que no lo
+    # recolecte el GC mientras la app vive.
+    window._instance_server = _install_instance_server(window)
     window.show()
     sys.exit(app.exec())
 

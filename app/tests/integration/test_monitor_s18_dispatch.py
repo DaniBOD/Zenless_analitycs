@@ -8,7 +8,7 @@ funcionaban en aislamiento. Este test simula el camino completo:
 
     frame → ScreenDetector.classify() → _deep_detect_s18 (fallback) →
     TemporalBuffer.promote_now() / .add() → _dispatch_state() →
-    _maybe_process_agent_stats() → parse_agent_stats() → on_agent_stats CB
+    _process_agent_stats_continuous() → parse_agent_stats() → on_agent_stats CB
 
 Si pasa, la cadena entera está conectada y futuras regresiones de wiring
 se detectan en CI.
@@ -203,7 +203,7 @@ def test_temporal_buffer_promote_no_rompe_voting_normal():
 
 
 # ---------------------------------------------------------------------------
-# Test 3: Monitor._maybe_process_agent_stats dispara callback on_agent_stats
+# Test 3: Monitor._process_agent_stats_continuous dispara callback on_agent_stats
 # ---------------------------------------------------------------------------
 
 def test_monitor_dispatch_invoca_on_agent_stats():
@@ -258,11 +258,16 @@ def test_monitor_dispatch_invoca_on_agent_stats():
     assert state.code == "S18"
 
 
-def test_monitor_dispatch_dedup_no_re_invoca_mismo_estado(monkeypatch):
+def test_monitor_dispatch_continuo_re_extrae_mismo_estado(monkeypatch):
     """
-    Dos `_dispatch_state(frame, S18)` consecutivos disparan UNA sola vez
-    SI el primer resultado fue 'útil' (al menos un stat clave no-None).
-    Si fue todo None, se permite retry — esto se cubre en el otro test.
+    Extracción CONTINUA (cambio 2026-05-31, punto 2): dos
+    `_dispatch_state(frame, S18)` consecutivos disparan el callback DOS veces.
+
+    Antes había un dedup one-shot (1 sola emisión por entrada a S18); ahora,
+    mientras el usuario está en el perfil, cada ciclo de cadencia re-extrae y
+    re-emite. La cadencia real (no re-procesar más rápido que ~1500ms) la
+    controla el loop `_run`, no `_dispatch_state` — por eso a nivel de
+    dispatch directo cada llamada procesa.
     """
     if not S18_FIXTURES:
         pytest.skip("Sin fixtures S18")
@@ -274,8 +279,6 @@ def test_monitor_dispatch_dedup_no_re_invoca_mismo_estado(monkeypatch):
     from app.core.monitor import Monitor
     from app.core import monitor as monitor_mod
 
-    # Mockear parse_agent_stats para devolver un stats útil (PV no-None)
-    # así el dedup se compromete tras la primera llamada.
     monkeypatch.setattr(
         monitor_mod, "parse_agent_stats",
         lambda f, o: AgentStatsParsed(nivel=60, pv=10797, ataque=2531, defensa=925),
@@ -293,9 +296,9 @@ def test_monitor_dispatch_dedup_no_re_invoca_mismo_estado(monkeypatch):
     monitor._dispatch_state(frame, s18)
     monitor._dispatch_state(frame, s18)
 
-    assert len(received) == 1, (
-        f"Dedup roto: {len(received)} invocaciones para 2 dispatch del mismo estado "
-        f"(con stats útiles, el segundo NO debe re-emitir)."
+    assert len(received) == 2, (
+        f"Extracción continua rota: esperaba 2 invocaciones para 2 dispatch "
+        f"del mismo estado S18, recibió {len(received)}."
     )
 
 
