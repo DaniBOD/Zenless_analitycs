@@ -16,7 +16,7 @@ from app.core.capturer import WindowBounds, capture_window, find_zzz_window
 from app.core.detector import (
     ScreenDetector, ScreenState, TemporalBuffer, AGENT_STATS_STATES,
     extract_s17_slot, extract_s9_slot, polling_cadence_ms,
-    _deep_detect_s18,
+    _deep_detect_s18, detect_active_tab,
 )
 from app.core.parser_disc import DiscParsed, parse_modal_detalle
 from app.core.parser_disc_s17 import parse_disc_s17
@@ -212,10 +212,13 @@ class Monitor:
             raw_state = self._detector.classify(frame)
 
             # Fallback deep detect S18: si classify se quedó en S12, intentar
-            # detección independiente de templates con 3 indicadores visuales
-            # + 2 OCR. Cierra el gap en .exe a 2560x1440 donde las templates
-            # S18 no matchean (ver Documentacion/Dev_IA/2026-05-15_*.md).
-            if raw_state.code == "S12":
+            # detección independiente de templates con OCR confirmatorio de stats.
+            # Cierra el gap en .exe a 2560x1440 donde las templates S18 no matchean
+            # (ver Documentacion/Dev_IA/2026-05-15_*.md).
+            # Gate (2026-06-03): NO correr si hay un tab-bar activo — ahí la familia
+            # (S8/S18/S19) ya la resolvió `classify` por tab. Evita re-disparar S18
+            # sobre la pestaña Equipamiento. El tentativo visual-solo fue eliminado.
+            if raw_state.code == "S12" and detect_active_tab(frame) is None:
                 deep = _deep_detect_s18(frame, self._ocr)
                 if deep is not None:
                     raw_state = deep

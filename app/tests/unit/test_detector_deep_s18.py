@@ -114,16 +114,17 @@ def test_deep_detect_full_ocr_es_high_confidence():
     assert "ocr_stats_" in state.template_name
 
 
-def test_deep_detect_solo_banner_ocr_es_tentativo():
-    """Solo banner OCR (peso 2) → ocr_score=2, total=2 → tentativo conf 0.55."""
+def test_deep_detect_solo_banner_ocr_no_alcanza():
+    """
+    Solo banner OCR (peso 2) sobre frame negro → ocr_score=2 pero total=2 (<3)
+    → None. El path tentativo (conf 0.55) fue eliminado el 2026-06-03; ahora la
+    promoción exige ocr_score>=2 AND total>=3 (banner + grilla visual, o banner
+    + keywords stats).
+    """
     frame = np.zeros((1440, 2560, 3), dtype=np.uint8)
     ocr = _StubOcr(banner_text="AGENT INFO", stats_text="")
     state = _deep_detect_s18(frame, ocr)
-    assert state is not None
-    assert state.code == "S18"
-    # ocr_score=2 cumple gate de promoción pero total=2 (no >=3) → tentativo
-    assert state.confidence == 0.55
-    assert state.method == "deep_detect_tentativo"
+    assert state is None
 
 
 def test_deep_detect_pocos_keywords_no_dispara():
@@ -174,24 +175,21 @@ def test_deep_detect_ignora_errores_ocr():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("path", S18_FIXTURES, ids=lambda p: p.stem)
-def test_s18_fixtures_detectados_sin_ocr_minimo_tentativo(path):
+def test_s18_fixtures_sin_ocr_ya_no_disparan(path):
     """
-    Sin OCR (solo indicadores visuales): cada fixture S18 real debe al
-    menos disparar el CLAHE indicator (peso 2) → tentativo conf 0.55.
-    Sin promoción a deep_detect porque falta señal OCR confirmatoria.
+    Sin OCR (solo indicadores visuales): deep_detect ahora devuelve None.
+    El path tentativo visual-solo (conf 0.55) fue eliminado el 2026-06-03 porque
+    disparaba S18 falso sobre la pantalla de entrada y S8. La detección de S18 en
+    el pipeline real la hace ahora `detect_active_tab` (tab-bar) + template; el
+    deep_detect queda como refuerzo SOLO con confirmación OCR de stats/banner.
     """
     frame = _read_frame(path)
     if frame is None:
         pytest.skip(f"No se pudo cargar: {path}")
     state = _deep_detect_s18(frame, ocr=None)
-    assert state is not None, (
-        f"Fixture S18 {path.name}: deep_detect sin OCR devolvió None — "
-        f"ningún indicador visual disparó"
-    )
-    assert state.code == "S18"
-    # Sin OCR no debe promover a high confidence (anti-FP)
-    assert state.method == "deep_detect_tentativo", (
-        f"Fixture {path.name} sin OCR debería ser tentativo, fue: {state.method}"
+    assert state is None, (
+        f"Fixture S18 {path.name} sin OCR debería dar None (visual-solo ya no "
+        f"promueve), dio: {state.method if state else None}"
     )
 
 
@@ -222,8 +220,8 @@ def test_s18_fixtures_high_confidence_con_ocr_simulado(path):
 @pytest.mark.parametrize("path", FP_FIXTURES, ids=lambda p: p.name)
 def test_falsos_positivos_no_se_detectan_como_s18_sin_ocr(path):
     """
-    Sin OCR, los FP conocidos NO deben dispararse como deep_detect (alta conf).
-    Pueden quedar como tentativo — el monitor los filtra vía buffer 2/3 frames.
+    Sin OCR, los FP conocidos NO deben dispararse como S18: ahora dan None
+    (el tentativo visual-solo fue eliminado el 2026-06-03).
     """
     if not path.exists():
         pytest.skip(f"FP fixture no disponible: {path}")
@@ -231,11 +229,10 @@ def test_falsos_positivos_no_se_detectan_como_s18_sin_ocr(path):
     if frame is None:
         pytest.skip(f"No se pudo cargar: {path}")
     state = _deep_detect_s18(frame, ocr=None)
-    if state is not None:
-        assert state.method == "deep_detect_tentativo", (
-            f"FP {path.name} promovido a deep_detect sin OCR — fallo crítico anti-FP. "
-            f"template_name={state.template_name}"
-        )
+    assert state is None, (
+        f"FP {path.name} sin OCR debería dar None, dio: "
+        f"{state.method if state else None}"
+    )
 
 
 def test_falsos_positivos_no_se_detectan_como_s18_con_ocr_no_s18():

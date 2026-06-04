@@ -96,6 +96,46 @@ Estados relevantes que el clasificador debe identificar:
 - Botón rojo **"X"** esquina superior derecha + barra EXP verde → S10.
 - Header **"Desmontaje"** + grid de tiles con checkbox → S11.
 
+### 4.1 Familia "detalle de agente" (S8 / S17 / S18 / S19) — actualizado 2026-06-04
+
+> **Nota de doc vivo:** la tabla §4 (S1–S12) es la taxonomía original. La
+> implementación creció a S13–S19; la **fuente de verdad** es `app/core/detector.py`
+> (`STATE_DESCRIPTIONS`, `_VALID_TRANSITIONS`). Esta subsección documenta la familia
+> de detalle de agente, refinada tras QA en vivo (ver
+> `Documentacion/Dev_IA/2026-06-03_Hito_2.8_QA_Flujo_Pantallas_y_Avatar_ID.md`).
+
+La pantalla de **detalle de agente** tiene 3 pestañas, seleccionables por un
+tab-bar abajo a la derecha. Comparten layout y avatar-row superior; **solo S18 y
+S19 muestran el nombre del PJ** (S8 y S17 no → identidad por avatar, Etapa 2):
+
+| ID | Pestaña / vista | Nombre en pantalla | Acción |
+|----|-----------------|--------------------|--------|
+| S8  | Equipamiento (hexágono 6 slots) | ❌ | Leer discos equipados por slot |
+| S17 | Detalle de disco equipado ("Personalización de pistas") | ❌ | Extraer disco (slot/main/subs/set) |
+| S18 | Atributos base (grilla 11 stats) | ✅ | Extraer stats del agente |
+| S19 | Habilidades | ✅ | **Sin extracción** — solo reconocer para no clasificar mal |
+
+#### Desambiguación por tab-bar (ancla determinista)
+
+El pill de la pestaña activa es **amarillo** (Atributos) o **amarillo-lima**
+(Equipamiento). `detector.detect_active_tab()` ubica el pill en la franja inferior
+(ROI normalizada x 0.50–0.95, y 0.90–0.965) por máscara HSV y mapea su centroide
+horizontal a la pestaña → estado S18 / S19 / S8. Es **autoritativo** sobre template,
+HSV y deep-detect dentro de la familia.
+
+**Por qué:** el detector previo confundía S8↔S18 — el deep-detect de S18 (firmas
+visuales: grilla + CLAHE + valores brillantes) disparaba un **falso S18 sobre la
+pestaña Equipamiento (S8)** y sobre la pantalla de entrada del juego. Calibrado
+sobre 24 capturas reales 2559×1439 (5 S8, 7 S18, 8 FP, 5 S15) → 24/24. El path
+"tentativo" visual-solo del deep-detect (conf 0.55) fue **eliminado**; S18 por
+deep-detect ahora exige confirmación OCR de stats/banner.
+
+#### Corrección de ancla (errata §4)
+
+La línea *"Header 'Personalización de pistas de disco' → S9"* es incorrecta: ese
+header corresponde a **S17** (detalle de disco equipado), no a S9 (inventario
+general). El hexágono con slot **"DRIVER"** es S8 (no "S8/S9").
+
 ---
 
 ## 5. Triggers de captura — polling adaptativo
