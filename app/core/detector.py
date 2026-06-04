@@ -48,7 +48,8 @@ THRESHOLD_BY_STATE: dict[str, float] = {
     "S8":  0.80,   # Vista agente — informativo
     "S11": 0.80,   # Desmontaje — anti-FP
     "S17": 0.75,   # Detalle disco PJ — informativo, más permisivo
-    "S18": 0.75,   # Perfil agente — informativo
+    "S18": 0.75,   # Perfil agente (Atributos base) — informativo
+    "S19": 0.75,   # Perfil agente (Habilidades) — informativo, sin extracción
     "S9":  0.80,   # Inventario discos — informativo
     "S13": 0.70,   # Selección set farmeo — transición
     "S14": 0.70,   # Selección equipo — transición
@@ -70,17 +71,18 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     "S5":  {"S6", "S7", "S12"},
     "S6":  {"S7", "S12", "S4"},
     "S7":  {"S12", "S4", "S6"},
-    "S8":  {"S17", "S18", "S12", "S15", "S9"},
+    "S8":  {"S17", "S18", "S19", "S12", "S15", "S9"},
     "S9":  {"S8", "S12", "S17", "S16"},
     "S10": {"S12", "S9", "S3"},
     "S11": {"S12", "S9", "S3"},
-    "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18"},
+    "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18", "S19"},
     "S13": {"S12", "S14", "S1", "S18"},
     "S14": {"S12", "S1", "S13", "S15", "S18"},
-    "S15": {"S8", "S18", "S12", "S14"},
+    "S15": {"S8", "S18", "S19", "S12", "S14"},
     "S16": {"S12", "S9", "S8", "S18"},
-    "S17": {"S8", "S18", "S12", "S15", "S9"},
-    "S18": {"S8", "S12", "S15", "S17"},
+    "S17": {"S8", "S18", "S19", "S12", "S15", "S9"},
+    "S18": {"S8", "S19", "S12", "S15", "S17"},
+    "S19": {"S8", "S18", "S12", "S15", "S17"},
 }
 
 STATE_DESCRIPTIONS: dict[str, str] = {
@@ -102,6 +104,7 @@ STATE_DESCRIPTIONS: dict[str, str] = {
     "S16": "Detalle set de discos (modal 'Información de conjunto')",
     "S17": "Equipamiento PJ — vista detalle disco (Personalización pistas)",
     "S18": "Perfil agente — pestaña Atributos base",
+    "S19": "Perfil agente — pestaña Habilidades (sin extracción)",
 }
 
 # Estados que SÍ tienen un disco visible para parsear
@@ -111,7 +114,7 @@ UPGRADE_STATES: set[str] = {"S10"}
 # Estados sin disco (solo logging informativo)
 NON_CAPTURE_STATES: set[str] = {
     "S1", "S2", "S4", "S5", "S8", "S9",
-    "S11", "S12", "S13", "S14", "S15", "S16",
+    "S11", "S12", "S13", "S14", "S15", "S16", "S19",
 }
 
 # Estados donde hay stats de agente visibles (Atributos base)
@@ -137,6 +140,67 @@ _SLOT_POSITIONS: dict[int, tuple[float, float, float, float]] = {
     5: (0.380, 0.500, 0.080, 0.100),   # lower-left
     6: (0.380, 0.350, 0.080, 0.100),   # upper-left
 }
+
+
+# =========================================================================
+# Tab-bar detector — familia "detalle de agente" (RF-04 §4)
+# =========================================================================
+# La pantalla de detalle de agente tiene 3 pestañas abajo a la derecha:
+#   "Atributos base" (S18) | "Habilidades" (S19) | "Equipamiento" (S8)
+# La pestaña activa es un "pill" relleno amarillo (Atributos) o amarillo-lima
+# (Equipamiento). Detectar cuál está activa es una señal DETERMINISTA de en
+# cuál de los 3 estados de la familia estamos — más robusta que template/HSV/
+# deep-detect, que confunden S8↔S18 (cf. Dev_IA 2026-06-03).
+#
+# Calibrado sobre 24 capturas reales 2559×1439 (5 S8, 7 S18, 8 FP, 5 S15):
+#   → 24/24 aciertos. Resolución-agnóstico (ROI + centros normalizados).
+_TAB_BAR_ROI: tuple[float, float, float, float] = (0.50, 0.90, 0.45, 0.065)  # x,y,w,h norm
+# Centro x normalizado (imagen completa) del pill de cada pestaña → estado:
+_TAB_CENTERS: dict[str, float] = {
+    "S18": 0.59,   # Atributos base (izq)
+    "S19": 0.74,   # Habilidades (centro)
+    "S8":  0.87,   # Equipamiento (der)
+}
+# Rango HSV del pill activo: cubre amarillo puro (Atributos) y amarillo-lima
+# (Equipamiento, tinte según tema del PJ).
+_TAB_HSV_LOWER = np.array([20, 90, 120])
+_TAB_HSV_UPPER = np.array([45, 255, 255])
+# Pills reales: ratio 0.22–0.28. Ruido de S15/S2 ≤ 0.082. Gate con margen amplio.
+_TAB_MIN_RATIO = 0.12
+
+
+def detect_active_tab(frame: np.ndarray) -> str | None:
+    """
+    Detecta qué pestaña del detalle de agente está activa por el pill amarillo/lima.
+
+    Devuelve el código de estado de la familia ("S18"/"S19"/"S8") o None si no
+    hay un pill claro en la franja del tab-bar (⇒ no estamos en la familia, o no
+    es concluyente). Pura HSV, sin OCR, ~1 ms.
+    """
+    if frame is None or frame.size == 0:
+        return None
+    try:
+        h, w = frame.shape[:2]
+        x, y, rw, rh = _TAB_BAR_ROI
+        x0, y0 = int(x * w), int(y * h)
+        x1, y1 = int((x + rw) * w), int((y + rh) * h)
+        crop = frame[y0:y1, x0:x1]
+        if crop.size == 0:
+            return None
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, _TAB_HSV_LOWER, _TAB_HSV_UPPER)
+        ratio = mask.sum() / 255 / mask.size
+        if ratio < _TAB_MIN_RATIO:
+            return None
+        cols = mask.sum(axis=0)
+        total = cols.sum()
+        if total <= 0:
+            return None
+        cx = int((np.arange(len(cols)) * cols).sum() / total)
+        fullx = (x0 + cx) / w
+        return min(_TAB_CENTERS, key=lambda k: abs(_TAB_CENTERS[k] - fullx))
+    except Exception:
+        return None
 
 
 # =========================================================================
@@ -653,7 +717,14 @@ def _deep_detect_s18(frame: np.ndarray, ocr=None) -> "ScreenState | None":
 
     total = visual_score + ocr_score
 
-    # Promoción a alta confianza requiere señal OCR confirmatoria
+    # Promoción a S18 SOLO con señal OCR confirmatoria de stats/banner.
+    # El path "tentativo" (conf 0.55, visual-solo) fue ELIMINADO el 2026-06-03:
+    # disparaba S18 falso sobre la pantalla de entrada (TV) y sobre S8 (la grilla
+    # de efectos de set + el pill lima activaban CLAHE/valores_brillantes sin un
+    # solo stat real). Los visuales NO distinguen S18 de otras pantallas con
+    # grilla/texto; solo el OCR de "AGENT INFO"/keywords de stats es exclusivo.
+    # La desambiguación S8↔S18 ahora la hace `detect_active_tab` (tab-bar).
+    # Ver Documentacion/Dev_IA/2026-06-03_*.md §2.
     if ocr_score >= 2 and total >= 3:
         return ScreenState(
             code="S18",
@@ -661,14 +732,6 @@ def _deep_detect_s18(frame: np.ndarray, ocr=None) -> "ScreenState | None":
             template_name="deep_detect:" + "+".join(reasons),
             verification=f"vis={visual_score} ocr={ocr_score}",
             method="deep_detect",
-        )
-    if total >= 2:
-        return ScreenState(
-            code="S18",
-            confidence=0.55,
-            template_name="deep_detect_tentativo:" + "+".join(reasons),
-            verification=f"vis={visual_score} ocr={ocr_score}",
-            method="deep_detect_tentativo",
         )
     return None
 
@@ -931,11 +994,16 @@ class ScreenDetector:
             hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
             h, w = frame.shape[:2]
 
-            # S10: barra EXP verde en la zona inferior del modal
+            # S10: barra EXP verde en la zona inferior del modal.
+            # FIX 2026-06-03: faltaba `/255` → el ratio venía ×255 inflado y el
+            # umbral "0.03" se cumplía con cualquier verde (FP de S10 sobre S8 y
+            # la pantalla de entrada). Ahora es fracción real; umbral 0.20
+            # (S18 llega a 0.133, S8 a 0.065 en capturas reales → excluidos).
             exp_roi = hsv[int(0.50*h):int(0.54*h), int(0.35*w):int(0.65*w)]
             if exp_roi.size > 0:
                 green_mask = cv2.inRange(exp_roi, np.array([35, 50, 50]), np.array([90, 255, 255]))
-                if green_mask.sum() / green_mask.size > 0.03:
+                green_ratio = green_mask.sum() / green_mask.size / 255.0
+                if green_ratio > 0.20:
                     return ScreenState("S10", 0.60, "hsv_green_bar", method="hsv")
 
             # S11: header rojo (zona superior central)
@@ -997,6 +1065,7 @@ class ScreenDetector:
         0. Dark frame filter (pantallas de carga/transición → S12 inmediato)
         1. Template matching (rápido, ~50ms)
         2. Verificación secundaria (~30ms)
+        2.5 Override por tab-bar (ancla determinista de la familia detalle-PJ)
         3. State machine (transiciones válidas)
         4. HSV fallback solo si template no matchó
         """
@@ -1013,7 +1082,17 @@ class ScreenDetector:
         # Capa 2: verificación secundaria
         state = self._verify(state, frame)
 
-        # Capa 3: HSV fallback si template no matchó
+        # Capa 2.5: override por tab-bar. Si hay un pill de pestaña activo, ES
+        # autoritativo para distinguir S8/S18/S19 (familia detalle de agente),
+        # por encima de template/HSV/deep-detect. Mata el FP histórico S18-sobre-S8
+        # y el FP S10-sobre-S8 (cf. Dev_IA 2026-06-03). No corre OCR (~1 ms).
+        tab_state = detect_active_tab(frame)
+        if tab_state is not None and tab_state != state.code:
+            state = ScreenState(tab_state, 0.90, f"tab:{tab_state}", method="tab")
+        elif tab_state is not None:
+            state.method = "template+tab"  # template y tab coinciden → confianza extra
+
+        # Capa 3: HSV fallback si template no matchó (y el tab tampoco resolvió)
         if state.code == "S12":
             hsv_state = self._classify_by_hsv(frame)
             if hsv_state is not None:
@@ -1047,6 +1126,6 @@ def polling_cadence_ms(state: ScreenState) -> int:
         "S5":  1000, "S6":   500, "S7":   500, "S8":  1500,
         "S9":  1500, "S10":  500, "S11": 5000, "S12": 2000,
         "S13": 1000, "S14": 1000, "S15": 1000, "S16": 1500,
-        "S17": 1000, "S18": 1500,
+        "S17": 1000, "S18": 1500, "S19": 1500,
     }
     return cadence.get(state.code, 2000)
