@@ -124,8 +124,14 @@ class Monitor:
         self._last_agent_name: str | None = None
         # Posición x del avatar resaltado cuando se confirmó la identidad en S18.
         # Se usa en S8/S19 (sin nombre en pantalla) para decidir si el PJ sigue
-        # siendo el mismo (carry-forward) o cambió (→ "sin identificar").
+        # siendo el mismo (carry-forward) o cambió (→ matcher / "sin identificar").
         self._agent_anchor_x: float | None = None
+        # Origen de la identidad latcheada para S8/S19: "heredado" (anchor desde
+        # S18) | "avatar" (matcher) | None. La identidad (nombre+anchor+source) se
+        # LATCHEA muestreando el avatar en el loop rápido (10 fps) y se SOSTIENE
+        # mientras el avatar esté oculto (interfaz deslizante) — solo cambia al ver
+        # positivamente otro avatar. Da robustez frente al auto-hide del row.
+        self._detail_source: str | None = None
         self._window: WindowBounds | None = None
         # TemporalBuffer del loop _run(). Instance var para que force_scan()
         # pueda resetearlo y permitir re-emisión de [reconocido]/[stats].
@@ -237,6 +243,13 @@ class Monitor:
 
             # ---- Paso 1: clasificar frame individual ----
             raw_state = self._detector.classify(frame)
+
+            # Muestreo RÁPIDO de identidad en S8/S19 (10 fps, no cadencia): el
+            # avatar-row es deslizante y se auto-oculta; muestrear en cada frame
+            # captura la ventana breve en que el avatar es visible (al seleccionar
+            # el PJ). Latchea la identidad para que el log de cadencia la sostenga.
+            if raw_state.code in _AGENT_DETAIL_STATES:
+                self._update_detail_identity(frame)
 
             # Fallback deep detect S18: si classify se quedó en S12, intentar
             # detección independiente de templates con OCR confirmatorio de stats.
@@ -371,6 +384,10 @@ class Monitor:
             # entrada a S18 vuelva a loggear "perfil reconocido".
             self._reported_agent_stats_state_code = None
             self._agent_stats_screen_logged = False
+            # S17 (disco del PJ actual) conserva la identidad; S3/S6/S7 (drop/
+            # tienda) NO son la familia de detalle de agente → resetear latch.
+            if state.code != "S17":
+                self._reset_detail_identity()
         elif state.code in AGENT_STATS_STATES:
             # Extracción CONTINUA: se invoca en cada ciclo de cadencia mientras
             # se está en S18 (no una sola vez). Auto-detecta cambio de agente.
@@ -387,6 +404,9 @@ class Monitor:
             self._processed_disc_state_code = None
             self._reported_agent_stats_state_code = None
             self._agent_stats_screen_logged = False
+            # Salimos de la familia de detalle de agente → olvidar la identidad
+            # latcheada (al re-entrar a un S8 de otro PJ no debe sostener el viejo).
+            self._reset_detail_identity()
 
     def _handle_upgrade(self, frame, state: ScreenState) -> None:
         if self._upgrade_syncer is None:
@@ -454,6 +474,7 @@ class Monitor:
             ax = selected_avatar_x(frame)
             if ax is not None:
                 self._agent_anchor_x = ax
+                self._detail_source = "heredado"
             # Bootstrap del matcher de avatar: aprender (nombre OCR → avatar) para
             # poder nombrar a este PJ luego en S8/S19 aunque se llegue por switch
             # directo (sin pasar por Atributos base).
@@ -462,42 +483,65 @@ class Monitor:
             except Exception:
                 log.exception("Error en identifier.learn")
 
+    def _update_detail_identity(self, frame) -> None:
+        """
+        Latchea la identidad del PJ en S8/S19 muestreando el avatar resaltado.
+        Se invoca en el loop rápido (10 fps) y también desde el handler de cadencia.
+
+        Reglas (hysteresis):
+          - avatar OCULTO (selected_avatar_x = None) → NO tocar el latch (sostener
+            la identidad: el row deslizante se ocultó, no hay evidencia de cambio).
+          - avatar en la MISMA posición que el anchor → mantener identidad.
+          - avatar en posición NUEVA → re-identificar por matcher de avatar:
+              match → latch (nombre, "avatar"); sin match → "sin identificar".
+        Solo invoca el matcher al ver una posición nueva (barato en estado estable).
+        """
+        try:
+            cur_x = selected_avatar_x(frame)
+        except Exception:
+            return
+        if cur_x is None:
+            return  # avatar oculto → sostener latch
+        # Misma posición que el anchor actual → ya identificado, nada que cambiar.
+        if (self._agent_anchor_x is not None
+                and abs(cur_x - self._agent_anchor_x) < _AVATAR_X_TOL):
+            if self._detail_source is None and self._last_agent_name:
+                self._detail_source = "heredado"
+            return
+        # Posición nueva (switch a otro PJ visible) → matcher de avatar.
+        try:
+            match = self._identifier.identify(frame)
+        except Exception:
+            log.exception("Error en identifier.identify")
+            match = None
+        if match is not None:
+            self._last_agent_name = match[0]
+            self._detail_source = "avatar"
+        else:
+            self._last_agent_name = None
+            self._detail_source = None
+        self._agent_anchor_x = cur_x
+
+    def _reset_detail_identity(self) -> None:
+        """Limpia el latch de identidad (al salir de la familia detalle de agente)."""
+        self._last_agent_name = None
+        self._agent_anchor_x = None
+        self._detail_source = None
+
     def _process_agent_detail_continuous(self, frame, state: ScreenState) -> None:
         """
         Logging PERSISTENTE para S8 (Equipamiento) y S19 (Habilidades).
 
-        Estas pantallas no muestran el nombre del PJ. Heredamos la identidad
-        confirmada en Atributos base (S18) y la mostramos en cada ciclo, SIEMPRE
-        que el avatar resaltado siga en la misma posición (mismo PJ). Si cambió
-        de posición ⇒ el usuario saltó a otro PJ sin pasar por stats ⇒ no
-        afirmamos identidad stale: se reporta "sin identificar".
-
-        El naming del PJ tras un switch directo (sin pasar por S18) requiere el
-        matcher de avatar (Etapa 2, pendiente).
+        Estas pantallas no muestran el nombre del PJ. Emite en cada ciclo la
+        identidad LATCHEADA (mantenida por `_update_detail_identity` en el loop
+        rápido): heredada de S18 (anchor) o reconocida por el matcher de avatar.
+        Si el avatar nunca se pudo leer (sin latch) → "sin identificar".
         """
-        cur_x = selected_avatar_x(frame)
-        same_pj = (
-            self._agent_anchor_x is not None
-            and cur_x is not None
-            and abs(cur_x - self._agent_anchor_x) < _AVATAR_X_TOL
-        )
-        # Vía 1 (rápida): mismo avatar que el anclado en S18 → herencia directa.
-        if same_pj and self._last_agent_name:
-            name, identified, source = self._last_agent_name, True, "heredado"
-        else:
-            # Vía 2: el PJ cambió (switch directo). Intentar el matcher de avatar.
-            name, identified, source = None, False, None
-            try:
-                match = self._identifier.identify(frame)
-            except Exception:
-                log.exception("Error en identifier.identify")
-                match = None
-            if match is not None:
-                name, identified, source = match[0], True, "avatar"
-                # Re-anclar para que los próximos ciclos usen la vía rápida.
-                self._last_agent_name = name
-                if cur_x is not None:
-                    self._agent_anchor_x = cur_x
+        # Refrescar el latch con el frame actual (además del muestreo rápido).
+        self._update_detail_identity(frame)
+        name = self._last_agent_name
+        identified = bool(name)
+        source = self._detail_source if identified else None
 
         log.info(
             "[%s] Pantalla detalle reconocida (%s) — PJ=%s identificado=%s (%s)",

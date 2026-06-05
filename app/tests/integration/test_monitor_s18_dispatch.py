@@ -444,6 +444,60 @@ def test_agent_detail_continuo_re_emite_cada_dispatch():
     assert received == ["S8", "S8"]
 
 
+@pytest.mark.parametrize("code", ["S8", "S19"])
+def test_agent_detail_sostiene_identidad_si_avatar_oculto(code):
+    """
+    Hysteresis (madurez): si el avatar-row se auto-oculta (selected_avatar_x =
+    None) NO se cae a 'sin identificar' — se SOSTIENE la última identidad.
+    """
+    from app.core.detector import ScreenState
+    from app.core.monitor import Monitor
+
+    received: list = []
+    monitor = Monitor(
+        ocr=_StubOcr("", ""),
+        detector=ScreenDetector(),
+        on_agent_detail=lambda st, name, ident, src: received.append((name, ident, src)),
+        agent_identifier=_empty_identifier(),
+    )
+    monitor._last_agent_name = "Dialyn"
+    monitor._agent_anchor_x = 0.60
+    monitor._detail_source = "heredado"
+
+    hidden = np.zeros((1440, 2560, 3), dtype=np.uint8)  # sin highlight → avatar oculto
+    monitor._dispatch_state(hidden, ScreenState(code, 0.90, f"tab:{code}", method="tab"))
+
+    assert received == [("Dialyn", True, "heredado")]
+
+
+def test_agent_detail_latch_se_resetea_al_salir_de_familia():
+    """Al pasar a un estado fuera de la familia (S12), el latch se limpia; luego
+    en un S8 con avatar oculto NO debe resucitar la identidad vieja."""
+    from app.core.detector import ScreenState
+    from app.core.monitor import Monitor
+
+    received: list = []
+    monitor = Monitor(
+        ocr=_StubOcr("", ""),
+        detector=ScreenDetector(),
+        on_agent_detail=lambda st, name, ident, src: received.append((name, ident, src)),
+        agent_identifier=_empty_identifier(),
+    )
+    monitor._last_agent_name = "Dialyn"
+    monitor._agent_anchor_x = 0.60
+    monitor._detail_source = "heredado"
+
+    # Salir a combate/menú (S12) → debe limpiar el latch
+    monitor._dispatch_state(np.zeros((1440, 2560, 3), np.uint8),
+                            ScreenState("S12", 0.0, "dark", method="template"))
+    assert monitor._last_agent_name is None
+
+    # Volver a S8 con avatar oculto → sin identidad heredada
+    monitor._dispatch_state(np.zeros((1440, 2560, 3), np.uint8),
+                            ScreenState("S8", 0.90, "tab:S8", method="tab"))
+    assert received == [(None, False, None)]
+
+
 def test_agent_detail_nombra_pj_via_matcher_de_avatar(tmp_path):
     """
     Switch directo: el anchor NO coincide (otro PJ), pero el matcher de avatar
