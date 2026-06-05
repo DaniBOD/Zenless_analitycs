@@ -21,6 +21,7 @@ from app.core.detector import (
 from app.core.parser_disc import DiscParsed, parse_modal_detalle
 from app.core.parser_disc_s17 import parse_disc_s17
 from app.core.parser_agent_stats import AgentStatsParsed, parse_agent_stats, AgentStatsAggregator
+from app.core.agent_identifier import AgentIdentifier
 from app.core.ocr_backend import OcrBackend
 
 log = logging.getLogger(__name__)
@@ -79,7 +80,8 @@ class Monitor:
         on_disc_rejected: Callable[[DiscParsed, ScreenState, str], None] | None = None,
         on_agent_stats: Callable[[AgentStatsParsed, ScreenState], None] | None = None,
         on_diagnostic: Callable[[str], None] | None = None,
-        on_agent_detail: Callable[[ScreenState, str | None, bool], None] | None = None,
+        on_agent_detail: Callable[[ScreenState, str | None, bool, str | None], None] | None = None,
+        agent_identifier: AgentIdentifier | None = None,
     ):
         self._ocr = ocr
         self._detector = detector
@@ -133,6 +135,10 @@ class Monitor:
         # los stats convergen a sus valores reales aunque cada captura sea
         # parcial. Se resetea automáticamente cuando cambia el agente.
         self._stats_aggregator = AgentStatsAggregator()
+        # Identificador de agente por avatar (Etapa 2): aprende en S18, matchea
+        # en S8/S19. Permite nombrar al PJ tras un switch directo (sin pasar por
+        # Atributos base), siempre que ese PJ ya se haya visto en S18 antes.
+        self._identifier = agent_identifier if agent_identifier is not None else AgentIdentifier()
 
     # ---- Control ----------------------------------------------------------------
 
@@ -448,6 +454,13 @@ class Monitor:
             ax = selected_avatar_x(frame)
             if ax is not None:
                 self._agent_anchor_x = ax
+            # Bootstrap del matcher de avatar: aprender (nombre OCR → avatar) para
+            # poder nombrar a este PJ luego en S8/S19 aunque se llegue por switch
+            # directo (sin pasar por Atributos base).
+            try:
+                self._identifier.learn(frame, nombre)
+            except Exception:
+                log.exception("Error en identifier.learn")
 
     def _process_agent_detail_continuous(self, frame, state: ScreenState) -> None:
         """
@@ -468,18 +481,33 @@ class Monitor:
             and cur_x is not None
             and abs(cur_x - self._agent_anchor_x) < _AVATAR_X_TOL
         )
-        identified = bool(same_pj and self._last_agent_name)
-        name = self._last_agent_name if identified else None
+        # Vía 1 (rápida): mismo avatar que el anclado en S18 → herencia directa.
+        if same_pj and self._last_agent_name:
+            name, identified, source = self._last_agent_name, True, "heredado"
+        else:
+            # Vía 2: el PJ cambió (switch directo). Intentar el matcher de avatar.
+            name, identified, source = None, False, None
+            try:
+                match = self._identifier.identify(frame)
+            except Exception:
+                log.exception("Error en identifier.identify")
+                match = None
+            if match is not None:
+                name, identified, source = match[0], True, "avatar"
+                # Re-anclar para que los próximos ciclos usen la vía rápida.
+                self._last_agent_name = name
+                if cur_x is not None:
+                    self._agent_anchor_x = cur_x
 
         log.info(
-            "[%s] Pantalla detalle reconocida (%s) — PJ=%s identificado=%s",
+            "[%s] Pantalla detalle reconocida (%s) — PJ=%s identificado=%s (%s)",
             state.code,
             "Habilidades" if state.code == "S19" else "Equipamiento",
-            name or "?", identified,
+            name or "?", identified, source or "-",
         )
         if self._on_agent_detail:
             try:
-                self._on_agent_detail(state, name, identified)
+                self._on_agent_detail(state, name, identified, source)
             except Exception:
                 log.exception("Error en on_agent_detail callback")
 

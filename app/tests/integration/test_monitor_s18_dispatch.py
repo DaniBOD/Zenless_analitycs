@@ -354,10 +354,15 @@ def _frame_with_avatar_highlight(center_norm_x: float) -> np.ndarray:
     return frame
 
 
+def _empty_identifier():
+    from app.core.agent_identifier import AgentIdentifier
+    return AgentIdentifier(autoload=False)
+
+
 @pytest.mark.parametrize("code", ["S8", "S19"])
 def test_agent_detail_hereda_identidad_si_mismo_avatar(code):
     """En S8/S19, si el avatar resaltado sigue en la posición anclada en S18,
-    se hereda el nombre del PJ (identified=True)."""
+    se hereda el nombre del PJ (identified=True, source='heredado')."""
     from app.core.detector import ScreenState
     from app.core.monitor import Monitor
 
@@ -365,7 +370,8 @@ def test_agent_detail_hereda_identidad_si_mismo_avatar(code):
     monitor = Monitor(
         ocr=_StubOcr("", ""),
         detector=ScreenDetector(),
-        on_agent_detail=lambda st, name, ident: received.append((st.code, name, ident)),
+        on_agent_detail=lambda st, name, ident, src: received.append((st.code, name, ident, src)),
+        agent_identifier=_empty_identifier(),
     )
     monitor._last_agent_name = "Nangong Yu"
     monitor._agent_anchor_x = 0.60
@@ -373,13 +379,13 @@ def test_agent_detail_hereda_identidad_si_mismo_avatar(code):
     frame = _frame_with_avatar_highlight(0.60)  # mismo PJ
     monitor._dispatch_state(frame, ScreenState(code, 0.90, f"tab:{code}", method="tab"))
 
-    assert received == [(code, "Nangong Yu", True)]
+    assert received == [(code, "Nangong Yu", True, "heredado")]
 
 
 @pytest.mark.parametrize("code", ["S8", "S19"])
 def test_agent_detail_no_afirma_identidad_si_cambio_avatar(code):
-    """Si el avatar cambió de posición (switch directo a otro PJ sin pasar por
-    Atributos base), NO se afirma identidad stale → identified=False, name=None."""
+    """Si el avatar cambió de posición (switch directo) y el matcher no lo
+    reconoce (librería vacía), NO se afirma identidad stale → None/False."""
     from app.core.detector import ScreenState
     from app.core.monitor import Monitor
 
@@ -387,7 +393,8 @@ def test_agent_detail_no_afirma_identidad_si_cambio_avatar(code):
     monitor = Monitor(
         ocr=_StubOcr("", ""),
         detector=ScreenDetector(),
-        on_agent_detail=lambda st, name, ident: received.append((st.code, name, ident)),
+        on_agent_detail=lambda st, name, ident, src: received.append((st.code, name, ident, src)),
+        agent_identifier=_empty_identifier(),
     )
     monitor._last_agent_name = "Nangong Yu"
     monitor._agent_anchor_x = 0.60
@@ -395,11 +402,11 @@ def test_agent_detail_no_afirma_identidad_si_cambio_avatar(code):
     frame = _frame_with_avatar_highlight(0.80)  # otro slot → otro PJ
     monitor._dispatch_state(frame, ScreenState(code, 0.90, f"tab:{code}", method="tab"))
 
-    assert received == [(code, None, False)]
+    assert received == [(code, None, False, None)]
 
 
 def test_agent_detail_sin_anchor_previo_no_identifica():
-    """Sin haber pasado por S18 (sin anchor), S8 no puede heredar identidad."""
+    """Sin anchor y con librería vacía, S8 no puede identificar."""
     from app.core.detector import ScreenState
     from app.core.monitor import Monitor
 
@@ -407,12 +414,13 @@ def test_agent_detail_sin_anchor_previo_no_identifica():
     monitor = Monitor(
         ocr=_StubOcr("", ""),
         detector=ScreenDetector(),
-        on_agent_detail=lambda st, name, ident: received.append((st.code, name, ident)),
+        on_agent_detail=lambda st, name, ident, src: received.append((st.code, name, ident, src)),
+        agent_identifier=_empty_identifier(),
     )
     frame = _frame_with_avatar_highlight(0.60)
     monitor._dispatch_state(frame, ScreenState("S8", 0.90, "tab:S8", method="tab"))
 
-    assert received == [("S8", None, False)]
+    assert received == [("S8", None, False, None)]
 
 
 def test_agent_detail_continuo_re_emite_cada_dispatch():
@@ -424,7 +432,8 @@ def test_agent_detail_continuo_re_emite_cada_dispatch():
     monitor = Monitor(
         ocr=_StubOcr("", ""),
         detector=ScreenDetector(),
-        on_agent_detail=lambda st, name, ident: received.append(st.code),
+        on_agent_detail=lambda st, name, ident, src: received.append(st.code),
+        agent_identifier=_empty_identifier(),
     )
     monitor._last_agent_name = "Nangong Yu"
     monitor._agent_anchor_x = 0.60
@@ -433,3 +442,43 @@ def test_agent_detail_continuo_re_emite_cada_dispatch():
     monitor._dispatch_state(frame, s8)
     monitor._dispatch_state(frame, s8)
     assert received == ["S8", "S8"]
+
+
+def test_agent_detail_nombra_pj_via_matcher_de_avatar(tmp_path):
+    """
+    Switch directo: el anchor NO coincide (otro PJ), pero el matcher de avatar
+    reconoce a Nangong Yu (aprendida antes desde S18) en su S8 real → la nombra
+    con source='avatar'.
+    """
+    from app.core.detector import ScreenState
+    from app.core.monitor import Monitor
+    from app.core.agent_identifier import AgentIdentifier
+
+    repo = Path(__file__).resolve().parents[3]
+    s18 = repo / "Documentacion/Screenshots_Triggers/Triggers_Generales/Perfil_agente/atributos_base_ejemplo_1.png"
+    s8 = repo / "Documentacion/Screenshots_Triggers/Discos_Triggers/03_Pantalla_Agente_Discos_Equipados/Ejemplo_1.png"
+    f18, f8 = _read_frame(s18), _read_frame(s8)
+    if f18 is None or f8 is None:
+        pytest.skip("capturas no disponibles")
+
+    ident = AgentIdentifier(library_path=tmp_path / "lib.npz", autoload=False)
+    ident.learn(f18, "Nangong Yu")  # bootstrap desde S18
+
+    received: list = []
+    monitor = Monitor(
+        ocr=_StubOcr("", ""),
+        detector=ScreenDetector(),
+        on_agent_detail=lambda st, name, ident_, src: received.append((name, ident_, src)),
+        agent_identifier=ident,
+    )
+    # Simular que veníamos de OTRO PJ (anchor en otra posición que no coincide).
+    monitor._last_agent_name = "Otro PJ"
+    monitor._agent_anchor_x = 0.10
+
+    monitor._dispatch_state(f8, ScreenState("S8", 0.90, "tab:S8", method="tab"))
+
+    assert len(received) == 1
+    name, identified, source = received[0]
+    assert name == "Nangong Yu"
+    assert identified is True
+    assert source == "avatar"

@@ -19,6 +19,16 @@ if os.path.isdir(_PADDLE_SITE) and _PADDLE_SITE not in sys.path:
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_avatar_library(tmp_path, monkeypatch):
+    """
+    Redirige la librería de avatares (AgentIdentifier) a un temp por test, para
+    que ningún test escriba en la librería real del usuario (LOCALAPPDATA) al
+    despachar S18 (que dispara identifier.learn → save).
+    """
+    monkeypatch.setenv("DANIBOD_AVATAR_LIB", str(tmp_path / "avatar_library.npz"))
+
+
 @pytest.fixture
 def mem_db():
     """DB SQLite en memoria con tablas mínimas para scoring tests."""

@@ -175,10 +175,12 @@ _TAB_MIN_RATIO = 0.12
 # proxy barato y robusto de "qué PJ" — si cambia de slot, cambió el PJ. Útil para
 # detectar cambio de agente en S8/S19 (sin nombre en pantalla) sin necesitar aún
 # el matcher de avatar completo (Etapa 2). Calibrado sobre capturas reales.
-_AVATAR_ROW_ROI: tuple[float, float, float, float] = (0.55, 0.015, 0.40, 0.060)  # x,y,w,h norm
+_AVATAR_ROW_ROI: tuple[float, float, float, float] = (0.55, 0.005, 0.42, 0.075)  # x,y,w,h norm
 _AVATAR_HL_LOWER = np.array([20, 90, 120])   # borde amarillo/lima del seleccionado
 _AVATAR_HL_UPPER = np.array([45, 255, 255])
 _AVATAR_HL_MIN_PIXELS = 30   # mínimo de columnas-equivalentes con highlight
+# Fracción del lado del tile resaltado que se recorta como "cara" (sin el borde).
+_AVATAR_FACE_INNER = 0.42
 
 
 def selected_avatar_x(frame: np.ndarray) -> float | None:
@@ -208,6 +210,48 @@ def selected_avatar_x(frame: np.ndarray) -> float | None:
             return None
         cx = int((np.arange(len(cols)) * cols).sum() / total)
         return (x0 + cx) / w
+    except Exception:
+        return None
+
+
+def crop_selected_avatar(frame: np.ndarray) -> np.ndarray | None:
+    """
+    Recorta la cara del avatar resaltado (el PJ actual) para identificación.
+
+    Aísla el tile seleccionado por el **componente conexo más grande** del borde
+    amarillo/lima (evita capturar el amarillo de tiles vecinos), toma el centro
+    de su bounding box y recorta la región interior de la cara. Devuelve el crop
+    BGR (cuadrado) o None si no hay highlight claro.
+
+    Validado: dos crops del MISMO PJ en pestañas distintas (S18 vs S8) correlan
+    ~0.995; PJs distintos ≤ ~0.72. Base del matcher de avatar (bootstrap desde S18).
+    """
+    if frame is None or frame.size == 0:
+        return None
+    try:
+        h, w = frame.shape[:2]
+        x, y, rw, rh = _AVATAR_ROW_ROI
+        x0, y0 = int(x * w), int(y * h)
+        sub = frame[y0:int((y + rh) * h), x0:int((x + rw) * w)]
+        if sub.size == 0:
+            return None
+        hsv = cv2.cvtColor(sub, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, _AVATAR_HL_LOWER, _AVATAR_HL_UPPER)
+        n, _lab, stats, _cent = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        if n <= 1:
+            return None
+        idx = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        bx, by, bw, bh, area = stats[idx]
+        if area < 200:
+            return None
+        cx, cy = bx + bw // 2, by + bh // 2
+        side = int(min(int(bw), int(bh)) * _AVATAR_FACE_INNER)
+        if side < 8:
+            return None
+        fx0 = max(0, x0 + cx - side)
+        fy0 = max(0, y0 + cy - side)
+        face = frame[fy0:fy0 + 2 * side, fx0:fx0 + 2 * side]
+        return face if face.size else None
     except Exception:
         return None
 
