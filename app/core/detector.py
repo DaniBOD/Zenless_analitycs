@@ -169,6 +169,49 @@ _TAB_HSV_UPPER = np.array([45, 255, 255])
 _TAB_MIN_RATIO = 0.12
 
 
+# --- Avatar-row: posición del avatar seleccionado (proxy de identidad) -------
+# En la familia de detalle de agente, el avatar del PJ actual está resaltado con
+# un borde rombo amarillo/lima en el row superior derecho. Su posición x es un
+# proxy barato y robusto de "qué PJ" — si cambia de slot, cambió el PJ. Útil para
+# detectar cambio de agente en S8/S19 (sin nombre en pantalla) sin necesitar aún
+# el matcher de avatar completo (Etapa 2). Calibrado sobre capturas reales.
+_AVATAR_ROW_ROI: tuple[float, float, float, float] = (0.55, 0.015, 0.40, 0.060)  # x,y,w,h norm
+_AVATAR_HL_LOWER = np.array([20, 90, 120])   # borde amarillo/lima del seleccionado
+_AVATAR_HL_UPPER = np.array([45, 255, 255])
+_AVATAR_HL_MIN_PIXELS = 30   # mínimo de columnas-equivalentes con highlight
+
+
+def selected_avatar_x(frame: np.ndarray) -> float | None:
+    """
+    Devuelve la posición x normalizada (0-1, imagen completa) del avatar
+    resaltado en el row superior, o None si no hay highlight claro.
+
+    Es un proxy de identidad: el mismo PJ mantiene su x; un cambio de x ⇒ se
+    seleccionó otro PJ. No identifica QUIÉN (eso es el matcher de avatar), solo
+    detecta cambios. Pura HSV, sin OCR, ~1 ms.
+    """
+    if frame is None or frame.size == 0:
+        return None
+    try:
+        h, w = frame.shape[:2]
+        x, y, rw, rh = _AVATAR_ROW_ROI
+        x0, y0 = int(x * w), int(y * h)
+        x1, y1 = int((x + rw) * w), int((y + rh) * h)
+        crop = frame[y0:y1, x0:x1]
+        if crop.size == 0:
+            return None
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, _AVATAR_HL_LOWER, _AVATAR_HL_UPPER)
+        cols = mask.sum(axis=0)
+        total = cols.sum()
+        if total < 255 * _AVATAR_HL_MIN_PIXELS:
+            return None
+        cx = int((np.arange(len(cols)) * cols).sum() / total)
+        return (x0 + cx) / w
+    except Exception:
+        return None
+
+
 def detect_active_tab(frame: np.ndarray) -> str | None:
     """
     Detecta qué pestaña del detalle de agente está activa por el pill amarillo/lima.

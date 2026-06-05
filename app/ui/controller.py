@@ -106,6 +106,7 @@ class MonitorController(QObject):
             on_disc_rejected=self._on_disc_rejected_from_monitor,
             on_agent_stats=self._on_agent_stats_from_monitor,
             on_diagnostic=self._on_diagnostic_from_monitor,
+            on_agent_detail=self._on_agent_detail_from_monitor,
             set_repo=self._disc_set_repo,
         )
         self._monitor.start()
@@ -267,6 +268,23 @@ class MonitorController(QObject):
             self.log_message.emit(f"[pantalla] {state.code} — {desc}{visibility} (conf {state.confidence:.2f})")
         else:
             self.log_message.emit(f"[pantalla] {state.code} — {desc}{slot_suffix} (conf {state.confidence:.2f})")
+
+    def _on_agent_detail_from_monitor(self, state, agent_name, identified):
+        """
+        Logging PERSISTENTE de S8 (Equipamiento) y S19 (Habilidades).
+        Se invoca en cada ciclo de cadencia (~1.5 s) mientras se está en esas
+        pantallas, igual que la extracción continua de S18. Muestra la identidad
+        heredada de Atributos base, o avisa si el PJ cambió sin pasar por stats.
+        """
+        label = "Habilidades" if state.code == "S19" else "Equipamiento"
+        if identified and agent_name:
+            self.log_message.emit(f"[reconocido] {agent_name} (heredado de Atributos base)")
+            self.log_message.emit(f"[pantalla] {state.code} — {label} reconocida")
+        else:
+            self.log_message.emit(
+                f"[pantalla] {state.code} — {label} reconocida · "
+                f"PJ sin identificar (entrá a Atributos base para confirmarlo)"
+            )
 
     def _on_disc_rejected_from_monitor(self, disc, state, reason: str):
         """Disco parseado pero descartado por baja confianza u otro motivo."""
