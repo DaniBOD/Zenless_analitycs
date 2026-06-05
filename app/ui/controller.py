@@ -269,21 +269,23 @@ class MonitorController(QObject):
         else:
             self.log_message.emit(f"[pantalla] {state.code} — {desc}{slot_suffix} (conf {state.confidence:.2f})")
 
-    def _on_agent_detail_from_monitor(self, state, agent_name, identified):
+    def _on_agent_detail_from_monitor(self, state, agent_name, identified, source=None):
         """
         Logging PERSISTENTE de S8 (Equipamiento) y S19 (Habilidades).
         Se invoca en cada ciclo de cadencia (~1.5 s) mientras se está en esas
-        pantallas, igual que la extracción continua de S18. Muestra la identidad
-        heredada de Atributos base, o avisa si el PJ cambió sin pasar por stats.
+        pantallas, igual que la extracción continua de S18. Muestra el PJ:
+        identificado por herencia de Atributos base (anchor) o por el matcher de
+        avatar (switch directo). Si no logra identificarlo, lo avisa sin mentir.
         """
         label = "Habilidades" if state.code == "S19" else "Equipamiento"
         if identified and agent_name:
-            self.log_message.emit(f"[reconocido] {agent_name} (heredado de Atributos base)")
+            origen = "por avatar" if source == "avatar" else "heredado de Atributos base"
+            self.log_message.emit(f"[reconocido] {agent_name} ({origen})")
             self.log_message.emit(f"[pantalla] {state.code} — {label} reconocida")
         else:
             self.log_message.emit(
                 f"[pantalla] {state.code} — {label} reconocida · "
-                f"PJ sin identificar (entrá a Atributos base para confirmarlo)"
+                f"PJ sin identificar (entrá a Atributos base para registrarlo)"
             )
 
     def _on_disc_rejected_from_monitor(self, disc, state, reason: str):
