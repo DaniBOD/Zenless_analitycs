@@ -447,8 +447,9 @@ def test_agent_detail_continuo_re_emite_cada_dispatch():
 @pytest.mark.parametrize("code", ["S8", "S19"])
 def test_agent_detail_sostiene_identidad_si_avatar_oculto(code):
     """
-    Hysteresis (madurez): si el avatar-row se auto-oculta (selected_avatar_x =
-    None) NO se cae a 'sin identificar' — se SOSTIENE la última identidad.
+    Honestidad (brecha B5): si el avatar-row se auto-oculta (selected_avatar_x =
+    None) se SOSTIENE el último nombre PERO marcado 'sin_confirmar' — no afirmamos
+    un PJ que ya no tenemos evidencia visible de cuál es (puede haber cambiado).
     """
     from app.core.detector import ScreenState
     from app.core.monitor import Monitor
@@ -467,7 +468,8 @@ def test_agent_detail_sostiene_identidad_si_avatar_oculto(code):
     hidden = np.zeros((1440, 2560, 3), dtype=np.uint8)  # sin highlight → avatar oculto
     monitor._dispatch_state(hidden, ScreenState(code, 0.90, f"tab:{code}", method="tab"))
 
-    assert received == [("Dialyn", True, "heredado")]
+    # El nombre se sostiene (identified=True) pero la fuente pasa a 'sin_confirmar'.
+    assert received == [("Dialyn", True, "sin_confirmar")]
 
 
 def test_agent_detail_latch_se_resetea_al_salir_de_familia():

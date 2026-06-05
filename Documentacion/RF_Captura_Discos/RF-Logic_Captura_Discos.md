@@ -136,6 +136,28 @@ La línea *"Header 'Personalización de pistas de disco' → S9"* es incorrecta:
 header corresponde a **S17** (detalle de disco equipado), no a S9 (inventario
 general). El hexágono con slot **"DRIVER"** es S8 (no "S8/S9").
 
+#### Identidad del PJ en S8 / S17 / S19 (sin nombre en pantalla)
+
+Estas pestañas no muestran el nombre. La identidad se resuelve así (Etapa 2):
+
+1. **Bootstrap desde S18**: en Atributos base se tiene el nombre por OCR y el crop
+   del avatar resaltado → se aprende `nombre → descriptor de avatar` en una librería
+   persistente (`AgentIdentifier`).
+2. **Carry-forward por anchor**: al pasar a S8/S19 del mismo PJ, la posición x del
+   avatar resaltado coincide con la de S18 → identidad **heredada**.
+3. **Matcher de avatar**: si el avatar aparece en otra posición (switch directo a
+   otro PJ), se recorta y matchea contra la librería (coseno; same-PJ ~0.995,
+   distinto ≤ ~0.72).
+
+**Brecha B5 — avatar oculto (honestidad):** el avatar-row es deslizante y se
+auto-oculta. Cuando no hay avatar resaltado (`selected_avatar_x = None`), el sistema
+**sostiene el último nombre pero lo marca `sin_confirmar`** y lo loguea como
+"sin confirmar (avatar oculto)" — nunca afirma un PJ del que no tiene evidencia
+visible. Se evaluó (2026-06-05) identificar por el **modelo 3D persistente** de la
+izquierda (histograma de color) y se **descartó con datos**: el encuadre/zoom/pose/
+fondo cambian entre pestañas y no separa PJs (same-PJ se solapa con cross-PJ). Detalle
+en `Dev_IA/2026-06-03_Hito_2.8_QA_Flujo_Pantallas_y_Avatar_ID.md` §12.5.
+
 ---
 
 ## 5. Triggers de captura — polling adaptativo

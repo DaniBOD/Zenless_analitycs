@@ -17,6 +17,13 @@ Ventajas vs. assets del wiki: estilo in-game exacto, auto-rotulado por OCR de S1
 
 Conservador (RNF-02): ante baja correlación o ambigüedad (poco margen sobre el 2º)
 devuelve None — preferimos "sin identificar" antes que afirmar un PJ equivocado.
+
+Nota (2026-06-05): se evaluó y descartó una identificación complementaria por el
+"modelo 3D" persistente de la izquierda (histograma de color). Validación con
+capturas reales S18↔S8 mostró que el encuadre/zoom/pose/fondo cambian entre
+pestañas y el histograma NO separa PJs (same-PJ 0.22–0.55 se solapa con cross-PJ
+hasta 0.50; p.ej. Sunna-S8 matchea mejor con Nangong que consigo misma). El avatar
+sigue siendo la única señal confiable. Ver Dev_IA 2026-06-03 §12.4/B5.
 """
 from __future__ import annotations
 

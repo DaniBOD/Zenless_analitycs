@@ -488,24 +488,32 @@ class Monitor:
         Latchea la identidad del PJ en S8/S19 muestreando el avatar resaltado.
         Se invoca en el loop rápido (10 fps) y también desde el handler de cadencia.
 
-        Reglas (hysteresis):
-          - avatar OCULTO (selected_avatar_x = None) → NO tocar el latch (sostener
-            la identidad: el row deslizante se ocultó, no hay evidencia de cambio).
-          - avatar en la MISMA posición que el anchor → mantener identidad.
+        Reglas (hysteresis + honestidad — brecha B5):
+          - avatar OCULTO (selected_avatar_x = None) → sostener el último nombre PERO
+            marcarlo "sin_confirmar": el row deslizante se ocultó y no hay evidencia
+            visible de qué PJ es ahora (no arriesgamos un nombre equivocado).
+          - avatar en la MISMA posición que el anchor → identidad confirmada (se
+            reconfirma 'heredado' si venía sin confirmar).
           - avatar en posición NUEVA → re-identificar por matcher de avatar:
               match → latch (nombre, "avatar"); sin match → "sin identificar".
-        Solo invoca el matcher al ver una posición nueva (barato en estado estable).
+
+        Nota (2026-06-05): se descartó cerrar B5 por el modelo 3D persistente — la
+        validación con capturas reales mostró que el histograma de color no separa
+        PJs entre pestañas (encuadre/zoom/fondo cambian). Ver agent_identifier.py.
         """
         try:
             cur_x = selected_avatar_x(frame)
         except Exception:
             return
         if cur_x is None:
-            return  # avatar oculto → sostener latch
-        # Misma posición que el anchor actual → ya identificado, nada que cambiar.
+            # Avatar oculto → sostener el nombre pero marcarlo SIN CONFIRMAR.
+            if self._last_agent_name:
+                self._detail_source = "sin_confirmar"
+            return
+        # Misma posición que el anchor actual → identidad confirmada.
         if (self._agent_anchor_x is not None
                 and abs(cur_x - self._agent_anchor_x) < _AVATAR_X_TOL):
-            if self._detail_source is None and self._last_agent_name:
+            if self._detail_source in (None, "sin_confirmar") and self._last_agent_name:
                 self._detail_source = "heredado"
             return
         # Posición nueva (switch a otro PJ visible) → matcher de avatar.
