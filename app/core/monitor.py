@@ -16,7 +16,7 @@ from app.core.capturer import WindowBounds, capture_window, find_zzz_window
 from app.core.detector import (
     ScreenDetector, ScreenState, TemporalBuffer, AGENT_STATS_STATES,
     extract_s17_slot, extract_s9_slot, polling_cadence_ms,
-    _deep_detect_s18, detect_active_tab,
+    _deep_detect_s18, detect_active_tab, selected_avatar_x,
 )
 from app.core.parser_disc import DiscParsed, parse_modal_detalle
 from app.core.parser_disc_s17 import parse_disc_s17
@@ -30,6 +30,19 @@ log = logging.getLogger(__name__)
 _NEW_DISC_STATES = {"S3", "S6", "S7"}       # discos nuevos (drop/tienda)
 _EQUIPPED_DISC_STATES = {"S17"}              # discos equipados (vista PJ)
 _DISC_DETAIL_STATES = _NEW_DISC_STATES | _EQUIPPED_DISC_STATES
+
+# Pantallas de la familia "detalle de agente" SIN extracción de stats pero con
+# logging persistente + identidad heredada de Atributos base (S18):
+#   S8  = Equipamiento (hexágono de discos)
+#   S19 = Habilidades
+# No muestran el nombre del PJ en pantalla → identidad por carry-forward desde
+# S18, con detección de cambio de PJ vía posición del avatar resaltado.
+_AGENT_DETAIL_STATES = {"S8", "S19"}
+# Estados re-procesados en CADA ciclo de cadencia (no one-shot por entrada):
+_CONTINUOUS_STATES = AGENT_STATS_STATES | _AGENT_DETAIL_STATES
+# Tolerancia de posición x del avatar para considerar "mismo PJ" (avatares
+# adyacentes distan ~0.04-0.05 norm; media-ranura como margen anti-jitter).
+_AVATAR_X_TOL = 0.025
 
 # Intervalo de captura rápida (entre frames para buffer, sin procesar)
 _FAST_CAPTURE_MS = 100  # 10 fps — MSS captura en ~20ms, template match en ~50ms
@@ -66,6 +79,7 @@ class Monitor:
         on_disc_rejected: Callable[[DiscParsed, ScreenState, str], None] | None = None,
         on_agent_stats: Callable[[AgentStatsParsed, ScreenState], None] | None = None,
         on_diagnostic: Callable[[str], None] | None = None,
+        on_agent_detail: Callable[[ScreenState, str | None, bool], None] | None = None,
     ):
         self._ocr = ocr
         self._detector = detector
@@ -76,6 +90,9 @@ class Monitor:
         self._upgrade_syncer = upgrade_syncer
         self._on_disc_rejected = on_disc_rejected
         self._on_agent_stats = on_agent_stats
+        # Callback para pantallas de detalle de agente sin stats (S8/S19): emite
+        # (state, agent_name|None, identified) en cada ciclo continuo.
+        self._on_agent_detail = on_agent_detail
         # Callback para mensajes de diagnóstico (heartbeat, fallos de captura, etc).
         # Permite que la UI muestre por qué el monitor "está silencioso".
         self._on_diagnostic = on_diagnostic
@@ -103,6 +120,10 @@ class Monitor:
         # Nombre del agente del último ciclo de extracción S18, para detectar
         # y loggear cambios de agente (navegación entre perfiles sin salir de S18).
         self._last_agent_name: str | None = None
+        # Posición x del avatar resaltado cuando se confirmó la identidad en S18.
+        # Se usa en S8/S19 (sin nombre en pantalla) para decidir si el PJ sigue
+        # siendo el mismo (carry-forward) o cambió (→ "sin identificar").
+        self._agent_anchor_x: float | None = None
         self._window: WindowBounds | None = None
         # TemporalBuffer del loop _run(). Instance var para que force_scan()
         # pueda resetearlo y permitir re-emisión de [reconocido]/[stats].
@@ -252,10 +273,11 @@ class Monitor:
                 cadence_ms = polling_cadence_ms(active_state)
                 elapsed_ms = (now - last_process_time) * 1000
                 forced = self._force_event.is_set()
-                # S18 (stats de agente) se re-extrae en cada ciclo de cadencia
-                # aunque el estado no cambie. El resto de estados procesa solo
-                # en la transición (voted_state no nulo) o por F8 forzado.
-                continuous = active_state.code in AGENT_STATS_STATES
+                # S18 (stats) y S8/S19 (detalle de agente) se re-procesan en cada
+                # ciclo de cadencia aunque el estado no cambie (logging persistente).
+                # El resto de estados procesa solo en la transición (voted_state no
+                # nulo) o por F8 forzado.
+                continuous = active_state.code in _CONTINUOUS_STATES
                 should_dispatch = forced or (
                     elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
                 )
@@ -349,6 +371,10 @@ class Monitor:
             self._process_agent_stats_continuous(frame, state)
             # Si salimos de un disc-state, reseteamos su dedup también
             self._processed_disc_state_code = None
+        elif state.code in _AGENT_DETAIL_STATES:
+            # S8/S19: logging persistente + identidad heredada de S18 (sin stats).
+            self._process_agent_detail_continuous(frame, state)
+            self._processed_disc_state_code = None
         else:
             # Estado intermedio (S1/S12/S15/etc.) — resetear dedup flags para
             # que la próxima entrada a un capturable o S18 re-dispare/re-loggee.
@@ -417,6 +443,45 @@ class Monitor:
                     self._last_agent_name, nombre,
                 )
             self._last_agent_name = nombre
+            # Anclar la posición del avatar resaltado para identificar al mismo PJ
+            # luego en S8/S19 (donde no hay nombre en pantalla).
+            ax = selected_avatar_x(frame)
+            if ax is not None:
+                self._agent_anchor_x = ax
+
+    def _process_agent_detail_continuous(self, frame, state: ScreenState) -> None:
+        """
+        Logging PERSISTENTE para S8 (Equipamiento) y S19 (Habilidades).
+
+        Estas pantallas no muestran el nombre del PJ. Heredamos la identidad
+        confirmada en Atributos base (S18) y la mostramos en cada ciclo, SIEMPRE
+        que el avatar resaltado siga en la misma posición (mismo PJ). Si cambió
+        de posición ⇒ el usuario saltó a otro PJ sin pasar por stats ⇒ no
+        afirmamos identidad stale: se reporta "sin identificar".
+
+        El naming del PJ tras un switch directo (sin pasar por S18) requiere el
+        matcher de avatar (Etapa 2, pendiente).
+        """
+        cur_x = selected_avatar_x(frame)
+        same_pj = (
+            self._agent_anchor_x is not None
+            and cur_x is not None
+            and abs(cur_x - self._agent_anchor_x) < _AVATAR_X_TOL
+        )
+        identified = bool(same_pj and self._last_agent_name)
+        name = self._last_agent_name if identified else None
+
+        log.info(
+            "[%s] Pantalla detalle reconocida (%s) — PJ=%s identificado=%s",
+            state.code,
+            "Habilidades" if state.code == "S19" else "Equipamiento",
+            name or "?", identified,
+        )
+        if self._on_agent_detail:
+            try:
+                self._on_agent_detail(state, name, identified)
+            except Exception:
+                log.exception("Error en on_agent_detail callback")
 
         # 2c) El re-log de stats lo emite el controller en on_agent_stats
         # ([reconocido]/[stats]/[completo]) y _process_agent_stats loggea el

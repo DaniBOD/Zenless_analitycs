@@ -23,8 +23,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from app.core.detector import (  # noqa: E402
     detect_active_tab,
+    selected_avatar_x,
     _TAB_CENTERS,
     _TAB_BAR_ROI,
+    _AVATAR_ROW_ROI,
 )
 
 REPO = Path(__file__).resolve().parents[3]
@@ -108,3 +110,36 @@ def test_capturas_reales_s18_dan_atributos(path):
     if frame is None:
         pytest.skip(f"No se pudo cargar {path}")
     assert detect_active_tab(frame) == "S18"
+
+
+# ---------------------------------------------------------------------------
+# selected_avatar_x — proxy de identidad por posición del avatar resaltado
+# ---------------------------------------------------------------------------
+
+def _frame_avatar(center_norm_x: float) -> np.ndarray:
+    frame = np.zeros((H, W, 3), dtype=np.uint8)
+    _, y, _, rh = _AVATAR_ROW_ROI
+    cy = int((y + rh / 2) * H)
+    cx = int(center_norm_x * W)
+    cv2.rectangle(frame, (cx - 60, cy - 36), (cx + 60, cy + 36), (0, 255, 255), -1)
+    return frame
+
+
+@pytest.mark.parametrize("x", [0.60, 0.70, 0.85])
+def test_selected_avatar_x_devuelve_posicion(x):
+    got = selected_avatar_x(_frame_avatar(x))
+    assert got is not None
+    assert abs(got - x) < 0.02
+
+
+def test_selected_avatar_x_none_sin_highlight():
+    assert selected_avatar_x(np.zeros((H, W, 3), dtype=np.uint8)) is None
+    assert selected_avatar_x(None) is None
+
+
+def test_selected_avatar_x_distingue_slots_adyacentes():
+    """Dos PJs en slots distintos dan x separables por encima de la tolerancia."""
+    a = selected_avatar_x(_frame_avatar(0.60))
+    b = selected_avatar_x(_frame_avatar(0.66))
+    assert a is not None and b is not None
+    assert abs(a - b) > 0.025
