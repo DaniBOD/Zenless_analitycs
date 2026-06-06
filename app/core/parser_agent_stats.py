@@ -736,30 +736,28 @@ _RE_FUERZA_BRUTA = re.compile(r"fuerza\s*bruta\s*(\d+)")
 _RE_TASA_PERFORACION = re.compile(
     r"tasa\s*(?:de\s*)?perfor\w*[^\d%\n]{0,10}(\d+(?:\.\d+)?)\s*%"
 )
-# Recup Energía: "Recuperación de Energía". El VALOR (e.g. "1.2") queda ADYACENTE
-# al token "energia" en el texto concatenado, pero su LADO depende de cómo el OCR
-# agrupe las filas a la resolución del usuario:
-#   - 2 líneas ("Recuperación de" / "Energía"): el valor cae ANTES de "energia":
-#       "...perforacion 0 % 1.2 energia..."           (caso de los fixtures)
-#   - 1 línea ("Recuperación de Energía 1.2"): el valor cae DESPUÉS de "energia":
-#       "...energia 1.2..."                            (caso QA en vivo 2026-06-05)
+# Recup Energía: "Recuperación de Energía". El VALOR (e.g. "1.2") queda cerca del
+# token "energia" en el texto concatenado, pero NO necesariamente adyacente: el OCR
+# en vivo (QA 2026-06-05, 2560×1440) intercala RUIDO con dígitos entre el valor y
+# el label:
+#       "...perforacion 0 % 1.2 11 energia recomendacion..."   (el '11' es ruido OCR)
+# Por eso NO se puede usar `[^\d\n]` (no-dígitos) como separador — el ruido numérico
+# rompía el match y ER faltaba 1/11 en cada ciclo.
 #
-# El valor de ER SIEMPRE se muestra con DECIMAL (1.2, 2.5, 1.87...). Exigir el
-# decimal (`\d+\.\d+`) en las alternativas adyacentes evita dos trampas:
-#   - el "0" de "Tasa de Perforación 0 %" de la fila de al lado (entero → no matchea).
-#   - el "1" de "Equipamiento completo" que el OCR pega tras "energia" en algunos
-#     frames (entero → no matchea). Bug histórico QA 2026-05-31 / 2026-06-05.
+# CLAVE: el ER SIEMPRE se muestra con DECIMAL (1.2, 2.5, 1.87...). Anclar en el
+# decimal (`\d+\.\d+`) ES el guard: el "0" de "Tasa de Perforación 0 %", el "11" de
+# ruido y el "1" de "Equipamiento" son ENTEROS → nunca matchean. Así podemos permitir
+# CUALQUIER carácter (incl. dígitos) en la ventana corta entre el decimal y "energia".
 #
-# Orden de alternativas (re.search devuelve el match más a la izquierda; el loop
-# de extracción toma el primer grupo no-None):
-#   (a) "<decimal> energia"   — valor ANTES del token (layout 2-líneas, fixtures)
-#   (c) "energia <decimal>"   — valor DESPUÉS del token (layout 1-línea, en vivo)
-#   (b) "recup... <valor>"    — fallback last-resort (ventana {0,12} para no cruzar
-#                                filas; acepta entero por si el decimal se pierde)
+# Orden de alternativas (re.search devuelve el match más a la izquierda; el loop de
+# extracción toma el primer grupo no-None):
+#   (a) "<decimal> ...ruido... energia"  — valor ANTES del token (caso en vivo/fixtures)
+#   (c) "energia ...ruido... <decimal>"  — valor DESPUÉS del token (layout 1-línea)
+#   (b) "recup... <valor>"               — fallback last-resort (acepta entero)
 # Disruptivos (Yixuan, etc.) NO tienen "energia" sino "Adrenalina" → ver _RE_ADRENALINA.
 _RE_RECUP_ENERGIA = re.compile(
-    r"(\d+\.\d+)[^\d\n]{0,6}?energ\w*"          # (a) decimal ANTES de "energia"
-    r"|energ\w*[^\d\n]{0,6}?(\d+\.\d+)"          # (c) decimal DESPUÉS de "energia"
+    r"(\d+\.\d+)[^\n]{0,10}?energ\w*"           # (a) decimal ... "energia" (tolera ruido)
+    r"|energ\w*[^\n]{0,10}?(\d+\.\d+)"           # (c) "energia" ... decimal (1-línea)
     r"|recup\w*[^\d\n]{0,12}?(\d+(?:\.\d+)?)"    # (b) fallback: "recup... <valor>"
 )
 # Acumulación Automática de Adrenalina (slot inferior-derecho de Disruptivos).

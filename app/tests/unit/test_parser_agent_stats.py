@@ -359,6 +359,13 @@ class TestRecupEnergiaBugB:
         txt = "tasa de perforacion 0 % energia 1 equipamiento completo"
         assert _extract_by_regex(txt)["recup_energia"] is None
 
+    def test_ruido_digitos_entre_valor_y_energia(self):
+        # QA en vivo 2026-06-05 (frame real Nangong 2560×1440): el OCR intercala un
+        # entero de ruido ('11') entre el decimal y 'energia'. El guard de no-dígitos
+        # rompía el match → ER faltaba. Anclar en el decimal lo resuelve.
+        txt = "maestria de anomalia 305 recuperacion de tasa de perforacion 0 % 1.2 11 energia recomendacion"
+        assert _extract_by_regex(txt)["recup_energia"] == "1.2"
+
 
 class TestAcumulacionAdrenalina:
     """La 'Acumulación Automática de Adrenalina' (slot inferior-derecho de
