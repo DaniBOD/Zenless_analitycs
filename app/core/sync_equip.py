@@ -95,8 +95,12 @@ class DiscSyncer:
         self._on_optimizer_result = on_optimizer_result
         self._ctx = ScoringContext()
 
-        # Repos de lectura (reutilizados entre llamadas)
-        self._con_r = sqlite3.connect(str(db_path))
+        # Repos de lectura (reutilizados entre llamadas). `check_same_thread=False`:
+        # el DiscSyncer se construye en el thread de la UI pero `persist_s17_disc`
+        # corre en el thread del monitor (daemon). El uso es single-thread real (no
+        # hay accesos concurrentes a esta conexión), así que es seguro; sin esto
+        # SQLite lanza "objects created in a thread can only be used in that thread".
+        self._con_r = sqlite3.connect(str(db_path), check_same_thread=False)
         self._con_r.row_factory = sqlite3.Row
         self._agent_repo  = AgentRepo(self._con_r)
         self._arch_repo   = ArchetypeRepo(self._con_r)

@@ -365,6 +365,44 @@ def test_persist_s17_sin_asignacion_no_equipa(syncer_db):
         sync.close()
 
 
+def test_persist_s17_cross_thread(syncer_db):
+    """
+    Regresión: el DiscSyncer se crea en un thread (UI) y persist_s17_disc corre en
+    otro (monitor). check_same_thread=False debe permitirlo sin lanzar
+    'SQLite objects created in a thread can only be used in that same thread'.
+    """
+    import threading
+    sync = _make_syncer(syncer_db)  # creado en este thread
+    out = {}
+    def work():
+        try:
+            d = _disc()
+            d.agente_asignado_nombre = "Zhu Yuan"; d.agente_asignado_conf = 0.95
+            out["res"] = sync.persist_s17_disc(d)
+        except Exception as exc:  # noqa: BLE001
+            out["err"] = exc
+    t = threading.Thread(target=work)
+    t.start(); t.join()
+    sync.close()
+    assert "err" not in out, f"persist falló cross-thread: {out.get('err')}"
+    assert out["res"] is not None and out["res"].agente_asignado_nombre == "Zhu Yuan"
+
+
+def test_maybe_process_disc_recaptura_al_cambiar_slot(monkeypatch):
+    """S17: la dedup es por (code, slot) → cambiar de slot re-captura."""
+    from app.core.detector import ScreenState
+    m = _monitor()
+    calls = []
+    monkeypatch.setattr(m, "_process_disc", lambda frame, st: calls.append(st.slot))
+    s1 = ScreenState("S17", 1.0, "tmpl"); s1.slot = 1
+    s1b = ScreenState("S17", 1.0, "tmpl"); s1b.slot = 1
+    s2 = ScreenState("S17", 1.0, "tmpl"); s2.slot = 2
+    m._maybe_process_disc(None, s1)   # captura slot 1
+    m._maybe_process_disc(None, s1b)  # mismo slot → dedup
+    m._maybe_process_disc(None, s2)   # slot 2 → re-captura
+    assert calls == [1, 2], f"esperaba capturas en slot 1 y 2, hubo {calls}"
+
+
 def test_persist_s17_update_preserva_asignacion_si_sin_match(syncer_db):
     """Re-captura del mismo disco SIN asignación confiable no pisa el PJ curado."""
     sync = _make_syncer(syncer_db)

@@ -60,6 +60,11 @@ _DETAIL_RESET_MIN_CONF = 0.50
 #   sim < MIN → avatar es de OTRO PJ (disco del grid) → abstener (preservar DB).
 _S17_GUARD_MIN = 0.86
 
+# Frames consecutivos con el MISMO slot S17 (a 10fps) antes de aceptar un cambio
+# de slot como real y re-capturar. El slot por OCR rebota durante la navegación
+# (visto en vivo: 2→3→2); 3 frames (~0.3s) filtra ese ruido sin agregar lag.
+_S17_SLOT_STABLE_FRAMES = 3
+
 # Intervalo de captura rápida (entre frames para buffer, sin procesar)
 _FAST_CAPTURE_MS = 100  # 10 fps — MSS captura en ~20ms, template match en ~50ms
 
@@ -127,6 +132,13 @@ class Monitor:
         # no en cada tick. Se resetea cuando salimos del estado.
         self._processed_disc_state_code: str | None = None
         self._reported_agent_stats_state_code: str | None = None
+        # S17: cada slot es un disco distinto → re-capturar al cambiar de slot.
+        # El slot por OCR rebota durante la navegación (2→3→2), así que exigimos
+        # estabilidad (N frames iguales) antes de capturar. `_processed_disc_slot`
+        # evita re-procesar el mismo slot; se resetea al salir de S17.
+        self._s17_slot_candidate: int | None = None
+        self._s17_slot_count: int = 0
+        self._processed_disc_slot: int | None = None
         # Último estado confirmado por votación. Persiste aunque el buffer
         # dedupee (devuelva None por mismo estado), para permitir
         # re-extracción CONTINUA de S18 sin requerir cambio de estado ni F8.
@@ -279,10 +291,28 @@ class Monitor:
                     raw_state = deep
 
             # Slot detection
+            s17_slot_ready = False
             if raw_state.code == "S17":
                 raw_state.slot = extract_s17_slot(frame, self._ocr)
-            elif raw_state.code == "S9":
-                raw_state.slot = extract_s9_slot(frame, self._ocr)
+                # Estabilizar el slot (rebota por OCR durante la navegación) y
+                # marcar re-captura cuando un slot NUEVO se mantiene N frames.
+                sl = raw_state.slot
+                if sl and 1 <= sl <= 6:
+                    if sl == self._s17_slot_candidate:
+                        self._s17_slot_count += 1
+                    else:
+                        self._s17_slot_candidate = sl
+                        self._s17_slot_count = 1
+                    if (self._s17_slot_count >= _S17_SLOT_STABLE_FRAMES
+                            and sl != self._processed_disc_slot):
+                        s17_slot_ready = True
+            else:
+                if raw_state.code == "S9":
+                    raw_state.slot = extract_s9_slot(frame, self._ocr)
+                # Fuera de S17 → olvidar el tracking de slot (re-entrar re-captura).
+                self._s17_slot_candidate = None
+                self._s17_slot_count = 0
+                self._processed_disc_slot = None
 
             # ---- Paso 2: alimentar buffer temporal ----
             # Deep detect con alta confianza salta la votación 2/3 para
@@ -312,9 +342,17 @@ class Monitor:
                 # El resto de estados procesa solo en la transición (voted_state no
                 # nulo) o por F8 forzado.
                 continuous = active_state.code in _CONTINUOUS_STATES
-                should_dispatch = forced or (
-                    elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
-                )
+                if active_state.code == "S17":
+                    # S17 captura SOLO cuando hay un slot estable nuevo (o F8).
+                    # Evita capturar durante la navegación con slot inestable, y
+                    # re-captura en cada cambio de slot (cada slot = otro disco).
+                    if s17_slot_ready:
+                        active_state.slot = self._s17_slot_candidate
+                    should_dispatch = forced or s17_slot_ready
+                else:
+                    should_dispatch = forced or (
+                        elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
+                    )
                 if should_dispatch:
                     last_process_time = now
                     self._dispatch_state(frame, active_state)
@@ -441,15 +479,18 @@ class Monitor:
 
     def _maybe_process_disc(self, frame, state: ScreenState) -> None:
         """
-        Dispara `_process_disc` UNA SOLA VEZ por entrada al estado.
-        Si seguimos en el mismo disc-state que ya procesamos, no re-emitimos.
-        Para re-capturar el mismo disco el usuario debe cerrar y volver a abrir
-        el modal (eso genera una transición S3→otro→S3 que resetea el flag).
+        Dispara `_process_disc` una vez por (estado, slot). Para S17 el slot forma
+        parte de la clave de dedup: cada slot es un disco distinto, así que cambiar
+        de slot (sin salir de S17) re-captura. Para S3/S6/S7 la clave es el código
+        (un solo disco visible); reabrir el modal genera la transición que resetea.
         """
-        if self._processed_disc_state_code == state.code:
+        key = (state.code, state.slot) if state.code == "S17" else state.code
+        if self._processed_disc_state_code == key:
             return
-        self._processed_disc_state_code = state.code
+        self._processed_disc_state_code = key
         self._process_disc(frame, state)
+        if state.code == "S17":
+            self._processed_disc_slot = state.slot
 
     def _process_agent_stats_continuous(self, frame, state: ScreenState) -> None:
         """
