@@ -27,6 +27,31 @@ $distDir  = Join-Path $repoRoot "app\build\dist"
 Write-Host "=== DaniBOD ZZZ Analytics - Rebuild ===" -ForegroundColor Cyan
 Write-Host "Repo root: $repoRoot"
 
+# 0) Pick the build interpreter. MUST be the project .venv: it has the clean
+#    PaddleOCR stack (numpy 1.26.4 + paddleocr 2.8.1 + paddlepaddle 2.6.2) that
+#    produces DETERMINISTIC OCR. The bare 'python' resolves to the Windows Store
+#    Python (App Execution Alias) which has numpy 2.x + torch and NO paddleocr ->
+#    a degraded, non-deterministic bundle (regression seen 2026-06-06). See
+#    Documentacion/Dev_IA/2026-05-31_Hito_2.8_Migracion_Python_PaddleOCR.md.
+$venvPy = Join-Path $repoRoot ".venv\Scripts\python.exe"
+if (Test-Path $venvPy) {
+    $py = $venvPy
+    Write-Host "Interpreter: .venv ($py)" -ForegroundColor Green
+} else {
+    $py = "python"
+    Write-Host "WARNING: .venv not found - falling back to bare 'python'. The build may bundle the wrong PaddleOCR." -ForegroundColor Red
+}
+
+# Build-env guard: abort if the interpreter is not the clean paddle env. Prevents
+# silently bundling the broken numpy-2.x paddle again.
+$envCheck = & $py -c "import numpy, importlib.util as u; ok = numpy.__version__.startswith('1.') and (u.find_spec('paddleocr') is not None); print(numpy.__version__ + '|' + ('OK' if ok else 'BAD'))"
+Write-Host "Build env: numpy/paddleocr -> $envCheck"
+if ($envCheck -notmatch "\|OK$") {
+    Write-Host "ERROR: wrong build environment (need numpy 1.x + paddleocr). Use the project .venv:" -ForegroundColor Red
+    Write-Host "  .venv\Scripts\python.exe -m pip install paddlepaddle==2.6.2 paddleocr==2.8.1 numpy==1.26.4" -ForegroundColor Red
+    exit 1
+}
+
 # 1) Kill running instances (optional)
 if ($KillRunning) {
     Write-Host ""
@@ -57,7 +82,7 @@ if (-not $SkipBuild) {
     Write-Host "[3/4] Running PyInstaller (3-5 minutes)..." -ForegroundColor Yellow
     Push-Location $repoRoot
     try {
-        python -m PyInstaller $specPath --clean --noconfirm --distpath $distDir --workpath $workDir
+        & $py -m PyInstaller $specPath --clean --noconfirm --distpath $distDir --workpath $workDir
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: PyInstaller failed with exit code $LASTEXITCODE" -ForegroundColor Red
             exit 1
