@@ -710,25 +710,31 @@ _RE_FUERZA_BRUTA = re.compile(r"fuerza\s*bruta\s*(\d+)")
 _RE_TASA_PERFORACION = re.compile(
     r"tasa\s*(?:de\s*)?perfor\w*[^\d%\n]{0,10}(\d+(?:\.\d+)?)\s*%"
 )
-# Recup Energía: "Recuperación de Energía" se renderiza en 2 LÍNEAS en el
-# juego ("Recuperación de" / "Energía") y PaddleOCR las lee por filas, así que
-# el VALOR (e.g. "1.2") suele quedar JUSTO ANTES del token "energia" en el
-# texto concatenado: "...perforacion 0 % 1.2 energia...".
+# Recup Energía: "Recuperación de Energía". El VALOR (e.g. "1.2") queda ADYACENTE
+# al token "energia" en el texto concatenado, pero su LADO depende de cómo el OCR
+# agrupe las filas a la resolución del usuario:
+#   - 2 líneas ("Recuperación de" / "Energía"): el valor cae ANTES de "energia":
+#       "...perforacion 0 % 1.2 energia..."           (caso de los fixtures)
+#   - 1 línea ("Recuperación de Energía 1.2"): el valor cae DESPUÉS de "energia":
+#       "...energia 1.2..."                            (caso QA en vivo 2026-06-05)
 #
-# Bug histórico (QA 2026-05-31): el patrón viejo `(?:recup|energ|adrenal)...(\d)`
-# matcheaba "recuperacion" y luego agarraba el PRIMER dígito siguiente, que era
-# el "0" de "Tasa de Perforación 0 %" de la fila de al lado → ER=0.0 (mal).
+# El valor de ER SIEMPRE se muestra con DECIMAL (1.2, 2.5, 1.87...). Exigir el
+# decimal (`\d+\.\d+`) en las alternativas adyacentes evita dos trampas:
+#   - el "0" de "Tasa de Perforación 0 %" de la fila de al lado (entero → no matchea).
+#   - el "1" de "Equipamiento completo" que el OCR pega tras "energia" en algunos
+#     frames (entero → no matchea). Bug histórico QA 2026-05-31 / 2026-06-05.
 #
 # Orden de alternativas (re.search devuelve el match más a la izquierda; el loop
 # de extracción toma el primer grupo no-None):
-#   (a) "<valor> energia"          — layout 2-líneas real (caso principal)
-#   (b) "recup... <valor>"         — fallback si el valor va después del label
-#                                     (ventana corta {0,12} para no cruzar filas)
-#   (c) "adrenalina <N>"           — Disruptivos: el slot inferior-derecho es
-#                                     "Acumulación Automática de Adrenalina"
+#   (a) "<decimal> energia"   — valor ANTES del token (layout 2-líneas, fixtures)
+#   (c) "energia <decimal>"   — valor DESPUÉS del token (layout 1-línea, en vivo)
+#   (b) "recup... <valor>"    — fallback last-resort (ventana {0,12} para no cruzar
+#                                filas; acepta entero por si el decimal se pierde)
+# Disruptivos (Yixuan, etc.) NO tienen "energia" sino "Adrenalina" → ver _RE_ADRENALINA.
 _RE_RECUP_ENERGIA = re.compile(
-    r"(\d+(?:\.\d+)?)[^\d\n]{0,4}?energ\w*"   # "<valor> [ruido] energia" ("2.5 v energia")
-    r"|recup\w*[^\d\n]{0,12}?(\d+(?:\.\d+)?)"  # "recup... <valor>"
+    r"(\d+\.\d+)[^\d\n]{0,6}?energ\w*"          # (a) decimal ANTES de "energia"
+    r"|energ\w*[^\d\n]{0,6}?(\d+\.\d+)"          # (c) decimal DESPUÉS de "energia"
+    r"|recup\w*[^\d\n]{0,12}?(\d+(?:\.\d+)?)"    # (b) fallback: "recup... <valor>"
 )
 # Acumulación Automática de Adrenalina (slot inferior-derecho de Disruptivos).
 # Es un campo SEPARADO de recuperacion_energia: aparece SOLO en Disruptivos y

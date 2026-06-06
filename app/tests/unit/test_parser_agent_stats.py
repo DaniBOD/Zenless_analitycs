@@ -317,6 +317,23 @@ class TestRecupEnergiaBugB:
         txt = "tasa de perforacion 0 % 1.2 energia"
         assert _extract_by_regex(txt)["recup_energia"] != "0"
 
+    def test_valor_despues_de_energia_1_linea(self):
+        # QA en vivo 2026-06-05: a la resolución del usuario el label NO envuelve
+        # a 2 líneas → "recuperacion de energia 1.2" con el valor DESPUÉS del token.
+        # El regex viejo (solo valor-antes) fallaba → ER faltaba en cada ciclo.
+        txt = "recuperacion de energia 1.2 equipamiento completo"
+        assert _extract_by_regex(txt)["recup_energia"] == "1.2"
+
+    def test_valor_despues_directo(self):
+        txt = "maestria de anomalia 158 energia 2.04 equipamiento"
+        assert _extract_by_regex(txt)["recup_energia"] == "2.04"
+
+    def test_no_captura_entero_suelto_tras_energia(self):
+        # Si tras "energia" solo hay un entero (p.ej. el "1" de "Equipamiento"),
+        # NO debe tomarse: el ER siempre es decimal. Exigir decimal evita la trampa.
+        txt = "tasa de perforacion 0 % energia 1 equipamiento completo"
+        assert _extract_by_regex(txt)["recup_energia"] is None
+
 
 class TestAcumulacionAdrenalina:
     """La 'Acumulación Automática de Adrenalina' (slot inferior-derecho de
