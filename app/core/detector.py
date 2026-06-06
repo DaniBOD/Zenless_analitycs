@@ -1127,7 +1127,7 @@ class ScreenDetector:
     # ---- Pipeline completo --------------------------------------------------
 
     @staticmethod
-    def _is_dark_frame(frame: np.ndarray, threshold: int = 35, dark_ratio: float = 0.60) -> bool:
+    def _is_dark_frame(frame: np.ndarray, threshold: int = 35, dark_ratio: float = 0.68) -> bool:
         """
         Filtro de frame oscuro: si más del `dark_ratio`% de píxeles están
         por debajo de `threshold` de brillo, es una pantalla de carga/
@@ -1135,7 +1135,18 @@ class ScreenDetector:
 
         Solo analiza el 60% central del ancho (x=0.20 a x=0.80) para evitar
         que personajes con fondo oscuro en los bordes disparen el filtro.
-        dark_ratio subido a 0.60 para ser más permisivo con pantallas informativas.
+
+        Calibración del umbral (2026-06-06, medido sobre capturas reales):
+          - S18 (Atributos base) LEGÍTIMOS: dark_ratio 0.513–0.595.
+          - Zhu Yuan S18 (traje azul marino + fondo CRIT oscuro): 0.610 (medido).
+          - Frames oscuros reales (loading/transición/FPs): 0.760–0.780.
+        El umbral viejo (0.60) estaba clavado al techo de lo legítimo (sin
+        margen): Zhu Yuan, a 0.610, lo cruzaba por 0.010 y parpadeaba S18↔S12
+        (un frame con animación de fondo bajaba a 0.599 → S18 conf 0.98; el
+        siguiente subía a 0.601 → S12), nunca extraía stats. Se sube a 0.68
+        (medio del hueco 0.610↔0.760): ~0.07 de margen sobre Zhu Yuan y ~0.08
+        bajo el frame oscuro real más claro. Una S18 real además matchea su
+        template (~0.98), evidencia de que es legible.
         """
         if frame is None or frame.size == 0:
             return True
