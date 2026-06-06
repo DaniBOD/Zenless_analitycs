@@ -412,6 +412,15 @@ class MonitorController(QObject):
                 f"{len(required_keys)}: {', '.join(missing_labels)} "
                 f"- el aggregator completa en los próximos ciclos (extracción continua)"
             )
+            # Diagnóstico ER (2026-06-06): si falta el ER, mostrar el texto OCR
+            # crudo de la zona para ver qué arma el PaddleOCR del .exe del usuario.
+            if "ER" in missing_labels:
+                er_dbg = next(
+                    (n for n in (stats.notas or []) if n.startswith("er_ocr_region=")),
+                    None,
+                )
+                if er_dbg:
+                    self.log_message.emit(f"[ER-debug] OCR crudo → {er_dbg[len('er_ocr_region='):]}")
 
     def _on_disc_from_monitor(self, disc_parsed, state):
         """

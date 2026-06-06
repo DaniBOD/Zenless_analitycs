@@ -844,6 +844,23 @@ def _extract_by_regex(text: str) -> dict[str, str | None]:
     return result
 
 
+def _er_region_snippet(full_text: str) -> str:
+    """
+    Devuelve un fragmento del texto OCR NORMALIZADO alrededor de 'energ'/'recup'
+    para diagnóstico en vivo del ER (Recuperación de Energía). Permite ver, desde
+    el .exe del usuario, qué texto exacto arma su PaddleOCR cuando el ER no se capta
+    (el OCR empaquetado puede diferir del entorno de desarrollo). Diag 2026-06-06.
+    """
+    norm = _normalize_ocr_text(full_text)
+    for kw in ("energ", "recup"):
+        i = norm.find(kw)
+        if i >= 0:
+            a = max(0, i - 48)
+            b = min(len(norm), i + 22)
+            return norm[a:b]
+    return "(sin 'energ'/'recup' en el OCR)"
+
+
 def _extract_agent_info(
     full_text: str,
     stats: dict | None = None,
@@ -1012,6 +1029,11 @@ def _parse_via_full_frame(
             notas.append("er_ignorada_disruptivo")
     else:
         recuperacion_energia = _parse_float(extracted["recup_energia"])
+
+    # Diagnóstico en vivo (2026-06-06): si el ER no se captó en una pantalla
+    # no-disruptiva, adjuntar el texto OCR crudo de la zona para verlo en el panel.
+    if recuperacion_energia is None and acumulacion_adrenalina is None:
+        notas.append(f"er_ocr_region={_er_region_snippet(full_text)!r}")
 
     return AgentStatsParsed(
         nivel=nivel, pv=pv, ataque=ataque, defensa=defensa,
