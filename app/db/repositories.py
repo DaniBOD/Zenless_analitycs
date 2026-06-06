@@ -149,6 +149,20 @@ class DiscSetRepo:
             for r in self._con.execute("SELECT id, nombre FROM disc_sets")
         }
 
+    def get_bonus(self, set_id: int) -> tuple[str | None, str | None, str | None]:
+        """
+        Bono de conjunto curado del set: (bonus_2p_stat, bonus_2p_valor,
+        bonus_4p_desc). Es la fuente de verdad del item #3 (no se re-OCRiza —
+        disc_sets está 100% curado). Devuelve (None, None, None) si no existe.
+        """
+        r = self._con.execute(
+            "SELECT bonus_2p_stat, bonus_2p_valor, bonus_4p_desc FROM disc_sets WHERE id=?",
+            (set_id,),
+        ).fetchone()
+        if not r:
+            return (None, None, None)
+        return (r["bonus_2p_stat"], r["bonus_2p_valor"], r["bonus_4p_desc"])
+
     def get_all(self) -> list[DiscSetEntry]:
         """Devuelve todas las filas de disc_sets con id, nombre y nombre_en."""
         return [
@@ -260,8 +274,18 @@ class InventoryDiscRepo:
         ).fetchone()
         return self._row_to_disc(r) if r else None
 
-    def insert_from_parsed(self, p: "DiscParsed", set_id: int) -> int:
-        """Inserta un disco nuevo desde DiscParsed. Devuelve el id insertado."""
+    def insert_from_parsed(
+        self,
+        p: "DiscParsed",
+        set_id: int,
+        agente_asignado: int | None = None,
+        equipado: int = 0,
+    ) -> int:
+        """
+        Inserta un disco nuevo desde DiscParsed. Devuelve el id insertado.
+        `agente_asignado`/`equipado` solo se setean cuando el caller tiene una
+        asignación confiable (S17 latch+avatar); por defecto None/0.
+        """
         subs = p.subs
         def _sub(i: int):
             if i < len(subs):
@@ -277,18 +301,30 @@ class InventoryDiscRepo:
                 sub2, val2, rolls2, unidad2,
                 sub3, val3, rolls3, unidad3,
                 sub4, val4, rolls4, unidad4,
-                nivel, equipado, descartado)
-               VALUES (?,?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?)""",
+                nivel, equipado, agente_asignado, descartado)
+               VALUES (?,?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?)""",
             (
                 set_id, p.slot, p.main_stat_canon or p.main_stat_raw, p.main_valor, p.main_unidad,
                 s1[0], s1[1], s1[2], s1[3],
                 s2[0], s2[1], s2[2], s2[3],
                 s3[0], s3[1], s3[2], s3[3],
                 s4[0], s4[1], s4[2], s4[3],
-                p.nivel, 0, 0,
+                p.nivel, (1 if agente_asignado is not None else equipado),
+                agente_asignado, 0,
             ),
         )
         return cur.lastrowid  # type: ignore[return-value]
+
+    def update_assignment(self, disc_id: int, agente_id: int, equipado: int = 1) -> None:
+        """
+        Actualiza SOLO la asignación de un disco existente (PJ + equipado). Se
+        llama únicamente con asignación confiable (S17 latch+avatar); nunca con
+        valores nulos/inciertos — así no se pisa lo curado (RNF-02).
+        """
+        self._con.execute(
+            "UPDATE inventory_discs SET agente_asignado=?, equipado=? WHERE id=?",
+            (agente_id, equipado, disc_id),
+        )
 
     def update_from_parsed(self, disc_id: int, p: "DiscParsed") -> None:
         """Actualiza nivel y substats de un disco existente (re-captura post-upgrade)."""

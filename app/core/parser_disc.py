@@ -74,6 +74,10 @@ class DiscParsed:
     subs: list[SubstatParsed] = field(default_factory=list)
     confianza_global: float = 0.0
     notas: list[str] = field(default_factory=list)
+    # Asignación del PJ (solo S17, set por el monitor — visual, no OCR). El parser
+    # los deja en default; el monitor los completa tras la guarda latch+avatar.
+    agente_asignado_nombre: str | None = None
+    agente_asignado_conf: float = 0.0
 
 
 def _parse_titulo(raw: str) -> tuple[str, int]:

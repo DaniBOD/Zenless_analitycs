@@ -27,6 +27,7 @@ def _isolate_avatar_library(tmp_path, monkeypatch):
     despachar S18 (que dispara identifier.learn → save).
     """
     monkeypatch.setenv("DANIBOD_AVATAR_LIB", str(tmp_path / "avatar_library.npz"))
+    monkeypatch.setenv("DANIBOD_AVATAR_LIB_S17", str(tmp_path / "avatar_library_s17.npz"))
 
 
 @pytest.fixture

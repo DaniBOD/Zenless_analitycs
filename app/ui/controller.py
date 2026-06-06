@@ -70,6 +70,7 @@ class MonitorController(QObject):
         self._archetype_repo = None
         self._disc_set_repo = None
         self._scoring_ctx = None
+        self._disc_syncer = None
 
         # Watcher de proceso ZZZ — arranca/detiene el monitor automáticamente
         # según la presencia de la ventana del juego.
@@ -121,6 +122,12 @@ class MonitorController(QObject):
         except Exception:
             log.exception("Error stopping monitor")
         self._monitor = None
+        if self._disc_syncer is not None:
+            try:
+                self._disc_syncer.close()
+            except Exception:
+                pass
+            self._disc_syncer = None
         if self._con is not None:
             try:
                 self._con.close()
@@ -232,7 +239,7 @@ class MonitorController(QObject):
             )
 
         # DB + repos
-        from app.db.connection import get_connection
+        from app.db.connection import get_connection, get_db_path
         from app.db.repositories import AgentRepo, ArchetypeRepo, DiscSetRepo
         from app.core.score_normalizer import ScoringContext
         self._con = get_connection(self._db_path)
@@ -240,6 +247,15 @@ class MonitorController(QObject):
         self._archetype_repo = ArchetypeRepo(self._con)
         self._disc_set_repo = DiscSetRepo(self._con)
         self._scoring_ctx = ScoringContext()
+
+        # Persistencia S17 (disco equipado): escribe disco + asignación (sin
+        # scoring). Usa la MISMA DB resuelta que las lecturas (en el .exe vive en
+        # %LOCALAPPDATA%, no la relativa al source). Backup de sesión RNF-01 una
+        # sola vez antes de habilitar writes.
+        from app.core.sync_equip import DiscSyncer
+        resolved_db = self._db_path or get_db_path()
+        self._backup_db_session(resolved_db)
+        self._disc_syncer = DiscSyncer(db_path=Path(resolved_db))
 
     # ---- Callbacks desde el Monitor (thread daemon) ----------------------------
 
@@ -413,18 +429,40 @@ class MonitorController(QObject):
                 f"- el aggregator completa en los próximos ciclos (extracción continua)"
             )
 
+    def _backup_db_session(self, db_path) -> None:
+        """
+        Backup de sesión RNF-01: copia única de la DB antes de habilitar writes
+        de captura. Gitignoreado (db/danibod_zzz_v2.backup_*.db). Best-effort: si
+        falla (permiso/espacio) se loguea pero no bloquea el arranque.
+        """
+        import shutil
+        from datetime import datetime
+        try:
+            src = Path(db_path)
+            if not src.exists():
+                return
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            dst = src.with_name(f"{src.stem}.backup_session_{ts}.db")
+            shutil.copy2(src, dst)
+            log.info("Backup de sesión RNF-01: %s", dst)
+        except Exception:
+            log.exception("No se pudo crear backup de sesión (se continúa)")
+
     def _on_disc_from_monitor(self, disc_parsed, state):
         """
         El monitor parseó un disco. Calculamos la recomendación y emitimos
         el payload listo para que LivePanel + Toast lo consuman.
 
-        S17 (disco equipado) es EXTRACCIÓN PURA: se loguea el disco completo
-        (set/slot/nivel/main/substats) sin invocar el recommender (scoring es
-        fase posterior). El resto (S3/S6/S7, discos nuevos) sí va al recommender.
+        S17 (disco equipado): persistencia ENFOCADA (disco + asignación PJ + bono,
+        sin scoring — fase posterior) vía DiscSyncer.persist_s17_disc, y se loguea
+        el disco completo. El resto (S3/S6/S7, discos nuevos) va al recommender.
         """
         try:
             if state.code == "S17":
-                self._log_s17_extraction(disc_parsed)
+                result = None
+                if self._disc_syncer is not None:
+                    result = self._disc_syncer.persist_s17_disc(disc_parsed)
+                self._log_s17_extraction(disc_parsed, result)
                 return
             payload = self._build_payload(disc_parsed, state)
             self.disc_detected.emit(payload)
@@ -443,7 +481,7 @@ class MonitorController(QObject):
             val = f" {s.valor:g}{unit}"
         return f"{nombre}{roll}{val}"
 
-    def _log_s17_extraction(self, disc) -> None:
+    def _log_s17_extraction(self, disc, result=None) -> None:
         """Loguea la extracción completa de un disco equipado S17 (estilo S18)."""
         set_name = disc.set_name_canon or disc.set_name_raw or "?"
         rareza = f" · {disc.rareza}-rank" if disc.rareza in ("S", "A", "B") else ""
@@ -461,6 +499,27 @@ class MonitorController(QObject):
         if disc.subs:
             self.log_message.emit(
                 "[disco] subs: " + " · ".join(self._fmt_sub(s) for s in disc.subs)
+            )
+        # PJ asignado (item #5): del DiscParsed (marcado por el monitor con guarda).
+        if disc.agente_asignado_nombre:
+            self.log_message.emit(
+                f"[asignado] equipado en: {disc.agente_asignado_nombre} "
+                f"(conf {disc.agente_asignado_conf:.2f})"
+            )
+        else:
+            self.log_message.emit("[asignado] sin PJ confiable → no se tocó la asignación")
+        # Bono de conjunto (item #3): desde disc_sets (curado, no OCR).
+        if result is not None and (result.set_bonus_2p or result.set_bonus_4p):
+            if result.set_bonus_2p:
+                self.log_message.emit(f"[conjunto] 2pc: {result.set_bonus_2p}")
+            if result.set_bonus_4p:
+                desc = result.set_bonus_4p
+                if len(desc) > 90:
+                    desc = desc[:90] + "…"
+                self.log_message.emit(f"[conjunto] 4pc: {desc}")
+        if result is not None:
+            self.log_message.emit(
+                f"[persistido] disco id={result.disc_id} ({result.trigger})"
             )
         self.log_message.emit(f"[completo] disco extraído — {len(disc.subs)}/4 substats")
         if disc.notas:

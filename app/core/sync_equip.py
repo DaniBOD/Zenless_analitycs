@@ -38,8 +38,14 @@ class SyncResult:
     trigger: str        # "captura_inicial" | "re_eval_threshold"
     recomendacion: str
     score_norm: float
-    agente_nombre: str | None
+    agente_nombre: str | None          # PJ recomendado por el scoring
     latency_ms: float
+    # Asignación real capturada en S17 (PJ donde está equipado) — distinto del
+    # recomendado. None si no hubo asignación confiable (no se tocó la DB).
+    agente_asignado_nombre: str | None = None
+    # Bono de conjunto curado del set (item #3, desde disc_sets — no OCR).
+    set_bonus_2p: str | None = None
+    set_bonus_4p: str | None = None
 
 
 # Callback opcional que recibe el resultado (para el toast de Fase 3)
@@ -126,6 +132,10 @@ class DiscSyncer:
             log.debug("Confianza baja (%.2f) — disco ignorado.", parsed.confianza_global)
             return None
 
+        # PJ asignado (S17): solo si el monitor lo marcó como confiable (latch +
+        # avatar). None ⇒ no se toca agente_asignado/equipado (preserva lo curado).
+        agente_id = self._resolve_agent_id(parsed)
+
         # Abrir conexión de escritura para esta transacción
         con_w = sqlite3.connect(str(self._db_path))
         con_w.row_factory = sqlite3.Row
@@ -145,11 +155,23 @@ class DiscSyncer:
                     disc_id = existing.id
                     trigger = "re_eval_threshold"
                     disc_repo_w.update_from_parsed(disc_id, parsed)
+                    if agente_id is not None:
+                        disc_repo_w.update_assignment(disc_id, agente_id)
+                        log.info("Disco id=%d → asignado a '%s' (equipado).",
+                                 disc_id, parsed.agente_asignado_nombre)
                     log.debug("Disco existente id=%d — actualizado.", disc_id)
                 else:
-                    disc_id = disc_repo_w.insert_from_parsed(parsed, set_id)
+                    disc_id = disc_repo_w.insert_from_parsed(
+                        parsed, set_id,
+                        agente_asignado=agente_id,
+                        equipado=1 if agente_id is not None else 0,
+                    )
                     trigger = "captura_inicial"
-                    log.info("Disco nuevo insertado id=%d  set=%s slot=%d.", disc_id, parsed.set_name_raw, parsed.slot)
+                    log.info(
+                        "Disco nuevo insertado id=%d  set=%s slot=%d%s.",
+                        disc_id, parsed.set_name_raw, parsed.slot,
+                        f"  asignado='{parsed.agente_asignado_nombre}'" if agente_id is not None else "",
+                    )
 
                 # Scoring
                 disc_obj = _parsed_to_disc(parsed, disc_id, set_id)
@@ -164,10 +186,18 @@ class DiscSyncer:
                     "; ".join(parsed.notas) if parsed.notas else None,
                 )
 
+            # Bono de conjunto curado (item #3) — desde disc_sets, no OCR.
+            bonus_2p_stat, bonus_2p_valor, bonus_4p = self._set_repo.get_bonus(set_id)
+            bonus_2p = (
+                f"{bonus_2p_stat} {bonus_2p_valor}".strip()
+                if (bonus_2p_stat or bonus_2p_valor) else None
+            )
+
             latency_ms = (time.perf_counter() - t0) * 1000
             log.info(
-                "Sync OK  id=%d  %s  score=%.3f  agente=%s  %.0fms",
-                disc_id, rec.tipo, rec.score_norm, rec.agente_nombre or "-", latency_ms,
+                "Sync OK  id=%d  %s  score=%.3f  rec_agente=%s  asignado=%s  2pc=%s  %.0fms",
+                disc_id, rec.tipo, rec.score_norm, rec.agente_nombre or "-",
+                parsed.agente_asignado_nombre or "-", bonus_2p or "-", latency_ms,
             )
 
             result = SyncResult(
@@ -177,6 +207,9 @@ class DiscSyncer:
                 score_norm=rec.score_norm,
                 agente_nombre=rec.agente_nombre,
                 latency_ms=round(latency_ms, 1),
+                agente_asignado_nombre=parsed.agente_asignado_nombre,
+                set_bonus_2p=bonus_2p,
+                set_bonus_4p=bonus_4p,
             )
             if self._notify:
                 try:
@@ -192,6 +225,77 @@ class DiscSyncer:
 
         except Exception as exc:
             log.exception("Error en on_disc_detected: %s", exc)
+            return None
+        finally:
+            con_w.close()
+
+    def persist_s17_disc(self, parsed: DiscParsed) -> SyncResult | None:
+        """
+        Persistencia ENFOCADA de un disco equipado S17 (decisión 2026-06-06):
+        upsert disco + asignación con salvaguarda + bono, SIN scoring/optimizer
+        (consistente con 'S17 = extracción, scoring fase posterior'). Devuelve un
+        SyncResult informativo (recomendacion='(s17)', score 0) o None si no se
+        pudo resolver el set / baja confianza.
+        """
+        t0 = time.perf_counter()
+        set_id = self._resolve_set_id(parsed)
+        if set_id is None:
+            log.warning("S17: set desconocido '%s' — no se persiste.", parsed.set_name_raw)
+            return None
+        if parsed.confianza_global < 0.7:
+            log.debug("S17: confianza baja (%.2f) — no se persiste.", parsed.confianza_global)
+            return None
+
+        agente_id = self._resolve_agent_id(parsed)
+
+        con_w = sqlite3.connect(str(self._db_path))
+        con_w.row_factory = sqlite3.Row
+        disc_repo_w = InventoryDiscRepo(con_w)
+        try:
+            with con_w:
+                existing = disc_repo_w.find_by_hash(
+                    set_id, parsed.slot,
+                    parsed.main_stat_canon or parsed.main_stat_raw,
+                    parsed.main_valor,
+                )
+                if existing:
+                    disc_id = existing.id
+                    trigger = "s17_update"
+                    disc_repo_w.update_from_parsed(disc_id, parsed)
+                    if agente_id is not None:
+                        disc_repo_w.update_assignment(disc_id, agente_id)
+                else:
+                    disc_id = disc_repo_w.insert_from_parsed(
+                        parsed, set_id,
+                        agente_asignado=agente_id,
+                        equipado=1 if agente_id is not None else 0,
+                    )
+                    trigger = "s17_insert"
+
+            bonus_2p_stat, bonus_2p_valor, bonus_4p = self._set_repo.get_bonus(set_id)
+            bonus_2p = (
+                f"{bonus_2p_stat} {bonus_2p_valor}".strip()
+                if (bonus_2p_stat or bonus_2p_valor) else None
+            )
+            latency_ms = (time.perf_counter() - t0) * 1000
+            log.info(
+                "S17 persistido id=%d %s set=%s slot=%d asignado=%s 2pc=%s %.0fms",
+                disc_id, trigger, parsed.set_name_raw, parsed.slot,
+                parsed.agente_asignado_nombre or "-", bonus_2p or "-", latency_ms,
+            )
+            return SyncResult(
+                disc_id=disc_id,
+                trigger=trigger,
+                recomendacion="(s17)",
+                score_norm=0.0,
+                agente_nombre=None,
+                latency_ms=round(latency_ms, 1),
+                agente_asignado_nombre=parsed.agente_asignado_nombre,
+                set_bonus_2p=bonus_2p,
+                set_bonus_4p=bonus_4p,
+            )
+        except Exception as exc:
+            log.exception("Error en persist_s17_disc: %s", exc)
             return None
         finally:
             con_w.close()
@@ -229,6 +333,21 @@ class DiscSyncer:
             self._opt_timers[agente_id] = t
             t.start()
         log.debug("Optimizer debounce iniciado para PJ=%d.", agente_id)
+
+    def _resolve_agent_id(self, parsed: DiscParsed) -> int | None:
+        """
+        Resuelve el agent_id del PJ asignado (S17), SOLO si el monitor lo marcó
+        confiable (nombre presente y conf > 0). None ⇒ no se escribe la asignación
+        (preserva agente_asignado/equipado curados, RNF-02).
+        """
+        name = parsed.agente_asignado_nombre
+        if not name or parsed.agente_asignado_conf <= 0:
+            return None
+        a = self._agent_repo.get_by_nombre(name)
+        if a is None:
+            log.warning("S17: PJ asignado '%s' no existe en agents — sin asignar.", name)
+            return None
+        return a.id
 
     def _resolve_set_id(self, parsed: DiscParsed) -> int | None:
         """Intenta resolver set_id desde set_name_raw usando exact + fuzzy matching."""

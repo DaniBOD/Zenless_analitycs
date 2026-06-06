@@ -38,6 +38,21 @@ _MATCH_MIN = 0.88
 # Margen mínimo del mejor sobre el segundo (anti-ambigüedad).
 _MATCH_GAP = 0.05
 
+# --- Avatar circular S17 (asignación de disco equipado) ---------------------
+# El avatar del PJ asignado en S17 es un círculo (a la derecha de "Nivel X/15"),
+# NO el tile rectangular del row. Tiene fondo rayado oscuro en las esquinas, que
+# domina el descriptor rectangular y colapsa todos los matches (medido 2026-06-06:
+# todo → "Miyabi" ~0.58 contra la librería del row). Por eso S17 usa:
+#   1. un descriptor con MÁSCARA CIRCULAR (anula las esquinas), y
+#   2. una librería PROPIA (`avatar_library_s17.npz`) bootstrapeada del latch.
+# Medido sobre 7 crops reales: same-PJ 0.87–0.97; distinto ≤ 0.85. El umbral de
+# guarda separa "mismo PJ que el latch" de "otro PJ" (disco del grid de otro PJ).
+_S17_DESC_SIZE = 48
+_yy, _xx = np.ogrid[:_S17_DESC_SIZE, :_S17_DESC_SIZE]
+_S17_CMASK = (
+    (_xx - _S17_DESC_SIZE / 2) ** 2 + (_yy - _S17_DESC_SIZE / 2) ** 2
+) <= (_S17_DESC_SIZE / 2 - 1) ** 2
+
 
 def _default_library_path() -> Path:
     # Override explícito (tests, o ubicación custom).
@@ -48,10 +63,33 @@ def _default_library_path() -> Path:
     return Path(base) / "DaniBOD_ZZZ_Analytics" / "avatar_library.npz"
 
 
+def _s17_library_path(main_path: Path) -> Path:
+    """Librería S17 hermana de la del row (mismo dir, sufijo _s17)."""
+    override = os.environ.get("DANIBOD_AVATAR_LIB_S17")
+    if override:
+        return Path(override)
+    return main_path.with_name("avatar_library_s17.npz")
+
+
 def _descriptor(face: np.ndarray) -> np.ndarray:
     """Descriptor invariante a brillo: resize 48×48 BGR, media-cero norma-unitaria."""
     g = cv2.resize(face, (_DESC_SIZE, _DESC_SIZE)).astype(np.float32)
     g = g - g.mean()
+    norm = float(np.sqrt((g * g).sum()))
+    if norm < 1e-6:
+        return g.ravel()
+    return (g / norm).ravel()
+
+
+def _descriptor_circular(face: np.ndarray) -> np.ndarray:
+    """
+    Descriptor para el avatar circular S17: resize 48×48, media-cero calculada
+    SOLO dentro del círculo, esquinas anuladas (máscara), norma-unitaria. Anula
+    el fondo rayado de las esquinas que de otro modo domina el coseno.
+    """
+    g = cv2.resize(face, (_S17_DESC_SIZE, _S17_DESC_SIZE)).astype(np.float32)
+    mean = g[_S17_CMASK].mean(axis=0)
+    g = (g - mean) * _S17_CMASK[..., None]
     norm = float(np.sqrt((g * g).sum()))
     if norm < 1e-6:
         return g.ravel()
@@ -66,9 +104,12 @@ class AgentIdentifier:
 
     def __init__(self, library_path: Path | None = None, autoload: bool = True):
         self._path = Path(library_path) if library_path else _default_library_path()
+        self._path_s17 = _s17_library_path(self._path)
         self._lib: dict[str, np.ndarray] = {}
+        self._lib_s17: dict[str, np.ndarray] = {}
         if autoload:
             self.load()
+            self.load_s17()
 
     # ---- Persistencia -------------------------------------------------------
 
@@ -96,6 +137,31 @@ class AgentIdentifier:
         except Exception:
             log.exception("AgentIdentifier: error guardando librería")
 
+    def load_s17(self) -> None:
+        if not self._path_s17.exists():
+            return
+        try:
+            data = np.load(str(self._path_s17), allow_pickle=True)
+            names = list(data["names"])
+            descs = data["descs"]
+            self._lib_s17 = {str(n): descs[i] for i, n in enumerate(names)}
+            log.info("AgentIdentifier: %d avatares S17 cargados de %s",
+                     len(self._lib_s17), self._path_s17)
+        except Exception:
+            log.exception("AgentIdentifier: error cargando librería S17; se ignora")
+            self._lib_s17 = {}
+
+    def save_s17(self) -> None:
+        if not self._lib_s17:
+            return
+        try:
+            self._path_s17.parent.mkdir(parents=True, exist_ok=True)
+            names = np.array(list(self._lib_s17.keys()), dtype=object)
+            descs = np.stack(list(self._lib_s17.values()))
+            np.savez(str(self._path_s17), names=names, descs=descs)
+        except Exception:
+            log.exception("AgentIdentifier: error guardando librería S17")
+
     # ---- API ----------------------------------------------------------------
 
     @property
@@ -122,13 +188,20 @@ class AgentIdentifier:
 
     def identify(self, frame: np.ndarray) -> tuple[str, float] | None:
         """
-        Identifica al PJ del avatar resaltado contra la librería.
+        Identifica al PJ del avatar resaltado (row) contra la librería.
         Devuelve (nombre, correlación) si supera umbral+margen, o None.
         """
-        if not self._lib:
-            return None
         face = crop_selected_avatar(frame)
         if face is None:
+            return None
+        return self.identify_face(face)
+
+    def identify_face(self, face: np.ndarray) -> tuple[str, float] | None:
+        """
+        Matchea un crop de cara arbitrario (descriptor rectangular) contra la
+        librería del row. Núcleo reutilizable de `identify()`.
+        """
+        if not self._lib or face is None or face.size == 0:
             return None
         q = _descriptor(face)
         scored: list[tuple[str, float]] = []
@@ -145,3 +218,42 @@ class AgentIdentifier:
         if len(scored) > 1 and (best - scored[1][1]) < _MATCH_GAP:
             return None  # ambiguo
         return best_name, best
+
+    # ---- Avatar S17 (librería circular propia, guarda de asignación) ---------
+
+    @property
+    def names_s17(self) -> list[str]:
+        return list(self._lib_s17.keys())
+
+    def learn_s17(self, face: np.ndarray, name: str) -> bool:
+        """
+        Aprende/actualiza el descriptor circular S17 de `name` desde un crop de
+        avatar. `name` es ground-truth del latch (PJ cuya pantalla se ve).
+        Devuelve True si guardó.
+        """
+        if not name or face is None or face.size == 0:
+            return False
+        new = self._lib_s17.get(name) is None
+        self._lib_s17[name] = _descriptor_circular(face)
+        self.save_s17()
+        if new:
+            log.info("AgentIdentifier: avatar S17 aprendido para '%s' (%d en librería S17)",
+                     name, len(self._lib_s17))
+        return True
+
+    def s17_similarity(self, face: np.ndarray, name: str) -> float | None:
+        """
+        Coseno entre el descriptor circular del crop y el descriptor S17 guardado
+        de `name`. None si `name` no tiene descriptor aprendido todavía o el crop
+        es inválido. Es la GUARDA mismo/distinto vs el PJ latcheado (no un matcher
+        de 46 vías): ≥ umbral ⇒ "mismo PJ"; < umbral ⇒ "otro PJ / abstener".
+        """
+        if face is None or face.size == 0:
+            return None
+        stored = self._lib_s17.get(name)
+        if stored is None:
+            return None
+        q = _descriptor_circular(face)
+        if q.shape != stored.shape:
+            return None
+        return float(np.dot(q, stored))

@@ -267,12 +267,93 @@ def _parse_s17_from_lines(
     )
 
 
+# --- Avatar del PJ asignado (a la derecha de "Nivel X/15") -------------------
+# Localización verificada sobre crops reales 2557×1439 (2026-06-06): el avatar
+# circular está en X casi fijo (centro xn≈0.503) y su Y SIGUE a la barra de nivel
+# (que se desplaza según el set ocupe 1 o 2 líneas). Anclamos cx a xn fijo y cy al
+# centro de la línea de nivel del panel de detalle; el lado ≈ 1.05× alto del pill.
+_S17_AVATAR_CX_NORM = 0.503
+_S17_AVATAR_HALF_FACTOR = 1.05
+# Fracción mínima de píxeles saturados dentro del círculo para considerar que HAY
+# avatar (el fondo rayado del panel es casi gris → baja saturación). Calibrado
+# conservador: discos equipados reales miden >> este piso; un disco sin equipar
+# (sin avatar) cae por debajo. Ante duda, el caller igual abstiene por la guarda.
+_S17_AVATAR_MIN_SAT_FRAC = 0.06
+
+
+def _detail_level_bbox(lines, W) -> tuple[int, int, int, int] | None:
+    """Bbox de la línea 'Nivel N/15' del panel de detalle (xn en [0.30, 0.52])."""
+    for (t, _c, bb) in lines:
+        x1, y1, x2, y2 = bb
+        if "/15" in t and 0.30 <= (x1 / W if W else 0) <= 0.52:
+            return (x1, y1, x2, y2)
+    return None
+
+
+def crop_s17_assigned_avatar(frame, lines, W, H):
+    """
+    Recorta el avatar circular del PJ asignado (a la derecha de 'Nivel X/15').
+    Devuelve el crop BGR cuadrado o None si no se localiza la barra de nivel o si
+    no hay avatar (disco sin equipar — baja saturación dentro del círculo).
+    """
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return None
+    bb = _detail_level_bbox(lines, W)
+    if bb is None:
+        return None
+    x1, y1, x2, y2 = bb
+    hpill = max(1, y2 - y1)
+    cy = (y1 + y2) // 2
+    cx = int(_S17_AVATAR_CX_NORM * W)
+    half = int(_S17_AVATAR_HALF_FACTOR * hpill)
+    if half < 8:
+        return None
+    y0, y1c = max(0, cy - half), min(H, cy + half)
+    x0, x1c = max(0, cx - half), min(W, cx + half)
+    face = frame[y0:y1c, x0:x1c]
+    if face.size == 0:
+        return None
+    # Detección de ausencia (disco sin equipar): círculo casi sin píxeles saturados.
+    if not _has_avatar_content(face):
+        return None
+    return face
+
+
+def _has_avatar_content(face) -> bool:
+    """True si dentro del círculo inscripto hay suficiente contenido saturado."""
+    try:
+        import cv2
+        h, w = face.shape[:2]
+        side = min(h, w)
+        sq = face[:side, :side]
+        yy, xx = np.ogrid[:side, :side]
+        mask = ((xx - side / 2) ** 2 + (yy - side / 2) ** 2) <= (side / 2 - 1) ** 2
+        hsv = cv2.cvtColor(sq, cv2.COLOR_BGR2HSV)
+        sat = hsv[:, :, 1][mask]
+        if sat.size == 0:
+            return False
+        frac = float((sat > 60).mean())
+        return frac >= _S17_AVATAR_MIN_SAT_FRAC
+    except Exception:
+        return True  # ante error, no bloquear (la guarda decide)
+
+
 def parse_disc_s17(frame: np.ndarray, ocr: "OcrBackend") -> DiscParsed:
     """
     Extrae el disco equipado de una pantalla S17 (full-frame, espacial).
 
     Devuelve un `DiscParsed`. La rareza se intenta por color del borde del
     icono (best-effort); el resto sale del OCR espacial.
+    """
+    parsed, _face = parse_disc_s17_full(frame, ocr)
+    return parsed
+
+
+def parse_disc_s17_full(frame: np.ndarray, ocr: "OcrBackend"):
+    """
+    Como `parse_disc_s17` pero corre OCR UNA vez y devuelve también el crop del
+    avatar del PJ asignado: `(DiscParsed, face | None)`. El monitor usa esto para
+    no re-OCRizar (presupuesto de latencia RF-06 < 500 ms).
     """
     lines = ocr.text_with_bboxes(frame)
     H, W = frame.shape[:2]
@@ -286,4 +367,5 @@ def parse_disc_s17(frame: np.ndarray, ocr: "OcrBackend") -> DiscParsed:
             parsed.rareza = rar
     except Exception:
         pass
-    return parsed
+    face = crop_s17_assigned_avatar(frame, lines, W, H)
+    return parsed, face

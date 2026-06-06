@@ -19,7 +19,7 @@ from app.core.detector import (
     _deep_detect_s18, detect_active_tab, selected_avatar_x,
 )
 from app.core.parser_disc import DiscParsed, parse_modal_detalle
-from app.core.parser_disc_s17 import parse_disc_s17
+from app.core.parser_disc_s17 import parse_disc_s17, parse_disc_s17_full
 from app.core.parser_agent_stats import AgentStatsParsed, parse_agent_stats, AgentStatsAggregator
 from app.core.agent_identifier import AgentIdentifier
 from app.core.ocr_backend import OcrBackend
@@ -50,6 +50,15 @@ _AVATAR_X_TOL = 0.025
 # olvidar al PJ — eso causaba el parpadeo "detecta→no reconoce" (Zhu Yuan,
 # 2026-06-06). Solo una pantalla no-detalle CONFIRMADA (roster/ciudad) resetea.
 _DETAIL_RESET_MIN_CONF = 0.50
+
+# Guarda de asignación S17 (latch + avatar). El PJ asignado a un disco equipado
+# sale del LATCH (PJ cuya pantalla se ve, ya confiable); el avatar circular S17 se
+# usa solo como chequeo mismo/distinto contra ese latch. Medido 2026-06-06 sobre
+# crops reales: same-PJ 0.95–0.99, otro PJ ≤ 0.76 → umbral 0.86 separa limpio.
+#   sim None  → primera vez del PJ en S17 → confiar latch + aprender (bootstrap).
+#   sim ≥ MIN → avatar confirma el latch → asignar.
+#   sim < MIN → avatar es de OTRO PJ (disco del grid) → abstener (preservar DB).
+_S17_GUARD_MIN = 0.86
 
 # Intervalo de captura rápida (entre frames para buffer, sin procesar)
 _FAST_CAPTURE_MS = 100  # 10 fps — MSS captura en ~20ms, template match en ~50ms
@@ -685,13 +694,47 @@ class Monitor:
         if self._force_event.wait(timeout=_FAST_CAPTURE_MS / 1000.0):
             self._force_event.clear()
 
+    def _assign_s17_pj(self, disc: DiscParsed, face) -> None:
+        """
+        Resuelve el PJ asignado a un disco S17 con la guarda latch + avatar
+        (decisión 2026-06-06). El latch (`_last_agent_name`, PJ cuya pantalla se
+        ve) es la fuente de identidad; el avatar circular S17 confirma o abstiene.
+        Setea `disc.agente_asignado_nombre/_conf` SOLO cuando hay asignación
+        confiable; ante duda los deja en None/0 (el syncer preserva lo curado).
+        """
+        latch = self._last_agent_name
+        if not latch:
+            log.info("[S17] sin latch de PJ → disco sin asignar (preserva DB).")
+            return
+        if face is None:
+            log.info("[S17] disco sin avatar (sin equipar / no localizado) → sin asignar.")
+            return
+        sim = self._identifier.s17_similarity(face, latch)
+        if sim is None:
+            # Primera vez que vemos a este PJ en S17: confiar en el latch y aprender.
+            self._identifier.learn_s17(face, latch)
+            disc.agente_asignado_nombre = latch
+            disc.agente_asignado_conf = 1.0
+            log.info("[S17] asignado a '%s' (bootstrap latch, avatar S17 aprendido).", latch)
+        elif sim >= _S17_GUARD_MIN:
+            disc.agente_asignado_nombre = latch
+            disc.agente_asignado_conf = round(sim, 3)
+            log.info("[S17] asignado a '%s' (avatar confirma, sim=%.3f).", latch, sim)
+        else:
+            log.info(
+                "[S17] avatar NO coincide con latch '%s' (sim=%.3f < %.2f) → "
+                "disco de otro PJ → sin asignar (preserva DB).",
+                latch, sim, _S17_GUARD_MIN,
+            )
+
     def _process_disc(self, frame, state: ScreenState) -> None:
         try:
             # S17 (disco equipado, "Personalización de pistas") usa el parser
             # ESPACIAL full-frame — más robusto que el per-ROI a 2560×1440.
             # El resto de disc-states (S3/S6/S7) sigue con parse_modal_detalle.
             if state.code == "S17":
-                disc = parse_disc_s17(frame, self._ocr)
+                disc, face = parse_disc_s17_full(frame, self._ocr)
+                self._assign_s17_pj(disc, face)
             else:
                 disc = parse_modal_detalle(frame, self._ocr, self._set_repo, state_code=state.code)
             if disc.confianza_global < 0.7:
