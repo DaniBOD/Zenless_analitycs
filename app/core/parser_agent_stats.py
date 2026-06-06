@@ -443,6 +443,32 @@ def _normalize_percent(val: float | None) -> float | None:
     return val
 
 
+def _fix_crit_rate(val: float | None) -> tuple[float | None, bool]:
+    """
+    Corrige la Prob. Crítico (crit RATE), que en ZZZ NO puede exceder 100%
+    (a diferencia del Daño Crítico, que sí — 162%, etc.).
+
+    Si tras normalizar la fracción queda > 1.0 (> 100%), es DEMOSTRABLEMENTE un
+    error de OCR que perdió el punto decimal (p.ej. "19.4" → "194" → 1.94). Se
+    recupera dividiendo por 10 hasta volver a ≤ 100% (194%→19.4%, 398%→39.8%), con
+    tope duro de 100% como red de seguridad ante basura extrema.
+
+    A diferencia del hack `/10` global que se eliminó (corrompía el Daño Crítico
+    legítimo ≥100%), esto se aplica SOLO a prob_crit, donde >100% es imposible →
+    la corrección es válida, no inventada (RNF-02). Devuelve (valor, se_corrigio).
+    """
+    if val is None or val <= 1.0:
+        return val, False
+    corrected = val
+    for _ in range(3):
+        if corrected <= 1.0:
+            break
+        corrected /= 10.0
+    if corrected > 1.0:
+        corrected = 1.0  # tope duro 100%
+    return corrected, True
+
+
 # ---------------------------------------------------------------------------
 # Modo 1: PaddleOCR full-frame
 # ---------------------------------------------------------------------------
@@ -941,6 +967,10 @@ def _parse_via_full_frame(
     defensa = _parse_int(extracted["defensa"])
     impacto = _parse_int(extracted["impacto"])
     prob_crit = _normalize_percent(_parse_float(extracted["prob_crit"]))
+    prob_crit, _cr_fixed = _fix_crit_rate(prob_crit)
+    if _cr_fixed:
+        notas.append("prob_crit_decimal_recuperado")
+    # Daño Crítico SÍ puede exceder 100% → no se le aplica el tope/recuperación.
     dano_crit = _normalize_percent(_parse_float(extracted["dano_crit"]))
     tasa_anomalia = _parse_int(extracted["tasa_anomalia"])
     maestria_anomalia = _parse_int(extracted["maestria_anomalia"])
@@ -1036,7 +1066,9 @@ def _parse_via_rois(frame: np.ndarray, ocr: OcrBackend) -> AgentStatsParsed:
     text, c1, c2 = _parse_stat("ataque");        confianzas.extend([c1, c2]); ataque = _parse_int(text)
     text, c1, c2 = _parse_stat("defensa");       confianzas.extend([c1, c2]); defensa = _parse_int(text)
     text, c1, c2 = _parse_stat("impacto");       confianzas.extend([c1, c2]); impacto = _parse_int(text)
-    text, c1, c2 = _parse_stat("prob_crit");     confianzas.extend([c1, c2]); prob_crit = _normalize_percent(_parse_float(text))
+    text, c1, c2 = _parse_stat("prob_crit");     confianzas.extend([c1, c2]); prob_crit, _crf = _fix_crit_rate(_normalize_percent(_parse_float(text)))
+    if _crf:
+        notas.append("prob_crit_decimal_recuperado")
     text, c1, c2 = _parse_stat("dano_crit");     confianzas.extend([c1, c2]); dano_crit = _normalize_percent(_parse_float(text))
     text, c1, c2 = _parse_stat("tasa_anomalia"); confianzas.extend([c1, c2]); tasa_anomalia = _parse_int(text)
     text, c1, c2 = _parse_stat("maestria_anomalia"); confianzas.extend([c1, c2]); maestria_anomalia = _parse_int(text)

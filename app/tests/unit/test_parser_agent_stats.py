@@ -276,7 +276,32 @@ def test_extracts_some_stats_with_tesseract(screenshot_path, tesseract_ocr):
 from app.core.parser_agent_stats import (  # noqa: E402
     _normalize_percent,
     _extract_by_regex,
+    _fix_crit_rate,
 )
+
+
+class TestFixCritRate:
+    """QA en vivo 2026-06-05: el OCR pierde el decimal del Prob. Crítico
+    (19.4→194, 39.8→398). Como el crit RATE no puede exceder 100% en ZZZ, se
+    recupera dividiendo por 10 (≠ Daño Crítico, que sí supera 100%)."""
+
+    def test_recupera_decimal_perdido(self):
+        # N.º 11: 194% → 19.4% (fracción 1.94 → 0.194)
+        assert _fix_crit_rate(1.94) == (pytest.approx(0.194), True)
+        # Dialyn: 398% → 39.8%
+        assert _fix_crit_rate(3.98) == (pytest.approx(0.398), True)
+
+    def test_no_toca_valores_validos(self):
+        # ≤100% no se corrige (no sabemos si '9.8' o '98' real → conservador)
+        assert _fix_crit_rate(0.194) == (pytest.approx(0.194), False)
+        assert _fix_crit_rate(0.98) == (0.98, False)
+        assert _fix_crit_rate(1.0) == (1.0, False)   # 100% exacto: válido
+        assert _fix_crit_rate(None) == (None, False)
+
+    def test_tope_duro_100(self):
+        # Basura extrema: tras recuperar sigue >100% → tope 1.0
+        val, fixed = _fix_crit_rate(19400.0)
+        assert val <= 1.0 and fixed
 
 
 class TestNormalizePercentBugA:
