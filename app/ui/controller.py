@@ -279,7 +279,12 @@ class MonitorController(QObject):
         """
         label = "Habilidades" if state.code == "S19" else "Equipamiento"
         if identified and agent_name:
-            origen = "por avatar" if source == "avatar" else "heredado de Atributos base"
+            if source == "avatar":
+                origen = "por avatar"
+            elif source == "sostenido":
+                origen = "sostenido del último reconocido"
+            else:
+                origen = "heredado de Atributos base"
             self.log_message.emit(f"[reconocido] {agent_name} ({origen})")
             self.log_message.emit(f"[pantalla] {state.code} — {label} reconocida")
         else:

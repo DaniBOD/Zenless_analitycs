@@ -383,9 +383,11 @@ def test_agent_detail_hereda_identidad_si_mismo_avatar(code):
 
 
 @pytest.mark.parametrize("code", ["S8", "S19"])
-def test_agent_detail_no_afirma_identidad_si_cambio_avatar(code):
-    """Si el avatar cambió de posición (switch directo) y el matcher no lo
-    reconoce (librería vacía), NO se afirma identidad stale → None/False."""
+def test_agent_detail_sostiene_latch_si_cambio_avatar_y_matcher_falla(code):
+    """Latch por contexto (2026-06-06): si el avatar cambió de posición y el
+    matcher NO lo reconoce (librería vacía / crop de esquina degradado), NO se
+    cae a 'sin identificar' — se SOSTIENE el último PJ con source='sostenido'.
+    Esto cierra el bug del PJ de esquina y la contaminación de otros PJs."""
     from app.core.detector import ScreenState
     from app.core.monitor import Monitor
 
@@ -398,11 +400,33 @@ def test_agent_detail_no_afirma_identidad_si_cambio_avatar(code):
     )
     monitor._last_agent_name = "Nangong Yu"
     monitor._agent_anchor_x = 0.60
+    monitor._detail_source = "heredado"
 
-    frame = _frame_with_avatar_highlight(0.80)  # otro slot → otro PJ
+    frame = _frame_with_avatar_highlight(0.80)  # otra posición, matcher falla
     monitor._dispatch_state(frame, ScreenState(code, 0.90, f"tab:{code}", method="tab"))
 
-    assert received == [(code, None, False, None)]
+    # Sostiene el último PJ reconocido en vez de borrarlo.
+    assert received == [(code, "Nangong Yu", True, "sostenido")]
+
+
+def test_agent_detail_sin_latch_y_matcher_falla_no_identifica():
+    """Si NO hay latch previo y el matcher falla, sí cae a 'sin identificar'
+    (no hay nada que sostener)."""
+    from app.core.detector import ScreenState
+    from app.core.monitor import Monitor
+
+    received: list = []
+    monitor = Monitor(
+        ocr=_StubOcr("", ""),
+        detector=ScreenDetector(),
+        on_agent_detail=lambda st, name, ident, src: received.append((st.code, name, ident, src)),
+        agent_identifier=_empty_identifier(),
+    )
+    # Sin _last_agent_name (None por defecto), avatar en posición nueva.
+    frame = _frame_with_avatar_highlight(0.80)
+    monitor._dispatch_state(frame, ScreenState("S8", 0.90, "tab:S8", method="tab"))
+
+    assert received == [("S8", None, False, None)]
 
 
 def test_agent_detail_sin_anchor_previo_no_identifica():
@@ -470,9 +494,10 @@ def test_agent_detail_sostiene_identidad_si_avatar_oculto(code):
     assert received == [("Dialyn", True, "heredado")]
 
 
-def test_agent_detail_latch_se_resetea_al_salir_de_familia():
-    """Al pasar a un estado fuera de la familia (S12), el latch se limpia; luego
-    en un S8 con avatar oculto NO debe resucitar la identidad vieja."""
+def test_agent_detail_latch_se_resetea_al_salir_a_pantalla_confirmada():
+    """Al pasar a una pantalla no-detalle CONFIRMADA (roster/menú, conf alta), el
+    latch se limpia; luego en un S8 con avatar oculto NO debe resucitar la
+    identidad vieja."""
     from app.core.detector import ScreenState
     from app.core.monitor import Monitor
 
@@ -487,15 +512,38 @@ def test_agent_detail_latch_se_resetea_al_salir_de_familia():
     monitor._agent_anchor_x = 0.60
     monitor._detail_source = "heredado"
 
-    # Salir a combate/menú (S12) → debe limpiar el latch
+    # Salir a un menú CONFIRMADO (conf alta) → debe limpiar el latch
     monitor._dispatch_state(np.zeros((1440, 2560, 3), np.uint8),
-                            ScreenState("S12", 0.0, "dark", method="template"))
+                            ScreenState("S12", 0.90, "menu", method="template"))
     assert monitor._last_agent_name is None
 
     # Volver a S8 con avatar oculto → sin identidad heredada
     monitor._dispatch_state(np.zeros((1440, 2560, 3), np.uint8),
                             ScreenState("S8", 0.90, "tab:S8", method="tab"))
     assert received == [(None, False, None)]
+
+
+def test_agent_detail_latch_sobrevive_fundido_de_transicion():
+    """Zhu Yuan (2026-06-06): un fundido oscuro entre pestañas (S12 conf~0) NO
+    debe resetear el latch — la identidad sobrevive el transitorio."""
+    from app.core.detector import ScreenState
+    from app.core.monitor import Monitor
+
+    monitor = Monitor(
+        ocr=_StubOcr("", ""),
+        detector=ScreenDetector(),
+        on_agent_detail=lambda *a: None,
+        agent_identifier=_empty_identifier(),
+    )
+    monitor._last_agent_name = "Zhu Yuan"
+    monitor._agent_anchor_x = 0.60
+    monitor._detail_source = "heredado"
+
+    # Fundido de transición: S12 con conf 0.0 (dark_frame_filter). NO resetea.
+    monitor._dispatch_state(np.zeros((1440, 2560, 3), np.uint8),
+                            ScreenState("S12", 0.0, "dark_frame_filter", method="template"))
+    assert monitor._last_agent_name == "Zhu Yuan"
+    assert monitor._detail_source == "heredado"
 
 
 def test_agent_detail_nombra_pj_via_matcher_de_avatar(tmp_path):

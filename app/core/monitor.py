@@ -45,6 +45,12 @@ _CONTINUOUS_STATES = AGENT_STATS_STATES | _AGENT_DETAIL_STATES
 # adyacentes distan ~0.04-0.05 norm; media-ranura como margen anti-jitter).
 _AVATAR_X_TOL = 0.025
 
+# Confianza mínima de un estado NO-detalle para resetear el latch de identidad.
+# Un fundido de transición entre pestañas (S12/dark_frame_filter, conf~0) NO debe
+# olvidar al PJ — eso causaba el parpadeo "detecta→no reconoce" (Zhu Yuan,
+# 2026-06-06). Solo una pantalla no-detalle CONFIRMADA (roster/ciudad) resetea.
+_DETAIL_RESET_MIN_CONF = 0.50
+
 # Intervalo de captura rápida (entre frames para buffer, sin procesar)
 _FAST_CAPTURE_MS = 100  # 10 fps — MSS captura en ~20ms, template match en ~50ms
 
@@ -406,7 +412,11 @@ class Monitor:
             self._agent_stats_screen_logged = False
             # Salimos de la familia de detalle de agente → olvidar la identidad
             # latcheada (al re-entrar a un S8 de otro PJ no debe sostener el viejo).
-            self._reset_detail_identity()
+            # PERO solo si es una pantalla no-detalle CONFIRMADA: un fundido de
+            # transición entre pestañas (conf~0) NO debe resetear el latch, o
+            # parpadea "detecta→no reconoce" (Zhu Yuan, 2026-06-06).
+            if state.confidence >= _DETAIL_RESET_MIN_CONF:
+                self._reset_detail_identity()
 
     def _handle_upgrade(self, frame, state: ScreenState) -> None:
         if self._upgrade_syncer is None:
@@ -488,38 +498,63 @@ class Monitor:
         Latchea la identidad del PJ en S8/S19 muestreando el avatar resaltado.
         Se invoca en el loop rápido (10 fps) y también desde el handler de cadencia.
 
-        Reglas (hysteresis):
-          - avatar OCULTO (selected_avatar_x = None) → NO tocar el latch (sostener
-            la identidad: el row deslizante se ocultó, no hay evidencia de cambio).
-          - avatar en la MISMA posición que el anchor → mantener identidad.
-          - avatar en posición NUEVA → re-identificar por matcher de avatar:
-              match → latch (nombre, "avatar"); sin match → "sin identificar".
-        Solo invoca el matcher al ver una posición nueva (barato en estado estable).
+        **Latch POR CONTEXTO (2026-06-06).** La identidad se SOSTIENE; un fallo de
+        lectura/match NUNCA la borra. Solo cambia ante EVIDENCIA POSITIVA (un match
+        de avatar, que puede ser un PJ distinto). Cierra de raíz los 4 hallazgos del
+        primer parseo S8/S19 (ver Dev_IA 2026-06-06 §8):
+          - avatar OCULTO (cur_x None) → sostener (brecha B5: ocultar la fila no es
+            evidencia de cambio de PJ).
+          - PJ en ESQUINA del slider cuyo crop sale degradado → el matcher falla,
+            pero sostenemos el último PJ en vez de caer a "sin identificar".
+          - el fallo de identificar un PJ NO contamina al ya reconocido (no se borra
+            el latch global) → no hace falta re-parsear.
+
+        Reglas:
+          - cur_x None (row oculto) → sostener, no tocar nada.
+          - cur_x ≈ anchor y la identidad ya está CONFIRMADA (heredado/avatar) →
+            estable, nada que hacer.
+          - en otro caso correr el matcher:
+              match → confirmar (nombre, "avatar"), anclar la posición.
+              sin match + hay latch previo → SOSTENER (source "sostenido"), sin
+                  anclar la posición (deja re-confirmar en un frame más nítido).
+              sin match + sin latch → genuinamente "sin identificar".
         """
         try:
             cur_x = selected_avatar_x(frame)
         except Exception:
             return
         if cur_x is None:
-            return  # avatar oculto → sostener latch
-        # Misma posición que el anchor actual → ya identificado, nada que cambiar.
-        if (self._agent_anchor_x is not None
-                and abs(cur_x - self._agent_anchor_x) < _AVATAR_X_TOL):
-            if self._detail_source is None and self._last_agent_name:
+            return  # avatar oculto → sostener latch (sin evidencia de cambio)
+        same_pos = (self._agent_anchor_x is not None
+                    and abs(cur_x - self._agent_anchor_x) < _AVATAR_X_TOL)
+        if same_pos and self._last_agent_name is not None:
+            # Misma posición que el anchor con un nombre ya latcheado → es el PJ
+            # anclado (heredado). No degradar un match 'avatar' ya confirmado.
+            if self._detail_source != "avatar":
                 self._detail_source = "heredado"
             return
-        # Posición nueva (switch a otro PJ visible) → matcher de avatar.
+        # Posición nueva (o sin nombre aún) → matcher de avatar.
         try:
             match = self._identifier.identify(frame)
         except Exception:
             log.exception("Error en identifier.identify")
             match = None
         if match is not None:
+            # Evidencia positiva → confirmar (puede ser un cambio real de PJ).
             self._last_agent_name = match[0]
             self._detail_source = "avatar"
-        else:
-            self._last_agent_name = None
-            self._detail_source = None
+            self._agent_anchor_x = cur_x
+            return
+        # Matcher sin match. Carry-forward: NUNCA borrar un latch ya logrado.
+        if self._last_agent_name is not None:
+            if self._detail_source != "avatar":
+                self._detail_source = "sostenido"
+            # NO anclar cur_x: dejar reintentar el matcher en frames más nítidos
+            # (clave para el PJ de esquina cuyo crop oscila).
+            return
+        # Sin latch previo y sin match → genuinamente sin identificar.
+        self._last_agent_name = None
+        self._detail_source = None
         self._agent_anchor_x = cur_x
 
     def _reset_detail_identity(self) -> None:
