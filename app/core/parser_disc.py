@@ -78,6 +78,10 @@ class DiscParsed:
     # los deja en default; el monitor los completa tras la guarda latch+avatar.
     agente_asignado_nombre: str | None = None
     agente_asignado_conf: float = 0.0
+    # Tier de conjunto ACTIVO para este disco (solo S17): 2 = solo 2pc activo
+    # (2-3 piezas), 4 = 4pc activo (4+ piezas, que también activa el 2pc). None si
+    # no se detecta. Se lee por color del texto "N pistas:" (blanco=activo/gris=no).
+    set_active_tier: int | None = None
 
 
 def _parse_titulo(raw: str) -> tuple[str, int]:

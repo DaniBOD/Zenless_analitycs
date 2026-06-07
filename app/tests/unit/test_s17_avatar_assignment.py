@@ -24,6 +24,7 @@ from app.core.parser_disc_s17 import (
     crop_s17_assigned_avatar,
     _has_avatar_content,
     _detail_level_bbox,
+    detect_active_set_tier,
 )
 from app.core.agent_identifier import AgentIdentifier
 from app.core.parser_disc import DiscParsed, SubstatParsed
@@ -95,6 +96,26 @@ def test_crop_avatar_ausente_devuelve_none():
     # línea de nivel sintética en el panel de detalle (xn≈0.36)
     lines = [("Nivel 15/15", 0.95, (924, 249, 1103, 286))]
     assert crop_s17_assigned_avatar(frame, lines, 2557, 1439) is None
+
+
+# --- 1b. Tier de conjunto activo (color del texto) ---------------------------
+
+@pytest.mark.parametrize("name,esperado", [
+    ("Ejemplo_1", 2),   # Jazz caótico 2pc (4pistas en gris)
+    ("Ejemplo_8", 2),
+    ("Ejemplo_2", 4),   # 4pistas en blanco → 4pc activo
+    ("Ejemplo_4", 4),
+    ("Ejemplo_9", 4),
+    ("Ejemplo_10", 4),
+])
+def test_detect_active_tier(name, esperado):
+    frame, lines, W, H = _load_frame_lines(name)
+    assert detect_active_set_tier(frame, lines, W, H) == esperado
+
+
+def test_detect_active_tier_sin_pistas_none():
+    frame = np.zeros((1439, 2557, 3), dtype=np.uint8)
+    assert detect_active_set_tier(frame, [("ruido", 0.9, (10, 10, 80, 40))], 2557, 1439) is None
 
 
 # --- 2. Guarda S17 del identificador -----------------------------------------

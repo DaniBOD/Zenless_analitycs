@@ -472,14 +472,15 @@ class MonitorController(QObject):
 
     @staticmethod
     def _fmt_sub(s) -> str:
-        """Formatea un substat: 'ATK +1 38' · 'ATK% 3%' · 'Daño Crítico +1 9.6%'."""
+        """Formatea un substat con los rolls entre paréntesis tras el valor:
+        'ATK 38 (+1)' · 'ATK% 3%' · 'Daño Crítico 9.6% (+1)'."""
         nombre = s.nombre_canon or s.nombre_raw or "?"
-        roll = f" +{s.rolls}" if s.rolls else ""
         val = ""
         if s.valor is not None:
             unit = "%" if s.unidad == "%" else ""
             val = f" {s.valor:g}{unit}"
-        return f"{nombre}{roll}{val}"
+        roll = f" (+{s.rolls})" if s.rolls else ""
+        return f"{nombre}{val}{roll}"
 
     def _log_s17_extraction(self, disc, result=None) -> None:
         """Loguea la extracción completa de un disco equipado S17 (estilo S18)."""
@@ -508,15 +509,17 @@ class MonitorController(QObject):
             )
         else:
             self.log_message.emit("[asignado] sin PJ confiable → no se tocó la asignación")
-        # Bono de conjunto (item #3): desde disc_sets (curado, no OCR).
-        if result is not None and (result.set_bonus_2p or result.set_bonus_4p):
-            if result.set_bonus_2p:
-                self.log_message.emit(f"[conjunto] 2pc: {result.set_bonus_2p}")
-            if result.set_bonus_4p:
-                desc = result.set_bonus_4p
-                if len(desc) > 90:
-                    desc = desc[:90] + "…"
-                self.log_message.emit(f"[conjunto] 4pc: {desc}")
+        # Conjunto: tier ACTIVO para este disco (2pc vs 4pc, por color del texto)
+        # + el bono 2pc curado (corto). NO se vuelca la descripción 4pc completa.
+        set_name = disc.set_name_canon or disc.set_name_raw or "?"
+        if disc.set_active_tier in (2, 4):
+            self.log_message.emit(
+                f"[conjunto] {set_name} · tier activo: {disc.set_active_tier}pc"
+            )
+        else:
+            self.log_message.emit(f"[conjunto] {set_name} · tier activo: sin detectar")
+        if result is not None and result.set_bonus_2p:
+            self.log_message.emit(f"[conjunto] 2pc: {result.set_bonus_2p}")
         if result is not None:
             self.log_message.emit(
                 f"[persistido] disco id={result.disc_id} ({result.trigger})"

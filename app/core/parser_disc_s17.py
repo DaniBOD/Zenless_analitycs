@@ -59,6 +59,11 @@ _RE_NIVEL = re.compile(r"nivel\s*(\d{1,2})\s*/\s*15")
 _RE_ROLLS = re.compile(r"^(.*?)\s*\+\s*(\d+)\s*$")
 _RE_VALOR = re.compile(r"(-?\d+(?:[.,]\d+)?)\s*(%?)")
 _RE_PISTAS = re.compile(r"^\d+\s*pistas?\s*:", re.IGNORECASE)
+_RE_PISTAS_TIER = re.compile(r"^\s*(\d)\s*pistas?\s*:", re.IGNORECASE)
+# Brillo (p95 del prefijo "N pistas:") por encima del cual el tier está ACTIVO
+# (texto blanco). Medido sobre 8 capturas reales: activo=255, inactivo=142 →
+# umbral 190 con margen enorme. El prefijo nunca lleva keywords coloreadas.
+_ACTIVE_TIER_BRIGHT_MIN = 190.0
 
 
 def _strip(s: str) -> str:
@@ -338,6 +343,39 @@ def _has_avatar_content(face) -> bool:
         return True  # ante error, no bloquear (la guarda decide)
 
 
+def detect_active_set_tier(frame, lines, W, H) -> int | None:
+    """
+    Tier de conjunto ACTIVO leyendo el color del texto en "Efecto de conjunto":
+    el 2pc siempre está blanco (activo); el 4pc está blanco si hay 4+ piezas o
+    gris si solo hay 2-3. Devuelve 4 si el 4pc está activo, 2 si solo el 2pc,
+    None si no se localiza la línea "4 pistas:".
+    """
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return None
+    tier4_bb = None
+    for (t, _c, bb) in lines:
+        m = _RE_PISTAS_TIER.match(_strip(t).strip())
+        x1, _y1, _x2, _y2 = bb
+        xn = x1 / W if W else 0.0
+        if m and 0.30 <= xn <= 0.52 and m.group(1) == "4":
+            tier4_bb = bb
+            break
+    if tier4_bb is None:
+        return None
+    try:
+        import cv2
+        x1, y1, x2, y2 = tier4_bb
+        xp = x1 + int((x2 - x1) * 0.35)  # solo el prefijo "4 pistas:"
+        crop = frame[y1:y2, x1:xp]
+        if crop.size == 0:
+            return None
+        g = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        p95 = float(np.percentile(g, 95))
+        return 4 if p95 > _ACTIVE_TIER_BRIGHT_MIN else 2
+    except Exception:
+        return None
+
+
 def parse_disc_s17(frame: np.ndarray, ocr: "OcrBackend") -> DiscParsed:
     """
     Extrae el disco equipado de una pantalla S17 (full-frame, espacial).
@@ -367,5 +405,6 @@ def parse_disc_s17_full(frame: np.ndarray, ocr: "OcrBackend"):
             parsed.rareza = rar
     except Exception:
         pass
+    parsed.set_active_tier = detect_active_set_tier(frame, lines, W, H)
     face = crop_s17_assigned_avatar(frame, lines, W, H)
     return parsed, face
