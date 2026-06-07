@@ -439,3 +439,84 @@ def test_persist_s17_update_preserva_asignacion_si_sin_match(syncer_db):
         con.close()
     finally:
         sync.close()
+
+
+# --- 6. Composición de set derivada de inventory_discs -----------------------
+
+def _comp_db():
+    """DB en memoria con inventory_discs + disc_sets para tests de composición."""
+    con = sqlite3.connect(":memory:"); con.row_factory = sqlite3.Row
+    con.executescript("""
+        CREATE TABLE disc_sets (id INTEGER PRIMARY KEY, nombre TEXT);
+        CREATE TABLE inventory_discs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, set_id INTEGER, slot INTEGER,
+            equipado INTEGER DEFAULT 0, agente_asignado INTEGER, descartado INTEGER DEFAULT 0
+        );
+        INSERT INTO disc_sets VALUES (1,'Jazz Caótico'),(2,'Melodía de Faetón'),(3,'Set C');
+    """)
+    return con
+
+
+def _seed(con, agente, pares):
+    """pares: lista de (slot, set_id)."""
+    for slot, sid in pares:
+        con.execute("INSERT INTO inventory_discs (set_id, slot, equipado, agente_asignado) VALUES (?,?,1,?)",
+                    (sid, slot, agente))
+    con.commit()
+
+
+def test_composicion_estandar_4_2():
+    from app.core.sync_equip import compute_set_composition, format_composition
+    con = _comp_db()
+    _seed(con, 26, [(1, 1), (6, 1), (2, 2), (3, 2), (4, 2), (5, 2)])  # 2x Jazz + 4x Melodía
+    comp = compute_set_composition(con, 26)
+    assert comp["clasificacion"] == "estándar 4+2"
+    assert comp["faltantes"] == []
+    # 4pc primero
+    assert comp["sets"][0]["nombre"] == "Melodía de Faetón" and comp["sets"][0]["tier"] == "4pc"
+    assert comp["sets"][1]["nombre"] == "Jazz Caótico" and comp["sets"][1]["tier"] == "2pc"
+    s = format_composition(comp)
+    assert s == "4pc Melodía de Faetón + 2pc Jazz Caótico · 6/6 · estándar 4+2", s
+
+
+def test_composicion_exotica_2_2_2():
+    from app.core.sync_equip import compute_set_composition
+    con = _comp_db()
+    _seed(con, 1, [(1, 1), (2, 1), (3, 2), (4, 2), (5, 3), (6, 3)])
+    comp = compute_set_composition(con, 1)
+    assert comp["clasificacion"] == "exótica"
+    assert all(s["tier"] == "2pc" for s in comp["sets"]) and len(comp["sets"]) == 3
+
+
+def test_composicion_incompleta_con_faltantes():
+    from app.core.sync_equip import compute_set_composition, format_composition
+    con = _comp_db()
+    _seed(con, 1, [(1, 1), (2, 2), (3, 2), (4, 2), (5, 2)])  # slot 6 faltante
+    comp = compute_set_composition(con, 1)
+    assert comp["clasificacion"] == "incompleta"
+    assert comp["faltantes"] == [6]
+    assert "slots 6 faltantes (nulo/no capturado)" in format_composition(comp)
+    # set con 1 pieza → "suelto"
+    jazz = next(s for s in comp["sets"] if s["nombre"] == "Jazz Caótico")
+    assert jazz["tier"] == "suelto"
+
+
+def test_composicion_sin_discos():
+    from app.core.sync_equip import compute_set_composition, format_composition
+    con = _comp_db()
+    comp = compute_set_composition(con, 99)
+    assert comp["sets"] == [] and comp["faltantes"] == [1, 2, 3, 4, 5, 6]
+    assert format_composition(comp) == "sin discos equipados capturados"
+
+
+def test_persist_s17_devuelve_composicion(syncer_db):
+    """persist_s17_disc adjunta la composición del PJ asignado al SyncResult."""
+    sync = _make_syncer(syncer_db)
+    try:
+        d = _disc(slot=1); d.agente_asignado_nombre = "Zhu Yuan"; d.agente_asignado_conf = 0.95
+        res = sync.persist_s17_disc(d)
+        assert res is not None and res.set_composition is not None
+        # 1 disco (slot 1) → incompleta con 5 faltantes
+        assert "incompleta" in res.set_composition
+    finally:
+        sync.close()

@@ -46,6 +46,9 @@ class SyncResult:
     # Bono de conjunto curado del set (item #3, desde disc_sets — no OCR).
     set_bonus_2p: str | None = None
     set_bonus_4p: str | None = None
+    # Composición de set del PJ asignado (derivada de los discos equipados en
+    # inventory_discs): resumen legible "4pc X + 2pc Y · 6/6 · estándar 4+2".
+    set_composition: str | None = None
 
 
 # Callback opcional que recibe el resultado (para el toast de Fase 3)
@@ -55,6 +58,86 @@ NotifyFn = Callable[[SyncResult, DiscParsed], None]
 OptimizerNotifyFn = Callable[["OptimizerResult"], None]  # type: ignore[type-arg]
 
 _OPTIMIZER_DEBOUNCE_S = 2.0
+
+
+def compute_set_composition(con: sqlite3.Connection, agente_id: int) -> dict:
+    """
+    Composición de set de un PJ derivada de sus discos equipados (inventory_discs).
+    Reusa el set leído por OCR del título en cada captura S17 (fiable). Devuelve:
+
+        {
+          "sets": [{"nombre", "count", "slots": [..], "tier": "4pc"|"2pc"|"suelto"}],
+          "slots_llenos": [..], "faltantes": [..],
+          "clasificacion": "estándar 4+2"|"exótica"|"incompleta",
+        }
+
+    `tier`: ≥4→"4pc" (que también activa el 2pc), ≥2→"2pc", ==1→"suelto".
+    `clasificacion`: incompleta si hay slots faltantes (nulo o no capturado aún);
+    estándar 4+2 si exactamente un set con 4 y uno con 2 sin faltantes; si no, exótica.
+    """
+    rows = con.execute(
+        """SELECT iv.slot AS slot, iv.set_id AS set_id, ds.nombre AS nombre
+           FROM inventory_discs iv LEFT JOIN disc_sets ds ON ds.id = iv.set_id
+           WHERE iv.agente_asignado = ? AND iv.equipado = 1
+             AND (iv.descartado = 0 OR iv.descartado IS NULL)
+           ORDER BY iv.slot""",
+        (agente_id,),
+    ).fetchall()
+
+    by_set: dict[int, dict] = {}
+    slots_llenos: list[int] = []
+    for r in rows:
+        slot = r["slot"]
+        sid = r["set_id"]
+        if slot is not None:
+            slots_llenos.append(slot)
+        entry = by_set.setdefault(sid, {"nombre": r["nombre"] or f"set#{sid}", "slots": []})
+        if slot is not None:
+            entry["slots"].append(slot)
+
+    def _tier(n: int) -> str:
+        return "4pc" if n >= 4 else ("2pc" if n >= 2 else "suelto")
+
+    sets = [
+        {"nombre": e["nombre"], "count": len(e["slots"]),
+         "slots": sorted(e["slots"]), "tier": _tier(len(e["slots"]))}
+        for e in by_set.values()
+    ]
+    # Orden: por count desc (4pc primero), luego nombre.
+    sets.sort(key=lambda s: (-s["count"], s["nombre"]))
+
+    llenos = sorted(set(slots_llenos))
+    faltantes = sorted(set(range(1, 7)) - set(llenos))
+
+    counts = sorted((s["count"] for s in sets), reverse=True)
+    if faltantes:
+        clasificacion = "incompleta"
+    elif counts == [4, 2]:
+        clasificacion = "estándar 4+2"
+    else:
+        clasificacion = "exótica"
+
+    return {
+        "sets": sets,
+        "slots_llenos": llenos,
+        "faltantes": faltantes,
+        "clasificacion": clasificacion,
+    }
+
+
+def format_composition(comp: dict) -> str:
+    """Resumen legible de `compute_set_composition` para el log/UI."""
+    if not comp.get("sets"):
+        return "sin discos equipados capturados"
+    partes = [f"{s['tier']} {s['nombre']}" for s in comp["sets"]]
+    cuerpo = " + ".join(partes)
+    n = len(comp["slots_llenos"])
+    cob = f"{n}/6"
+    extra = ""
+    if comp["faltantes"]:
+        fl = ",".join(str(s) for s in comp["faltantes"])
+        extra = f" · slots {fl} faltantes (nulo/no capturado)"
+    return f"{cuerpo} · {cob} · {comp['clasificacion']}{extra}"
 
 
 def _parsed_to_disc(p: DiscParsed, disc_id: int, set_id: int) -> Disc:
@@ -281,11 +364,22 @@ class DiscSyncer:
                 f"{bonus_2p_stat} {bonus_2p_valor}".strip()
                 if (bonus_2p_stat or bonus_2p_valor) else None
             )
+            # Composición de set del PJ (derivada de los discos equipados). Solo si
+            # hay PJ asignado confiable. Usa _con_r (check_same_thread=False).
+            composition = None
+            if agente_id is not None:
+                try:
+                    composition = format_composition(
+                        compute_set_composition(self._con_r, agente_id)
+                    )
+                except Exception:
+                    log.exception("Error computando composición de set")
             latency_ms = (time.perf_counter() - t0) * 1000
             log.info(
-                "S17 persistido id=%d %s set=%s slot=%d asignado=%s 2pc=%s %.0fms",
+                "S17 persistido id=%d %s set=%s slot=%d asignado=%s 2pc=%s comp=%s %.0fms",
                 disc_id, trigger, parsed.set_name_raw, parsed.slot,
-                parsed.agente_asignado_nombre or "-", bonus_2p or "-", latency_ms,
+                parsed.agente_asignado_nombre or "-", bonus_2p or "-",
+                composition or "-", latency_ms,
             )
             return SyncResult(
                 disc_id=disc_id,
@@ -297,6 +391,7 @@ class DiscSyncer:
                 agente_asignado_nombre=parsed.agente_asignado_nombre,
                 set_bonus_2p=bonus_2p,
                 set_bonus_4p=bonus_4p,
+                set_composition=composition,
             )
         except Exception as exc:
             log.exception("Error en persist_s17_disc: %s", exc)

@@ -524,6 +524,8 @@ class MonitorController(QObject):
             self.log_message.emit(
                 f"[persistido] disco id={result.disc_id} ({result.trigger})"
             )
+            if result.set_composition:
+                self.log_message.emit(f"[composición] {result.set_composition}")
         self.log_message.emit(f"[completo] disco extraído — {len(disc.subs)}/4 substats")
         if disc.notas:
             self.log_message.emit(f"[disco] notas: {', '.join(disc.notas)}")
