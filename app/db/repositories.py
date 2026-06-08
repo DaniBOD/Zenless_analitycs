@@ -274,6 +274,26 @@ class InventoryDiscRepo:
         ).fetchone()
         return self._row_to_disc(r) if r else None
 
+    def find_equipped_by_agent_slot(self, agente_id: int, slot: int) -> "Disc | None":
+        """
+        Disco equipado de un PJ en un slot dado. Clave NATURAL del equipamiento:
+        un PJ tiene exactamente un disco equipado por slot. A diferencia de
+        `find_by_hash` (set+slot+main+mainval, que COLISIONA entre PJs que comparten
+        la misma firma), esto nunca devuelve el disco de otro PJ.
+        """
+        r = self._con.execute(
+            "SELECT * FROM inventory_discs WHERE agente_asignado=? AND slot=? "
+            "AND equipado=1 AND descartado=0 LIMIT 1",
+            (agente_id, slot),
+        ).fetchone()
+        return self._row_to_disc(r) if r else None
+
+    def set_unequipped(self, disc_id: int) -> None:
+        """Marca un disco como NO equipado (swap-out). Conserva agente_asignado y data."""
+        self._con.execute(
+            "UPDATE inventory_discs SET equipado=0 WHERE id=?", (disc_id,)
+        )
+
     def insert_from_parsed(
         self,
         p: "DiscParsed",

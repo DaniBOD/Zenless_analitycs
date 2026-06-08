@@ -60,6 +60,30 @@ class TestNormalizeStatName:
     def test_truly_unknown(self):
         assert normalize_stat_name("Fuerza Mística") is None
 
+    def test_fuzzy_n_tilde_mangles(self):
+        """
+        El OCR latino mangléa la 'ñ' de 'Daño' de forma inconsistente (la pierde
+        o la cambia por otra letra). El fallback difuso debe resolver todas a
+        'Daño Crítico'. Casos reales/plausibles observados en vivo (2026-06-06).
+        """
+        for raw in ["Dao Critico", "Daio Critico", "Dauo Critico",
+                    "Danio Critico", "Dafo Critico"]:
+            assert normalize_stat_name(raw) == "Daño Crítico", raw
+
+    def test_fuzzy_no_inventa_ante_ambiguedad(self):
+        """RNF-02: el difuso se ABSTIENE si no hay un canónico claramente cercano."""
+        # 'Fuerza Mística' no se parece a ningún stat → None (no fuerza un match)
+        assert normalize_stat_name("Fuerza Mística") is None
+        assert normalize_stat_name("xyzqw") is None
+
+    def test_fuzzy_no_confunde_maestria_con_tasa(self):
+        """
+        'Maestría de Anomalía' y 'Tasa de Anomalía' son cercanas (ratio 0.81) pero
+        DISTINTAS. Un mangle leve de una nunca debe resolver a la otra.
+        """
+        assert normalize_stat_name("Maestria de Anomalia") == "Maestría de Anomalía"
+        assert normalize_stat_name("Tasa de Anomalia") == "Tasa de Anomalía"
+
 
 # ---------------------------------------------------------------------------
 # parse_value

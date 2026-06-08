@@ -373,14 +373,73 @@ def test_persist_s17_inserta_con_asignacion(syncer_db):
         sync.close()
 
 
-def test_persist_s17_sin_asignacion_no_equipa(syncer_db):
+def test_persist_s17_sin_pj_confiable_no_persiste(syncer_db):
+    """
+    Sin PJ confiable NO se persiste: el disco S17 está equipado en algún PJ y sin
+    saber cuál, cualquier match por firma colisiona con discos de otros PJs.
+    """
     sync = _make_syncer(syncer_db)
     try:
         res = sync.persist_s17_disc(_disc())  # sin agente_asignado_nombre
-        assert res is not None and res.agente_asignado_nombre is None
+        assert res is None
         con = sqlite3.connect(str(syncer_db)); con.row_factory = sqlite3.Row
-        r = con.execute("SELECT agente_asignado, equipado FROM inventory_discs WHERE id=?", (res.disc_id,)).fetchone()
-        assert r["agente_asignado"] is None and r["equipado"] == 0
+        n = con.execute("SELECT COUNT(*) c FROM inventory_discs").fetchone()["c"]
+        assert n == 0, "no debe insertar nada sin PJ confiable"
+        con.close()
+    finally:
+        sync.close()
+
+
+def test_persist_s17_no_colisiona_entre_pjs(syncer_db):
+    """
+    Regresión del bug de corrupción (2026-06-06): dos PJs con la MISMA firma
+    (set+slot+main+mainval) — capturar el disco del PJ B no debe tocar el del PJ A.
+    Antes find_by_hash devolvía el disco de A (id más bajo) y le pisaba los stats.
+    """
+    sync = _make_syncer(syncer_db)
+    try:
+        con = sqlite3.connect(str(syncer_db)); con.row_factory = sqlite3.Row
+        con.execute("INSERT INTO agents (id, nombre, rol) VALUES (8, 'Otro PJ', 'Ataque')")
+        # Disco de A (Zhu Yuan, id agente 7): Jazz slot1, HP 2200, substat propio.
+        con.execute(
+            "INSERT INTO inventory_discs (id, set_id, slot, main_stat, main_valor, "
+            "sub1, val1, rolls1, nivel, equipado, agente_asignado, descartado) "
+            "VALUES (100, 1, 1, 'HP', 2200.0, 'Daño Crítico', 9.6, 1, 15, 1, 7, 0)"
+        )
+        con.commit(); con.close()
+
+        # Capturo el disco de B (Otro PJ): MISMA firma, substat distinto.
+        d = _disc(slot=1)  # Jazz, HP 2200
+        d.subs = [SubstatParsed("ATK", "ATK", 38.0, "flat", 1, 0.95)]
+        d.agente_asignado_nombre = "Otro PJ"; d.agente_asignado_conf = 0.95
+        res = sync.persist_s17_disc(d)
+        assert res is not None and res.disc_id != 100, "no debe matchear el disco de A"
+
+        con = sqlite3.connect(str(syncer_db)); con.row_factory = sqlite3.Row
+        a = con.execute("SELECT sub1, val1, agente_asignado FROM inventory_discs WHERE id=100").fetchone()
+        assert a["sub1"] == "Daño Crítico" and a["val1"] == 9.6, "el disco de A fue pisado"
+        assert a["agente_asignado"] == 7, "el disco de A fue robado"
+        b = con.execute("SELECT agente_asignado, equipado FROM inventory_discs WHERE id=?", (res.disc_id,)).fetchone()
+        assert b["agente_asignado"] == 8 and b["equipado"] == 1
+        con.close()
+    finally:
+        sync.close()
+
+
+def test_persist_s17_update_mismo_pj_slot(syncer_db):
+    """Re-captura del mismo PJ+slot actualiza ESE disco (no crea duplicado)."""
+    sync = _make_syncer(syncer_db)
+    try:
+        d1 = _disc(slot=1); d1.agente_asignado_nombre = "Zhu Yuan"; d1.agente_asignado_conf = 0.95
+        res1 = sync.persist_s17_disc(d1)
+        d2 = _disc(slot=1); d2.nivel = 15
+        d2.subs = [SubstatParsed("Daño Crítico", "Daño Crítico", 12.0, "%", 2, 0.95)]
+        d2.agente_asignado_nombre = "Zhu Yuan"; d2.agente_asignado_conf = 0.95
+        res2 = sync.persist_s17_disc(d2)
+        assert res2.disc_id == res1.disc_id, "debe actualizar el mismo disco, no duplicar"
+        con = sqlite3.connect(str(syncer_db)); con.row_factory = sqlite3.Row
+        n = con.execute("SELECT COUNT(*) c FROM inventory_discs WHERE agente_asignado=7 AND slot=1 AND equipado=1").fetchone()["c"]
+        assert n == 1, "un PJ tiene un solo disco equipado por slot"
         con.close()
     finally:
         sync.close()
@@ -409,33 +468,333 @@ def test_persist_s17_cross_thread(syncer_db):
     assert out["res"] is not None and out["res"].agente_asignado_nombre == "Zhu Yuan"
 
 
-def test_maybe_process_disc_recaptura_al_cambiar_slot(monkeypatch):
-    """S17: la dedup es por (code, slot) → cambiar de slot re-captura."""
+def _band_frame(val):
+    """Frame BGR con la banda de detalle S17 (x[0.30,0.52], y[0.10,0.55]) en `val`."""
+    import numpy as np
+    f = np.zeros((1440, 2560, 3), dtype=np.uint8)
+    f[int(0.10 * 1440):int(0.55 * 1440), int(0.30 * 2560):int(0.52 * 2560)] = val
+    return f
+
+
+def test_s17_firma_detecta_cambio_de_disco():
+    """
+    La firma híbrida gobierna el RESET del aggregator (Fase 1): mismo disco → no es
+    nuevo; otra firma (otro disco/slot) → es nuevo. Cubre el modo visualización.
+    """
+    m = _monitor()
+    fA, fB = _band_frame(50), _band_frame(200)
+    sigA, sigB = m._s17_disc_signature(fA), m._s17_disc_signature(fB)
+    assert m._is_new_s17_disc(sigA)        # sin ancla → todo es nuevo
+    m._disc_agg_sig = sigA
+    assert not m._is_new_s17_disc(sigA)    # mismo disco
+    assert m._is_new_s17_disc(sigB)        # otro disco
+
+
+_SLOTS_DIR = REPO / "Documentacion" / "Screenshots_Triggers" / "Discos_Triggers" / "14_Slots_equipamiento"
+
+
+@pytest.mark.parametrize("a,b", [
+    ("Ejemplo_Slot4_1", "Ejemplo_Slot5_1"),   # adyacentes, MISMO set (Melodía) — el caso que fallaba
+    ("Ejemplo_Slot5_1", "Ejemplo_Slot6_1"),
+    ("Ejemplo_Slot2_1", "Ejemplo_Slot3_1"),
+])
+def test_s17_firma_distingue_slots_mismo_set_adyacentes(a, b):
+    """
+    Regresión QA 2026-06-07: dos slots ADYACENTES del MISMO set se ven como discos
+    DISTINTOS (firma híbrida) → el aggregator se resetea al navegar. La firma 12×12
+    vieja no los distinguía. Usa capturas reales.
+    """
+    fa = cv2.imread(str(_SLOTS_DIR / f"{a}.png"))
+    fb = cv2.imread(str(_SLOTS_DIR / f"{b}.png"))
+    if fa is None or fb is None:
+        pytest.skip(f"captura no encontrada: {a}/{b}")
+    m = _monitor()
+    sa, sb = m._s17_disc_signature(fa), m._s17_disc_signature(fb)
+    assert m._sig_close(sa, sa), "el mismo frame debe verse como el mismo disco"
+    assert not m._sig_close(sa, sb), f"{a}→{b} (mismo set) deben verse como discos distintos"
+
+
+def test_maybe_process_disc_s17_va_al_handler_continuo(monkeypatch):
+    """S17 enruta al handler CONTINUO (Fase 1), no al one-shot _process_disc."""
     from app.core.detector import ScreenState
     m = _monitor()
     calls = []
-    monkeypatch.setattr(m, "_process_disc", lambda frame, st: calls.append(st.slot))
-    s1 = ScreenState("S17", 1.0, "tmpl"); s1.slot = 1
-    s1b = ScreenState("S17", 1.0, "tmpl"); s1b.slot = 1
-    s2 = ScreenState("S17", 1.0, "tmpl"); s2.slot = 2
-    m._maybe_process_disc(None, s1)   # captura slot 1
-    m._maybe_process_disc(None, s1b)  # mismo slot → dedup
-    m._maybe_process_disc(None, s2)   # slot 2 → re-captura
-    assert calls == [1, 2], f"esperaba capturas en slot 1 y 2, hubo {calls}"
+    monkeypatch.setattr(m, "_process_disc_s17_continuous", lambda frame, st: calls.append(st.code))
+    m._maybe_process_disc(None, ScreenState("S17", 1.0, "tmpl"))
+    assert calls == ["S17"]
 
 
-def test_persist_s17_update_preserva_asignacion_si_sin_match(syncer_db):
-    """Re-captura del mismo disco SIN asignación confiable no pisa el PJ curado."""
+# --- 5d. DiscAggregator + S17 continuo (Fase 1) ------------------------------
+
+def _sub(nombre, valor, rolls=0, unidad="flat"):
+    return SubstatParsed(nombre, nombre, valor, unidad, rolls, 0.95)
+
+
+def _disc_full(slot=1, set_name="Jazz caótico"):
+    """Disco maduro: set+slot+main+4 substats con valor."""
+    d = _disc(slot=slot, set_name=set_name)
+    d.subs = [_sub("ATK", 38.0, 1), _sub("Daño Crítico", 9.6, 1, "%"),
+              _sub("Prob. Crítica", 4.8, 0, "%"), _sub("Maestría de Anomalía", 27.0, 2)]
+    return d
+
+
+def test_disc_is_mature():
+    from app.core.parser_disc_s17 import disc_is_mature
+    assert disc_is_mature(_disc_full())
+    # main sin valor → no maduro
+    d = _disc_full(); d.main_valor = None
+    assert not disc_is_mature(d)
+    # solo 3 substats → no maduro
+    d = _disc_full(); d.subs = d.subs[:3]
+    assert not disc_is_mature(d)
+    # slot inválido (0) → no maduro
+    d = _disc_full(); d.slot = 0
+    assert not disc_is_mature(d)
+
+
+def test_disc_aggregator_converge_parciales():
+    """Fusiona parciales del mismo disco: un valor leído en un frame se conserva
+    aunque el siguiente lo lea None; converge a completo."""
+    from app.core.parser_disc_s17 import DiscAggregator, disc_is_mature
+    agg = DiscAggregator()
+    # Frame 1: main OK pero 2 substats sin valor.
+    d1 = _disc_full()
+    d1.subs[1].valor = None
+    d1.subs[3].valor = None
+    m1 = agg.merge(d1)
+    assert not disc_is_mature(m1)
+    # Frame 2: main None (se dropea) pero los 2 substats faltantes ahora con valor.
+    d2 = _disc_full()
+    d2.main_valor = None
+    m2 = agg.merge(d2)
+    # main se conserva del frame 1; substats completados del frame 2 → maduro.
+    assert m2.main_valor is not None
+    assert disc_is_mature(m2)
+
+
+def test_s17_continuo_emite_una_vez_al_madurar(monkeypatch):
+    """
+    _process_disc_s17_continuous fusiona cada ciclo y emite (_on_disc) UNA sola vez
+    al madurar; no re-emite mientras siga el mismo disco; resetea al cambiar de disco.
+    """
+    from app.core.detector import ScreenState
+    import numpy as np
+    emitted = []
+    m = _monitor()
+    m._on_disc = lambda disc, st: emitted.append(disc)
+    # Firma estable (mismo disco) y sin avatar.
+    sig = (np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
+    monkeypatch.setattr(m, "_s17_disc_signature", lambda frame: sig)
+    monkeypatch.setattr(m, "_assign_s17_pj", lambda disc, face: None)
+
+    seq = iter([_partial := _disc_full(), _disc_full(), _disc_full()])
+    _partial.subs[2].valor = None  # frame 1 incompleto
+    monkeypatch.setattr("app.core.monitor.parse_disc_s17_full",
+                        lambda frame, ocr: (next(seq), None))
+    st = ScreenState("S17", 1.0, "tmpl")
+    m._process_disc_s17_continuous(None, st)   # frame 1: parcial → no emite
+    assert emitted == []
+    m._process_disc_s17_continuous(None, st)   # frame 2: completo → emite 1 vez
+    assert len(emitted) == 1
+    m._process_disc_s17_continuous(None, st)   # frame 3: mismo disco → no re-emite
+    assert len(emitted) == 1
+
+
+def test_s17_continuo_no_re_emite_por_parpadeo_de_firma(monkeypatch):
+    """
+    Regresión QA 2026-06-07: el modelo 3D del disco tiene animación idle → la firma
+    híbrida cruza el umbral en pantalla ESTÁTICA y resetea el aggregator. Sin dedup
+    por identidad el MISMO disco quieto se re-emitía ~7×. Con dedup: aunque la firma
+    parpadee (fuerza reset cada ciclo), un disco ya emitido NO se re-emite.
+    """
+    from app.core.detector import ScreenState
+    import numpy as np
+    emitted = []
+    m = _monitor()
+    m._on_disc = lambda disc, st: emitted.append(disc)
+    # Firma que PARPADEA cruzando el umbral cada ciclo (diff 100 > _S17_SIG_DETAIL_MAX)
+    # → _is_new_s17_disc True cada ciclo (peor caso: modelo 3D animado).
+    import itertools
+    seqsig = itertools.cycle([0.0, 100.0])
+    monkeypatch.setattr(
+        m, "_s17_disc_signature",
+        lambda frame: (np.full((48, 48), next(seqsig), np.float32), np.zeros((24, 24), np.float32)),
+    )
+    monkeypatch.setattr(m, "_assign_s17_pj", lambda disc, face: None)
+    monkeypatch.setattr("app.core.monitor.parse_disc_s17_full",
+                        lambda frame, ocr: (_disc_full(), None))
+    st = ScreenState("S17", 1.0, "tmpl")
+    for _ in range(7):
+        m._process_disc_s17_continuous(None, st)
+    assert len(emitted) == 1, "el mismo disco no debe re-emitirse aunque la firma parpadee"
+    # Cambiar de disco (otra identidad) SÍ emite de nuevo.
+    monkeypatch.setattr("app.core.monitor.parse_disc_s17_full",
+                        lambda frame, ocr: (_disc_full(slot=2), None))
+    m._process_disc_s17_continuous(None, st)
+    assert len(emitted) == 2
+    # Salir de S17 limpia el dedup → re-entrar re-emite.
+    m._reset_s17_disc_tracking()
+    monkeypatch.setattr("app.core.monitor.parse_disc_s17_full",
+                        lambda frame, ocr: (_disc_full(), None))
+    m._process_disc_s17_continuous(None, st)
+    assert len(emitted) == 3
+
+
+def test_log_s17_assign_edge_triggered():
+    """El log de asignación S17 emite 1× por firma; re-loguea al cambiar de decisión."""
+    m = _monitor()
+    logs = []
+    import app.core.monitor as mon
+    orig = mon.log.info
+    mon.log.info = lambda msg, *a: logs.append(msg % a if a else msg)
+    try:
+        m._log_s17_assign(("confirm", "Lucía"), "asig %s", "Lucía")
+        m._log_s17_assign(("confirm", "Lucía"), "asig %s", "Lucía")  # misma firma → no
+        m._log_s17_assign(("mismatch", "Lucía", "Yixuan"), "mismatch")  # cambia → sí
+    finally:
+        mon.log.info = orig
+    assert logs == ["asig Lucía", "mismatch"]
+
+
+def test_s17_continuo_baja_confianza_no_contamina(monkeypatch):
+    """Un frame con confianza < 0.7 (transición) no se fusiona ni emite."""
+    from app.core.detector import ScreenState
+    import numpy as np
+    emitted = []
+    m = _monitor()
+    m._on_disc = lambda disc, st: emitted.append(disc)
+    sig = (np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
+    monkeypatch.setattr(m, "_s17_disc_signature", lambda frame: sig)
+    monkeypatch.setattr(m, "_assign_s17_pj", lambda disc, face: None)
+    bad = _disc_full(); bad.confianza_global = 0.5
+    monkeypatch.setattr("app.core.monitor.parse_disc_s17_full", lambda frame, ocr: (bad, None))
+    m._process_disc_s17_continuous(None, ScreenState("S17", 1.0, "tmpl"))
+    assert emitted == []
+    assert m._disc_aggregator.current is None  # no se fusionó nada
+
+
+def test_assign_s17_visualizacion_no_equipado():
+    """Sin avatar → equip_detectado False (disco disponible, no equipado)."""
+    m = _monitor()
+    m._last_agent_name = "Zhu Yuan"
+    disc = _disc()
+    m._assign_s17_pj(disc, None)
+    assert disc.equip_detectado is False
+    assert disc.equip_pj_visual is None
+
+
+def test_assign_s17_visualizacion_equipado_por_latch():
+    """Con avatar del PJ latcheado → equip_detectado True + equip_pj_visual = latch."""
+    fr, ln, W, H = _load_frame_lines("Ejemplo_1")
+    m = _monitor()
+    m._last_agent_name = "Zhu Yuan"
+    disc = _disc()
+    m._assign_s17_pj(disc, crop_s17_assigned_avatar(fr, ln, W, H))
+    assert disc.equip_detectado is True
+    assert disc.equip_pj_visual == "Zhu Yuan"
+
+
+def test_persist_s17_sin_pj_no_pisa_lo_curado(syncer_db):
+    """Re-captura SIN asignación confiable no persiste → preserva el PJ curado."""
     sync = _make_syncer(syncer_db)
     try:
         d1 = _disc(); d1.agente_asignado_nombre = "Zhu Yuan"; d1.agente_asignado_conf = 0.95
         res1 = sync.persist_s17_disc(d1)
-        # Segunda pasada del MISMO disco (mismo hash) sin asignación → preserva
+        # Segunda pasada SIN asignación confiable → None, no toca nada.
         res2 = sync.persist_s17_disc(_disc())
-        assert res2 is not None and res2.disc_id == res1.disc_id
+        assert res2 is None
         con = sqlite3.connect(str(syncer_db)); con.row_factory = sqlite3.Row
         r = con.execute("SELECT agente_asignado, equipado FROM inventory_discs WHERE id=?", (res1.disc_id,)).fetchone()
         assert r["agente_asignado"] == 7 and r["equipado"] == 1, "no debe pisar lo curado"
+        con.close()
+    finally:
+        sync.close()
+
+
+# --- 5b. Resolución de set INSENSIBLE A ACENTOS (OCR pierde tildes) -----------
+
+def test_resolve_set_id_sin_tilde(syncer_db):
+    """
+    El OCR pierde tildes inconsistentemente ('Melodía'→'Melodia'). _resolve_set_id
+    debe matchear igual (regresión del slot 2 que no persistía en el QA 2026-06-07).
+    """
+    con = sqlite3.connect(str(syncer_db))
+    con.execute("INSERT INTO disc_sets (id, nombre, nombre_en, bonus_2p_stat, bonus_2p_valor, bonus_4p_desc) "
+                "VALUES (2, 'Melodía de Faetón', \"Phaethon's Melody\", 'Tasa de Anomalía', '+8%', 'Cuando...')")
+    con.commit(); con.close()
+    sync = _make_syncer(syncer_db)
+    try:
+        d = _disc(slot=2, set_name="Melodia de Faetón")  # OCR sin la í
+        assert sync._resolve_set_id(d) == 2
+        # Persiste de punta a punta con el PJ asignado.
+        d.agente_asignado_nombre = "Zhu Yuan"; d.agente_asignado_conf = 0.95
+        res = sync.persist_s17_disc(d)
+        assert res is not None
+        con = sqlite3.connect(str(syncer_db)); con.row_factory = sqlite3.Row
+        r = con.execute("SELECT set_id FROM inventory_discs WHERE id=?", (res.disc_id,)).fetchone()
+        assert r["set_id"] == 2
+        con.close()
+    finally:
+        sync.close()
+
+
+def test_resolve_set_id_no_inventa_set(syncer_db):
+    """Un nombre que no se parece a ningún set → None (no falso positivo)."""
+    sync = _make_syncer(syncer_db)
+    try:
+        d = _disc(set_name="Texto OCR basura xyz")
+        assert sync._resolve_set_id(d) is None
+    finally:
+        sync.close()
+
+
+def test_resolve_set_id_distingue_sets_parecidos(syncer_db):
+    """Sets distintos no colisionan al normalizar (Jazz caótico ≠ Melodía)."""
+    con = sqlite3.connect(str(syncer_db))
+    con.execute("INSERT INTO disc_sets (id, nombre) VALUES (2, 'Melodía de Faetón')")
+    con.commit(); con.close()
+    sync = _make_syncer(syncer_db)
+    try:
+        assert sync._resolve_set_id(_disc(set_name="Jazz caotico")) == 1   # sin tilde en ó
+        assert sync._resolve_set_id(_disc(set_name="melodia de faeton")) == 2
+    finally:
+        sync.close()
+
+
+# --- 5c. Modo READONLY (DANIBOD_READONLY) — no escribe -----------------------
+
+def test_persist_s17_readonly_no_escribe(syncer_db, monkeypatch):
+    """
+    Con DANIBOD_READONLY, persist_s17_disc NO toca la DB (modo offline para testear
+    hipótesis), pero devuelve un SyncResult informativo (trigger='readonly').
+    """
+    monkeypatch.setenv("DANIBOD_READONLY", "1")
+    sync = _make_syncer(syncer_db)
+    try:
+        d = _disc(slot=1)
+        d.agente_asignado_nombre = "Zhu Yuan"; d.agente_asignado_conf = 0.95
+        res = sync.persist_s17_disc(d)
+        assert res is not None and res.trigger == "readonly"
+        con = sqlite3.connect(str(syncer_db)); con.row_factory = sqlite3.Row
+        n = con.execute("SELECT COUNT(*) c FROM inventory_discs").fetchone()["c"]
+        assert n == 0, "readonly no debe escribir en la DB"
+        con.close()
+    finally:
+        sync.close()
+
+
+def test_persist_s17_escribe_si_no_readonly(syncer_db, monkeypatch):
+    """Sin la var (o '0'), persiste normal — confirma que el guard no rompe el flujo."""
+    monkeypatch.setenv("DANIBOD_READONLY", "0")
+    sync = _make_syncer(syncer_db)
+    try:
+        d = _disc(slot=1)
+        d.agente_asignado_nombre = "Zhu Yuan"; d.agente_asignado_conf = 0.95
+        res = sync.persist_s17_disc(d)
+        assert res is not None and res.trigger != "readonly"
+        con = sqlite3.connect(str(syncer_db)); con.row_factory = sqlite3.Row
+        n = con.execute("SELECT COUNT(*) c FROM inventory_discs WHERE equipado=1").fetchone()["c"]
+        assert n == 1
         con.close()
     finally:
         sync.close()

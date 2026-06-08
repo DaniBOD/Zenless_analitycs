@@ -138,6 +138,7 @@ ALIASES: dict[str, str] = {
 
 import re as _re
 import unicodedata as _ud
+import difflib as _difflib
 
 
 def _norm_key(s: str) -> str:
@@ -164,16 +165,53 @@ for _canon in ALL_CANONICAL:
 for _alias, _canon in ALIASES.items():
     _NORM_LOOKUP.setdefault(_norm_key(_alias), _canon)
 
+_NORM_KEYS: list[str] = list(_NORM_LOOKUP.keys())
+
+# Umbral del fallback difuso. Calibrado (2026-06-06) para abarcar los mangles de
+# la 'ñ' del OCR ('Daño'→'Dao'/'Daio'/'Dauo'/'Danio'/'Dafo', ratio ≥ 0.87) y
+# excluir la colisión peligrosa 'Maestría de Anomalía'↔'Tasa de Anomalía' (0.812).
+_FUZZY_CUTOFF = 0.84
+# Margen mínimo para desempatar entre dos canónicos DISTINTOS cercanos: si el
+# segundo candidato (de otro canónico) está más cerca que esto, no se adivina.
+_FUZZY_MARGIN = 0.06
+
+
+def _base(canon: str) -> str:
+    """Quita el '%' final: ATK y ATK% comparten base (el parser desambigua por unidad)."""
+    return canon[:-1] if canon.endswith("%") else canon
+
 
 def normalize_stat_name(raw: str | None) -> str | None:
     """
     Devuelve el nombre canónico del stat, o None si es desconocido.
 
     Insensible a acentos, mayúsculas y espacios (robusto a OCR). Ver _norm_key.
+
+    Fallback difuso: el OCR latino mangléa la 'ñ' de forma inconsistente
+    ('Daño Crítico' → 'Dao'/'Daio'/'Dauo'/'Danio Critico') y los alias fijos no
+    escalan a cada variante. Si la clave exacta falla, se busca el canónico más
+    cercano con umbral alto; se ABSTIENE (None) si hay ambigüedad con otro
+    canónico distinto (RNF-02: no adivinar). Las variantes X/X% no cuentan como
+    ambiguas (misma base; el parser corrige el % por la unidad del valor).
     """
     if raw is None:
         return None
-    return _NORM_LOOKUP.get(_norm_key(raw))
+    key = _norm_key(raw)
+    hit = _NORM_LOOKUP.get(key)
+    if hit is not None:
+        return hit
+    matches = _difflib.get_close_matches(key, _NORM_KEYS, n=3, cutoff=_FUZZY_CUTOFF)
+    if not matches:
+        return None
+    best = _NORM_LOOKUP[matches[0]]
+    r_best = _difflib.SequenceMatcher(None, key, matches[0]).ratio()
+    for m in matches[1:]:
+        if _base(_NORM_LOOKUP[m]) != _base(best):
+            r_m = _difflib.SequenceMatcher(None, key, m).ratio()
+            if r_best - r_m < _FUZZY_MARGIN:
+                return None  # ambiguo entre canónicos distintos → no adivinar
+            break
+    return best
 
 
 def parse_value(raw: str | float | int | None) -> tuple[float, str] | None:

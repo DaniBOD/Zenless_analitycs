@@ -12,6 +12,8 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
+import numpy as np
+
 from app.core.capturer import WindowBounds, capture_window, find_zzz_window
 from app.core.detector import (
     ScreenDetector, ScreenState, TemporalBuffer, AGENT_STATS_STATES,
@@ -19,7 +21,9 @@ from app.core.detector import (
     _deep_detect_s18, detect_active_tab, selected_avatar_x,
 )
 from app.core.parser_disc import DiscParsed, parse_modal_detalle
-from app.core.parser_disc_s17 import parse_disc_s17, parse_disc_s17_full
+from app.core.parser_disc_s17 import (
+    parse_disc_s17, parse_disc_s17_full, DiscAggregator, disc_is_mature,
+)
 from app.core.parser_agent_stats import AgentStatsParsed, parse_agent_stats, AgentStatsAggregator
 from app.core.agent_identifier import AgentIdentifier
 from app.core.ocr_backend import OcrBackend
@@ -60,16 +64,27 @@ _DETAIL_RESET_MIN_CONF = 0.50
 #   sim < MIN → avatar es de OTRO PJ (disco del grid) → abstener (preservar DB).
 _S17_GUARD_MIN = 0.86
 
-# Frames consecutivos con el MISMO slot S17 (a 10fps) antes de aceptar un cambio
-# de slot como real y re-capturar. El slot por OCR rebota durante la navegación
-# (visto en vivo: 2→3→2); 3 frames (~0.3s) filtra ese ruido sin agregar lag.
-_S17_SLOT_STABLE_FRAMES = 3
+# S17 continuo (Fase 1): ciclos de cadencia que se fusionan en el aggregator antes
+# de emitir BEST-EFFORT si el disco no maduró (red de seguridad). Si madura antes
+# (todos los campos), se emite en ese ciclo. ~5 ciclos cubre OCR no-determinista.
+_S17_AGG_MAX_CYCLES = 5
+
+# Firma HÍBRIDA del disco S17 (gobierna la re-captura; BARATA, sin OCR — RNF-06).
+# Dos componentes en gris comparadas con OR:
+#   - detalle: bloque main + 4 substats (lo que SÍ difiere entre discos del MISMO
+#     set; el título/nivel/labels son idénticos y se excluyen para no diluir).
+#   - hexágono: las 6 caras + el anillo de selección (cambia al cambiar de slot).
+# "Disco nuevo" si CUALQUIER componente supera su umbral. Umbrales calibrados sobre
+# capturas reales (14_Slots_equipamiento): TODOS los cambios de slot —incluso
+# adyacentes del mismo set, p.ej. 4↔5— superan el umbral (peor caso ~1.6× el
+# umbral); frame idéntico = 0. La firma 12×12 vieja NO distinguía slots del mismo
+# set (bug QA 2026-06-07). Re-capturar el mismo disco es idempotente (update
+# in-place) → se sesga a sensibilidad. Ver Dev_IA 2026-06-07.
+_S17_SIG_DETAIL_MAX = 5.0
+_S17_SIG_HEX_MAX = 3.0
 
 # Intervalo de captura rápida (entre frames para buffer, sin procesar)
 _FAST_CAPTURE_MS = 100  # 10 fps — MSS captura en ~20ms, template match en ~50ms
-
-# Heartbeat intervalo (logging de diagnóstico)
-_HEARTBEAT_S = 2.0
 
 
 @dataclass
@@ -132,13 +147,23 @@ class Monitor:
         # no en cada tick. Se resetea cuando salimos del estado.
         self._processed_disc_state_code: str | None = None
         self._reported_agent_stats_state_code: str | None = None
-        # S17: cada slot es un disco distinto → re-capturar al cambiar de slot.
-        # El slot por OCR rebota durante la navegación (2→3→2), así que exigimos
-        # estabilidad (N frames iguales) antes de capturar. `_processed_disc_slot`
-        # evita re-procesar el mismo slot; se resetea al salir de S17.
-        self._s17_slot_candidate: int | None = None
-        self._s17_slot_count: int = 0
-        self._processed_disc_slot: int | None = None
+        # S17 CONTINUO + DiscAggregator (Fase 1, 2026-06-07): igual que S18, mientras
+        # se mira un disco se re-extrae cada cadencia y se FUSIONAN parciales →
+        # converge en pocos ciclos sin necesitar un frame perfecto (mata el
+        # "mover y volver"). La firma híbrida del disco detecta CAMBIO de disco y
+        # resetea el aggregator (igual que S18 resetea por cambio de agente).
+        self._disc_aggregator = DiscAggregator()
+        self._disc_agg_sig = None        # firma-ancla del disco que se está fusionando
+        self._disc_emitted: bool = False  # ya se emitió (persist/log) este disco
+        self._disc_agg_cycles: int = 0    # ciclos fusionados del disco actual
+        # Identidades (set_canon, slot, main_canon) ya emitidas en ESTA sesión S17.
+        # Desacopla la emisión de los parpadeos de la firma híbrida: el modelo 3D
+        # del disco tiene animación idle → la firma cruza el umbral en pantalla
+        # estática y resetea el aggregator. Sin esto el MISMO disco quieto se
+        # re-emite ~7×. Se limpia al salir de S17 o forzar (F8). RNF-06: sin OCR.
+        self._disc_emitted_ids: set = set()
+        # Última firma del log "[S17] asignado" (edge-trigger: 1× por cambio).
+        self._s17_assign_sig = None
         # Último estado confirmado por votación. Persiste aunque el buffer
         # dedupee (devuelva None por mismo estado), para permitir
         # re-extracción CONTINUA de S18 sin requerir cambio de estado ni F8.
@@ -159,6 +184,9 @@ class Monitor:
         # mientras el avatar esté oculto (interfaz deslizante) — solo cambia al ver
         # positivamente otro avatar. Da robustez frente al auto-hide del row.
         self._detail_source: str | None = None
+        # Firma del último log de detalle S8/S19 emitido (edge-triggered): solo se
+        # re-loguea cuando (code, name, identified, source) cambia.
+        self._last_detail_sig: tuple | None = None
         self._window: WindowBounds | None = None
         # TemporalBuffer del loop _run(). Instance var para que force_scan()
         # pueda resetearlo y permitir re-emisión de [reconocido]/[stats].
@@ -219,6 +247,11 @@ class Monitor:
         if self._thread and self._thread.is_alive():
             self._processed_disc_state_code = None
             self._reported_agent_stats_state_code = None
+            # S17 continuo: re-emitir el disco actual aunque ya se haya emitido
+            # (sin tirar lo fusionado — F8 fuerza el re-log/persist del best-known).
+            self._disc_emitted = False
+            self._disc_emitted_ids.clear()
+            self._s17_assign_sig = None
             # Resetear también el TemporalBuffer del loop. Sin esto, F8
             # quedaba sin emitir [reconocido]/[stats] porque `buffer.add`
             # devuelve None para el mismo código ya emitido. El buffer
@@ -249,7 +282,6 @@ class Monitor:
         sin necesidad de cambio de estado real.
         """
         self._force_event = threading.Event()
-        last_heartbeat = time.monotonic()
         last_process_time = 0.0
         self._buffer = TemporalBuffer(window_size=3)
         buffer = self._buffer  # alias local para el loop
@@ -290,29 +322,16 @@ class Monitor:
                 if deep is not None:
                     raw_state = deep
 
-            # Slot detection
-            s17_slot_ready = False
-            if raw_state.code == "S17":
-                raw_state.slot = extract_s17_slot(frame, self._ocr)
-                # Estabilizar el slot (rebota por OCR durante la navegación) y
-                # marcar re-captura cuando un slot NUEVO se mantiene N frames.
-                sl = raw_state.slot
-                if sl and 1 <= sl <= 6:
-                    if sl == self._s17_slot_candidate:
-                        self._s17_slot_count += 1
-                    else:
-                        self._s17_slot_candidate = sl
-                        self._s17_slot_count = 1
-                    if (self._s17_slot_count >= _S17_SLOT_STABLE_FRAMES
-                            and sl != self._processed_disc_slot):
-                        s17_slot_ready = True
-            else:
-                if raw_state.code == "S9":
-                    raw_state.slot = extract_s9_slot(frame, self._ocr)
-                # Fuera de S17 → olvidar el tracking de slot (re-entrar re-captura).
-                self._s17_slot_candidate = None
-                self._s17_slot_count = 0
-                self._processed_disc_slot = None
+            # Slot detection. S17 ya NO usa gate one-shot: es CONTINUO con aggregator
+            # (Fase 1), igual que S18. La firma del disco se evalúa dentro del handler
+            # (_process_disc_s17_continuous) para resetear el aggregator al cambiar de
+            # disco. El slot lo lee el parser del título cada ciclo (y el aggregator
+            # conserva el mejor no-cero).
+            if raw_state.code == "S9":
+                raw_state.slot = extract_s9_slot(frame, self._ocr)
+            elif raw_state.code != "S17":
+                # Fuera de S17 → olvidar el tracking del disco mirado.
+                self._reset_s17_disc_tracking()
 
             # ---- Paso 2: alimentar buffer temporal ----
             # Deep detect con alta confianza salta la votación 2/3 para
@@ -341,34 +360,19 @@ class Monitor:
                 # ciclo de cadencia aunque el estado no cambie (logging persistente).
                 # El resto de estados procesa solo en la transición (voted_state no
                 # nulo) o por F8 forzado.
-                continuous = active_state.code in _CONTINUOUS_STATES
-                if active_state.code == "S17":
-                    # S17 captura SOLO cuando hay un slot estable nuevo (o F8).
-                    # Evita capturar durante la navegación con slot inestable, y
-                    # re-captura en cada cambio de slot (cada slot = otro disco).
-                    if s17_slot_ready:
-                        active_state.slot = self._s17_slot_candidate
-                    should_dispatch = forced or s17_slot_ready
-                else:
-                    should_dispatch = forced or (
-                        elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
-                    )
+                # S17 es CONTINUO (Fase 1): se re-procesa cada cadencia como S18/S8/S19.
+                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code == "S17"
+                should_dispatch = forced or (
+                    elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
+                )
                 if should_dispatch:
                     last_process_time = now
                     self._dispatch_state(frame, active_state)
 
-            # ---- Heartbeat cada 2s ----
-            if now - last_heartbeat >= _HEARTBEAT_S:
-                last_heartbeat = now
-                state_for_log = voted_state or raw_state
-                self._emit_diagnostic(
-                    f"heartbeat: {self._loop_ticks} capturas, "
-                    f"estado={state_for_log.code} slot={state_for_log.slot} "
-                    f"conf={state_for_log.confidence:.2f} "
-                    f"tmpl={state_for_log.template_name}"
-                )
-
             # ---- Espera corta entre capturas (fast polling) ----
+            # (Sin heartbeat periódico: el logging es edge-triggered. El cambio de
+            #  estado se loguea en _notify_state_change; los stats/detalle, en sus
+            #  handlers, solo cuando el dato cambia.)
             self._wait_fast()
 
     def _emit_diagnostic(self, msg: str) -> None:
@@ -414,13 +418,16 @@ class Monitor:
     def _notify_state_change(self, state: ScreenState) -> None:
         # Detectar cambio: code distinto, O mismo code S17 pero distinto slot
         # (el usuario clickea otro disco equipado en el mismo PJ).
+        prev_code = self._last_state.code if self._last_state is not None else None
         if self._last_state is not None:
             same_code = state.code == self._last_state.code
             same_slot = state.slot == self._last_state.slot
             if same_code and same_slot:
                 return
-        log.debug("Estado: %s slot=%s (conf=%.2f)",
-                  state.code, state.slot, state.confidence)
+        # Edge-triggered: solo se loguea al cambiar de estado (o de slot en S17).
+        slot_txt = f" slot={state.slot}" if state.slot is not None else ""
+        log.info("[estado] %s → %s%s (conf=%.2f)",
+                 prev_code or "-", state.code, slot_txt, state.confidence)
         if self._on_state_change:
             try:
                 self._on_state_change(state)
@@ -477,20 +484,140 @@ class Monitor:
         elif prev_code == "S10":
             self._upgrade_syncer.on_s10_exit()
 
+    @staticmethod
+    def _s17_disc_signature(frame):
+        """
+        Firma HÍBRIDA del disco S17, sin OCR (RNF-06). Devuelve `(sig_detail,
+        sig_hex)` o None:
+          - sig_detail: 48×48 gris del bloque main+substats (x∈[0.30,0.52],
+            y∈[0.22,0.56]) — lo que difiere entre discos del mismo set.
+          - sig_hex: 24×24 gris del hexágono (x∈[0.58,0.95], y∈[0.18,0.88]) — el
+            anillo de selección se mueve al cambiar de slot.
+        Identifica el disco mirado y cambia al navegar la grilla / cambiar de slot
+        aunque el set sea el mismo.
+        """
+        if frame is None or getattr(frame, "size", 0) == 0:
+            return None
+        try:
+            import cv2
+            H, W = frame.shape[:2]
+            det = frame[int(0.22 * H):int(0.56 * H), int(0.30 * W):int(0.52 * W)]
+            hexr = frame[int(0.18 * H):int(0.88 * H), int(0.58 * W):int(0.95 * W)]
+            if det.size == 0 or hexr.size == 0:
+                return None
+            sig_detail = cv2.cvtColor(
+                cv2.resize(det, (48, 48), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
+            ).astype(np.float32)
+            sig_hex = cv2.cvtColor(
+                cv2.resize(hexr, (24, 24), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
+            ).astype(np.float32)
+            return (sig_detail, sig_hex)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _sig_component_diff(a, b) -> float:
+        """Diff medio absoluto de una componente; inf si falta o cambia de forma."""
+        if a is None or b is None or getattr(a, "shape", None) != getattr(b, "shape", None):
+            return float("inf")
+        return float(np.abs(a - b).mean())
+
+    @staticmethod
+    def _sig_close(a, b) -> bool:
+        """
+        True si dos firmas híbridas son del MISMO disco: AMBAS componentes dentro de
+        su umbral. Si cualquiera supera su umbral ⇒ disco distinto (OR para disparar).
+        """
+        if a is None or b is None:
+            return False
+        return (Monitor._sig_component_diff(a[0], b[0]) <= _S17_SIG_DETAIL_MAX
+                and Monitor._sig_component_diff(a[1], b[1]) <= _S17_SIG_HEX_MAX)
+
+    def _reset_s17_disc_tracking(self) -> None:
+        """Olvida el disco S17 en fusión (al salir de S17 o forzar re-captura)."""
+        self._disc_aggregator.reset()
+        self._disc_agg_sig = None
+        self._disc_emitted = False
+        self._disc_agg_cycles = 0
+        self._disc_emitted_ids.clear()
+        self._s17_assign_sig = None
+
+    @staticmethod
+    def _disc_identity(d) -> tuple:
+        """Identidad estable de un disco para dedup de emisión (sin firma visual)."""
+        return (
+            d.set_name_canon or d.set_name_raw,
+            d.slot,
+            d.main_stat_canon or d.main_stat_raw,
+        )
+
+    def _is_new_s17_disc(self, sig) -> bool:
+        """True si la firma indica que el disco mirado cambió (o no había ancla)."""
+        return self._disc_agg_sig is None or not self._sig_close(sig, self._disc_agg_sig)
+
+    def _process_disc_s17_continuous(self, frame, state: ScreenState) -> None:
+        """
+        S17 CONTINUO (Fase 1, espejo de la extracción S18): cada cadencia re-extrae
+        el disco y FUSIONA parciales en el DiscAggregator. La firma híbrida detecta
+        cambio de disco y resetea el aggregator. Emite (persist/log) UNA vez cuando
+        el resultado fusionado MADURA (todos los campos), o tras _S17_AGG_MAX_CYCLES
+        como red de seguridad. Converge en pocos ciclos → mata el "mover y volver".
+        """
+        sig = self._s17_disc_signature(frame)
+        if sig is None:
+            return
+        if self._is_new_s17_disc(sig):
+            self._disc_aggregator.reset()
+            self._disc_agg_sig = sig
+            self._disc_emitted = False
+            self._disc_agg_cycles = 0
+        try:
+            disc, face = parse_disc_s17_full(frame, self._ocr)
+        except Exception:
+            log.exception("Error parseando disco S17")
+            return
+        self._assign_s17_pj(disc, face)
+        if disc.confianza_global < 0.7:
+            return  # frame de transición/baja confianza → no contaminar el aggregator
+        merged = self._disc_aggregator.merge(disc)
+        self._disc_agg_cycles += 1
+        if self._disc_emitted or merged is None:
+            return
+        mature = disc_is_mature(merged)
+        if mature or self._disc_agg_cycles >= _S17_AGG_MAX_CYCLES:
+            self._disc_emitted = True
+            # Dedup por IDENTIDAD: si la firma parpadeó (modelo 3D animado) y este
+            # disco ya se emitió en esta sesión S17, no re-emitir (ni re-persistir).
+            identity = self._disc_identity(merged)
+            if identity in self._disc_emitted_ids:
+                return
+            self._disc_emitted_ids.add(identity)
+            log.info(
+                "Disco detectado: set=%s slot=%d main=%s nivel=%d conf=%.2f (agg %dc%s)",
+                merged.set_name_canon or merged.set_name_raw, merged.slot,
+                merged.main_stat_canon or merged.main_stat_raw, merged.nivel,
+                merged.confianza_global, self._disc_agg_cycles,
+                "" if mature else " best-effort",
+            )
+            if self._on_disc:
+                try:
+                    self._on_disc(merged, state)
+                except Exception:
+                    log.exception("Error en on_disc S17")
+
     def _maybe_process_disc(self, frame, state: ScreenState) -> None:
         """
-        Dispara `_process_disc` una vez por (estado, slot). Para S17 el slot forma
-        parte de la clave de dedup: cada slot es un disco distinto, así que cambiar
-        de slot (sin salir de S17) re-captura. Para S3/S6/S7 la clave es el código
-        (un solo disco visible); reabrir el modal genera la transición que resetea.
+        S17 → handler CONTINUO con aggregator (Fase 1). S3/S6/S7 → one-shot por código
+        (un disco visible; reabrir el estado resetea el dedup).
         """
-        key = (state.code, state.slot) if state.code == "S17" else state.code
+        if state.code == "S17":
+            self._process_disc_s17_continuous(frame, state)
+            return
+        key = state.code
         if self._processed_disc_state_code == key:
             return
         self._processed_disc_state_code = key
         self._process_disc(frame, state)
-        if state.code == "S17":
-            self._processed_disc_slot = state.slot
 
     def _process_agent_stats_continuous(self, frame, state: ScreenState) -> None:
         """
@@ -516,8 +643,10 @@ class Monitor:
                 "(conf=%.2f)", state.confidence,
             )
 
-        # 2b) Extracción de datos en pantalla (cada ciclo).
-        log.info("[S18] Extrayendo stats de pantalla...")
+        # 2b) Extracción de datos en pantalla (cada ciclo). El log del RESULTADO es
+        # edge-triggered (lo emite el controller solo cuando cambia); este marcador
+        # per-ciclo queda en debug para no spamear.
+        log.debug("[S18] Extrayendo stats de pantalla...")
         result = self._process_agent_stats(frame, state)
 
         # Detección explícita de cambio de agente para el log.
@@ -612,6 +741,8 @@ class Monitor:
         self._last_agent_name = None
         self._agent_anchor_x = None
         self._detail_source = None
+        # Reset de la firma del log de detalle → re-entrar a S8/S19 loguea 1 vez.
+        self._last_detail_sig = None
 
     def _process_agent_detail_continuous(self, frame, state: ScreenState) -> None:
         """
@@ -628,6 +759,14 @@ class Monitor:
         identified = bool(name)
         source = self._detail_source if identified else None
 
+        # Edge-triggered: emitir solo cuando la identidad/estado de detalle cambia
+        # (antes se logueaba en cada ciclo de cadencia). Se resetea al salir de la
+        # familia detalle (_reset_detail_identity) → re-entrar loguea 1 vez.
+        sig = (state.code, name, identified, source)
+        if sig == self._last_detail_sig:
+            return
+        self._last_detail_sig = sig
+
         log.info(
             "[%s] Pantalla detalle reconocida (%s) — PJ=%s identificado=%s (%s)",
             state.code,
@@ -641,8 +780,9 @@ class Monitor:
                 log.exception("Error en on_agent_detail callback")
 
         # 2c) El re-log de stats lo emite el controller en on_agent_stats
-        # ([reconocido]/[stats]/[completo]) y _process_agent_stats loggea el
-        # post-merge — ambos se repiten en cada ciclo, según lo pedido.
+        # ([reconocido]/[stats]/[completo]) EDGE-triggered (solo cuando el resultado
+        # cambia). El procesamiento sí corre cada ciclo (madura parciales); el
+        # post-merge interno quedó en debug.
 
     @staticmethod
     def _stats_result_is_useful(stats) -> bool:
@@ -702,7 +842,9 @@ class Monitor:
             # Pasar por el aggregator: si esta captura tiene campos None pero
             # capturas previas del MISMO agente tenían valor, se preservan.
             stats = self._stats_aggregator.merge(raw_stats)
-            log.info(
+            # Diagnóstico interno del merge (per-ciclo) → debug. El log user-facing
+            # de stats lo emite el controller, edge-triggered (solo al cambiar).
+            log.debug(
                 "Stats agente (post-merge): Nv=%s PV=%s ATK=%s DEF=%s conf=%.2f",
                 stats.nivel, stats.pv, stats.ataque, stats.defensa, stats.confianza_global,
             )
@@ -744,11 +886,26 @@ class Monitor:
         confiable; ante duda los deja en None/0 (el syncer preserva lo curado).
         """
         latch = self._last_agent_name
-        if not latch:
-            log.info("[S17] sin latch de PJ → disco sin asignar (preserva DB).")
-            return
+        # --- VISUALIZACIÓN (display-only, independiente de la guarda) ---
+        # Hay avatar a la derecha del set ⇒ disco equipado; su ausencia ⇒ no equipado.
+        disc.equip_detectado = face is not None
         if face is None:
-            log.info("[S17] disco sin avatar (sin equipar / no localizado) → sin asignar.")
+            disc.equip_pj_visual = None
+            if latch:
+                self._log_s17_assign(
+                    ("no_avatar", latch),
+                    "[S17] disco sin avatar (no equipado / no localizado) → sin asignar.",
+                )
+            return
+        # Avatar presente: identificar el PJ para display (puede ser otro ≠ latch).
+        ident = self._identifier.identify_s17(face)
+        disc.equip_pj_visual = ident[0] if ident is not None else None
+
+        # --- GUARDA DE ASIGNACIÓN (persistencia) latch + avatar ---
+        if not latch:
+            self._log_s17_assign(
+                ("no_latch",), "[S17] sin latch de PJ → disco sin asignar (preserva DB)."
+            )
             return
         sim = self._identifier.s17_similarity(face, latch)
         if sim is None:
@@ -756,17 +913,35 @@ class Monitor:
             self._identifier.learn_s17(face, latch)
             disc.agente_asignado_nombre = latch
             disc.agente_asignado_conf = 1.0
-            log.info("[S17] asignado a '%s' (bootstrap latch, avatar S17 aprendido).", latch)
+            disc.equip_pj_visual = disc.equip_pj_visual or latch
+            self._log_s17_assign(
+                ("bootstrap", latch),
+                "[S17] asignado a '%s' (bootstrap latch, avatar S17 aprendido).", latch,
+            )
         elif sim >= _S17_GUARD_MIN:
             disc.agente_asignado_nombre = latch
             disc.agente_asignado_conf = round(sim, 3)
-            log.info("[S17] asignado a '%s' (avatar confirma, sim=%.3f).", latch, sim)
+            disc.equip_pj_visual = disc.equip_pj_visual or latch
+            self._log_s17_assign(
+                ("confirm", latch),
+                "[S17] asignado a '%s' (avatar confirma, sim=%.3f).", latch, sim,
+            )
         else:
-            log.info(
+            self._log_s17_assign(
+                ("mismatch", latch, disc.equip_pj_visual),
                 "[S17] avatar NO coincide con latch '%s' (sim=%.3f < %.2f) → "
                 "disco de otro PJ → sin asignar (preserva DB).",
                 latch, sim, _S17_GUARD_MIN,
             )
+
+    def _log_s17_assign(self, sig, msg, *args) -> None:
+        """Loguea la decisión de asignación S17 edge-triggered: 1× por cambio de
+        firma (no en cada ciclo del modelo continuo). Re-loguea al transicionar
+        entre equipado/otro-PJ/sin-avatar. Reset en _reset_s17_disc_tracking."""
+        if sig == self._s17_assign_sig:
+            return
+        self._s17_assign_sig = sig
+        log.info(msg, *args)
 
     def _process_disc(self, frame, state: ScreenState) -> None:
         try:

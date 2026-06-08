@@ -71,6 +71,9 @@ class MonitorController(QObject):
         self._disc_set_repo = None
         self._scoring_ctx = None
         self._disc_syncer = None
+        # Firma del último log de stats S18 emitido (edge-triggered): re-loguea solo
+        # cuando el resultado cambia. Se resetea en _on_state_from_monitor.
+        self._last_stats_sig: tuple | None = None
 
         # Watcher de proceso ZZZ — arranca/detiene el monitor automáticamente
         # según la presencia de la ventana del juego.
@@ -262,6 +265,9 @@ class MonitorController(QObject):
     def _on_state_from_monitor(self, state):
         # Signals son thread-safe en Qt (cross-thread auto-marshalled si hay event loop)
         from app.core.detector import describe_state, CAPTURE_DISC_STATES, UPGRADE_STATES, NON_CAPTURE_STATES
+        # Edge: cualquier cambio de estado resetea la firma del log de stats S18, de
+        # modo que re-entrar a Atributos base loguee el resultado 1 vez.
+        self._last_stats_sig = None
         self.state_changed.emit(state.code, state.confidence)
         desc = describe_state(state.code)
 
@@ -378,6 +384,26 @@ class MonitorController(QObject):
         missing = [k for k in required_keys if getattr(stats, k) is None]
         missing_labels = [_LABELS.get(k, k) for k in missing]
 
+        # El panel de stats es un binding de datos: se actualiza siempre.
+        payload = asdict(stats)
+        payload["state_code"] = state.code
+        self.agent_stats_detected.emit(payload)
+
+        # Logging EDGE-triggered: emitir el log (archivo + 3 líneas UI) solo cuando
+        # el RESULTADO cambia. La firma incluye los 11 stats + missing → un parcial
+        # que luego se completa cambia la firma y re-loguea (requisito explícito).
+        # `conf` se excluye (fluctúa). Se resetea al cambiar de estado
+        # (_on_state_from_monitor) → re-entrar a S18 loguea 1 vez.
+        stats_sig = (
+            stats.agente_nombre, stats.nivel, stats.pv, stats.ataque, stats.defensa,
+            stats.impacto, stats.prob_crit, stats.dano_crit, stats.tasa_anomalia,
+            stats.maestria_anomalia, stats.tasa_perforacion, stats.fuerza_bruta,
+            stats.recuperacion_energia, stats.acumulacion_adrenalina, tuple(missing),
+        )
+        if stats_sig == self._last_stats_sig:
+            return
+        self._last_stats_sig = stats_sig
+
         log.info(
             "Stats agente %s (%s/%s): Nv=%s PV=%s ATK=%s DEF=%s IMP=%s "
             "CR=%s CD=%s TA=%s MA=%s TP=%s FB=%s ER=%s AD=%s conf=%.2f missing=%s",
@@ -392,10 +418,6 @@ class MonitorController(QObject):
             stats.confianza_global,
             missing_labels,
         )
-
-        payload = asdict(stats)
-        payload["state_code"] = state.code
-        self.agent_stats_detected.emit(payload)
 
         # Línea 1: pantalla reconocida + nombre + rol + elemento (de pantalla)
         nombre = stats.agente_nombre or "agente"
@@ -509,6 +531,15 @@ class MonitorController(QObject):
             )
         else:
             self.log_message.emit("[asignado] sin PJ confiable → no se tocó la asignación")
+        # Estado de equipamiento (VISUALIZACIÓN, modo navegación de grilla): equipado
+        # o no + qué PJ, independiente de si se persistió. None = no aplicable (S3/S6/S7).
+        if disc.equip_detectado is not None:
+            if not disc.equip_detectado:
+                self.log_message.emit("[equipamiento] NO equipado (disco disponible)")
+            elif disc.equip_pj_visual:
+                self.log_message.emit(f"[equipamiento] equipado por: {disc.equip_pj_visual}")
+            else:
+                self.log_message.emit("[equipamiento] equipado (PJ no identificado)")
         # Conjunto: tier ACTIVO para este disco (2pc vs 4pc, por color del texto)
         # + el bono 2pc curado (corto). NO se vuelca la descripción 4pc completa.
         set_name = disc.set_name_canon or disc.set_name_raw or "?"

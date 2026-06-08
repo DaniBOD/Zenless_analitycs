@@ -82,6 +82,12 @@ class DiscParsed:
     # (2-3 piezas), 4 = 4pc activo (4+ piezas, que también activa el 2pc). None si
     # no se detecta. Se lee por color del texto "N pistas:" (blanco=activo/gris=no).
     set_active_tier: int | None = None
+    # VISUALIZACIÓN (S17, navegación de grilla, display-only): estado de
+    # equipamiento del disco mirado, independiente de la guarda de persistencia.
+    # equip_detectado: hay avatar a la derecha del set (→ equipado). equip_pj_visual:
+    # PJ identificado del avatar (puede ser otro distinto del latch), o None.
+    equip_detectado: bool | None = None
+    equip_pj_visual: str | None = None
 
 
 def _parse_titulo(raw: str) -> tuple[str, int]:

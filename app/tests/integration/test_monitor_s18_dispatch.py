@@ -447,8 +447,12 @@ def test_agent_detail_sin_anchor_previo_no_identifica():
     assert received == [("S8", None, False, None)]
 
 
-def test_agent_detail_continuo_re_emite_cada_dispatch():
-    """S8/S19 son continuos: 2 dispatch → 2 emisiones (logging persistente)."""
+def test_agent_detail_edge_emite_una_vez_hasta_cambio():
+    """
+    S8/S19 son EDGE-triggered (2026-06-07): con identidad estable, N dispatch
+    emiten 1 sola vez; al cambiar la identidad re-emite; al salir de la familia
+    detalle (_reset_detail_identity) se resetea → re-entrar emite de nuevo.
+    """
     from app.core.detector import ScreenState
     from app.core.monitor import Monitor
 
@@ -456,7 +460,7 @@ def test_agent_detail_continuo_re_emite_cada_dispatch():
     monitor = Monitor(
         ocr=_StubOcr("", ""),
         detector=ScreenDetector(),
-        on_agent_detail=lambda st, name, ident, src: received.append(st.code),
+        on_agent_detail=lambda st, name, ident, src: received.append((st.code, name)),
         agent_identifier=_empty_identifier(),
     )
     monitor._last_agent_name = "Nangong Yu"
@@ -464,8 +468,20 @@ def test_agent_detail_continuo_re_emite_cada_dispatch():
     frame = _frame_with_avatar_highlight(0.60)
     s8 = ScreenState("S8", 0.90, "tab:S8", method="tab")
     monitor._dispatch_state(frame, s8)
+    monitor._dispatch_state(frame, s8)  # mismo PJ/estado → NO re-emite
+    assert received == [("S8", "Nangong Yu")]
+
+    # Cambio de identidad → re-emite.
+    monitor._last_agent_name = "Zhu Yuan"
     monitor._dispatch_state(frame, s8)
-    assert received == ["S8", "S8"]
+    assert received == [("S8", "Nangong Yu"), ("S8", "Zhu Yuan")]
+
+    # Salir de la familia detalle resetea la firma → re-entrar emite otra vez.
+    monitor._reset_detail_identity()
+    monitor._last_agent_name = "Zhu Yuan"
+    monitor._agent_anchor_x = 0.60
+    monitor._dispatch_state(frame, s8)
+    assert received[-1] == ("S8", "Zhu Yuan") and len(received) == 3
 
 
 @pytest.mark.parametrize("code", ["S8", "S19"])

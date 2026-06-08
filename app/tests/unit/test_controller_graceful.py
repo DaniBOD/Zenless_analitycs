@@ -85,3 +85,53 @@ def test_controller_toggle_pause_when_not_started_is_noop(qapp):
     ctrl = MonitorController()
     # Sin monitor activo, toggle_pause es un no-op silencioso
     ctrl.toggle_pause()
+
+
+def test_agent_stats_log_edge_triggered(qapp):
+    """
+    El log de stats S18 es EDGE-triggered (2026-06-07): un resultado idéntico no
+    re-emite las líneas de log; un cambio de valor (o parcial→completo) sí;
+    `conf` NO gatilla; un cambio de estado resetea (re-entrar loguea 1 vez). El
+    binding del panel (agent_stats_detected) se emite SIEMPRE.
+    """
+    from dataclasses import replace
+    from app.ui.controller import MonitorController
+    from app.core.parser_agent_stats import AgentStatsParsed
+    from app.core.detector import ScreenState
+
+    ctrl = MonitorController()
+    logs: list = []
+    binds: list = []
+    ctrl.log_message.connect(lambda m: logs.append(m))
+    ctrl.agent_stats_detected.connect(lambda p: binds.append(p))
+
+    st = ScreenState("S18", 1.0, "tmpl")
+    s1 = AgentStatsParsed(
+        nivel=60, pv=10000, ataque=2500, defensa=900,
+        agente_nombre="Nangong Yu", rol="Aturdimiento", elemento="Éter",
+        confianza_global=0.9,
+    )
+
+    ctrl._on_agent_stats_from_monitor(s1, st)
+    n1 = len(logs)
+    assert n1 >= 3 and len(binds) == 1       # [reconocido]+[stats]+[parcial]
+
+    # Idéntico → no re-loguea; el panel sí se actualiza.
+    ctrl._on_agent_stats_from_monitor(s1, st)
+    assert len(logs) == n1, "log idéntico no debe re-emitir"
+    assert len(binds) == 2
+
+    # Cambia un stat → re-loguea.
+    ctrl._on_agent_stats_from_monitor(replace(s1, ataque=2600), st)
+    assert len(logs) > n1
+    n2 = len(logs)
+
+    # Solo cambia conf → NO gatilla.
+    ctrl._on_agent_stats_from_monitor(replace(s1, ataque=2600, confianza_global=0.4), st)
+    assert len(logs) == n2, "cambio de conf no debe gatillar"
+
+    # Cambio de estado resetea la firma → re-loguea aunque los datos sean iguales.
+    ctrl._on_state_from_monitor(ScreenState("S15", 1.0, "tmpl"))
+    n3 = len(logs)
+    ctrl._on_agent_stats_from_monitor(replace(s1, ataque=2600), st)
+    assert len(logs) > n3

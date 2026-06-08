@@ -17,6 +17,8 @@ from typing import Callable
 
 from app.core.parser_disc import DiscParsed
 from app.core.score_normalizer import ScoringContext
+from app.core.stats_vocab import _norm_key
+from app.db.connection import is_readonly
 from app.core.recommender import Recommendation, recomendar, recommendation_to_json
 from app.db.repositories import (
     AgentRepo,
@@ -223,6 +225,13 @@ class DiscSyncer:
         # avatar). None ⇒ no se toca agente_asignado/equipado (preserva lo curado).
         agente_id = self._resolve_agent_id(parsed)
 
+        if is_readonly():
+            log.info(
+                "[readonly] disco NO persiste — set=%s slot=%s asignado=%s",
+                parsed.set_name_raw, parsed.slot, parsed.agente_asignado_nombre or "-",
+            )
+            return None
+
         # Abrir conexión de escritura para esta transacción
         con_w = sqlite3.connect(str(self._db_path))
         con_w.row_factory = sqlite3.Row
@@ -334,28 +343,69 @@ class DiscSyncer:
             return None
 
         agente_id = self._resolve_agent_id(parsed)
+        # Sin PJ confiable NO se persiste: el disco S17 está equipado en ALGÚN PJ y
+        # la clave correcta es (PJ, slot). Sin saber el PJ, cualquier match por firma
+        # (set+slot+main+substats) colisiona con discos de otros PJs (en este roster,
+        # 72% de los discos comparten firma con otro PJ) → corromper/robar datos.
+        # Mejor no escribir y dejar que el usuario identifique el PJ (Atributos base).
+        if agente_id is None:
+            log.info(
+                "S17: PJ no confiable para '%s' slot=%d — no se persiste (evita colisión entre PJs).",
+                parsed.set_name_raw, parsed.slot,
+            )
+            return None
+
+        if is_readonly():
+            # Modo offline: NO se escribe. Se computa lo legible (set/composición) y
+            # se loguea lo que SE HARÍA, para testear hipótesis sin tocar la DB. La
+            # identificación del PJ (que puede ser errónea) ya la logueó el monitor.
+            comp = None
+            try:
+                comp = format_composition(compute_set_composition(self._con_r, agente_id))
+            except Exception:
+                log.exception("Error computando composición (readonly)")
+            bonus_2p_stat, bonus_2p_valor, bonus_4p = self._set_repo.get_bonus(set_id)
+            bonus_2p = (
+                f"{bonus_2p_stat} {bonus_2p_valor}".strip()
+                if (bonus_2p_stat or bonus_2p_valor) else None
+            )
+            log.info(
+                "[readonly] S17 NO persiste — set=%s slot=%d asignado=%s comp=%s",
+                parsed.set_name_raw, parsed.slot,
+                parsed.agente_asignado_nombre or "-", comp or "-",
+            )
+            return SyncResult(
+                disc_id=-1, trigger="readonly", recomendacion="(s17)", score_norm=0.0,
+                agente_nombre=None, latency_ms=round((time.perf_counter() - t0) * 1000, 1),
+                agente_asignado_nombre=parsed.agente_asignado_nombre,
+                set_bonus_2p=bonus_2p, set_bonus_4p=bonus_4p, set_composition=comp,
+            )
 
         con_w = sqlite3.connect(str(self._db_path))
         con_w.row_factory = sqlite3.Row
         disc_repo_w = InventoryDiscRepo(con_w)
         try:
             with con_w:
-                existing = disc_repo_w.find_by_hash(
-                    set_id, parsed.slot,
-                    parsed.main_stat_canon or parsed.main_stat_raw,
-                    parsed.main_valor,
-                )
-                if existing:
-                    disc_id = existing.id
+                # Clave NATURAL del equipamiento: un PJ tiene un disco por slot.
+                # Nunca matchea el disco de otro PJ (a diferencia de find_by_hash).
+                slot_disc = disc_repo_w.find_equipped_by_agent_slot(agente_id, parsed.slot)
+                if slot_disc is not None and slot_disc.set_id == set_id:
+                    # Mismo disco (refresco de nivel/substats tras upgrade).
+                    disc_id = slot_disc.id
                     trigger = "s17_update"
                     disc_repo_w.update_from_parsed(disc_id, parsed)
-                    if agente_id is not None:
-                        disc_repo_w.update_assignment(disc_id, agente_id)
-                else:
+                elif slot_disc is not None:
+                    # El PJ cambió el disco de este slot (set distinto): swap-out el
+                    # viejo (queda en inventario) e inserta el nuevo equipado.
+                    disc_repo_w.set_unequipped(slot_disc.id)
                     disc_id = disc_repo_w.insert_from_parsed(
-                        parsed, set_id,
-                        agente_asignado=agente_id,
-                        equipado=1 if agente_id is not None else 0,
+                        parsed, set_id, agente_asignado=agente_id, equipado=1,
+                    )
+                    trigger = "s17_swap"
+                else:
+                    # PJ sin disco previo en ese slot → alta.
+                    disc_id = disc_repo_w.insert_from_parsed(
+                        parsed, set_id, agente_asignado=agente_id, equipado=1,
                     )
                     trigger = "s17_insert"
 
@@ -459,12 +509,17 @@ class DiscSyncer:
         if sid:
             return sid
 
-        # 2. Fuzzy: buscar set cuyo nombre sea substring del texto OCR o viceversa
-        all_sets = self._set_repo.get_all_names()  # {nombre_lower: id}
-        name_l = name.lower().strip()
-        for sname, sid in all_sets.items():
-            if sname in name_l or name_l in sname:
-                log.debug("Set fuzzy match: '%s' → '%s' (id=%d)", name, sname, sid)
-                return sid
+        # 2. Fuzzy INSENSIBLE A ACENTOS: el OCR pierde tildes de forma inconsistente
+        #    ('Melodía'→'Melodia'), igual que la ñ de los substats. Se normaliza ambos
+        #    lados con _norm_key (NFD + quita Mn + minúscula + sin espacios) y se matchea
+        #    por igualdad o substring (el OCR puede capturar texto extra alrededor del
+        #    título). Subsume el viejo substring lowercase (que era acento-sensible).
+        name_n = _norm_key(name)
+        if name_n:
+            for sname, sid in self._set_repo.get_all_names().items():  # {nombre_lower: id}
+                sname_n = _norm_key(sname)
+                if sname_n and (sname_n == name_n or sname_n in name_n or name_n in sname_n):
+                    log.debug("Set fuzzy match (sin acentos): '%s' → '%s' (id=%d)", name, sname, sid)
+                    return sid
 
         return None

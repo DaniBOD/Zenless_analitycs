@@ -1,7 +1,11 @@
 """
 Conexión SQLite con foreign_keys ON y row_factory por defecto.
 
-Resolución de path de la DB:
+Resolución de path de la DB (en orden de prioridad):
+- Override por env var `DANIBOD_DB_PATH`: si está seteada, se usa ESE path tal
+  cual (sin copiar nada). Pensado para QA del `.exe`: apuntar la app a la DB del
+  repo (`db/danibod_zzz_v2.db`) para que el agente pueda leer/arreglar/verificar
+  la misma DB que usa la app sin pelear con el sandbox de %LOCALAPPDATA%.
 - Modo dev (corriendo `python -m app.main`): usa `db/danibod_zzz_v2.db` relativo al cwd.
 - Modo .exe (PyInstaller --onedir): copia la DB empaquetada a
   `%LOCALAPPDATA%/DaniBOD_ZZZ_Analytics/db/danibod_zzz_v2.db` en el primer
@@ -18,6 +22,19 @@ from pathlib import Path
 
 _APP_DIRNAME = "DaniBOD_ZZZ_Analytics"
 _DB_FILENAME = "danibod_zzz_v2.db"
+_DB_PATH_ENV = "DANIBOD_DB_PATH"
+_READONLY_ENV = "DANIBOD_READONLY"
+
+
+def is_readonly() -> bool:
+    """
+    Modo offline/readonly (env `DANIBOD_READONLY`): la app detecta y loguea normal
+    pero NO escribe nada persistente (DB ni librería de avatares). Para testear
+    hipótesis sin riesgo de corromper datos. True si la var está seteada y no es
+    una negación explícita ("", "0", "false", "no").
+    """
+    v = (os.environ.get(_READONLY_ENV) or "").strip().lower()
+    return v not in ("", "0", "false", "no", "off")
 
 
 def _user_data_dir() -> Path:
@@ -40,10 +57,16 @@ def _bundled_db_path() -> Path | None:
 def _resolve_db_path() -> Path:
     """
     Determina dónde está la DB activa.
+    - Override `DANIBOD_DB_PATH`: si está seteada (no vacía), gana sobre todo lo demás.
     - Si está corriendo desde el .exe (PyInstaller): usa %LOCALAPPDATA% writable.
       Copia desde el bundle en primer arranque.
     - Si está corriendo desde source: usa db/<file> relativo al cwd.
     """
+    override = os.environ.get(_DB_PATH_ENV)
+    if override and override.strip():
+        # QA: la app (incluso el .exe) apunta a esta DB tal cual, sin copiar.
+        return Path(override.strip()).expanduser()
+
     bundled = _bundled_db_path()
     if bundled is not None:
         # Estamos en el .exe. Asegurar copia writable.

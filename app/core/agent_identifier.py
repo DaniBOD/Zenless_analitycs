@@ -28,6 +28,7 @@ import cv2
 import numpy as np
 
 from app.core.detector import crop_selected_avatar
+from app.db.connection import is_readonly
 
 log = logging.getLogger(__name__)
 
@@ -175,6 +176,8 @@ class AgentIdentifier:
         """
         if not name:
             return False
+        if is_readonly():
+            return False  # modo offline: librería de avatares inerte
         face = crop_selected_avatar(frame)
         if face is None:
             return False
@@ -233,6 +236,8 @@ class AgentIdentifier:
         """
         if not name or face is None or face.size == 0:
             return False
+        if is_readonly():
+            return False  # modo offline: librería S17 inerte
         new = self._lib_s17.get(name) is None
         self._lib_s17[name] = _descriptor_circular(face)
         self.save_s17()
@@ -257,3 +262,25 @@ class AgentIdentifier:
         if q.shape != stored.shape:
             return None
         return float(np.dot(q, stored))
+
+    def identify_s17(self, face: np.ndarray, min_sim: float = 0.86) -> tuple[str, float] | None:
+        """
+        Mejor match del avatar circular S17 contra TODA la librería S17 (a
+        diferencia de `s17_similarity`, que compara contra UN nombre). Para el modo
+        VISUALIZACIÓN: nombrar qué PJ tiene equipado un disco candidato de la grilla.
+        Devuelve (nombre, sim) del mejor match ≥ `min_sim`, o None si no hay
+        librería / el crop es inválido / ningún PJ supera el umbral.
+        """
+        if face is None or face.size == 0 or not self._lib_s17:
+            return None
+        q = _descriptor_circular(face)
+        best_name, best_sim = None, -1.0
+        for name, stored in self._lib_s17.items():
+            if q.shape != stored.shape:
+                continue
+            sim = float(np.dot(q, stored))
+            if sim > best_sim:
+                best_sim, best_name = sim, name
+        if best_name is None or best_sim < min_sim:
+            return None
+        return best_name, best_sim

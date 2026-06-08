@@ -82,9 +82,19 @@ if (-not $SkipBuild) {
     Write-Host "[3/4] Running PyInstaller (3-5 minutes)..." -ForegroundColor Yellow
     Push-Location $repoRoot
     try {
+        # PyInstaller writes its INFO log to stderr. Under PowerShell 5.1, native
+        # stderr is wrapped as a NativeCommandError ErrorRecord, and with
+        # $ErrorActionPreference='Stop' the very first INFO line aborts the script
+        # before the build runs (regression seen 2026-06-06). Relax the preference
+        # locally so stderr is non-terminating; correctness is still gated by the
+        # explicit $LASTEXITCODE check below.
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
         & $py -m PyInstaller $specPath --clean --noconfirm --distpath $distDir --workpath $workDir
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "ERROR: PyInstaller failed with exit code $LASTEXITCODE" -ForegroundColor Red
+        $piExit = $LASTEXITCODE
+        $ErrorActionPreference = $prevEAP
+        if ($piExit -ne 0) {
+            Write-Host "ERROR: PyInstaller failed with exit code $piExit" -ForegroundColor Red
             exit 1
         }
     } finally {

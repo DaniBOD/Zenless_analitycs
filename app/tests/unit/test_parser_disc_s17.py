@@ -10,9 +10,15 @@ from pathlib import Path
 
 import pytest
 
-from app.core.parser_disc_s17 import _parse_s17_from_lines
+from app.core.parser_disc_s17 import _parse_s17_from_lines, _coalesce_rolls_fragments, _Line
 
 _FIX = Path(__file__).resolve().parent.parent / "fixtures" / "s17_ocr"
+
+# Capturas S17 reales para el camino end-to-end (re-OCR de rescate con Paddle vivo).
+_SLOT_IMGS = (
+    Path(__file__).resolve().parents[3]
+    / "Documentacion" / "Screenshots_Triggers" / "Discos_Triggers" / "14_Slots_equipamiento"
+)
 
 
 def _load(name: str):
@@ -93,6 +99,56 @@ def test_estructura_basica(name):
     assert not any("main_invalido" in n for n in r.notas), r.notas
 
 
+def test_rolls_badge_envuelto_se_fusiona():
+    """
+    Bug en vivo (2026-06-06, Melodía de Faetón slot 5): cuando el nombre del
+    substat es largo ('Probabilidad de Crítico'), el juego parte el badge '+1' a
+    una línea aparte. Antes se leía con rolls=0 y el '+1' quedaba fantasma.
+    Reproduce las líneas OCR con bbox (W=2557) y verifica que el roll se fusiona.
+    """
+    W, H = 2557, 1439
+    lines = [
+        ("Melodia de Faeton (5)",        0.99, (812, 164, 1170, 222)),
+        ("Nivel 15/15",                  0.99, (924, 249, 1103, 286)),
+        ("Atributo principal",           0.99, (818, 317, 1058, 349)),
+        ("Ataque",                       0.99, (836, 378, 950, 410)),
+        ("30 %",                         0.99, (1201, 376, 1286, 413)),
+        ("Atributos secundarios",        0.99, (818, 444, 1113, 476)),
+        ("Dano Critico +1",              0.99, (839, 508, 1057, 537)),
+        ("9.6 %",                        0.99, (1233, 508, 1284, 532)),
+        ("Maestria de Anomalia +2",      0.99, (836, 577, 1164, 606)),
+        ("27",                           0.99, (1241, 577, 1281, 606)),
+        # nombre largo → el badge "+1" se envuelve a su propia línea debajo
+        ("Probabilidad de Critico",      0.99, (839, 645, 1180, 675)),
+        ("+1",                           0.95, (839, 682, 884, 710)),
+        ("4.8 %",                        0.99, (1233, 660, 1284, 690)),
+        ("Ataque",                       0.99, (839, 745, 951, 774)),
+        ("19",                           0.99, (1241, 745, 1281, 774)),
+        ("Efecto de conjunto",           0.99, (815, 815, 1073, 849)),
+        ("Melodia de Faeton",            0.99, (839, 873, 1023, 899)),
+        ("2 pistas: Tasa de Anomalia",   0.99, (818, 930, 1294, 964)),
+    ]
+    r = _parse_s17_from_lines(lines, W, H)
+    assert len(r.subs) == 4, [s.nombre_raw for s in r.subs]
+    m = {s.nombre_canon: (s.valor, s.unidad, s.rolls) for s in r.subs if s.nombre_canon}
+    assert m["Prob. Crítica"] == (4.8, "%", 1), m
+    # no debe quedar un substat fantasma sin canon (el '+1' huérfano)
+    assert all(s.nombre_raw.strip() for s in r.subs)
+
+
+def test_coalesce_no_toca_nombres_normales():
+    """Sin badges envueltos, _coalesce_rolls_fragments es identidad."""
+    names = [
+        _Line("Dano Critico +1", 0.99, (839, 508, 1057, 537), 2557),
+        _Line("Ataque +1", 0.99, (839, 577, 983, 606), 2557),
+        _Line("Maestria de Anomalia +2", 0.99, (836, 645, 1164, 675), 2557),
+    ]
+    out = _coalesce_rolls_fragments(names)
+    assert [l.txt for l in out] == [
+        "Dano Critico +1", "Ataque +1", "Maestria de Anomalia +2",
+    ]
+
+
 @pytest.mark.parametrize("name", [
     "Ejemplo_1.json", "Ejemplo_3.json", "Ejemplo_4.json",
     "Ejemplo_5.json", "Ejemplo_8.json", "Ejemplo_9.json", "Ejemplo_10.json",
@@ -102,3 +158,109 @@ def test_substats_todas_canonizadas(name):
     r = _load(name)
     sin_canon = [s.nombre_raw for s in r.subs if s.nombre_canon is None]
     assert not sin_canon, f"{name}: substats sin canon: {sin_canon}"
+
+
+# ---------------------------------------------------------------------------
+# End-to-end con Paddle vivo: rescate de badge "+N" envuelto y de valor dropeado
+# (texto chico que el detector pierde a 960px; re-OCR upscaleado lo recupera).
+# ---------------------------------------------------------------------------
+@pytest.fixture(scope="session")
+def paddle_ocr():
+    try:
+        import cv2
+        import numpy as np
+        from app.core.ocr_paddle import PaddleBackend
+        ocr = PaddleBackend(lang="es")
+        sample = _SLOT_IMGS / "Ejemplo_Slot1_1.png"
+        if not sample.exists():
+            pytest.skip("Sin capturas S17 en el repo para el test e2e")
+        frame = cv2.imdecode(np.fromfile(str(sample), dtype=np.uint8), cv2.IMREAD_COLOR)
+        text, conf = ocr.text(frame)
+        if conf == 0.0 and not text:
+            raise RuntimeError("warmup Paddle vacío")
+        return ocr
+    except Exception as e:
+        pytest.skip(f"PaddleOCR no disponible: {e}")
+
+
+def _img(name):
+    import cv2
+    import numpy as np
+    p = _SLOT_IMGS / name
+    if not p.exists():
+        pytest.skip(f"falta {name}")
+    return cv2.imdecode(np.fromfile(str(p), dtype=np.uint8), cv2.IMREAD_COLOR)
+
+
+def test_e2e_rescata_badge_y_valor(paddle_ocr):
+    """
+    Slot1_1 (caso reportado en vivo 2026-06-06): 'Probabilidad de Crítico' parte el
+    badge '+1' a 2ª línea (Paddle no lo ve) y el valor '9' de 'Maestría de Anomalía'
+    se dropea por chico. El rescate por re-OCR upscaleado recupera ambos.
+    """
+    from app.core.parser_disc_s17 import parse_disc_s17_full
+    parsed, _ = parse_disc_s17_full(_img("Ejemplo_Slot1_1.png"), paddle_ocr)
+    m = {s.nombre_canon: s for s in parsed.subs if s.nombre_canon}
+    assert m["Prob. Crítica"].rolls == 1, "badge +1 envuelto no rescatado"
+    assert m["Maestría de Anomalía"].valor == 9.0, "valor dropeado no rescatado"
+    assert all(s.valor is not None for s in parsed.subs), "quedó un valor None"
+
+
+@pytest.mark.parametrize("name", [
+    "Ejemplo_Slot1_1.png", "Ejemplo_Slot1_2.png", "Ejemplo_Slot3_2.png",
+    "Ejemplo_Slot6_2.png",
+])
+def test_e2e_sin_substats_sin_valor_ni_desconocidos(paddle_ocr, name):
+    """Invariantes e2e: 4 substats canonizados, con valor, rolls totales ≤ 5."""
+    from app.core.parser_disc_s17 import parse_disc_s17_full
+    parsed, _ = parse_disc_s17_full(_img(name), paddle_ocr)
+    assert len(parsed.subs) == 4, name
+    assert all(s.nombre_canon for s in parsed.subs), \
+        [s.nombre_raw for s in parsed.subs if not s.nombre_canon]
+    assert all(s.valor is not None for s in parsed.subs), name
+    assert sum(s.rolls for s in parsed.subs) <= 5, name
+
+
+def test_e2e_ene_tilde_dano_critico(paddle_ocr):
+    """La 'ñ' mangleada de 'Daño Crítico' canoniza vía fallback difuso (Slot1_2)."""
+    from app.core.parser_disc_s17 import parse_disc_s17_full
+    parsed, _ = parse_disc_s17_full(_img("Ejemplo_Slot1_2.png"), paddle_ocr)
+    canons = {s.nombre_canon for s in parsed.subs}
+    assert "Daño Crítico" in canons, canons
+
+
+# Grilla de visualización: detección equipado/no-equipado por densidad de bordes.
+_INV_IMGS = (
+    Path(__file__).resolve().parents[3]
+    / "Documentacion" / "Screenshots_Triggers" / "Discos_Triggers"
+    / "04_Inventario_Disco_Vista_Individual"
+)
+
+
+def _inv_img(name):
+    import cv2
+    import numpy as np
+    p = _INV_IMGS / name
+    if not p.exists():
+        pytest.skip(f"falta {name}")
+    return cv2.imdecode(np.fromfile(str(p), dtype=np.uint8), cv2.IMREAD_COLOR)
+
+
+def test_e2e_avatar_no_equipado(paddle_ocr):
+    """
+    Disco candidato SIN equipar (sin avatar a la derecha del set): el detector por
+    densidad de bordes NO debe dar falso positivo, aunque el arte de fondo esté
+    saturado (Ejemplo_11_nangong, 'Blues libre'). Regresión 2026-06-07.
+    """
+    from app.core.parser_disc_s17 import parse_disc_s17_full
+    parsed, face = parse_disc_s17_full(_inv_img("Ejemplo_11_nangong.png"), paddle_ocr)
+    assert parsed.set_name_raw.startswith("Blues"), parsed.set_name_raw
+    assert face is None, "falso positivo: detectó avatar donde no hay (fondo saturado)"
+
+
+def test_e2e_avatar_equipado_otro_pj(paddle_ocr):
+    """Disco candidato equipado por otro PJ (avatar presente): se detecta (Ejemplo_12)."""
+    from app.core.parser_disc_s17 import parse_disc_s17_full
+    parsed, face = parse_disc_s17_full(_inv_img("Ejemplo_12_nangong.png"), paddle_ocr)
+    assert parsed.set_name_raw.startswith("Voz"), parsed.set_name_raw
+    assert face is not None, "no detectó el avatar del disco equipado"
