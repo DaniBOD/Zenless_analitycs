@@ -640,6 +640,34 @@ def test_s17_continuo_no_re_emite_por_parpadeo_de_firma(monkeypatch):
     assert len(emitted) == 3
 
 
+def test_s17_dedup_identidad_insensible_a_mojibake_de_tilde(monkeypatch):
+    """
+    Regresión QA Fase 2 (2026-06-08): el OCR del crop lee la tilde del set de forma
+    inestable entre ciclos ('Faetón'→'Faeton'). El dedup por identidad normaliza con
+    `_norm_key` ⇒ el MISMO disco NO se re-emite aunque varíe el mojibake del nombre.
+    """
+    from app.core.detector import ScreenState
+    import numpy as np
+    emitted = []
+    m = _monitor()
+    m._on_disc = lambda disc, st: emitted.append(disc)
+    # firma fija (mismo disco), pero el set cambia de mojibake cada ciclo
+    sig = (np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
+    monkeypatch.setattr(m, "_s17_disc_signature", lambda frame: sig)
+    monkeypatch.setattr(m, "_assign_s17_pj", lambda disc, face: None)
+    variants = iter(["Melodia de Faetón", "Melodia de Faeton", "Melodia de Faetön"])
+
+    def _parse(frame, ocr):
+        d = _disc_full(slot=3, set_name=next(variants))
+        return d, None
+    monkeypatch.setattr("app.core.monitor.parse_disc_s17_full", _parse)
+    st = ScreenState("S17", 1.0, "tmpl")
+    for _ in range(3):
+        m._disc_agg_sig = None  # firma "parpadea" → reset del aggregator (NO de ids)
+        m._process_disc_s17_continuous(None, st)
+    assert len(emitted) == 1, "mojibake de la tilde no debe re-emitir el mismo disco"
+
+
 def test_log_s17_assign_edge_triggered():
     """El log de asignación S17 emite 1× por firma; re-loguea al cambiar de decisión."""
     m = _monitor()

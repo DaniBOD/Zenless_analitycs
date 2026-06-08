@@ -544,11 +544,15 @@ class Monitor:
 
     @staticmethod
     def _disc_identity(d) -> tuple:
-        """Identidad estable de un disco para dedup de emisión (sin firma visual)."""
+        """Identidad estable de un disco para dedup de emisión (sin firma visual).
+        Normaliza nombre de set y main con `_norm_key` (sin tildes/mojibake): el OCR
+        del crop (Fase 2) lee la tilde de forma inestable entre ciclos
+        ('Faetón'/'Faeton'/'Faetön') y sin normalizar re-emitía el MISMO disco."""
+        from app.core.stats_vocab import _norm_key
         return (
-            d.set_name_canon or d.set_name_raw,
+            _norm_key(d.set_name_canon or d.set_name_raw or ""),
             d.slot,
-            d.main_stat_canon or d.main_stat_raw,
+            _norm_key(d.main_stat_canon or d.main_stat_raw or ""),
         )
 
     def _is_new_s17_disc(self, sig) -> bool:

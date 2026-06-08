@@ -264,3 +264,53 @@ def test_e2e_avatar_equipado_otro_pj(paddle_ocr):
     parsed, face = parse_disc_s17_full(_inv_img("Ejemplo_12_nangong.png"), paddle_ocr)
     assert parsed.set_name_raw.startswith("Voz"), parsed.set_name_raw
     assert face is not None, "no detectó el avatar del disco equipado"
+
+
+# --- Fase 2: OCR sobre crop nativo del panel -------------------------------------
+
+@pytest.mark.parametrize("name,slot", [
+    ("Ejemplo_Slot1_1.png", 1), ("Ejemplo_Slot2_1.png", 2),
+    ("Ejemplo_Slot3_1.png", 3), ("Ejemplo_Slot4_1.png", 4),
+    ("Ejemplo_Slot5_1.png", 5), ("Ejemplo_Slot6_1.png", 6),
+])
+def test_e2e_crop_slot_correcto(paddle_ocr, name, slot):
+    """
+    El path de crop nativo (parse_disc_s17_full) extrae el slot 1-6 correcto en
+    todas las capturas, incluido slot=1 (el '(1)' fino que el crop pierde y el
+    rescate de título recupera). Regresión Fase 2.
+    """
+    from app.core.parser_disc_s17 import parse_disc_s17_full
+    parsed, _ = parse_disc_s17_full(_img(name), paddle_ocr)
+    assert parsed.slot == slot, f"{name}: slot={parsed.slot} (esperado {slot})"
+    assert parsed.main_stat_canon is not None and parsed.main_valor is not None
+    assert len(parsed.subs) == 4 and all(s.valor is not None for s in parsed.subs)
+
+
+def test_rescue_slot_from_title_slot1(paddle_ocr):
+    """El rescate de slot lee el '(1)' de una franja fina del título (Slot1_1)."""
+    from app.core.parser_disc_s17 import _rescue_slot_from_title
+    frame = _img("Ejemplo_Slot1_1.png")
+    H, W = frame.shape[:2]
+    assert _rescue_slot_from_title(frame, paddle_ocr, W, H) == 1
+
+
+def test_e2e_crop_tier_detectado(paddle_ocr):
+    """detect_active_set_tier sigue funcionando sobre el crop (la línea '4 pistas:'
+    entra en el ROI del panel). Slot1_2 = build 4pc activo."""
+    from app.core.parser_disc_s17 import parse_disc_s17_full
+    parsed, _ = parse_disc_s17_full(_img("Ejemplo_Slot1_2.png"), paddle_ocr)
+    assert parsed.set_active_tier == 4, parsed.set_active_tier
+
+
+def test_ocr_detail_lines_offset_a_frame_completo(paddle_ocr):
+    """`_ocr_detail_lines` re-offsetea las bboxes a coords de frame completo: las
+    líneas del panel caen en la banda x∈[0.30,0.52] (no en [0,ancho_del_crop])."""
+    from app.core.parser_disc_s17 import _ocr_detail_lines, _BAND_X_MIN, _BAND_X_MAX
+    frame = _img("Ejemplo_Slot1_1.png")
+    H, W = frame.shape[:2]
+    lines = _ocr_detail_lines(frame, paddle_ocr)
+    assert lines, "sin líneas"
+    # alguna línea del panel debe caer dentro de la banda en coords de frame completo
+    in_band = [l for l in lines if _BAND_X_MIN <= (l[2][0] / W) <= _BAND_X_MAX]
+    assert in_band, "las bboxes no están en coords de frame completo (offset roto)"
+    assert all(l[2][2] <= W and l[2][3] <= H for l in lines), "bbox fuera del frame"

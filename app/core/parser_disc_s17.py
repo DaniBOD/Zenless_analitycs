@@ -69,6 +69,19 @@ _RE_PISTAS_TIER = re.compile(r"^\s*(\d)\s*pistas?\s*:", re.IGNORECASE)
 # umbral 190 con margen enorme. El prefijo nunca lleva keywords coloreadas.
 _ACTIVE_TIER_BRIGHT_MIN = 190.0
 
+# --- Fase 2 (2026-06-07): OCR sobre CROP nativo del panel (latencia) ---------
+# El crop del panel de detalle (lado mayor < 960px = det_limit_side_len) evita el
+# downscale del detector DBNet → el texto chico se lee en la 1ª pasada y el OCR
+# procesa ~0.85 MP en vez de 3.7 MP (~1.5× más rápido). Calibrado sobre capturas
+# reales (Paso 0): abarca título (incl. 2 líneas), nivel, main, 4 substats y la
+# línea "4 pistas:" (la usa detect_active_set_tier, hasta y≈0.73).
+_S17_DETAIL_PANEL_ROI = (0.27, 0.105, 0.36, 0.645)  # x0.27-0.63 (922px), y0.105-0.75 (928px)
+# Franja fina del título (1-2 líneas) para el rescate del slot: el "(N)" se lee
+# fiable en una sola línea aunque el crop del panel completo pierda el dígito fino.
+_S17_TITLE_STRIP_ROI = (0.29, 0.10, 0.34, 0.085)
+_RE_SLOT_PAREN = re.compile(r"\(\s*([1-6])\s*\)")
+_RE_INLINE_ROLL = re.compile(r"\+\s*([0-5])\b")
+
 
 def _strip(s: str) -> str:
     return "".join(
@@ -165,39 +178,97 @@ _BADGE_ORANGE_FRAC_MIN = 0.015  # fracción mínima de píxeles naranja (medido 
 _RE_BADGE_DIGIT = re.compile(r"\+?\s*([0-5])")
 
 
-def _rescue_wrapped_roll(frame, name_line: "_Line", ocr, W: int, H: int) -> int | None:
-    """
-    Intenta leer un badge "+N" envuelto a la línea de abajo del nombre.
-    Devuelve N (1-5) si lo recupera, o None si no hay badge naranja / no se lee.
-    """
-    if frame is None or ocr is None or getattr(frame, "size", 0) == 0:
-        return None
+def _orange_badge_frac(band) -> float:
+    """Fracción de píxeles del naranja del badge "+N" en un recorte BGR (gate)."""
     try:
         import cv2
-        hp = max(1, name_line.y2 - name_line.y1)
-        y0 = name_line.y2
-        y1 = min(H, name_line.y2 + int(1.15 * hp))   # solo la 2ª línea visual
-        x0 = name_line.x1
-        x1 = min(W, name_line.x1 + int(3.2 * hp))     # badge corto, alineado izq.
-        band = frame[y0:y1, x0:x1]
-        if band.size == 0:
-            return None
-        # Gate por color: el badge "+N" es naranja; texto/regiones blancas no.
+        if band is None or getattr(band, "size", 0) == 0:
+            return 0.0
         hsv = cv2.cvtColor(band, cv2.COLOR_BGR2HSV)
         orange = (
             (hsv[:, :, 0] >= _BADGE_ORANGE_H[0]) & (hsv[:, :, 0] <= _BADGE_ORANGE_H[1])
             & (hsv[:, :, 1] >= _BADGE_ORANGE_SMIN) & (hsv[:, :, 2] >= _BADGE_ORANGE_VMIN)
         )
-        if float(orange.mean()) < _BADGE_ORANGE_FRAC_MIN:
-            return None
+        return float(orange.mean())
+    except Exception:
+        return 0.0
+
+
+def _ocr_roll_digit(band, ocr, regex) -> int | None:
+    """Upscalea x3 y busca un dígito de roll (0-5) en el texto re-OCRizado."""
+    try:
+        import cv2
         up = cv2.resize(band, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-        for t, _c, _bb in ocr.text_with_bboxes(up):
-            m = _RE_BADGE_DIGIT.search(t)
-            if m:
-                return int(m.group(1))
+        txt = " ".join(t for t, _c, _bb in ocr.text_with_bboxes(up))
+        m = regex.search(txt)
+        if m:
+            return int(m.group(1))
     except Exception:
         return None
     return None
+
+
+def _rescue_roll(frame, name_line: "_Line", ocr, W: int, H: int) -> int | None:
+    """
+    Recupera el badge de rolls "+N" (naranja, chico) que PaddleOCR dropea, en sus
+    dos disposiciones:
+      - INLINE: a la derecha del nombre, en la misma fila (re-OCR de la fila entera
+        del nombre hasta antes de la columna de valor; tolera que el crop nativo
+        funda/mal-segmente el "+N" dentro del bbox del nombre — caso Fase 2).
+      - ENVUELTO: 2ª línea bajo el nombre cuando es largo (banda generosa, tolera
+        ±px del bbox del nombre).
+    Gate por color naranja → solo re-OCRiza cuando hay badge presente (no penaliza
+    substats legítimos con 0 rolls). Reemplaza al viejo `_rescue_wrapped_roll`
+    (que solo miraba abajo y era frágil a px).
+    """
+    if frame is None or ocr is None or getattr(frame, "size", 0) == 0:
+        return None
+    try:
+        hp = max(1, name_line.y2 - name_line.y1)
+        # 1) INLINE — fila completa del nombre, recortada antes de la col. de valor.
+        iy0 = max(0, name_line.y1 - int(0.25 * hp))
+        iy1 = min(H, name_line.y2 + int(0.25 * hp))
+        ix1 = min(W, int((_COL_SPLIT + 0.035) * W))  # ~0.455·W, antes del valor
+        inline = frame[iy0:iy1, name_line.x1:ix1]
+        if _orange_badge_frac(inline) >= _BADGE_ORANGE_FRAC_MIN:
+            d = _ocr_roll_digit(inline, ocr, _RE_INLINE_ROLL)
+            if d is not None:
+                return d
+        # 2) ENVUELTO — badge en la 2ª línea visual, alineado a la izquierda.
+        by0 = max(0, name_line.y2 - int(0.15 * hp))
+        by1 = min(H, name_line.y2 + int(1.7 * hp))
+        bx1 = min(W, name_line.x1 + int(3.6 * hp))
+        wrapped = frame[by0:by1, name_line.x1:bx1]
+        if _orange_badge_frac(wrapped) >= _BADGE_ORANGE_FRAC_MIN:
+            d = _ocr_roll_digit(wrapped, ocr, _RE_BADGE_DIGIT)
+            if d is not None:
+                return d
+    except Exception:
+        return None
+    return None
+
+
+def _rescue_slot_from_title(frame, ocr, W: int, H: int) -> int:
+    """
+    Recupera el slot (1-6) re-OCRizando una franja fina del título cuando el parse
+    del crop pierde el "(N)" (el dígito fino entre paréntesis se cae a veces a
+    resolución nativa). Al ser 1-2 líneas, la franja lee el "(N)" de forma fiable.
+    Devuelve 0 si no se localiza.
+    """
+    if frame is None or ocr is None or getattr(frame, "size", 0) == 0:
+        return 0
+    try:
+        from app.core.capturer import crop_roi
+        strip = crop_roi(frame, _S17_TITLE_STRIP_ROI)
+        if strip is None or getattr(strip, "size", 0) == 0:
+            return 0
+        for t, _c, _bb in ocr.text_with_bboxes(strip):
+            m = _RE_SLOT_PAREN.search(t)
+            if m:
+                return int(m.group(1))
+    except Exception:
+        return 0
+    return 0
 
 
 def _rescue_missing_value(frame, name_line: "_Line", ocr, W: int, H: int):
@@ -257,11 +328,14 @@ def _parse_s17_from_lines(
     header_ys: set[int] = set()
     for ln in detail:
         k = _norm_key(ln.txt)
-        if y_main is None and k.startswith("atributoprincipal"):
+        # Prefijos TOLERANTES: el OCR sobre crop nativo a veces trunca/funde el
+        # header (p.ej. "Atributo principal" → "Atributoprincipa"). Se usa un
+        # prefijo más corto pero todavía distintivo (sin colisión entre los tres).
+        if y_main is None and k.startswith("atributoprincip"):
             y_main = ln.y1; header_ys.add(ln.y1)
-        elif y_subs is None and k.startswith("atributossecundario"):
+        elif y_subs is None and k.startswith("atributossecundari"):
             y_subs = ln.y1; header_ys.add(ln.y1)
-        elif y_effect is None and k.startswith("efectodeconjunto"):
+        elif y_effect is None and k.startswith("efectodeconjunt"):
             y_effect = ln.y1; header_ys.add(ln.y1)
 
     if y_main is None or y_subs is None:
@@ -299,6 +373,15 @@ def _parse_s17_from_lines(
         slot = 0
         notas.append("slot_no_detectado")
 
+    # Rescate de slot (Fase 2): el crop nativo a veces pierde el "(N)" del título
+    # (dígito fino entre paréntesis). Re-OCR de una franja fina lo recupera.
+    if slot == 0 and frame is not None and ocr is not None:
+        rs = _rescue_slot_from_title(frame, ocr, W, H)
+        if rs:
+            slot = rs
+            if "slot_no_detectado" in notas:
+                notas.remove("slot_no_detectado")
+
     # --- Main stat: única fila nombre/valor entre 'Atributo principal' y 'Atributos secundarios' ---
     main_region = [ln for ln in detail if _ymain < ln.y1 < _ysubs and ln.y1 not in header_ys]
     main_names = [ln for ln in main_region if ln.xn < _COL_SPLIT]
@@ -333,9 +416,10 @@ def _parse_s17_from_lines(
                 best_dy, best_i = dy, i
         nombre, rolls = _split_rolls(nl.txt)
         if rolls == 0:
-            # Nombre largo → el badge "+N" pudo envolverse a la 2ª línea y Paddle
-            # no detectarlo. Rescatar por color+re-OCR (no-op sin frame/ocr).
-            rescued = _rescue_wrapped_roll(frame, nl, ocr, W, H)
+            # El badge "+N" pudo caerse (inline mal segmentado o envuelto a 2ª
+            # línea) y Paddle no detectarlo. Rescatar por color+re-OCR (no-op sin
+            # frame/ocr). Gate naranja → solo re-OCRiza si hay badge real.
+            rescued = _rescue_roll(frame, nl, ocr, W, H)
             if rescued is not None:
                 rolls = rescued
         valor = unidad = None
@@ -520,13 +604,35 @@ def parse_disc_s17(frame: np.ndarray, ocr: "OcrBackend") -> DiscParsed:
     return parsed
 
 
+def _ocr_detail_lines(frame: np.ndarray, ocr: "OcrBackend"):
+    """
+    OCR del panel de detalle S17 sobre un CROP nativo (Fase 2) y RE-OFFSET de cada
+    bbox a coordenadas de frame completo. El crop (lado mayor < 960px) evita el
+    downscale del detector → texto chico legible en 1ª pasada y OCR más rápido; el
+    offset deja las líneas como si vinieran del frame entero, así el parser espacial
+    (filtro de banda, headers, avatar, tier) NO cambia. Fallback al frame completo
+    si el crop falla o no devuelve líneas.
+    """
+    from app.core.capturer import crop_roi
+    H, W = frame.shape[:2]
+    x0 = int(_S17_DETAIL_PANEL_ROI[0] * W)
+    y0 = int(_S17_DETAIL_PANEL_ROI[1] * H)
+    crop = crop_roi(frame, _S17_DETAIL_PANEL_ROI)
+    if crop is None or getattr(crop, "size", 0) == 0:
+        return ocr.text_with_bboxes(frame)
+    raw = ocr.text_with_bboxes(crop)
+    if not raw:
+        return ocr.text_with_bboxes(frame)
+    return [(t, c, (b[0] + x0, b[1] + y0, b[2] + x0, b[3] + y0)) for (t, c, b) in raw]
+
+
 def parse_disc_s17_full(frame: np.ndarray, ocr: "OcrBackend"):
     """
     Como `parse_disc_s17` pero corre OCR UNA vez y devuelve también el crop del
     avatar del PJ asignado: `(DiscParsed, face | None)`. El monitor usa esto para
     no re-OCRizar (presupuesto de latencia RF-06 < 500 ms).
     """
-    lines = ocr.text_with_bboxes(frame)
+    lines = _ocr_detail_lines(frame, ocr)
     H, W = frame.shape[:2]
     parsed = _parse_s17_from_lines(lines, W, H, frame=frame, ocr=ocr)
     # Rareza best-effort por color del icono del disco (no bloquea si falla).
