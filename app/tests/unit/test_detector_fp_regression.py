@@ -91,3 +91,38 @@ def test_frames_oscuros_reales_siguen_gateando(rel_path):
     assert ScreenDetector._is_dark_frame(img), (
         f"Frame oscuro real {rel_path} ya no gatea → riesgo de FP en transición"
     )
+
+
+# Regresión 2026-06-08 (QA Burnice/Caesar): las S17 de PJs con FONDO OSCURO de
+# elemento (dark-ratio centro 0.68-0.71) se filtraban como dark → S12 ANTES del
+# template match → no se capturaba NADA (mientras Yixuan, 0.63, pasaba). El filtro
+# ahora es TEMPLATE-AWARE: corre DESPUÉS del template y solo gatea si ningún
+# template matchó. Estas capturas son "dark" por el filtro crudo pero matchean S17.
+_SLOTS = "Documentacion/Screenshots_Triggers/Discos_Triggers/14_Slots_equipamiento"
+S17_DARK_BG = [
+    f"{_SLOTS}/Ejemplo_Slot1_3.png",  # Burnice
+    f"{_SLOTS}/Ejemplo_Slot6_3.png",  # Burnice
+    f"{_SLOTS}/Ejemplo_Slot1_5.png",  # Caesar
+    f"{_SLOTS}/Ejemplo_Slot6_5.png",  # Caesar
+]
+
+
+@pytest.mark.parametrize("rel_path", S17_DARK_BG)
+def test_s17_fondo_oscuro_se_reconoce(rel_path):
+    """S17 de PJ con fondo oscuro: 'dark' por el filtro crudo pero matchea S17 →
+    el clasificador template-aware NO debe tirarla a S12."""
+    path = REPO / rel_path
+    if not path.exists():
+        pytest.skip(f"Archivo no encontrado: {path}")
+    img = cv2.imread(str(path))
+    if img is None:
+        pytest.skip(f"No se pudo leer: {path}")
+    # Escenario de la regresión: el frame ESTÁ en la zona dark del filtro crudo...
+    assert ScreenDetector._is_dark_frame(img), (
+        f"{rel_path}: se esperaba dark-ratio > umbral (fixture del caso de regresión)"
+    )
+    # ...pero el clasificador completo debe reconocerlo como S17 igualmente.
+    state = ScreenDetector().classify(img)
+    assert state.code == "S17", (
+        f"{rel_path} → {state.code} (conf={state.confidence:.2f}); debe ser S17"
+    )

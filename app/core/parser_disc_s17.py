@@ -402,6 +402,11 @@ def _parse_s17_from_lines(
     sub_names = _coalesce_rolls_fragments(
         sorted([ln for ln in sub_region if ln.xn < _COL_SPLIT], key=lambda l: l.y1)
     )
+    # Descartar fragmentos SIN letras (p.ej. '12', '+', un valor/badge que cayó en
+    # la columna de nombre): nunca son nombres de stat → si no se filtran generan un
+    # substat fantasma con canon=None (regresión QA Burnice Slot6). Los badges "+N"
+    # legítimos ya se fusionaron arriba en _coalesce_rolls_fragments.
+    sub_names = [ln for ln in sub_names if any(c.isalpha() for c in ln.txt)]
     sub_vals = sorted([ln for ln in sub_region if ln.xn >= _COL_SPLIT], key=lambda l: l.y1)
     subs: list[SubstatParsed] = []
     used_val: set[int] = set()

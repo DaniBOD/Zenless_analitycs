@@ -789,6 +789,27 @@ def test_resolve_set_id_distingue_sets_parecidos(syncer_db):
         sync.close()
 
 
+def test_resolve_set_id_fuzzy_drop_de_letra(syncer_db):
+    """
+    Regresión QA Yixuan 2026-06-08: el OCR dropea una letra del nombre del set
+    ('Fábula Yunkui'→'Fäbua Yunkui'), que el substring no captura. El fuzzy difflib
+    (cutoff 0.86 + guarda de ambigüedad) lo resuelve, pero NO inventa ante un nombre
+    genuinamente lejano/ambiguo (dos sets 'Balada …' + alias corto del catálogo).
+    """
+    con = sqlite3.connect(str(syncer_db))
+    con.execute("INSERT INTO disc_sets (id, nombre) VALUES (49, 'Fábula Yunkui')")
+    con.execute("INSERT INTO disc_sets (id, nombre) VALUES (25, 'Balada rama/espada')")
+    con.execute("INSERT INTO disc_sets (id, nombre) VALUES (51, 'Balada de aguas blancas')")
+    con.commit(); con.close()
+    sync = _make_syncer(syncer_db)
+    try:
+        assert sync._resolve_set_id(_disc(set_name="Fäbua Yunkui")) == 49  # drop de 'l'
+        # forma larga real vs alias corto + 2º 'Balada' → ambiguo/lejano → None
+        assert sync._resolve_set_id(_disc(set_name="Balada de la rama y la espada")) is None
+    finally:
+        sync.close()
+
+
 # --- 5c. Modo READONLY (DANIBOD_READONLY) — no escribe -----------------------
 
 def test_persist_s17_readonly_no_escribe(syncer_db, monkeypatch):

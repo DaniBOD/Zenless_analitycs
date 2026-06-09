@@ -302,6 +302,19 @@ def test_e2e_crop_tier_detectado(paddle_ocr):
     assert parsed.set_active_tier == 4, parsed.set_active_tier
 
 
+def test_e2e_no_substat_fantasma_numerico(paddle_ocr):
+    """
+    Regresión QA Burnice 2026-06-08 (Slot6): un fragmento numérico ('12') que cae en
+    la columna de NOMBRE no debe generar un 5º substat fantasma con canon=None. Se
+    filtran los nombres sin letras (los badges '+N' legítimos ya se fusionaron antes).
+    """
+    from app.core.parser_disc_s17 import parse_disc_s17_full
+    parsed, _ = parse_disc_s17_full(_img("Ejemplo_Slot6_3.png"), paddle_ocr)
+    assert len(parsed.subs) == 4, [s.nombre_raw for s in parsed.subs]
+    assert all(s.nombre_canon for s in parsed.subs), \
+        [s.nombre_raw for s in parsed.subs if not s.nombre_canon]
+
+
 def test_ocr_detail_lines_offset_a_frame_completo(paddle_ocr):
     """`_ocr_detail_lines` re-offsetea las bboxes a coords de frame completo: las
     líneas del panel caen en la banda x∈[0.30,0.52] (no en [0,ancho_del_crop])."""

@@ -1170,15 +1170,23 @@ class ScreenDetector:
         if frame is None or frame.size == 0:
             return ScreenState("S12", 0.0, "")
 
-        # Capa 0: filtro de frame oscuro (pantallas de carga, diálogos oscuros)
-        if self._is_dark_frame(frame):
-            return ScreenState("S12", 0.0, "dark_frame_filter")
-
         # Capa 1: template matching
         state = self._template_match(frame)
 
         # Capa 2: verificación secundaria
         state = self._verify(state, frame)
+
+        # Capa 0 (template-aware): filtro de frame oscuro SOLO si ningún template
+        # matchó. Un match fuerte (p.ej. S17 a 1.00) evidencia contenido legible y
+        # NO debe filtrarse aunque el fondo del elemento del PJ sea oscuro. Las
+        # pantallas de carga/transición reales no matchean ningún template → S12.
+        # (Regresión 2026-06-08: las S17 de PJs con fondo oscuro — Burnice/Caesar,
+        # dark-ratio 0.68-0.70 — se filtraban como dark → S12 y no se capturaba
+        # nada, mientras Yixuan 0.63 pasaba. Antes el filtro corría ANTES del
+        # template y cortaba a ciegas; las FP reales — Detalle_set_disco 0.76 —
+        # matchean su propio template, S16, así que no necesitan este atajo.)
+        if state.code == "S12" and self._is_dark_frame(frame):
+            return ScreenState("S12", 0.0, "dark_frame_filter")
 
         # Capa 2.5: override por tab-bar. Si hay un pill de pestaña activo, ES
         # autoritativo para distinguir S8/S18/S19 (familia detalle de agente),

@@ -6,6 +6,7 @@ Thread-safe: cada llamada abre su propia transacción (con RNF-01 cumplido).
 """
 from __future__ import annotations
 
+import difflib
 import json
 import logging
 import sqlite3
@@ -30,6 +31,13 @@ from app.db.repositories import (
 )
 
 log = logging.getLogger(__name__)
+
+# Fuzzy de nombre de set (difflib) en _resolve_set_id: umbral alto + margen de
+# ambigüedad (RNF-02). Cutoff 0.86 acepta drops de 1 char ('Fábula'→'Fäbua'≈0.96)
+# y rechaza nombres genuinamente distintos/ambiguos (p.ej. la forma larga de
+# 'Balada …' vs el alias corto del catálogo ≈0.72).
+_SET_FUZZY_CUTOFF = 0.86
+_SET_FUZZY_MARGIN = 0.06
 
 DB_PATH = Path("db/danibod_zzz_v2.db")
 
@@ -515,11 +523,36 @@ class DiscSyncer:
         #    por igualdad o substring (el OCR puede capturar texto extra alrededor del
         #    título). Subsume el viejo substring lowercase (que era acento-sensible).
         name_n = _norm_key(name)
+        norm_to: dict[str, tuple[str, int]] = {}
         if name_n:
             for sname, sid in self._set_repo.get_all_names().items():  # {nombre_lower: id}
                 sname_n = _norm_key(sname)
-                if sname_n and (sname_n == name_n or sname_n in name_n or name_n in sname_n):
+                if not sname_n:
+                    continue
+                norm_to.setdefault(sname_n, (sname, sid))
+                if sname_n == name_n or sname_n in name_n or name_n in sname_n:
                     log.debug("Set fuzzy match (sin acentos): '%s' → '%s' (id=%d)", name, sname, sid)
                     return sid
+
+        # 3. Fuzzy DIFUSO (difflib): el OCR dropea/cambia 1-2 chars del nombre del set
+        #    ('Fábula'→'Fäbua'), que el substring no captura. Umbral alto + guarda de
+        #    ambigüedad (abstiene si dos sets DISTINTOS quedan empatados dentro del
+        #    margen) — RNF-02: no adivinar. Mismo patrón que la 'ñ' en stats_vocab.
+        if name_n and norm_to:
+            keys = list(norm_to)
+            matches = difflib.get_close_matches(name_n, keys, n=3, cutoff=_SET_FUZZY_CUTOFF)
+            if matches:
+                best_sname, best_sid = norm_to[matches[0]]
+                r_best = difflib.SequenceMatcher(None, name_n, matches[0]).ratio()
+                ambiguous = False
+                for m in matches[1:]:
+                    if norm_to[m][1] != best_sid:
+                        r_m = difflib.SequenceMatcher(None, name_n, m).ratio()
+                        ambiguous = (r_best - r_m) < _SET_FUZZY_MARGIN
+                        break
+                if not ambiguous:
+                    log.debug("Set fuzzy difflib: '%s' → '%s' (id=%d, r=%.2f)",
+                              name, best_sname, best_sid, r_best)
+                    return best_sid
 
         return None
