@@ -125,7 +125,7 @@ def test_guarda_s17_confirma_mismo_pj_y_abstiene_otro():
     Aprendido el descriptor S17 de un PJ (desde Ejemplo_1), otros discos del MISMO
     PJ (Ej_8/9/10) confirman (sim alto) y discos de OTRO PJ (Ej_2/4/5) abstienen.
     """
-    ident = AgentIdentifier(autoload=False)
+    ident = AgentIdentifier(autoload=False, roster={"PJ_A"})  # roster explícito (no DB)
     def face(name):
         fr, ln, W, H = _load_frame_lines(name)
         f = crop_s17_assigned_avatar(fr, ln, W, H)
@@ -274,17 +274,88 @@ def test_monitor_confirma_mismo_pj_tras_bootstrap():
     assert 0.86 <= disc.agente_asignado_conf < 1.0  # confirmado por sim, no bootstrap
 
 
-def test_monitor_abstiene_si_avatar_es_de_otro_pj():
-    """Tras aprender PJ_A (Ej_1), un disco de OTRO PJ (Ej_2) → no asigna (preserva)."""
+def test_monitor_confia_en_latch_para_disco_equipado():
+    """
+    Fase 4 (revisado tras QA 2026-06-09): el avatar circular S17 es poco
+    discriminativo (best-match inservible) → para el disco EQUIPADO se CONFÍA en el
+    latch (identidad fiable de S8/S18), sin rechazar por el avatar. La discriminación
+    de discos de OTRO PJ (grilla) se difiere a su fase. Aquí: latch presente → asigna
+    al latch aunque el frame sea de otro PJ.
+    """
     m = _monitor()
-    m._last_agent_name = "Zhu Yuan"
-    f1, l1, W1, H1 = _load_frame_lines("Ejemplo_1")
-    m._assign_s17_pj(_disc(), crop_s17_assigned_avatar(f1, l1, W1, H1))  # aprende Zhu Yuan
+    m._identifier._roster_norm = {}  # no validar roster en el test
     f2, l2, W2, H2 = _load_frame_lines("Ejemplo_2")
+    m._last_agent_name = "Zhu Yuan"
     disc = _disc()
     m._assign_s17_pj(disc, crop_s17_assigned_avatar(f2, l2, W2, H2))
-    assert disc.agente_asignado_nombre is None
-    assert disc.agente_asignado_conf == 0.0
+    assert disc.agente_asignado_nombre == "Zhu Yuan"  # confía en el latch
+    assert disc.equip_pj_visual == "Zhu Yuan"
+
+
+def test_monitor_self_heal_descriptor_viejo_no_falso_rechaza():
+    """
+    Fase 4: un descriptor S17 VIEJO del latch (sim baja, p.ej. Nangong 0.734) NO debe
+    causar falso-rechazo si nadie le gana: se asigna al latch y se RE-APRENDE.
+    """
+    m = _monitor()
+    m._identifier._roster_norm = {}
+    f1, l1, W1, H1 = _load_frame_lines("Ejemplo_1")
+    f9, l9, W9, H9 = _load_frame_lines("Ejemplo_9")  # mismo PJ, otro disco
+    # Sembrar un descriptor "viejo" del latch desde un frame de OTRO PJ (sim baja).
+    m._identifier.learn_s17(crop_s17_assigned_avatar(f1, l1, W1, H1), "Zhu Yuan")
+    import numpy as np
+    m._identifier._lib_s17["Zhu Yuan"] = m._identifier._lib_s17["Zhu Yuan"] * 0  # descriptor degradado
+    m._last_agent_name = "Zhu Yuan"
+    disc = _disc()
+    m._assign_s17_pj(disc, crop_s17_assigned_avatar(f9, l9, W9, H9))
+    assert disc.agente_asignado_nombre == "Zhu Yuan"  # no falso-rechazo
+
+
+def test_identifier_learn_valida_y_canonicaliza_por_roster(tmp_path):
+    """Fase 4: learn_s17 rechaza nombres fuera del roster ('Permiso') y canonicaliza
+    el OCR sin tilde ('Lucia'→'Lucía')."""
+    import numpy as np
+    from app.core.agent_identifier import AgentIdentifier
+    ident = AgentIdentifier(library_path=tmp_path / "lib.npz", autoload=False,
+                            roster={"Nangong Yu", "Lucía"})
+    face = np.full((48, 48, 3), 127, np.uint8)
+    assert ident.learn_s17(face, "Permiso") is False        # fuera del roster
+    assert "Permiso" not in ident.names_s17
+    assert ident.learn_s17(face, "Lucia") is True            # OCR sin tilde
+    assert "Lucía" in ident.names_s17                        # canonicalizado
+
+
+def test_identifier_prune_to_roster(tmp_path):
+    """Fase 4: prune_to_roster quita entradas espurias de ambas librerías."""
+    import numpy as np
+    from app.core.agent_identifier import AgentIdentifier
+    ident = AgentIdentifier(library_path=tmp_path / "lib.npz", autoload=False,
+                            roster={"Nangong Yu"})
+    z = np.zeros(10, np.float32)
+    ident._lib = {"Nangong Yu": z, "Permiso": z}
+    ident._lib_s17 = {"Nangong Yu": z, "Sporos_bogus": z}
+    assert ident.prune_to_roster() == 2
+    assert ident.names == ["Nangong Yu"] and ident.names_s17 == ["Nangong Yu"]
+
+
+def test_retroceso_s17_a_s8_hereda_pj(monkeypatch):
+    """Fase 4: al volver de S17 (detalle disco) a S8 (hexágono) se HEREDA el PJ —
+    se re-ancla el latch y NO se re-identifica por avatar (sería el mismo PJ)."""
+    import numpy as np
+    from app.core.detector import ScreenState
+    m = _monitor()
+    m._last_agent_name = "Burnice"
+    m._agent_anchor_x = None
+    m._detail_source = "avatar"
+    m._prev_state_code = "S17"  # venimos del detalle del disco
+    monkeypatch.setattr("app.core.monitor.selected_avatar_x", lambda f: 0.123)
+    # si NO se heredara, el matcher cambiaría el latch a 'OtroPJ'
+    monkeypatch.setattr(m._identifier, "identify", lambda f: ("OtroPJ", 0.99))
+    monkeypatch.setattr(m, "_process_agent_detail_continuous", lambda f, s: None)
+    monkeypatch.setattr(m, "_handle_upgrade", lambda f, s: None)
+    m._dispatch_state(np.zeros((1440, 2560, 3), np.uint8), ScreenState("S8", 0.9, "tmpl"))
+    assert m._agent_anchor_x == 0.123      # re-anclado a la posición actual
+    assert m._last_agent_name == "Burnice"  # latch preservado (no 'OtroPJ')
 
 
 def test_monitor_sin_latch_no_asigna():

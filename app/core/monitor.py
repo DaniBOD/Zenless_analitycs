@@ -63,6 +63,12 @@ _DETAIL_RESET_MIN_CONF = 0.50
 #   sim ≥ MIN → avatar confirma el latch → asignar.
 #   sim < MIN → avatar es de OTRO PJ (disco del grid) → abstener (preservar DB).
 _S17_GUARD_MIN = 0.86
+# Fase 4 (revisado tras QA 2026-06-09): se CONFÍA EN EL LATCH para asignar el disco
+# equipado; `sim` (avatar circular S17) solo decide si re-aprender el descriptor
+# (sim baja/ausente → refrescar; self-heal del falso-rechazo de Nangong 0.734). El
+# best-match del avatar S17 resultó inservible para rechazar (descriptor 'imán'
+# Yixuan ~0.9 contra casi todo) → la discriminación de discos de OTRO PJ se difiere
+# a la fase de grilla de candidatos.
 
 # S17 continuo (Fase 1): ciclos de cadencia que se fusionan en el aggregator antes
 # de emitir BEST-EFFORT si el disco no maduró (red de seguridad). Si madura antes
@@ -187,6 +193,10 @@ class Monitor:
         # Firma del último log de detalle S8/S19 emitido (edge-triggered): solo se
         # re-loguea cuando (code, name, identified, source) cambia.
         self._last_detail_sig: tuple | None = None
+        # Código del estado del ciclo anterior (para detectar el retroceso S17→S8:
+        # Fase 4 — al volver del detalle del disco al hexágono es el MISMO PJ, así
+        # que se hereda el latch en vez de re-identificar por avatar).
+        self._prev_state_code: str | None = None
         self._window: WindowBounds | None = None
         # TemporalBuffer del loop _run(). Instance var para que force_scan()
         # pueda resetearlo y permitir re-emisión de [reconocido]/[stats].
@@ -437,6 +447,8 @@ class Monitor:
 
     def _dispatch_state(self, frame, state: ScreenState) -> None:
         """Enruta el frame al handler correspondiente según el estado."""
+        prev_code = self._prev_state_code
+        self._prev_state_code = state.code
         self._handle_upgrade(frame, state)
         if state.code in _DISC_DETAIL_STATES:
             self._maybe_process_disc(frame, state)
@@ -455,6 +467,19 @@ class Monitor:
             # Si salimos de un disc-state, reseteamos su dedup también
             self._processed_disc_state_code = None
         elif state.code in _AGENT_DETAIL_STATES:
+            # Retroceso S17→S8 (Fase 4): volvés del detalle del disco al hexágono →
+            # es el MISMO PJ. Re-anclar el latch a la posición actual del avatar para
+            # que `_update_detail_identity` lo SOSTENGA (heredado) en vez de re-matchear
+            # por avatar (que mis-identificaba al volver). Solo si ya hay latch.
+            if prev_code == "S17" and self._last_agent_name:
+                try:
+                    ax = selected_avatar_x(frame)
+                except Exception:
+                    ax = None
+                if ax is not None:
+                    self._agent_anchor_x = ax
+                    if self._detail_source != "avatar":
+                        self._detail_source = "heredado"
             # S8/S19: logging persistente + identidad heredada de S18 (sin stats).
             self._process_agent_detail_continuous(frame, state)
             self._processed_disc_state_code = None
@@ -901,42 +926,31 @@ class Monitor:
                     "[S17] disco sin avatar (no equipado / no localizado) → sin asignar.",
                 )
             return
-        # Avatar presente: identificar el PJ para display (puede ser otro ≠ latch).
-        ident = self._identifier.identify_s17(face)
-        disc.equip_pj_visual = ident[0] if ident is not None else None
-
-        # --- GUARDA DE ASIGNACIÓN (persistencia) latch + avatar ---
+        # --- ASIGNACIÓN (persistencia): CONFIAR EN EL LATCH ----------------------
+        # El latch (PJ cuya pantalla se ve, de S8/S18 — avatar de fila + OCR) es la
+        # identidad FIABLE. El avatar circular S17 es POCO discriminativo (best-match
+        # inservible: un descriptor 'imán' p.ej. Yixuan matchea ~todo a 0.86-0.91,
+        # QA 2026-06-09) → NO se usa para rechazar; solo para aprender/refrescar. La
+        # discriminación de discos de OTRO PJ (navegar la grilla de candidatos) es una
+        # FASE APARTE (necesita descriptores mejores o detectar el modo grilla).
         if not latch:
             self._log_s17_assign(
                 ("no_latch",), "[S17] sin latch de PJ → disco sin asignar (preserva DB)."
             )
             return
         sim = self._identifier.s17_similarity(face, latch)
-        if sim is None:
-            # Primera vez que vemos a este PJ en S17: confiar en el latch y aprender.
+        # Aprender/refrescar el descriptor S17 del latch cuando falta o quedó viejo
+        # (sim baja). No re-aprende si ya matchea bien (evita escrituras / degradar).
+        if sim is None or sim < _S17_GUARD_MIN:
             self._identifier.learn_s17(face, latch)
-            disc.agente_asignado_nombre = latch
-            disc.agente_asignado_conf = 1.0
-            disc.equip_pj_visual = disc.equip_pj_visual or latch
-            self._log_s17_assign(
-                ("bootstrap", latch),
-                "[S17] asignado a '%s' (bootstrap latch, avatar S17 aprendido).", latch,
-            )
-        elif sim >= _S17_GUARD_MIN:
-            disc.agente_asignado_nombre = latch
-            disc.agente_asignado_conf = round(sim, 3)
-            disc.equip_pj_visual = disc.equip_pj_visual or latch
-            self._log_s17_assign(
-                ("confirm", latch),
-                "[S17] asignado a '%s' (avatar confirma, sim=%.3f).", latch, sim,
-            )
-        else:
-            self._log_s17_assign(
-                ("mismatch", latch, disc.equip_pj_visual),
-                "[S17] avatar NO coincide con latch '%s' (sim=%.3f < %.2f) → "
-                "disco de otro PJ → sin asignar (preserva DB).",
-                latch, sim, _S17_GUARD_MIN,
-            )
+        disc.agente_asignado_nombre = latch
+        disc.agente_asignado_conf = round(sim, 3) if (sim is not None and sim >= _S17_GUARD_MIN) else 1.0
+        disc.equip_pj_visual = latch
+        self._log_s17_assign(
+            ("confirm", latch),
+            "[S17] asignado a '%s' (latch; sim=%s).",
+            latch, f"{sim:.3f}" if sim is not None else "bootstrap",
+        )
 
     def _log_s17_assign(self, sig, msg, *args) -> None:
         """Loguea la decisión de asignación S17 edge-triggered: 1× por cambio de

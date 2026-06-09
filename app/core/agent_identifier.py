@@ -28,6 +28,7 @@ import cv2
 import numpy as np
 
 from app.core.detector import crop_selected_avatar
+from app.core.stats_vocab import _norm_key
 from app.db.connection import is_readonly
 
 log = logging.getLogger(__name__)
@@ -103,14 +104,71 @@ class AgentIdentifier:
     matching (en S8/S19). Persiste a disco (`avatar_library.npz`).
     """
 
-    def __init__(self, library_path: Path | None = None, autoload: bool = True):
+    def __init__(self, library_path: Path | None = None, autoload: bool = True,
+                 roster: set[str] | None = None):
         self._path = Path(library_path) if library_path else _default_library_path()
         self._path_s17 = _s17_library_path(self._path)
         self._lib: dict[str, np.ndarray] = {}
         self._lib_s17: dict[str, np.ndarray] = {}
+        # Roster canónico (nombres de `agents`) para validar/canonicalizar lo que se
+        # aprende y podar entradas espurias. None = carga perezosa desde la DB.
+        self._roster_norm: dict[str, str] | None = (
+            {_norm_key(n): n for n in roster} if roster is not None else None
+        )
         if autoload:
             self.load()
             self.load_s17()
+            self.prune_to_roster()
+
+    # ---- Roster (validación de nombres) -------------------------------------
+
+    def _load_roster(self) -> None:
+        """Carga perezosa del roster canónico desde `agents` (respeta DANIBOD_DB_PATH).
+        Si la DB no está disponible queda {} → sin validación (compat tests/sandbox)."""
+        if self._roster_norm is not None:
+            return
+        try:
+            from app.db.connection import get_connection
+            con = get_connection()
+            try:
+                self._roster_norm = {
+                    _norm_key(str(r[0])): str(r[0])
+                    for r in con.execute("SELECT nombre FROM agents")
+                }
+            finally:
+                con.close()
+        except Exception:
+            self._roster_norm = {}
+
+    def _canonical_name(self, name: str | None) -> str | None:
+        """Nombre canónico del roster que matchea `name` (sin acentos/espacios), o
+        None si no está en el roster. Si no hay roster cargado, devuelve `name` tal
+        cual (no valida)."""
+        if not name:
+            return None
+        self._load_roster()
+        if not self._roster_norm:
+            return name  # sin roster → no validar
+        return self._roster_norm.get(_norm_key(name))
+
+    def prune_to_roster(self) -> int:
+        """Elimina de ambas librerías las entradas cuyo nombre no esté en el roster
+        (p.ej. 'Permiso' aprendido de un OCR malo). Devuelve cuántas quitó. No
+        guarda en modo readonly. Sin roster disponible: no hace nada."""
+        self._load_roster()
+        if not self._roster_norm:
+            return 0
+        valid = set(self._roster_norm.values())
+        removed = 0
+        for lib in (self._lib, self._lib_s17):
+            for n in [k for k in lib if k not in valid]:
+                del lib[n]; removed += 1
+        if removed and not is_readonly():
+            log.info("AgentIdentifier: podadas %d entradas fuera del roster", removed)
+            self.save(); self.save_s17()
+        elif removed:
+            log.info("AgentIdentifier: %d entradas fuera del roster (readonly: no se guarda)", removed)
+        return removed
 
     # ---- Persistencia -------------------------------------------------------
 
@@ -178,15 +236,19 @@ class AgentIdentifier:
             return False
         if is_readonly():
             return False  # modo offline: librería de avatares inerte
+        canon = self._canonical_name(name)
+        if canon is None:
+            log.debug("AgentIdentifier: '%s' no está en el roster → no se aprende", name)
+            return False  # nombre OCR espurio (p.ej. 'Permiso') → no contaminar
         face = crop_selected_avatar(frame)
         if face is None:
             return False
-        new = self._lib.get(name) is None
-        self._lib[name] = _descriptor(face)
+        new = self._lib.get(canon) is None
+        self._lib[canon] = _descriptor(face)
         self.save()
         if new:
             log.info("AgentIdentifier: avatar aprendido para '%s' (%d en librería)",
-                     name, len(self._lib))
+                     canon, len(self._lib))
         return True
 
     def identify(self, frame: np.ndarray) -> tuple[str, float] | None:
@@ -238,12 +300,16 @@ class AgentIdentifier:
             return False
         if is_readonly():
             return False  # modo offline: librería S17 inerte
-        new = self._lib_s17.get(name) is None
-        self._lib_s17[name] = _descriptor_circular(face)
+        canon = self._canonical_name(name)
+        if canon is None:
+            log.debug("AgentIdentifier: S17 '%s' fuera del roster → no se aprende", name)
+            return False
+        new = self._lib_s17.get(canon) is None
+        self._lib_s17[canon] = _descriptor_circular(face)
         self.save_s17()
         if new:
             log.info("AgentIdentifier: avatar S17 aprendido para '%s' (%d en librería S17)",
-                     name, len(self._lib_s17))
+                     canon, len(self._lib_s17))
         return True
 
     def s17_similarity(self, face: np.ndarray, name: str) -> float | None:
