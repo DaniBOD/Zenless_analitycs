@@ -82,6 +82,21 @@ _S17_TITLE_STRIP_ROI = (0.29, 0.10, 0.34, 0.085)
 _RE_SLOT_PAREN = re.compile(r"\(\s*([1-6])\s*\)")
 _RE_INLINE_ROLL = re.compile(r"\+\s*([0-5])\b")
 
+# --- Fase 3 (2026-06-08): slot DETERMINISTA por el hexágono ------------------
+# El hexágono de discos equipados (derecha de S17) marca el slot seleccionado con
+# un ARO DORADO brillante. Detectarlo es independiente del OCR del título (que
+# dropea el '1' fino de '(1)' en algunos fondos). Centros calibrados con
+# HoughCircles + validados sobre 30 capturas reales (slots 1-6 × 5 PJs): 30/30.
+# Layout ZZZ (memoria zzz_slot_hexagon_layout): col izq 1→2→3 desc, col der 6→5→4 desc.
+_S17_HEX_CENTERS = {
+    1: (0.646, 0.296), 2: (0.592, 0.500), 3: (0.646, 0.705),
+    4: (0.812, 0.705), 5: (0.867, 0.501), 6: (0.812, 0.297),
+}
+_S17_HEX_RADIUS_N = 0.050          # radio del círculo de slot (norm. al ancho)
+_S17_HEX_GOLD_HSV = ((18, 90, 160), (42, 255, 255))  # aro dorado/amarillo brillante
+_S17_HEX_GOLD_MIN = 0.06           # fracción mínima de aro dorado para aceptar (min real 0.12)
+_S17_HEX_MARGIN = 0.04             # ventaja mínima del mejor sobre el 2º (min real 0.11)
+
 
 def _strip(s: str) -> str:
     return "".join(
@@ -248,6 +263,52 @@ def _rescue_roll(frame, name_line: "_Line", ocr, W: int, H: int) -> int | None:
     return None
 
 
+def _detect_s17_slot_by_hexagon(frame) -> int | None:
+    """
+    Slot (1-6) por el ARO DORADO de selección en el hexágono de equipados (Fase 3).
+    Sin OCR → robusto donde Paddle dropea el '(1)'. Para cada centro calibrado mide
+    la fracción de píxeles dorados en un ANNULUS (el aro, no el relleno del arte del
+    disco) y elige el máximo. Se ABSTIENE (None) si el mejor no supera el piso o no
+    le saca margen al 2º (p.ej. frame de transición / sin selección clara).
+    """
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return None
+    try:
+        import cv2
+        H, W = frame.shape[:2]
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        lo, hi = _S17_HEX_GOLD_HSV
+        scores: dict[int, float] = {}
+        for s, (nx, ny) in _S17_HEX_CENTERS.items():
+            cx, cy, r = int(nx * W), int(ny * H), int(_S17_HEX_RADIUS_N * W)
+            y0, y1 = max(0, cy - int(1.3 * r)), min(H, cy + int(1.3 * r))
+            x0, x1 = max(0, cx - int(1.3 * r)), min(W, cx + int(1.3 * r))
+            sub = hsv[y0:y1, x0:x1]
+            if sub.size == 0:
+                scores[s] = 0.0
+                continue
+            yy, xx = np.ogrid[y0:y1, x0:x1]
+            d = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+            ann = (d >= 0.78 * r) & (d <= 1.18 * r)
+            if not ann.any():
+                scores[s] = 0.0
+                continue
+            gold = (
+                (sub[:, :, 0] >= lo[0]) & (sub[:, :, 0] <= hi[0])
+                & (sub[:, :, 1] >= lo[1]) & (sub[:, :, 2] >= lo[2])
+            )
+            scores[s] = float(gold[ann].mean())
+        if not scores:
+            return None
+        ordered = sorted(scores.values(), reverse=True)
+        best = max(scores, key=lambda k: scores[k])
+        if scores[best] >= _S17_HEX_GOLD_MIN and (ordered[0] - ordered[1]) >= _S17_HEX_MARGIN:
+            return best
+    except Exception:
+        return None
+    return None
+
+
 def _rescue_slot_from_title(frame, ocr, W: int, H: int) -> int:
     """
     Recupera el slot (1-6) re-OCRizando una franja fina del título cuando el parse
@@ -369,18 +430,26 @@ def _parse_s17_from_lines(
         set_name_titulo = m.group(1).strip()
         slot = int(m.group(2))
     else:
-        set_name_titulo = titulo_raw
+        # El set sale igual del título (sin el '(N)'); el slot lo da el hexágono.
+        set_name_titulo = re.sub(r"\(\s*\d?\s*\)\s*$", "", titulo_raw).strip()
         slot = 0
-        notas.append("slot_no_detectado")
 
-    # Rescate de slot (Fase 2): el crop nativo a veces pierde el "(N)" del título
-    # (dígito fino entre paréntesis). Re-OCR de una franja fina lo recupera.
-    if slot == 0 and frame is not None and ocr is not None:
+    # Slot DETERMINISTA por hexágono (Fase 3): el aro de selección dorado de la celda
+    # marcada da el slot sin OCR → es AUTORITATIVO (Paddle dropea el '1' fino del
+    # '(1)' en algunos fondos, dejando slot=0). Cae al OCR del título y luego al
+    # rescate de franja solo si el hexágono se abstiene.
+    hex_slot = _detect_s17_slot_by_hexagon(frame) if frame is not None else None
+    if hex_slot is not None:
+        if slot and slot != hex_slot:
+            notas.append(f"slot_ocr{slot}_vs_hex{hex_slot}")
+        slot = hex_slot
+    elif slot == 0 and frame is not None and ocr is not None:
+        # Fallback (Fase 2): re-OCR de una franja fina del título.
         rs = _rescue_slot_from_title(frame, ocr, W, H)
         if rs:
             slot = rs
-            if "slot_no_detectado" in notas:
-                notas.remove("slot_no_detectado")
+    if slot == 0:
+        notas.append("slot_no_detectado")
 
     # --- Main stat: única fila nombre/valor entre 'Atributo principal' y 'Atributos secundarios' ---
     main_region = [ln for ln in detail if _ymain < ln.y1 < _ysubs and ln.y1 not in header_ys]

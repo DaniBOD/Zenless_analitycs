@@ -302,6 +302,31 @@ def test_e2e_crop_tier_detectado(paddle_ocr):
     assert parsed.set_active_tier == 4, parsed.set_active_tier
 
 
+@pytest.mark.parametrize("name,slot", [
+    ("Ejemplo_Slot1_1.png", 1), ("Ejemplo_Slot2_1.png", 2), ("Ejemplo_Slot3_1.png", 3),
+    ("Ejemplo_Slot4_1.png", 4), ("Ejemplo_Slot5_1.png", 5), ("Ejemplo_Slot6_1.png", 6),
+    ("Ejemplo_Slot1_3.png", 1),  # Burnice slot 1 (fondo oscuro; el OCR del '(1)' fallaba)
+    ("Ejemplo_Slot1_5.png", 1),  # Caesar slot 1 (idem)
+    ("Ejemplo_Slot6_3.png", 6), ("Ejemplo_Slot6_5.png", 6),
+])
+def test_slot_por_hexagono(name, slot):
+    """
+    Fase 3: el slot se deriva del ARO DORADO del hexágono, SIN OCR. Resuelve incluso
+    el slot=1 que Paddle no leía (el '1' fino de '(1)'). No requiere PaddleOCR.
+    """
+    from app.core.parser_disc_s17 import _detect_s17_slot_by_hexagon
+    img = _img(name)
+    assert _detect_s17_slot_by_hexagon(img) == slot, name
+
+
+def test_slot_hexagono_se_abstiene_sin_seleccion():
+    """Sin aro de selección (frame negro/transición) → None (no adivina)."""
+    import numpy as np
+    from app.core.parser_disc_s17 import _detect_s17_slot_by_hexagon
+    assert _detect_s17_slot_by_hexagon(np.zeros((1440, 2560, 3), np.uint8)) is None
+    assert _detect_s17_slot_by_hexagon(None) is None
+
+
 def test_e2e_no_substat_fantasma_numerico(paddle_ocr):
     """
     Regresión QA Burnice 2026-06-08 (Slot6): un fragmento numérico ('12') que cae en
