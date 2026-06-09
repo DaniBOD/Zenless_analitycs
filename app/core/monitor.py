@@ -480,6 +480,10 @@ class Monitor:
                     self._agent_anchor_x = ax
                     if self._detail_source != "avatar":
                         self._detail_source = "heredado"
+                # Re-emitir la identidad al retroceder: la firma edge no cambia
+                # (mismo PJ) y el log/UI quedaban sin feedback → el usuario creía que
+                # "no reconocía" y volvía a S18. Forzar 1 re-emisión del [S8] PJ=…
+                self._last_detail_sig = None
             # S8/S19: logging persistente + identidad heredada de S18 (sin stats).
             self._process_agent_detail_continuous(frame, state)
             self._processed_disc_state_code = None

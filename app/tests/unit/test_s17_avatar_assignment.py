@@ -353,9 +353,11 @@ def test_retroceso_s17_a_s8_hereda_pj(monkeypatch):
     monkeypatch.setattr(m._identifier, "identify", lambda f: ("OtroPJ", 0.99))
     monkeypatch.setattr(m, "_process_agent_detail_continuous", lambda f, s: None)
     monkeypatch.setattr(m, "_handle_upgrade", lambda f, s: None)
+    m._last_detail_sig = ("S8", "Burnice", True, "avatar")  # firma previa (no cambiaría)
     m._dispatch_state(np.zeros((1440, 2560, 3), np.uint8), ScreenState("S8", 0.9, "tmpl"))
     assert m._agent_anchor_x == 0.123      # re-anclado a la posición actual
     assert m._last_agent_name == "Burnice"  # latch preservado (no 'OtroPJ')
+    assert m._last_detail_sig is None       # re-emite (feedback al retroceder)
 
 
 def test_monitor_sin_latch_no_asigna():
