@@ -451,7 +451,20 @@ def _normalize_percent(val: float | None) -> float | None:
 # DB lookup
 # ---------------------------------------------------------------------------
 
+# Fallback dev-only. La DB REAL se resuelve en runtime con connection._resolve_db_path()
+# (honra DANIBOD_DB_PATH + la copia writable del .exe). Usar _DB_PATH directo desacopla
+# el roster del identificador de la DB que usa el resto de la app: en el .exe frozen
+# apunta a la copia bundleada/vieja → un PJ recién onboardeado no se identifica por stats.
 _DB_PATH = Path(__file__).resolve().parent.parent.parent / "db" / "danibod_zzz_v2.db"
+
+
+def _active_db_path() -> Path:
+    """DB activa, alineada con el resto de la app (override DANIBOD_DB_PATH + .exe)."""
+    try:
+        from app.db.connection import _resolve_db_path
+        return _resolve_db_path()
+    except Exception:
+        return _DB_PATH
 
 
 def _normalizar_rol(ocr_text: str) -> str | None:
@@ -506,7 +519,7 @@ def _get_roster() -> list[dict]:
     if _ROSTER_CACHE is None:
         roster: list[dict] = []
         try:
-            conn = sqlite3.connect(f"file:{_DB_PATH}?mode=ro", uri=True)
+            conn = sqlite3.connect(f"file:{_active_db_path()}?mode=ro", uri=True)
             for (nombre, rol, elemento, pv, ataque, defensa,
                  prob_critico, dano_critico) in conn.execute(
                 "SELECT nombre, rol, elemento, pv, ataque, defensa, "

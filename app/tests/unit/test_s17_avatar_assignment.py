@@ -202,6 +202,29 @@ def test_equip_map_registra_solo_equipados(monkeypatch, tmp_path):
     assert json.loads(mappath.read_text(encoding="utf-8")) == {key: "Burnice"}
 
 
+def test_equip_map_no_clobberea_entradas_previas(monkeypatch, tmp_path):
+    """5R.C fix: al detener/reanudar captura se recrea el Monitor (_equip_map={}).
+    El primer write de la instancia nueva debe MERGEAR el JSON existente, no pisarlo:
+    los PJs de pases previos se conservan. Regresión del bug de pérdida 2026-06-12."""
+    import json
+    from app.core.monitor import Monitor
+    mappath = tmp_path / "equip_map.json"
+    monkeypatch.setenv("DANIBOD_EQUIP_MAP", str(mappath))
+    # Pase 1 (instancia A): registra a Nangong Yu.
+    a = _monitor()
+    d1 = _disc(slot=1, set_name="Jazz caótico")
+    a._record_equip_map(Monitor._disc_identity(d1), "Nangong Yu")
+    k1 = Monitor._identity_to_key(Monitor._disc_identity(d1))
+    # Pausa/reanudación → instancia NUEVA con _equip_map vacío.
+    b = _monitor()
+    assert b._equip_map == {}
+    d2 = _disc(slot=2, set_name="Melodía de Faetón")
+    b._record_equip_map(Monitor._disc_identity(d2), "Yuzuha")
+    k2 = Monitor._identity_to_key(Monitor._disc_identity(d2))
+    data = json.loads(mappath.read_text(encoding="utf-8"))
+    assert data == {k1: "Nangong Yu", k2: "Yuzuha"}   # ambos, no clobber
+
+
 def test_equip_map_noop_sin_env(monkeypatch, tmp_path):
     """Sin DANIBOD_EQUIP_MAP, _record_equip_map no escribe nada (no-op)."""
     from app.core.monitor import Monitor

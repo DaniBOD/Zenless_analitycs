@@ -225,6 +225,7 @@ class Monitor:
         # está seteado, al emitir un disco EQUIPADO (agente_asignado por flujo-ancla,
         # dueño certero) se registra firma_disco→dueño a ese JSON. Readonly-safe (no DB).
         self._equip_map: dict[str, str] = {}
+        self._equip_map_loaded: bool = False  # lazy-load del JSON existente 1× por instancia
         # Cosecha de frames etiquetados por latch (Fase 5R.3, solo si DANIBOD_HARVEST
         # está seteado). Cap por (PJ, estado) para no spamear. Read-only: solo escribe
         # PNGs de frame completo a la carpeta indicada, nunca toca la DB.
@@ -690,13 +691,26 @@ class Monitor:
         if not path or not owner:
             return
         key = self._identity_to_key(identity)
-        if self._equip_map.get(key) == owner:
-            return
-        self._equip_map[key] = owner
         try:
             import json
             from pathlib import Path
             p = Path(path)
+            # Lazy-load 1× por instancia: el Monitor se recrea al detener/reanudar
+            # captura (o al relanzar la app) → _equip_map vuelve a {}. Sin cargar el
+            # JSON existente, el primer write CLOBBEREA los PJs de pases previos.
+            # Mergeamos disco como base; lo de esta sesión pisa entradas re-equipadas.
+            if not self._equip_map_loaded:
+                self._equip_map_loaded = True
+                if p.exists():
+                    try:
+                        disk = json.loads(p.read_text(encoding="utf-8"))
+                        if isinstance(disk, dict):
+                            self._equip_map = {**disk, **self._equip_map}
+                    except Exception:
+                        log.debug("equip_map load falló", exc_info=True)
+            if self._equip_map.get(key) == owner:
+                return
+            self._equip_map[key] = owner
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(json.dumps(self._equip_map, ensure_ascii=False, indent=0), encoding="utf-8")
         except Exception:

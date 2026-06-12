@@ -598,3 +598,31 @@ class TestIdentifyByStatsCapa4:
         # No debe afirmar "Lucy" (Soporte) cuando el banner dice Ataque.
         assert nombre != "Lucy"
         assert rol == "Ataque"
+
+
+def test_get_roster_honra_db_path_override(monkeypatch, tmp_path):
+    """Regresión 2026-06-12: _get_roster usaba un _DB_PATH hardcodeado (relativo al
+    fuente) con sqlite3 crudo, ignorando DANIBOD_DB_PATH. En el .exe frozen leía la
+    DB bundleada/vieja → un PJ recién onboardeado (Billy Estelar) NO se identificaba
+    por stats y caía al nombre ('Billy'). El roster debe leer la MISMA DB que el
+    resto de la app (override DANIBOD_DB_PATH)."""
+    import sqlite3
+    from app.core import parser_agent_stats as p
+    db = tmp_path / "override.db"
+    con = sqlite3.connect(str(db))
+    con.execute("CREATE TABLE agents (nombre TEXT, rol TEXT, elemento TEXT, pv REAL, "
+                "ataque REAL, defensa REAL, prob_critico REAL, dano_critico REAL)")
+    con.execute("INSERT INTO agents VALUES ('Zzz Testigo','Ataque','Físico',"
+                "99999,1234,567,72.2,118.8)")
+    con.commit(); con.close()
+    monkeypatch.setenv("DANIBOD_DB_PATH", str(db))
+    monkeypatch.setattr(p, "_ROSTER_CACHE", None, raising=False)  # forzar relectura
+    assert p._active_db_path() == db
+    roster = p._get_roster()
+    assert any(a["nombre"] == "Zzz Testigo" for a in roster), \
+        "el roster debe venir de la DB del override, no de la bundleada/source"
+    stats = {"pv": 99999, "ataque": 1234, "defensa": 567,
+             "prob_crit": 0.722, "dano_crit": 1.188}
+    res = p._identify_by_stats(stats)
+    assert res and res["nombre"] == "Zzz Testigo"
+    monkeypatch.setattr(p, "_ROSTER_CACHE", None, raising=False)  # no contaminar otros tests

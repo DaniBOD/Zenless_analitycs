@@ -44,15 +44,15 @@ Sistema de análisis y optimización de cuenta para ZZZ porque el juego carece d
 
 | Capa | Tabla | Filas | Notas |
 |------|-------|------:|-------|
-| 1 Catálogos | `agents` | **46** | Roster completo · 45 originales + Cissia v2.7 (2026-05-04) |
+| 1 Catálogos | `agents` | **47** | 45 originales + Cissia v2.7 (2026-05-04) + Billy Estelar v2.x (2026-06-12, onboarding PARCIAL: identidad+stats, pendiente synergy/splash/IA) |
 | 1 | `weapons` | 53 | 49 base + 4 nuevas (Street Superstar, Florescencia aurífera, Wild Gastronome, Hertz Transit). Ya tiene `pasiva_modelada` + `sensibilidad_contexto` |
 | 1 | `disc_sets` | 26 | Post-merge (id 47→40 Puffer Electro; id 50→35 Nana luz cenicienta) |
-| 1 | `agent_awakenings` | **6** | 1 verificado (Burnice nv6) + 4 placeholder `pending_capture` (Lycaon, Ellen, Grace, N.°0:Anby) + 1 placeholder Cissia (v2.7 sin awakening). Harumasa y N.°11 sin insertar hasta confirmar nivel |
+| 1 | `agent_awakenings` | **7** | 1 verificado (Burnice nv6) + 4 placeholder `pending_capture` (Lycaon, Ellen, Grace, N.°0:Anby) + 1 placeholder Cissia + 1 placeholder Billy Estelar. Harumasa y N.°11 sin insertar hasta confirmar nivel |
 | 2 Inventarios | `agent_discs` | 270 | 45 PJs × 6 slots; incluye EMPTY (Antón, Ben, builds 3+3). Cissia usa inventory_discs directamente hasta sync RF-04 |
 | 2 | `inventory_discs` | **334** | 263 equipados + 71 sueltos (+ 2 nuevos Cissia slot 4/6) |
 | 2 | `inventory_weapons` | 50 | 40 equipadas + 10 sueltas |
-| 3 Thresholds | `agent_thresholds` | **108** | 46/46 PJs con ≥1 stat · +5 Cissia (CR/CDmg/ATK/ER/Bono Eléctrico) |
-| 3 | `agent_score_thresholds` | **46** | Defaults equip 0.75 / stock 0.50, overridable |
+| 3 Thresholds | `agent_thresholds` | **110** | 47/47 PJs con ≥1 stat · +5 Cissia · +2 Billy Estelar (CR/CDmg) |
+| 3 | `agent_score_thresholds` | **47** | Defaults equip 0.75 / stock 0.50, overridable |
 | 3 | `agent_substat_preferences` | 0 | Cae al arquetipo del rol hasta que se cargue |
 | 4 Scoring | `disc_archetypes` | 6 | ATK_DPS, HP_DISRUPT, ANOMALY, STUN, SUPPORT_ER, DEFENSE |
 | 4 | `disc_set_archetype` | 34 | N:M con prioridad 1=primario, 2=secundario |
@@ -72,7 +72,7 @@ Sistema de análisis y optimización de cuenta para ZZZ porque el juego carece d
 | 8 | `content_profiles` | 4 | seed: shiyu_critical, da, hollow_zero, general |
 | 8 | `weapon_evaluations` | 0 | Cache scores (PJ × weapon × refinamiento × contenido) |
 | 8 | `prydwen_weapon_recommendations_snapshots` | 0 | Snapshot semanal scraper |
-| 8 | `pj_weapon_synergy` | **276** | 46 PJs × 6 categorías de pasiva |
+| 8 | `pj_weapon_synergy` | **276** | 46 PJs × 6 categorías · Billy Estelar PENDIENTE (rol Disruptivos/Rupture sin matriz confirmada — RNF-02) |
 
 **Migraciones aplicadas:** 9/9 (`01_archetypes_and_scoring`, `02_optimizer_pending`, `03_team_synergies`, `04_lategame_validation`, `05_weapon_optimizer`, `06_onboarding_cissia`, `07_re_estandarizacion`, `08_fix_archetypes_mains`, `09_add_protected_build`). Integrity OK, 0 FK violations.
 
@@ -138,8 +138,8 @@ RF-14 coordina con RF-06 (build full = arma + 6 discos)
 
 ## 6. Roster (rápido)
 
-**46 PJs** · Distribución elemento: Físico 13 · Eléctrico 12 · Fuego 9 · Éter 7 · Hielo 5
-**Distribución rol:** Ataque 14 · Aturdimiento 9 · Anomalía 8 · Soporte 8 · Defensa 5 · Disruptivos 2
+**47 PJs** · Distribución elemento: Físico 14 · Eléctrico 12 · Fuego 9 · Éter 7 · Hielo 5
+**Distribución rol:** Ataque 14 · Aturdimiento 9 · Anomalía 8 · Soporte 8 · Defensa 5 · Disruptivos 3
 
 > Corrección rol/elemento mig 07+08 (2026-06-01): se reasignaron 6 roles mal seedeados
 > (Pulchra→Aturdimiento, Lucía→Soporte, Ye Shunguang→Ataque, Yuzuha→Soporte, Dialyn→

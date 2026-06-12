@@ -44,6 +44,7 @@ ICO_ALIAS: dict[str, str] = {
     "Anby-Soldier-0": "N.º 0: Anby",
     "Soldier-11": "N.º 11",
     "Orphie": "Orfia y Magas",
+    "Billy-starlight": "Billy Estelar",   # Billy Kid Estelar (v2.x) — NO es Billy (id 12)
 }
 
 
