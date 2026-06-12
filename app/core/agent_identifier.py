@@ -1,22 +1,21 @@
 """
-Hito 2.8 — Etapa 2: identificación de agente por avatar (RF-04 §4.1).
+Hito 2.8 / Fase 5R — identificación de agente por avatar (RF-04 §4.1).
 
-Las pantallas S8 (Equipamiento) y S17/S19 no muestran el nombre del PJ; solo el
-avatar resaltado en el row superior. Este módulo identifica al PJ por ese avatar.
+Las pantallas S8 (Equipamiento), S18/S19 y la grilla de discos S17 no muestran el
+nombre del PJ; lo identificamos por su ícono de avatar. Desde Fase 5R esto usa el
+descriptor ROBUSTO (`avatar_descriptor.AvatarMatcher`: histograma HSV + NCC Lab +
+multi-ref + reject-set + abstención + ruta gris) en DOS matchers especializados
+(comparar like-with-like es lo que da robustez — medido 2026-06-10):
 
-Enfoque: **bootstrap desde S18 (Atributos base)**. Cuando el usuario está en
-Atributos base tenemos el nombre por OCR Y el crop del avatar resaltado. Guardamos
-el par (nombre → descriptor del avatar) en una librería persistente con el estilo
-REAL del juego. Luego, en S8/S19, recortamos el avatar resaltado y lo matcheamos
-contra la librería. Como el mismo PJ aparece en el mismo slot en todas las
-pestañas, el crop de aprendizaje y el de match son casi idénticos (corr ~0.995) y
-el match es trivial; PJs distintos correlan ≤ ~0.72.
+  - `_row`   : avatar de FILA (tile rectangular, S8/S18/S19). Solo cosecha vía latch
+               (bootstrap desde el OCR de S18). 100% leave-one-out.
+  - `_badge` : badge de DUEÑO de la grilla S17 (retrato circular). Sembrado con los
+               `-ico` del roster (día-1, incl. PJs grises no obtenidos) + cosecha.
+               96% / 0% error.
 
-Ventajas vs. assets del wiki: estilo in-game exacto, auto-rotulado por OCR de S18
-(evita assets mal etiquetados), auto-mejora a medida que el usuario navega.
-
-Conservador (RNF-02): ante baja correlación o ambigüedad (poco margen sobre el 2º)
-devuelve None — preferimos "sin identificar" antes que afirmar un PJ equivocado.
+Conservador (RNF-02): ante baja confianza o ambigüedad el matcher se ABSTIENE
+(devuelve None) — preferimos "sin identificar" antes que afirmar un PJ equivocado.
+Esto reemplaza el coseno de píxeles crudos que causaba el "imán Yixuan".
 """
 from __future__ import annotations
 
@@ -24,40 +23,39 @@ import logging
 import os
 from pathlib import Path
 
-import cv2
-import numpy as np
+import numpy as np  # noqa: F401  (compat: tests/otros importan np de acá indirectamente)
 
+from app.core.avatar_descriptor import AvatarMatcher, build_name_map
 from app.core.detector import crop_selected_avatar
 from app.core.stats_vocab import _norm_key
 from app.db.connection import is_readonly
 
 log = logging.getLogger(__name__)
 
-# Tamaño normalizado del descriptor (resize del crop de la cara).
-_DESC_SIZE = 48
-# Correlación mínima para aceptar un match (same-PJ ~0.995, distinto ≤ ~0.72).
-_MATCH_MIN = 0.88
-# Margen mínimo del mejor sobre el segundo (anti-ambigüedad).
-_MATCH_GAP = 0.05
+_RESOURCES = Path(__file__).resolve().parents[1] / "resources"
+_ICO_DIR = _RESOURCES / "avatar_refs"
+_REJECT_DIR = _RESOURCES / "avatar_reject"
 
-# --- Avatar circular S17 (asignación de disco equipado) ---------------------
-# El avatar del PJ asignado en S17 es un círculo (a la derecha de "Nivel X/15"),
-# NO el tile rectangular del row. Tiene fondo rayado oscuro en las esquinas, que
-# domina el descriptor rectangular y colapsa todos los matches (medido 2026-06-06:
-# todo → "Miyabi" ~0.58 contra la librería del row). Por eso S17 usa:
-#   1. un descriptor con MÁSCARA CIRCULAR (anula las esquinas), y
-#   2. una librería PROPIA (`avatar_library_s17.npz`) bootstrapeada del latch.
-# Medido sobre 7 crops reales: same-PJ 0.87–0.97; distinto ≤ 0.85. El umbral de
-# guarda separa "mismo PJ que el latch" de "otro PJ" (disco del grid de otro PJ).
-_S17_DESC_SIZE = 48
-_yy, _xx = np.ogrid[:_S17_DESC_SIZE, :_S17_DESC_SIZE]
-_S17_CMASK = (
-    (_xx - _S17_DESC_SIZE / 2) ** 2 + (_yy - _S17_DESC_SIZE / 2) ** 2
-) <= (_S17_DESC_SIZE / 2 - 1) ** 2
+# Cache del seed -ico: los descriptores son inmutables (frozen) y caros de construir
+# (53 PNGs + CLAHE + histogramas). Se construyen UNA vez y se comparten entre
+# instancias (cada una recibe listas propias, así su cosecha no se filtra).
+_ICO_SEED_CACHE: tuple[dict, list] | None = None
+
+# Similitud mínima para confirmar "mismo PJ que el latch" (guarda S17). Con el
+# descriptor robusto multi-ref, same-badge ~0.95+; distinto cae bastante.
+_S17_GUARD_DEFAULT = 0.86
+
+
+def _badge_harvest_enabled() -> bool:
+    """Modo cosecha de badges (DANIBOD_BADGE_HARVEST): permite que `learn_s17` PERSISTA
+    la librería de badges (avatar_badge_v2.npz) aunque la DB esté en readonly. Crece la
+    cobertura del descriptor sin tocar la DB — la librería es un archivo aparte. La
+    cosecha sigue gateada por el flujo-ancla (solo el disco EQUIPADO, label certero por
+    latch), así que no entra ruido de candidatos."""
+    return os.environ.get("DANIBOD_BADGE_HARVEST", "").strip() not in ("", "0", "false")
 
 
 def _default_library_path() -> Path:
-    # Override explícito (tests, o ubicación custom).
     override = os.environ.get("DANIBOD_AVATAR_LIB")
     if override:
         return Path(override)
@@ -65,66 +63,56 @@ def _default_library_path() -> Path:
     return Path(base) / "DaniBOD_ZZZ_Analytics" / "avatar_library.npz"
 
 
-def _s17_library_path(main_path: Path) -> Path:
-    """Librería S17 hermana de la del row (mismo dir, sufijo _s17)."""
-    override = os.environ.get("DANIBOD_AVATAR_LIB_S17")
-    if override:
-        return Path(override)
-    return main_path.with_name("avatar_library_s17.npz")
-
-
-def _descriptor(face: np.ndarray) -> np.ndarray:
-    """Descriptor invariante a brillo: resize 48×48 BGR, media-cero norma-unitaria."""
-    g = cv2.resize(face, (_DESC_SIZE, _DESC_SIZE)).astype(np.float32)
-    g = g - g.mean()
-    norm = float(np.sqrt((g * g).sum()))
-    if norm < 1e-6:
-        return g.ravel()
-    return (g / norm).ravel()
-
-
-def _descriptor_circular(face: np.ndarray) -> np.ndarray:
-    """
-    Descriptor para el avatar circular S17: resize 48×48, media-cero calculada
-    SOLO dentro del círculo, esquinas anuladas (máscara), norma-unitaria. Anula
-    el fondo rayado de las esquinas que de otro modo domina el coseno.
-    """
-    g = cv2.resize(face, (_S17_DESC_SIZE, _S17_DESC_SIZE)).astype(np.float32)
-    mean = g[_S17_CMASK].mean(axis=0)
-    g = (g - mean) * _S17_CMASK[..., None]
-    norm = float(np.sqrt((g * g).sum()))
-    if norm < 1e-6:
-        return g.ravel()
-    return (g / norm).ravel()
-
-
 class AgentIdentifier:
-    """
-    Librería de avatares por nombre, con aprendizaje (bootstrap desde S18) y
-    matching (en S8/S19). Persiste a disco (`avatar_library.npz`).
-    """
+    """Identificador de PJ por avatar, con aprendizaje (cosecha vía latch) y
+    matching robusto. Dos matchers especializados (fila / badge), persistidos."""
 
     def __init__(self, library_path: Path | None = None, autoload: bool = True,
                  roster: set[str] | None = None):
-        self._path = Path(library_path) if library_path else _default_library_path()
-        self._path_s17 = _s17_library_path(self._path)
-        self._lib: dict[str, np.ndarray] = {}
-        self._lib_s17: dict[str, np.ndarray] = {}
-        # Roster canónico (nombres de `agents`) para validar/canonicalizar lo que se
-        # aprende y podar entradas espurias. None = carga perezosa desde la DB.
+        base = Path(library_path) if library_path else _default_library_path()
+        self._row_path = base.with_name("avatar_row_v2.npz")
+        self._badge_path = base.with_name("avatar_badge_v2.npz")
+        self._row = AvatarMatcher()
+        self._badge = AvatarMatcher()
+        self._ico_names: set[str] = set()   # refs sembradas de -ico (no podar)
         self._roster_norm: dict[str, str] | None = (
             {_norm_key(n): n for n in roster} if roster is not None else None
         )
         if autoload:
+            self._seed_ico()
             self.load()
             self.load_s17()
             self.prune_to_roster()
 
+    # ---- semilla -ico (badge) -----------------------------------------------
+
+    def _seed_ico(self) -> None:
+        """Siembra el matcher de badge con los `-ico` del roster + reject-set. Los
+        nombres se canonicalizan al roster (build_name_map); los PJs no obtenidos
+        que igual tienen ico quedan con su stem (cobertura día-1 de grises)."""
+        global _ICO_SEED_CACHE
+        if not _ICO_DIR.is_dir():
+            return
+        try:
+            if _ICO_SEED_CACHE is None:
+                self._load_roster()
+                roster = list((self._roster_norm or {}).values())
+                stems = [p.stem for p in _ICO_DIR.glob("*.png")]
+                nm = build_name_map(stems, roster)
+                seeded = AvatarMatcher.from_folders(_ICO_DIR, _REJECT_DIR, name_map=nm)
+                _ICO_SEED_CACHE = (seeded._refs, seeded._rejects)
+            refs, rejects = _ICO_SEED_CACHE
+            for name, lst in refs.items():        # listas propias, descriptores compartidos
+                self._badge._refs.setdefault(name, []).extend(lst)
+            self._badge._rejects = list(rejects)
+            self._row._rejects = list(rejects)
+            self._ico_names = set(refs.keys())
+        except Exception:
+            log.exception("AgentIdentifier: error sembrando -ico")
+
     # ---- Roster (validación de nombres) -------------------------------------
 
     def _load_roster(self) -> None:
-        """Carga perezosa del roster canónico desde `agents` (respeta DANIBOD_DB_PATH).
-        Si la DB no está disponible queda {} → sin validación (compat tests/sandbox)."""
         if self._roster_norm is not None:
             return
         try:
@@ -141,212 +129,118 @@ class AgentIdentifier:
             self._roster_norm = {}
 
     def _canonical_name(self, name: str | None) -> str | None:
-        """Nombre canónico del roster que matchea `name` (sin acentos/espacios), o
-        None si no está en el roster. Si no hay roster cargado, devuelve `name` tal
-        cual (no valida)."""
         if not name:
             return None
         self._load_roster()
         if not self._roster_norm:
-            return name  # sin roster → no validar
+            return name
         return self._roster_norm.get(_norm_key(name))
 
     def prune_to_roster(self) -> int:
-        """Elimina de ambas librerías las entradas cuyo nombre no esté en el roster
-        (p.ej. 'Permiso' aprendido de un OCR malo). Devuelve cuántas quitó. No
-        guarda en modo readonly. Sin roster disponible: no hace nada."""
+        """Quita refs cuyo nombre no esté en el roster (OCR espurio como 'Permiso'),
+        PROTEGIENDO las sembradas de -ico (PJs válidos no obtenidos)."""
         self._load_roster()
         if not self._roster_norm:
             return 0
-        valid = set(self._roster_norm.values())
+        valid = set(self._roster_norm.values()) | self._ico_names
         removed = 0
-        for lib in (self._lib, self._lib_s17):
-            for n in [k for k in lib if k not in valid]:
-                del lib[n]; removed += 1
+        for matcher in (self._row, self._badge):
+            for n in [k for k in matcher._refs if k not in valid]:
+                del matcher._refs[n]; removed += 1
         if removed and not is_readonly():
-            log.info("AgentIdentifier: podadas %d entradas fuera del roster", removed)
+            log.info("AgentIdentifier: podadas %d refs fuera del roster", removed)
             self.save(); self.save_s17()
-        elif removed:
-            log.info("AgentIdentifier: %d entradas fuera del roster (readonly: no se guarda)", removed)
         return removed
 
     # ---- Persistencia -------------------------------------------------------
 
     def load(self) -> None:
-        if not self._path.exists():
-            return
-        try:
-            data = np.load(str(self._path), allow_pickle=True)
-            names = list(data["names"])
-            descs = data["descs"]
-            self._lib = {str(n): descs[i] for i, n in enumerate(names)}
-            log.info("AgentIdentifier: %d avatares cargados de %s", len(self._lib), self._path)
-        except Exception:
-            log.exception("AgentIdentifier: error cargando librería; se ignora")
-            self._lib = {}
+        n = self._row.load_merge(self._row_path)
+        if n:
+            log.info("AgentIdentifier: %d refs de fila cargadas de %s", n, self._row_path)
 
     def save(self) -> None:
-        if not self._lib:
-            return
-        try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            names = np.array(list(self._lib.keys()), dtype=object)
-            descs = np.stack(list(self._lib.values()))
-            np.savez(str(self._path), names=names, descs=descs)
-        except Exception:
-            log.exception("AgentIdentifier: error guardando librería")
+        self._row.save(self._row_path)
 
     def load_s17(self) -> None:
-        if not self._path_s17.exists():
-            return
-        try:
-            data = np.load(str(self._path_s17), allow_pickle=True)
-            names = list(data["names"])
-            descs = data["descs"]
-            self._lib_s17 = {str(n): descs[i] for i, n in enumerate(names)}
-            log.info("AgentIdentifier: %d avatares S17 cargados de %s",
-                     len(self._lib_s17), self._path_s17)
-        except Exception:
-            log.exception("AgentIdentifier: error cargando librería S17; se ignora")
-            self._lib_s17 = {}
+        n = self._badge.load_merge(self._badge_path)
+        if n:
+            log.info("AgentIdentifier: %d refs de badge cargadas de %s", n, self._badge_path)
 
     def save_s17(self) -> None:
-        if not self._lib_s17:
-            return
-        try:
-            self._path_s17.parent.mkdir(parents=True, exist_ok=True)
-            names = np.array(list(self._lib_s17.keys()), dtype=object)
-            descs = np.stack(list(self._lib_s17.values()))
-            np.savez(str(self._path_s17), names=names, descs=descs)
-        except Exception:
-            log.exception("AgentIdentifier: error guardando librería S17")
+        self._badge.save(self._badge_path)
 
-    # ---- API ----------------------------------------------------------------
+    # ---- API: avatar de FILA (S8/S18/S19) -----------------------------------
 
     @property
     def names(self) -> list[str]:
-        return list(self._lib.keys())
+        return list(self._row._refs.keys())
 
-    def learn(self, frame: np.ndarray, name: str) -> bool:
-        """
-        Aprende/actualiza el avatar de `name` desde el frame (típicamente S18,
-        donde el nombre viene por OCR). Devuelve True si guardó.
-        """
-        if not name:
+    def learn(self, frame, name: str) -> bool:
+        """Aprende/cosecha el avatar de fila de `name` desde el frame (típicamente
+        S18, nombre por OCR). Multi-ref. No escribe en readonly."""
+        if not name or is_readonly():
             return False
-        if is_readonly():
-            return False  # modo offline: librería de avatares inerte
         canon = self._canonical_name(name)
         if canon is None:
-            log.debug("AgentIdentifier: '%s' no está en el roster → no se aprende", name)
-            return False  # nombre OCR espurio (p.ej. 'Permiso') → no contaminar
+            log.debug("AgentIdentifier: '%s' fuera del roster → no se aprende", name)
+            return False
         face = crop_selected_avatar(frame)
         if face is None:
             return False
-        new = self._lib.get(canon) is None
-        self._lib[canon] = _descriptor(face)
+        new = canon not in self._row._refs
+        self._row.add_reference(canon, face)
         self.save()
         if new:
-            log.info("AgentIdentifier: avatar aprendido para '%s' (%d en librería)",
-                     canon, len(self._lib))
+            log.info("AgentIdentifier: avatar de fila aprendido para '%s'", canon)
         return True
 
-    def identify(self, frame: np.ndarray) -> tuple[str, float] | None:
-        """
-        Identifica al PJ del avatar resaltado (row) contra la librería.
-        Devuelve (nombre, correlación) si supera umbral+margen, o None.
-        """
-        face = crop_selected_avatar(frame)
+    def identify(self, frame) -> tuple[str, float] | None:
+        return self.identify_face(crop_selected_avatar(frame))
+
+    def identify_face(self, face) -> tuple[str, float] | None:
         if face is None:
             return None
-        return self.identify_face(face)
+        r = self._row.match(face)
+        return (r.name, r.conf) if r.name else None
 
-    def identify_face(self, face: np.ndarray) -> tuple[str, float] | None:
-        """
-        Matchea un crop de cara arbitrario (descriptor rectangular) contra la
-        librería del row. Núcleo reutilizable de `identify()`.
-        """
-        if not self._lib or face is None or face.size == 0:
-            return None
-        q = _descriptor(face)
-        scored: list[tuple[str, float]] = []
-        for name, d in self._lib.items():
-            if d.shape != q.shape:
-                continue
-            scored.append((name, float(np.dot(q, d))))  # ambos norma-unitaria → coseno
-        if not scored:
-            return None
-        scored.sort(key=lambda t: t[1], reverse=True)
-        best_name, best = scored[0]
-        if best < _MATCH_MIN:
-            return None
-        if len(scored) > 1 and (best - scored[1][1]) < _MATCH_GAP:
-            return None  # ambiguo
-        return best_name, best
-
-    # ---- Avatar S17 (librería circular propia, guarda de asignación) ---------
+    # ---- API: badge de DUEÑO (grilla S17) -----------------------------------
 
     @property
     def names_s17(self) -> list[str]:
-        return list(self._lib_s17.keys())
+        return list(self._badge._refs.keys())
 
-    def learn_s17(self, face: np.ndarray, name: str) -> bool:
-        """
-        Aprende/actualiza el descriptor circular S17 de `name` desde un crop de
-        avatar. `name` es ground-truth del latch (PJ cuya pantalla se ve).
-        Devuelve True si guardó.
-        """
-        if not name or face is None or face.size == 0:
+    def learn_s17(self, face, name: str) -> bool:
+        """Aprende/cosecha el badge de `name` (ground-truth del latch). Multi-ref.
+        En readonly NO persiste, SALVO en modo cosecha de badges (DANIBOD_BADGE_HARVEST),
+        que escribe solo la librería de badges (no la DB)."""
+        if not name or face is None or (is_readonly() and not _badge_harvest_enabled()):
             return False
-        if is_readonly():
-            return False  # modo offline: librería S17 inerte
         canon = self._canonical_name(name)
         if canon is None:
             log.debug("AgentIdentifier: S17 '%s' fuera del roster → no se aprende", name)
             return False
-        new = self._lib_s17.get(canon) is None
-        self._lib_s17[canon] = _descriptor_circular(face)
+        new = canon not in self._badge._refs or canon in self._ico_names
+        self._badge.add_reference(canon, face)
         self.save_s17()
         if new:
-            log.info("AgentIdentifier: avatar S17 aprendido para '%s' (%d en librería S17)",
-                     canon, len(self._lib_s17))
+            log.info("AgentIdentifier: badge aprendido para '%s'", canon)
         return True
 
-    def s17_similarity(self, face: np.ndarray, name: str) -> float | None:
-        """
-        Coseno entre el descriptor circular del crop y el descriptor S17 guardado
-        de `name`. None si `name` no tiene descriptor aprendido todavía o el crop
-        es inválido. Es la GUARDA mismo/distinto vs el PJ latcheado (no un matcher
-        de 46 vías): ≥ umbral ⇒ "mismo PJ"; < umbral ⇒ "otro PJ / abstener".
-        """
-        if face is None or face.size == 0:
+    def s17_similarity(self, face, name: str) -> float | None:
+        """Similitud del badge a las refs de `name` (guarda mismo/distinto vs latch).
+        None si `name` no tiene refs o el crop es inválido."""
+        if face is None:
             return None
-        stored = self._lib_s17.get(name)
-        if stored is None:
-            return None
-        q = _descriptor_circular(face)
-        if q.shape != stored.shape:
-            return None
-        return float(np.dot(q, stored))
+        return self._badge.similarity_to(face, name)
 
-    def identify_s17(self, face: np.ndarray, min_sim: float = 0.86) -> tuple[str, float] | None:
-        """
-        Mejor match del avatar circular S17 contra TODA la librería S17 (a
-        diferencia de `s17_similarity`, que compara contra UN nombre). Para el modo
-        VISUALIZACIÓN: nombrar qué PJ tiene equipado un disco candidato de la grilla.
-        Devuelve (nombre, sim) del mejor match ≥ `min_sim`, o None si no hay
-        librería / el crop es inválido / ningún PJ supera el umbral.
-        """
-        if face is None or face.size == 0 or not self._lib_s17:
+    def identify_s17(self, face, min_sim: float = _S17_GUARD_DEFAULT) -> tuple[str, float] | None:
+        """Mejor match del badge contra TODA la librería (sembrado -ico + cosecha).
+        Para nombrar el DUEÑO de un disco candidato de la grilla. Se abstiene
+        (None) si conf<gate o margen chico o cae en el reject-set."""
+        if face is None:
             return None
-        q = _descriptor_circular(face)
-        best_name, best_sim = None, -1.0
-        for name, stored in self._lib_s17.items():
-            if q.shape != stored.shape:
-                continue
-            sim = float(np.dot(q, stored))
-            if sim > best_sim:
-                best_sim, best_name = sim, name
-        if best_name is None or best_sim < min_sim:
+        r = self._badge.match(face)
+        if r.name is None or r.conf < min_sim:
             return None
-        return best_name, best_sim
+        return r.name, r.conf

@@ -91,7 +91,7 @@ def test_persistencia_round_trip(tmp_path):
     path = tmp_path / "lib.npz"
     a = AgentIdentifier(library_path=path, autoload=False)
     a.learn(s18, "Nangong Yu")
-    assert path.exists()
+    assert a._row_path.exists()      # Fase 5R: la lib de fila se guarda en avatar_row_v2.npz
     b = AgentIdentifier(library_path=path, autoload=True)
     assert "Nangong Yu" in b.names
     res = b.identify(s8)

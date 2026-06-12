@@ -256,6 +256,91 @@ def crop_selected_avatar(frame: np.ndarray) -> np.ndarray | None:
         return None
 
 
+# --- Badge de dueño del tile seleccionado en la grilla S17 (Fase 5R) ----------
+# En la vista de detalle de disco (S17), la columna izquierda es una grilla de
+# discos candidatos; cada tile EQUIPADO lleva en su esquina sup-der un retrato
+# circular del PJ dueño. El tile SELECCIONADO está resaltado (mismo borde
+# amarillo/lima que el row). Localizamos ese tile por highlight y recortamos su
+# badge con offset FIJO (calibrado sobre frames reales 2026-06-10): el badge
+# cuelga de la esquina sup-der. centro=(tx+0.86·tw, ty+0.13·th), radio≈0.18·tw.
+_GRID_REGION = (0.01, 0.10, 0.235, 0.95)        # x0,y0,x1,y1 norm (columna grilla)
+_BADGE_CX_F, _BADGE_CY_F, _BADGE_R_F = 0.86, 0.13, 0.18
+_GRID_TILE_MIN_AREA = 1200
+# Filtro de forma del anillo de selección (calibrado sobre frames reales 2026-06-11):
+# tile ~175×172 px @ 2559×1439 → ~0.068·W × ~0.119·H. Aro hueco (fill 0.07–0.18);
+# barras "Nivel" llenas (fill ~0.63) → excluidas por _TILE_FILL_MAX.
+_TILE_W_FRAC = np.array([0.052, 0.088])     # [min,max] ancho / W
+_TILE_H_FRAC = np.array([0.095, 0.140])     # [min,max] alto / H
+_TILE_ASPECT_MIN, _TILE_ASPECT_MAX = 0.78, 1.28
+_TILE_FILL_MAX = 0.45
+
+
+def _selected_grid_tile_bbox(frame: np.ndarray):
+    """Bbox (en frame) del tile resaltado de la grilla izquierda S17, o None.
+
+    El indicador es un ANILLO (aro lima/amarillo) alrededor del tile seleccionado:
+    bbox ~cuadrado del tamaño del tile y HUECO (poca área de píxeles vs su bbox).
+    NO se puede usar `argmax(área)` crudo: el arte dorado de los sets Jazz y las
+    barras de "Nivel 15" (amarillas, anchas y llenas) tienen MÁS área que el anillo
+    y ganaban → bbox degenerado (143×28) → recorte de badge inservible → INCIERTO
+    falso (diag 2026-06-11). Se filtra por FORMA: cuadrado (aspect≈1), tamaño de
+    tile (~0.068·W) y bajo factor de relleno (hueco). De los candidatos válidos se
+    toma el de mayor área (anillo completo > fragmento parcial)."""
+    if frame is None or frame.size == 0:
+        return None
+    try:
+        H, W = frame.shape[:2]
+        x0, y0, x1, y1 = _GRID_REGION
+        gx0, gy0 = int(x0 * W), int(y0 * H)
+        sub = frame[gy0:int(y1 * H), gx0:int(x1 * W)]
+        if sub.size == 0:
+            return None
+        mask = cv2.inRange(cv2.cvtColor(sub, cv2.COLOR_BGR2HSV), _AVATAR_HL_LOWER, _AVATAR_HL_UPPER)
+        n, _lab, stats, _c = cv2.connectedComponentsWithStats(mask, 8)
+        if n <= 1:
+            return None
+        # Ventana de tamaño de tile, en fracción del frame (robusto a resolución).
+        wmin, wmax = _TILE_W_FRAC * W
+        hmin, hmax = _TILE_H_FRAC * H
+        best = None  # (area, bx, by, bw, bh)
+        for i in range(1, n):
+            bx, by, bw, bh, area = stats[i]
+            if area < _GRID_TILE_MIN_AREA or bw < 1 or bh < 1:
+                continue
+            aspect = bw / bh
+            fill = area / float(bw * bh)
+            if not (wmin <= bw <= wmax and hmin <= bh <= hmax):
+                continue
+            if not (_TILE_ASPECT_MIN <= aspect <= _TILE_ASPECT_MAX):
+                continue
+            if fill > _TILE_FILL_MAX:        # lleno = arte de disco / barra, no anillo
+                continue
+            if best is None or area > best[0]:
+                best = (area, bx, by, bw, bh)
+        if best is None:
+            return None
+        _a, bx, by, bw, bh = best
+        return gx0 + bx, gy0 + by, bw, bh
+    except Exception:
+        return None
+
+
+def crop_grid_selected_badge(frame: np.ndarray) -> np.ndarray | None:
+    """Recorta (círculo) el badge de dueño del tile seleccionado de la grilla S17.
+    Devuelve el crop BGR o None si no hay tile resaltado. Es el ícono que el matcher
+    de badge identifica para saber QUÉ PJ tiene equipado el disco candidato."""
+    bb = _selected_grid_tile_bbox(frame)
+    if bb is None:
+        return None
+    tx, ty, tw, th = bb
+    cx, cy, r = int(tx + _BADGE_CX_F * tw), int(ty + _BADGE_CY_F * th), int(_BADGE_R_F * tw)
+    if r < 8:
+        return None
+    H, W = frame.shape[:2]
+    crop = frame[max(0, cy - r):min(H, cy + r), max(0, cx - r):min(W, cx + r)]
+    return crop if crop.size else None
+
+
 def detect_active_tab(frame: np.ndarray) -> str | None:
     """
     Detecta qué pestaña del detalle de agente está activa por el pill amarillo/lima.

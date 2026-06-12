@@ -13,7 +13,10 @@
 # RNF-01: hace backup timestamped del repo DB antes de lanzar (la app va a escribir).
 
 param(
-    [switch]$ReadOnly
+    [switch]$ReadOnly,
+    [string]$Harvest,        # carpeta destino: cosecha frames etiquetados por latch (5R.3)
+    [switch]$BadgeHarvest    # crece la librería de badges (avatar_badge_v2.npz) en vivo,
+                             # gateada por flujo-ancla (solo disco equipado). NO toca DB.
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,6 +44,20 @@ if ($ReadOnly) {
     Write-Host "[qa_launch] DANIBOD_READONLY = 1 (modo offline: NO escribe DB ni avatares)"
 } else {
     Remove-Item Env:\DANIBOD_READONLY -ErrorAction SilentlyContinue
+}
+if ($Harvest) {
+    $harvestDir = if ([System.IO.Path]::IsPathRooted($Harvest)) { $Harvest } else { Join-Path $repoRoot $Harvest }
+    New-Item -ItemType Directory -Force -Path $harvestDir | Out-Null
+    $env:DANIBOD_HARVEST = $harvestDir
+    Write-Host "[qa_launch] DANIBOD_HARVEST = $harvestDir (cosecha frames etiquetados por latch)"
+} else {
+    Remove-Item Env:\DANIBOD_HARVEST -ErrorAction SilentlyContinue
+}
+if ($BadgeHarvest) {
+    $env:DANIBOD_BADGE_HARVEST = "1"
+    Write-Host "[qa_launch] DANIBOD_BADGE_HARVEST = 1 (crece avatar_badge_v2.npz · solo disco equipado · NO toca DB)"
+} else {
+    Remove-Item Env:\DANIBOD_BADGE_HARVEST -ErrorAction SilentlyContinue
 }
 Write-Host "[qa_launch] Lanzando $exe ..."
 

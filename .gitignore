@@ -86,6 +86,19 @@ audit/*_running_*.md
 app/tests/_tmp/
 app/tests/__snapshots__/_actual_*
 
+# ────────────── Artefactos efímeros de cosecha/diagnóstico (Fase 5R) ──────────────
+# Volcado de frames completos de cosecha (DANIBOD_HARVEST) — pesa GBs, regenerable.
+audit/harvest/
+# Montages/recortes de diagnóstico (diag_grid_*.py), QA shots y badges extraídos —
+# regenerables desde los frames etiquetados + las tools. No son fuente de verdad.
+audit/grid_diag/
+audit/qa_shots/
+audit/labeled_badges/
+# Frames full-res de validación de la grilla (~71 MB) — verdad de tierra del test
+# test_grid_owner_real_frames (skip-if-absent). Se mantienen locales (decisión usuario
+# 2026-06-12); el test corre en la máquina del usuario.
+Documentacion/Screenshots_Triggers/Discos_Triggers/16_discos_pj_grilla/
+
 # ────────────── Mockups runtime state ──────────────
 # DesignCanvas guarda estado de orden/títulos en sidecar JSON
 .design-canvas.state.json

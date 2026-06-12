@@ -120,27 +120,20 @@ def test_detect_active_tier_sin_pistas_none():
 
 # --- 2. Guarda S17 del identificador -----------------------------------------
 
-def test_guarda_s17_confirma_mismo_pj_y_abstiene_otro():
+def test_guarda_s17_confirma_mismo_pj_y_abstiene_otro(tmp_path):
     """
-    Aprendido el descriptor S17 de un PJ (desde Ejemplo_1), otros discos del MISMO
-    PJ (Ej_8/9/10) confirman (sim alto) y discos de OTRO PJ (Ej_2/4/5) abstienen.
+    Fase 5R: aprendido el badge de un PJ, el MISMO badge confirma (sim alto) y el de
+    OTRO PJ abstiene (sim bajo). Usa íconos reales del roster (descriptor robusto).
     """
-    ident = AgentIdentifier(autoload=False, roster={"PJ_A"})  # roster explícito (no DB)
-    def face(name):
-        fr, ln, W, H = _load_frame_lines(name)
-        f = crop_s17_assigned_avatar(fr, ln, W, H)
-        assert f is not None, name
-        return f
-
-    ident.learn_s17(face("Ejemplo_1"), "PJ_A")
-    # Mismo PJ → sim alto
-    for same in ["Ejemplo_8", "Ejemplo_9", "Ejemplo_10"]:
-        sim = ident.s17_similarity(face(same), "PJ_A")
-        assert sim is not None and sim >= 0.86, f"{same}: sim={sim} (debería confirmar)"
-    # Otro PJ → sim bajo (abstiene)
-    for other in ["Ejemplo_2", "Ejemplo_4", "Ejemplo_5"]:
-        sim = ident.s17_similarity(face(other), "PJ_A")
-        assert sim is not None and sim < 0.86, f"{other}: sim={sim} (debería abstener)"
+    refs = REPO / "app" / "resources" / "avatar_refs"
+    ellen = cv2.imread(str(refs / "Ellen.png"))
+    lycaon = cv2.imread(str(refs / "Lycaon.png"))
+    assert ellen is not None and lycaon is not None
+    ident = AgentIdentifier(library_path=tmp_path / "lib.npz", autoload=False, roster={"PJ_A"})
+    ident.learn_s17(ellen, "PJ_A")
+    assert ident.s17_similarity(ellen, "PJ_A") >= 0.86          # mismo → confirma
+    s_other = ident.s17_similarity(lycaon, "PJ_A")
+    assert s_other is not None and s_other < 0.86               # otro → abstiene
 
 
 def test_s17_similarity_none_si_pj_no_aprendido():
@@ -248,67 +241,194 @@ def _monitor():
     return Monitor(ocr=_DummyOcr(), detector=ScreenDetector())
 
 
-def test_monitor_bootstrap_asigna_y_aprende_con_latch():
-    """Latch presente + PJ no visto aún en S17 → confía latch, aprende, asigna."""
-    fr, ln, W, H = _load_frame_lines("Ejemplo_1")
-    face = crop_s17_assigned_avatar(fr, ln, W, H)
+def test_maybe_harvest_etiqueta_y_capea(tmp_path, monkeypatch):
+    """5R.3: con DANIBOD_HARVEST guarda frames etiquetados por latch, cap por (PJ,estado)."""
+    import numpy as _np
+    from app.core.detector import ScreenState
+    from app.core import monitor as _mon
+    monkeypatch.setenv("DANIBOD_HARVEST", str(tmp_path))
     m = _monitor()
     m._last_agent_name = "Zhu Yuan"
-    disc = _disc()
-    m._assign_s17_pj(disc, face)
+    frame = _np.zeros((64, 64, 3), _np.uint8)
+    st = ScreenState("S8", 0.9, "")
+    for _ in range(_mon._HARVEST_CAP + 3):
+        m._maybe_harvest(frame, st)
+    files = list(tmp_path.glob("*.png"))
+    assert len(files) == _mon._HARVEST_CAP            # cap respetado
+    assert all("__S8__" in f.name for f in files)     # etiquetado por estado
+
+
+def test_maybe_harvest_gates(tmp_path, monkeypatch):
+    """Sin env o sin latch o estado no-cosechable → no escribe."""
+    import numpy as _np
+    from app.core.detector import ScreenState
+    frame = _np.zeros((64, 64, 3), _np.uint8)
+    st = ScreenState("S8", 0.9, "")
+    monkeypatch.delenv("DANIBOD_HARVEST", raising=False)
+    m = _monitor(); m._last_agent_name = "X"
+    m._maybe_harvest(frame, st)                        # sin env
+    assert list(tmp_path.glob("*.png")) == []
+    monkeypatch.setenv("DANIBOD_HARVEST", str(tmp_path))
+    m2 = _monitor(); m2._last_agent_name = None
+    m2._maybe_harvest(frame, st)                       # sin latch
+    assert list(tmp_path.glob("*.png")) == []
+    m3 = _monitor(); m3._last_agent_name = "X"
+    m3._maybe_harvest(frame, ScreenState("S12", 0.0, ""))  # estado no-cosechable
+    assert list(tmp_path.glob("*.png")) == []
+
+
+class _StubIdent:
+    """Identificador controlado para testear la lógica de `_assign_s17_pj` (5R.5)
+    sin depender de fixtures: define la similitud al latch y el dueño identificado."""
+    def __init__(self, sim=None, owner=None):
+        self._sim = sim; self._owner = owner; self.learned = []
+        self._roster_norm = {}
+
+    def s17_similarity(self, badge, name):
+        return self._sim
+
+    def identify_s17(self, badge, min_sim=0.86):
+        return self._owner
+
+    def learn_s17(self, badge, name):
+        self.learned.append(name); return True
+
+
+def _monitor_badge(monkeypatch, sim=None, owner=None):
+    """Monitor con badge presente (stub de `crop_grid_selected_badge`) + identificador
+    controlado, latch=Zhu Yuan."""
+    import numpy as np
+    import app.core.monitor as mon
+    monkeypatch.setattr(mon, "crop_grid_selected_badge",
+                        lambda f: np.zeros((40, 40, 3), np.uint8))
+    m = _monitor()
+    m._identifier = _StubIdent(sim, owner)
+    m._last_agent_name = "Zhu Yuan"
+    return m
+
+
+def _frame():
+    import numpy as np
+    return np.zeros((720, 1280, 3), np.uint8)
+
+
+def test_monitor_equipado_por_flujo_asigna_y_cosecha(monkeypatch):
+    """Anchor de flujo (5R.5b): disco en un slot NUEVO = equipado por el latch
+    (certero) → asigna conf 1.0 + cosecha el badge, sin depender del sim."""
+    m = _monitor_badge(monkeypatch, sim=None, owner=None)
+    m._s17_last_slot = 0                       # slot 1 será "nuevo" → equipado
+    disc = _disc(slot=1)
+    m._assign_s17_pj(disc, _frame())
     assert disc.agente_asignado_nombre == "Zhu Yuan"
     assert disc.agente_asignado_conf == 1.0
-    assert "Zhu Yuan" in m._identifier.names_s17  # aprendió el descriptor S17
+    assert "Zhu Yuan" in m._identifier.learned  # cosecha con label certero
 
 
-def test_monitor_confirma_mismo_pj_tras_bootstrap():
-    """Tras bootstrap con Ej_1, otro disco del MISMO PJ (Ej_9) confirma por avatar."""
+def test_monitor_equipado_sin_badge_igual_asigna(monkeypatch):
+    """El equipado (slot nuevo) se asigna al latch AUNQUE el badge no se localice —
+    la estructura del juego lo garantiza (a prueba del crop)."""
+    import app.core.monitor as mon
+    monkeypatch.setattr(mon, "crop_grid_selected_badge", lambda f: None)
     m = _monitor()
+    m._identifier = _StubIdent()
     m._last_agent_name = "Zhu Yuan"
-    f1, l1, W1, H1 = _load_frame_lines("Ejemplo_1")
-    m._assign_s17_pj(_disc(), crop_s17_assigned_avatar(f1, l1, W1, H1))  # bootstrap
-    f9, l9, W9, H9 = _load_frame_lines("Ejemplo_9")
-    disc = _disc()
-    m._assign_s17_pj(disc, crop_s17_assigned_avatar(f9, l9, W9, H9))
+    m._s17_last_slot = 0
+    disc = _disc(slot=2)
+    m._assign_s17_pj(disc, _frame())
     assert disc.agente_asignado_nombre == "Zhu Yuan"
-    assert 0.86 <= disc.agente_asignado_conf < 1.0  # confirmado por sim, no bootstrap
+    assert disc.agente_asignado_conf == 1.0
 
 
-def test_monitor_confia_en_latch_para_disco_equipado():
-    """
-    Fase 4 (revisado tras QA 2026-06-09): el avatar circular S17 es poco
-    discriminativo (best-match inservible) → para el disco EQUIPADO se CONFÍA en el
-    latch (identidad fiable de S8/S18), sin rechazar por el avatar. La discriminación
-    de discos de OTRO PJ (grilla) se difiere a su fase. Aquí: latch presente → asigna
-    al latch aunque el frame sea de otro PJ.
-    """
-    m = _monitor()
-    m._identifier._roster_norm = {}  # no validar roster en el test
-    f2, l2, W2, H2 = _load_frame_lines("Ejemplo_2")
-    m._last_agent_name = "Zhu Yuan"
-    disc = _disc()
-    m._assign_s17_pj(disc, crop_s17_assigned_avatar(f2, l2, W2, H2))
-    assert disc.agente_asignado_nombre == "Zhu Yuan"  # confía en el latch
-    assert disc.equip_pj_visual == "Zhu Yuan"
+def test_monitor_candidato_del_latch_reconfirma(monkeypatch):
+    """Mismo slot + badge que matchea el latch (volviste al equipado) → re-confirma."""
+    m = _monitor_badge(monkeypatch, sim=0.95, owner=("Zhu Yuan", 0.95))
+    m._s17_last_slot = 1                       # mismo slot → candidato
+    disc = _disc(slot=1)
+    m._assign_s17_pj(disc, _frame())
+    assert disc.agente_asignado_nombre == "Zhu Yuan"
+    assert disc.agente_asignado_conf == 0.95
 
 
-def test_monitor_self_heal_descriptor_viejo_no_falso_rechaza():
-    """
-    Fase 4: un descriptor S17 VIEJO del latch (sim baja, p.ej. Nangong 0.734) NO debe
-    causar falso-rechazo si nadie le gana: se asigna al latch y se RE-APRENDE.
-    """
-    m = _monitor()
-    m._identifier._roster_norm = {}
-    f1, l1, W1, H1 = _load_frame_lines("Ejemplo_1")
-    f9, l9, W9, H9 = _load_frame_lines("Ejemplo_9")  # mismo PJ, otro disco
-    # Sembrar un descriptor "viejo" del latch desde un frame de OTRO PJ (sim baja).
-    m._identifier.learn_s17(crop_s17_assigned_avatar(f1, l1, W1, H1), "Zhu Yuan")
+def test_monitor_candidato_de_otro_pj_reporta_no_asigna(monkeypatch):
+    """Mismo slot + badge de OTRO PJ (sim<guarda) → reporta el dueño VOTADO pero NO lo
+    asigna al latch (no corrompe la build con un disco ajeno — RNF-02)."""
+    m = _monitor_badge(monkeypatch, sim=0.40, owner=("Ellen", 0.93))
+    m._s17_last_slot = 1
+    disc = _disc(slot=1)
+    m._sample_s17_owner(_frame())                    # loop rápido acumula el voto
+    m._assign_s17_pj(disc, _frame())
+    assert disc.agente_asignado_nombre is None       # NO asignado al latch
+    assert disc.equip_pj_visual == "Ellen"           # dueño votado reportado
+
+
+def test_monitor_candidato_incierto_abstiene(monkeypatch):
+    """Mismo slot + badge no reconocido (sin votos) → incierto, sin asignar."""
+    m = _monitor_badge(monkeypatch, sim=0.40, owner=None)
+    m._s17_last_slot = 1
+    disc = _disc(slot=1)
+    m._sample_s17_owner(_frame())                    # no acumula voto (owner None)
+    m._assign_s17_pj(disc, _frame())
+    assert disc.agente_asignado_nombre is None
+    assert disc.equip_pj_visual is None
+
+
+def test_monitor_voto_dueno_gana_pese_a_frames_inciertos(monkeypatch):
+    """Anti-parpadeo (5R.5c): el loop rápido samplea ~varios frames del MISMO disco;
+    aunque algunos den 'incierto' (recorte movido), el dueño con más confianza
+    acumulada gana → lectura estable, no el frame azaroso que tocó la cadencia."""
     import numpy as np
-    m._identifier._lib_s17["Zhu Yuan"] = m._identifier._lib_s17["Zhu Yuan"] * 0  # descriptor degradado
+    import app.core.monitor as mon
+    monkeypatch.setattr(mon, "crop_grid_selected_badge",
+                        lambda f: np.zeros((40, 40, 3), np.uint8))
+
+    class _Flicker:
+        """Alterna incierto/Yuzuha frame a frame (como el recorte real)."""
+        def __init__(self): self._i = 0; self.learned = []
+        def s17_similarity(self, badge, name): return 0.40   # no es el latch
+        def identify_s17(self, badge, min_sim=0.86):
+            self._i += 1
+            return ("Yuzuha", 0.90) if self._i % 2 == 0 else None
+        def learn_s17(self, badge, name): self.learned.append(name); return True
+
+    m = _monitor()
+    m._identifier = _Flicker()
+    m._last_agent_name = "Nangong Yu"
+    m._s17_last_slot = 1                              # mismo slot → candidato
+    for _ in range(8):                               # 8 frames: 4 Yuzuha, 4 incierto
+        m._sample_s17_owner(_frame())
+    disc = _disc(slot=1)
+    m._assign_s17_pj(disc, _frame())
+    assert disc.equip_pj_visual == "Yuzuha"          # gana el voto, no el parpadeo
+    assert disc.agente_asignado_nombre is None        # candidato: no asigna al latch
+
+
+def test_monitor_voto_se_resetea_al_cambiar_disco(monkeypatch):
+    """Al cambiar de disco (firma distinta) la votación arranca limpia: el dueño del
+    disco anterior NO se arrastra al nuevo."""
+    import numpy as np
+    import app.core.monitor as mon
+    monkeypatch.setattr(mon, "crop_grid_selected_badge",
+                        lambda f: np.zeros((40, 40, 3), np.uint8))
+    m = _monitor_badge(monkeypatch, sim=0.40, owner=("Ellen", 0.93))
+    m._sample_s17_owner(_frame())
+    assert m._s17_voted_owner(_frame()) == "Ellen"
+    # Firma distinta = disco nuevo → reset de votos
+    other = np.full((720, 1280, 3), 200, np.uint8)
+    assert m._s17_voted_owner(other) is None
+
+
+def test_monitor_sin_badge_mismo_slot_no_asigna(monkeypatch):
+    """Mismo slot (candidato) sin badge → sin asignar (no es el equipado)."""
+    import app.core.monitor as mon
+    monkeypatch.setattr(mon, "crop_grid_selected_badge", lambda f: None)
+    m = _monitor()
+    m._identifier = _StubIdent()
     m._last_agent_name = "Zhu Yuan"
-    disc = _disc()
-    m._assign_s17_pj(disc, crop_s17_assigned_avatar(f9, l9, W9, H9))
-    assert disc.agente_asignado_nombre == "Zhu Yuan"  # no falso-rechazo
+    m._s17_last_slot = 1
+    disc = _disc(slot=1)
+    m._assign_s17_pj(disc, _frame())
+    assert disc.agente_asignado_nombre is None
+    assert disc.equip_detectado is False
 
 
 def test_identifier_learn_valida_y_canonicaliza_por_roster(tmp_path):
@@ -325,15 +445,34 @@ def test_identifier_learn_valida_y_canonicaliza_por_roster(tmp_path):
     assert "Lucía" in ident.names_s17                        # canonicalizado
 
 
+def test_learn_s17_readonly_gateado_por_badge_harvest(tmp_path, monkeypatch):
+    """En readonly, learn_s17 NO persiste — salvo en modo cosecha de badges
+    (DANIBOD_BADGE_HARVEST), que escribe la librería de badges sin tocar la DB."""
+    import numpy as np
+    import app.core.agent_identifier as ai
+    monkeypatch.setattr(ai, "is_readonly", lambda: True)
+    face = np.full((48, 48, 3), 127, np.uint8)
+    ident = ai.AgentIdentifier(library_path=tmp_path / "lib.npz", autoload=False,
+                               roster={"Nangong Yu"})
+    monkeypatch.delenv("DANIBOD_BADGE_HARVEST", raising=False)
+    assert ident.learn_s17(face, "Nangong Yu") is False       # readonly puro → inerte
+    monkeypatch.setenv("DANIBOD_BADGE_HARVEST", "1")
+    assert ident.learn_s17(face, "Nangong Yu") is True        # modo cosecha → persiste
+    assert "Nangong Yu" in ident.names_s17
+
+
 def test_identifier_prune_to_roster(tmp_path):
-    """Fase 4: prune_to_roster quita entradas espurias de ambas librerías."""
+    """Fase 5R: prune_to_roster quita refs espurias de ambos matchers (protege -ico)."""
     import numpy as np
     from app.core.agent_identifier import AgentIdentifier
+    from app.core.avatar_descriptor import AvatarDescriptor
     ident = AgentIdentifier(library_path=tmp_path / "lib.npz", autoload=False,
                             roster={"Nangong Yu"})
-    z = np.zeros(10, np.float32)
-    ident._lib = {"Nangong Yu": z, "Permiso": z}
-    ident._lib_s17 = {"Nangong Yu": z, "Sporos_bogus": z}
+    def d():
+        return [AvatarDescriptor(np.zeros(192, np.float32), np.zeros(10, np.float32),
+                                 np.zeros(9, np.float32), np.zeros(10, np.float32), False)]
+    ident._row._refs = {"Nangong Yu": d(), "Permiso": d()}
+    ident._badge._refs = {"Nangong Yu": d(), "Sporos_bogus": d()}
     assert ident.prune_to_roster() == 2
     assert ident.names == ["Nangong Yu"] and ident.names_s17 == ["Nangong Yu"]
 
@@ -369,11 +508,15 @@ def test_monitor_sin_latch_no_asigna():
     assert disc.agente_asignado_nombre is None
 
 
-def test_monitor_sin_avatar_no_asigna():
+def test_monitor_candidato_sin_badge_no_asigna(monkeypatch):
+    """Candidato (mismo slot) sin badge localizado → no asigna (no es el equipado)."""
+    import app.core.monitor as mon
+    monkeypatch.setattr(mon, "crop_grid_selected_badge", lambda f: None)
     m = _monitor()
     m._last_agent_name = "Zhu Yuan"
-    disc = _disc()
-    m._assign_s17_pj(disc, None)  # disco sin equipar / avatar no localizado
+    m._s17_last_slot = 1                       # mismo slot → candidato, no equipado
+    disc = _disc(slot=1)
+    m._assign_s17_pj(disc, _frame())
     assert disc.agente_asignado_nombre is None
 
 
@@ -564,6 +707,20 @@ def test_s17_firma_detecta_cambio_de_disco():
 
 
 _SLOTS_DIR = REPO / "Documentacion" / "Screenshots_Triggers" / "Discos_Triggers" / "14_Slots_equipamiento"
+
+
+def test_crop_grid_selected_badge_localiza_en_s17():
+    """5R.4: el localizador de badge del tile seleccionado devuelve un crop en una
+    pantalla de grilla S17, y None sin grilla."""
+    from app.core.detector import crop_grid_selected_badge
+    f = cv2.imread(str(_SLOTS_DIR / "Ejemplo_Slot1_1.png"))
+    if f is None:
+        pytest.skip("captura Slot1_1 no encontrada")
+    badge = crop_grid_selected_badge(f)
+    assert badge is not None and badge.size > 0
+    h, w = badge.shape[:2]
+    assert 0.7 < h / w < 1.4              # aprox cuadrado (círculo inscripto)
+    assert crop_grid_selected_badge(np.zeros((720, 1280, 3), np.uint8)) is None
 
 
 @pytest.mark.parametrize("a,b", [
@@ -774,23 +931,27 @@ def test_s17_continuo_baja_confianza_no_contamina(monkeypatch):
     assert m._disc_aggregator.current is None  # no se fusionó nada
 
 
-def test_assign_s17_visualizacion_no_equipado():
-    """Sin avatar → equip_detectado False (disco disponible, no equipado)."""
+def test_assign_s17_visualizacion_no_equipado(monkeypatch):
+    """Candidato (mismo slot) sin badge → equip_detectado False, sin dueño."""
+    import app.core.monitor as mon
+    monkeypatch.setattr(mon, "crop_grid_selected_badge", lambda f: None)
     m = _monitor()
+    m._identifier = _StubIdent()
     m._last_agent_name = "Zhu Yuan"
-    disc = _disc()
-    m._assign_s17_pj(disc, None)
+    m._s17_last_slot = 1                       # mismo slot → no es el equipado
+    disc = _disc(slot=1)
+    m._assign_s17_pj(disc, _frame())
     assert disc.equip_detectado is False
     assert disc.equip_pj_visual is None
 
 
-def test_assign_s17_visualizacion_equipado_por_latch():
-    """Con avatar del PJ latcheado → equip_detectado True + equip_pj_visual = latch."""
-    fr, ln, W, H = _load_frame_lines("Ejemplo_1")
-    m = _monitor()
-    m._last_agent_name = "Zhu Yuan"
-    disc = _disc()
-    m._assign_s17_pj(disc, crop_s17_assigned_avatar(fr, ln, W, H))
+def test_assign_s17_visualizacion_equipado_por_latch(monkeypatch):
+    """Con badge del PJ latcheado (equipado por flujo) → equip_detectado True +
+    equip_pj_visual = latch."""
+    m = _monitor_badge(monkeypatch, sim=0.95, owner=("Zhu Yuan", 0.95))
+    m._s17_last_slot = 0                       # slot nuevo → equipado
+    disc = _disc(slot=1)
+    m._assign_s17_pj(disc, _frame())
     assert disc.equip_detectado is True
     assert disc.equip_pj_visual == "Zhu Yuan"
 

@@ -19,7 +19,9 @@ from app.core.detector import (
     ScreenDetector, ScreenState, TemporalBuffer, AGENT_STATS_STATES,
     extract_s17_slot, extract_s9_slot, polling_cadence_ms,
     _deep_detect_s18, detect_active_tab, selected_avatar_x,
+    crop_grid_selected_badge,
 )
+from app.core.stats_vocab import _norm_key
 from app.core.parser_disc import DiscParsed, parse_modal_detalle
 from app.core.parser_disc_s17 import (
     parse_disc_s17, parse_disc_s17_full, DiscAggregator, disc_is_mature,
@@ -54,6 +56,10 @@ _AVATAR_X_TOL = 0.025
 # olvidar al PJ — eso causaba el parpadeo "detecta→no reconoce" (Zhu Yuan,
 # 2026-06-06). Solo una pantalla no-detalle CONFIRMADA (roster/ciudad) resetea.
 _DETAIL_RESET_MIN_CONF = 0.50
+
+# Cosecha (Fase 5R.3): estados con avatar/badge útil + cuántos frames por (PJ,estado).
+_HARVEST_STATES = {"S8", "S17", "S18", "S19"}
+_HARVEST_CAP = 4
 
 # Guarda de asignación S17 (latch + avatar). El PJ asignado a un disco equipado
 # sale del LATCH (PJ cuya pantalla se ve, ya confiable); el avatar circular S17 se
@@ -197,6 +203,20 @@ class Monitor:
         # Fase 4 — al volver del detalle del disco al hexágono es el MISMO PJ, así
         # que se hereda el latch en vez de re-identificar por avatar).
         self._prev_state_code: str | None = None
+        # Slot del último disco S17 asignado — anchor de flujo (5R.5b): un disco en un
+        # slot NUEVO es el equipado por el latch (certero); mismo slot = candidato.
+        self._s17_last_slot: int = 0
+        # Votación del dueño del badge de grilla (5R.5c): el loop rápido (10 fps)
+        # samplea el badge y ACUMULA confianza por PJ mientras el MISMO disco está en
+        # pantalla. `_assign_s17_pj` usa el ganador en vez de un frame suelto → mata el
+        # parpadeo Yuzuha↔incierto (el recorte varía frame a frame por la animación
+        # idle del modelo 3D y el resaltado deslizante). Resetea al cambiar de disco.
+        self._s17_owner_sig: tuple | None = None
+        self._s17_owner_votes: dict[str, float] = {}
+        # Cosecha de frames etiquetados por latch (Fase 5R.3, solo si DANIBOD_HARVEST
+        # está seteado). Cap por (PJ, estado) para no spamear. Read-only: solo escribe
+        # PNGs de frame completo a la carpeta indicada, nunca toca la DB.
+        self._harvest_counts: dict[tuple[str, str], int] = {}
         self._window: WindowBounds | None = None
         # TemporalBuffer del loop _run(). Instance var para que force_scan()
         # pueda resetearlo y permitir re-emisión de [reconocido]/[stats].
@@ -319,6 +339,12 @@ class Monitor:
             # el PJ). Latchea la identidad para que el log de cadencia la sostenga.
             if raw_state.code in _AGENT_DETAIL_STATES:
                 self._update_detail_identity(frame)
+            # Muestreo RÁPIDO del dueño del badge en S17 (10 fps, 5R.5c): vota el dueño
+            # del disco mirado en cada frame y lo acumula por firma-de-disco. El badge
+            # se decide con ~15 votos/disco en vez de 1 (loop lento) → lectura estable,
+            # sin parpadeo. El descriptor cuesta microsegundos; no toca el MSS ni el OCR.
+            elif raw_state.code == "S17":
+                self._sample_s17_owner(frame)
 
             # Fallback deep detect S18: si classify se quedó en S12, intentar
             # detección independiente de templates con OCR confirmatorio de stats.
@@ -500,6 +526,35 @@ class Monitor:
             # parpadea "detecta→no reconoce" (Zhu Yuan, 2026-06-06).
             if state.confidence >= _DETAIL_RESET_MIN_CONF:
                 self._reset_detail_identity()
+        # Cosecha de frames etiquetados (5R.3) — al final, con el latch ya actualizado.
+        self._maybe_harvest(frame, state)
+
+    def _maybe_harvest(self, frame, state: ScreenState) -> None:
+        """Si DANIBOD_HARVEST está seteado, guarda el frame completo etiquetado por
+        el latch (`<pj>__<estado>__<n>.png`) para construir offline el set etiquetado
+        del descriptor (harness 5R.2) + la cosecha híbrida. Cap por (PJ, estado).
+        Solo escribe PNGs a esa carpeta; nunca toca la DB."""
+        import os
+        d = os.environ.get("DANIBOD_HARVEST")
+        if not d or not self._last_agent_name or state.code not in _HARVEST_STATES:
+            return
+        key = (self._last_agent_name, state.code)
+        if self._harvest_counts.get(key, 0) >= _HARVEST_CAP:
+            return
+        try:
+            import cv2
+            from pathlib import Path
+            from app.core.stats_vocab import _norm_key
+            n = self._harvest_counts.get(key, 0)
+            safe = _norm_key(self._last_agent_name) or "x"
+            out = Path(d)
+            out.mkdir(parents=True, exist_ok=True)
+            cv2.imwrite(str(out / f"{safe}__{state.code}__{n}.png"), frame)
+            self._harvest_counts[key] = n + 1
+            if self._on_diagnostic:
+                self._on_diagnostic(f"[harvest] {safe} {state.code} #{n}")
+        except Exception:
+            log.debug("harvest falló", exc_info=True)
 
     def _handle_upgrade(self, frame, state: ScreenState) -> None:
         if self._upgrade_syncer is None:
@@ -570,6 +625,12 @@ class Monitor:
         self._disc_agg_cycles = 0
         self._disc_emitted_ids.clear()
         self._s17_assign_sig = None
+        # Anchor de flujo (5R.5b): al re-entrar a un slot, el primer disco vuelve a ser
+        # el equipado por el latch (estructura del juego) → resetear el slot rastreado.
+        self._s17_last_slot = 0
+        # Votación del dueño (5R.5c): olvidar al salir de S17.
+        self._s17_owner_sig = None
+        self._s17_owner_votes = {}
 
     @staticmethod
     def _disc_identity(d) -> tuple:
@@ -605,11 +666,11 @@ class Monitor:
             self._disc_emitted = False
             self._disc_agg_cycles = 0
         try:
-            disc, face = parse_disc_s17_full(frame, self._ocr)
+            disc, _face = parse_disc_s17_full(frame, self._ocr)
         except Exception:
             log.exception("Error parseando disco S17")
             return
-        self._assign_s17_pj(disc, face)
+        self._assign_s17_pj(disc, frame)   # identidad por badge de grilla (5R.5)
         if disc.confianza_global < 0.7:
             return  # frame de transición/baja confianza → no contaminar el aggregator
         merged = self._disc_aggregator.merge(disc)
@@ -910,50 +971,104 @@ class Monitor:
         if self._force_event.wait(timeout=_FAST_CAPTURE_MS / 1000.0):
             self._force_event.clear()
 
-    def _assign_s17_pj(self, disc: DiscParsed, face) -> None:
+    def _sample_s17_owner(self, frame) -> None:
+        """Loop rápido (10 fps, 5R.5c): vota el dueño del badge de la grilla por
+        firma-de-disco. Acumula confianza por PJ mientras el MISMO disco está en
+        pantalla; al cambiar de disco resetea. Esto elimina el parpadeo: en vez de
+        que cada frame suelto cante un resultado (un recorte movido → 'incierto', uno
+        nítido → 'Yuzuha'), se junta la evidencia y `_assign_s17_pj` usa el ganador.
         """
-        Resuelve el PJ asignado a un disco S17 con la guarda latch + avatar
-        (decisión 2026-06-06). El latch (`_last_agent_name`, PJ cuya pantalla se
-        ve) es la fuente de identidad; el avatar circular S17 confirma o abstiene.
-        Setea `disc.agente_asignado_nombre/_conf` SOLO cuando hay asignación
-        confiable; ante duda los deja en None/0 (el syncer preserva lo curado).
+        sig = self._s17_disc_signature(frame)
+        if sig is None:
+            return
+        if self._s17_owner_sig is None or not self._sig_close(sig, self._s17_owner_sig):
+            self._s17_owner_sig = sig          # disco nuevo → empezar votación limpia
+            self._s17_owner_votes = {}
+        badge = crop_grid_selected_badge(frame)
+        if badge is None:
+            return
+        owner = self._identifier.identify_s17(badge)
+        if owner:
+            name, conf = owner
+            self._s17_owner_votes[name] = self._s17_owner_votes.get(name, 0.0) + float(conf)
+
+    def _s17_voted_owner(self, frame) -> str | None:
+        """Dueño ganador (mayor confianza acumulada) del disco mirado, si la votación
+        del loop rápido corresponde a ESTE disco. None si no hay votos confiables."""
+        if not self._s17_owner_votes:
+            return None
+        sig = self._s17_disc_signature(frame)
+        if sig is None or self._s17_owner_sig is None or not self._sig_close(sig, self._s17_owner_sig):
+            return None
+        return max(self._s17_owner_votes.items(), key=lambda kv: kv[1])[0]
+
+    def _assign_s17_pj(self, disc: DiscParsed, frame) -> None:
+        """
+        Resuelve el DUEÑO de un disco S17 con el badge de la grilla + el latch
+        (Fase 5R, descriptor robusto). Recorta el badge del tile seleccionado y lo
+        identifica:
+          - badge ausente → disco sin dueño visible / no equipado → sin asignar.
+          - similitud al latch ≥ guarda (o bootstrap) → disco EQUIPADO del PJ actual
+            → trust-latch (asigna + cosecha).
+          - similitud < guarda → el badge NO es del latch → candidato de la grilla de
+            OTRO PJ → se reporta su dueño (`identify_s17`) SIN asignarlo al latch
+            (RNF-02: no corromper la build del latch con un disco ajeno).
         """
         latch = self._last_agent_name
-        # --- VISUALIZACIÓN (display-only, independiente de la guarda) ---
-        # Hay avatar a la derecha del set ⇒ disco equipado; su ausencia ⇒ no equipado.
-        disc.equip_detectado = face is not None
-        if face is None:
+        badge = crop_grid_selected_badge(frame) if frame is not None else None
+        disc.equip_detectado = badge is not None
+        # --- ANCHOR DE FLUJO (5R.5b) ---------------------------------------------
+        # Estructura del juego: al abrir/cambiar de slot, el PRIMER disco mostrado es
+        # SIEMPRE el equipado por el latch. Un disco en un slot DISTINTO al último
+        # asignado ⇒ es el equipado (certero, no depende del crop del badge). Mismo
+        # slot + disco distinto (la firma resetea el aggregator) ⇒ candidato.
+        slot = disc.slot or 0
+        is_equipped = bool(latch) and slot != 0 and slot != self._s17_last_slot
+        if is_equipped:
+            self._s17_last_slot = slot
+            if badge is not None:                      # cosecha con label CERTERO
+                if self._identifier.learn_s17(badge, latch) and self._on_diagnostic:
+                    self._on_diagnostic(f"[cosecha] badge de {latch} (slot {slot})")
+            self._set_latch_assignment(disc, latch, 1.0, "equipado")
+            return
+        if badge is None:
             disc.equip_pj_visual = None
             if latch:
                 self._log_s17_assign(
-                    ("no_avatar", latch),
-                    "[S17] disco sin avatar (no equipado / no localizado) → sin asignar.",
+                    ("no_badge", latch), "[S17] disco sin badge de dueño → sin asignar."
                 )
             return
-        # --- ASIGNACIÓN (persistencia): CONFIAR EN EL LATCH ----------------------
-        # El latch (PJ cuya pantalla se ve, de S8/S18 — avatar de fila + OCR) es la
-        # identidad FIABLE. El avatar circular S17 es POCO discriminativo (best-match
-        # inservible: un descriptor 'imán' p.ej. Yixuan matchea ~todo a 0.86-0.91,
-        # QA 2026-06-09) → NO se usa para rechazar; solo para aprender/refrescar. La
-        # discriminación de discos de OTRO PJ (navegar la grilla de candidatos) es una
-        # FASE APARTE (necesita descriptores mejores o detectar el modo grilla).
         if not latch:
+            owner = self._identifier.identify_s17(badge)
+            if owner:
+                disc.equip_pj_visual = owner[0]
             self._log_s17_assign(
-                ("no_latch",), "[S17] sin latch de PJ → disco sin asignar (preserva DB)."
+                ("no_latch", owner[0] if owner else "?"),
+                "[S17] sin latch · dueño=%s.", owner[0] if owner else "incierto",
             )
             return
-        sim = self._identifier.s17_similarity(face, latch)
-        # Aprender/refrescar el descriptor S17 del latch cuando falta o quedó viejo
-        # (sim baja). No re-aprende si ya matchea bien (evita escrituras / degradar).
-        if sim is None or sim < _S17_GUARD_MIN:
-            self._identifier.learn_s17(face, latch)
+        # Mismo slot, disco distinto → CANDIDATO. Si el badge matchea el latch (volviste
+        # al equipado) re-confirma; si no, nombra el dueño SIN asignar al latch.
+        sim = self._identifier.s17_similarity(badge, latch)
+        if sim is not None and sim >= _S17_GUARD_MIN:
+            self._set_latch_assignment(disc, latch, round(sim, 3), f"{sim:.3f}")
+            return
+        # Dueño por VOTACIÓN del loop rápido (5R.5c): ganador acumulado entre los ~15
+        # frames del disco, no el recorte de este frame suelto → sin parpadeo.
+        owner = self._s17_voted_owner(frame)
+        disc.equip_pj_visual = owner
+        self._log_s17_assign(
+            ("grid_owner", owner or "?"),
+            "[grilla] disco de otro PJ · dueño=%s.", owner or "incierto",
+        )
+
+    def _set_latch_assignment(self, disc: DiscParsed, latch: str, conf: float, sim_str: str) -> None:
+        """Asigna el disco equipado al latch (trust-latch) + log."""
         disc.agente_asignado_nombre = latch
-        disc.agente_asignado_conf = round(sim, 3) if (sim is not None and sim >= _S17_GUARD_MIN) else 1.0
+        disc.agente_asignado_conf = conf
         disc.equip_pj_visual = latch
         self._log_s17_assign(
-            ("confirm", latch),
-            "[S17] asignado a '%s' (latch; sim=%s).",
-            latch, f"{sim:.3f}" if sim is not None else "bootstrap",
+            ("confirm", latch), "[S17] asignado a '%s' (latch; sim=%s).", latch, sim_str
         )
 
     def _log_s17_assign(self, sig, msg, *args) -> None:
@@ -971,8 +1086,8 @@ class Monitor:
             # ESPACIAL full-frame — más robusto que el per-ROI a 2560×1440.
             # El resto de disc-states (S3/S6/S7) sigue con parse_modal_detalle.
             if state.code == "S17":
-                disc, face = parse_disc_s17_full(frame, self._ocr)
-                self._assign_s17_pj(disc, face)
+                disc, _face = parse_disc_s17_full(frame, self._ocr)
+                self._assign_s17_pj(disc, frame)   # identidad por badge de grilla (5R.5)
             else:
                 disc = parse_modal_detalle(frame, self._ocr, self._set_repo, state_code=state.code)
             if disc.confianza_global < 0.7:
