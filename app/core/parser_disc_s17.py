@@ -744,6 +744,7 @@ def _clone_disc(d: DiscParsed) -> DiscParsed:
         agente_asignado_nombre=d.agente_asignado_nombre, agente_asignado_conf=d.agente_asignado_conf,
         set_active_tier=d.set_active_tier,
         equip_detectado=d.equip_detectado, equip_pj_visual=d.equip_pj_visual,
+        equip_libre=d.equip_libre,
     )
     return nd
 
@@ -838,6 +839,7 @@ class DiscAggregator:
         if new.equip_detectado is not None:
             b.equip_detectado = new.equip_detectado
             b.equip_pj_visual = new.equip_pj_visual
+            b.equip_libre = new.equip_libre
         b.confianza_global = max(b.confianza_global, new.confianza_global)
         b.subs = _merge_subs(b.subs, new.subs)
         return b

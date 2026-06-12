@@ -98,6 +98,9 @@ audit/labeled_badges/
 # test_grid_owner_real_frames (skip-if-absent). Se mantienen locales (decisión usuario
 # 2026-06-12); el test corre en la máquina del usuario.
 Documentacion/Screenshots_Triggers/Discos_Triggers/16_discos_pj_grilla/
+# Mapa disco→dueño (verdad de tierra del flujo-ancla, Fase 5R.C) — regenerable con un
+# pase de cosecha, específico de la cuenta del usuario.
+audit/equip_map_*.json
 
 # ────────────── Mockups runtime state ──────────────
 # DesignCanvas guarda estado de orden/títulos en sidecar JSON

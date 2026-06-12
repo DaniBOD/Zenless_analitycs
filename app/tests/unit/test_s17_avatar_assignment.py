@@ -182,6 +182,35 @@ def test_disc_identity_distingue_mismo_set_slot_distintos_substats():
     assert Monitor._disc_identity(d1) == Monitor._disc_identity(d1b)
 
 
+def test_equip_map_registra_solo_equipados(monkeypatch, tmp_path):
+    """5R.C: el mapa disco→dueño se escribe SOLO con la identidad+dueño del disco
+    equipado (verdad de tierra del flujo-ancla), serializado con clave estable."""
+    import json
+    from app.core.monitor import Monitor
+    mappath = tmp_path / "equip_map.json"
+    monkeypatch.setenv("DANIBOD_EQUIP_MAP", str(mappath))
+    m = _monitor()
+    d = _disc(slot=1, set_name="Jazz oscilante")
+    ident = Monitor._disc_identity(d)
+    m._record_equip_map(ident, "Burnice")
+    data = json.loads(mappath.read_text(encoding="utf-8"))
+    key = Monitor._identity_to_key(ident)
+    assert data == {key: "Burnice"}
+    assert key.startswith("jazzoscilante#1#")         # clave determinista (norm sin espacios)
+    # idempotente: mismo (ident, dueño) no reescribe distinto
+    m._record_equip_map(ident, "Burnice")
+    assert json.loads(mappath.read_text(encoding="utf-8")) == {key: "Burnice"}
+
+
+def test_equip_map_noop_sin_env(monkeypatch, tmp_path):
+    """Sin DANIBOD_EQUIP_MAP, _record_equip_map no escribe nada (no-op)."""
+    from app.core.monitor import Monitor
+    monkeypatch.delenv("DANIBOD_EQUIP_MAP", raising=False)
+    m = _monitor()
+    m._record_equip_map(Monitor._disc_identity(_disc()), "Rina")
+    assert list(tmp_path.glob("*.json")) == []
+
+
 @pytest.fixture
 def disc_db():
     con = sqlite3.connect(":memory:")

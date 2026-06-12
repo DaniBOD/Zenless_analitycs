@@ -221,6 +221,10 @@ class Monitor:
         self._s17_owner_votes: dict[str, float] = {}
         self._s17_free_evidence: int = 0   # frames con badge sin cara (5R.B)
         self._s17_samples: int = 0         # frames muestreados del disco actual
+        # Mapa disco→dueño (5R.C): verdad de tierra automática. Si DANIBOD_EQUIP_MAP
+        # está seteado, al emitir un disco EQUIPADO (agente_asignado por flujo-ancla,
+        # dueño certero) se registra firma_disco→dueño a ese JSON. Readonly-safe (no DB).
+        self._equip_map: dict[str, str] = {}
         # Cosecha de frames etiquetados por latch (Fase 5R.3, solo si DANIBOD_HARVEST
         # está seteado). Cap por (PJ, estado) para no spamear. Read-only: solo escribe
         # PNGs de frame completo a la carpeta indicada, nunca toca la DB.
@@ -670,6 +674,34 @@ class Monitor:
         """True si la firma indica que el disco mirado cambió (o no había ancla)."""
         return self._disc_agg_sig is None or not self._sig_close(sig, self._disc_agg_sig)
 
+    @staticmethod
+    def _identity_to_key(identity) -> str:
+        """Serializa la identidad de disco (`_disc_identity`) a una clave string estable
+        para el mapa disco→dueño. Determinista — monitor y harness la computan igual."""
+        set_, slot, main, subs = identity
+        subs_s = "|".join(f"{n}:{r}" for n, r in subs)
+        return f"{set_}#{slot}#{main}#{subs_s}"
+
+    def _record_equip_map(self, identity, owner: str) -> None:
+        """Registra firma_disco→dueño (verdad de tierra del flujo-ancla) al JSON apuntado
+        por DANIBOD_EQUIP_MAP. No-op si la env no está. Readonly-safe (no toca DB)."""
+        import os
+        path = os.environ.get("DANIBOD_EQUIP_MAP")
+        if not path or not owner:
+            return
+        key = self._identity_to_key(identity)
+        if self._equip_map.get(key) == owner:
+            return
+        self._equip_map[key] = owner
+        try:
+            import json
+            from pathlib import Path
+            p = Path(path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(self._equip_map, ensure_ascii=False, indent=0), encoding="utf-8")
+        except Exception:
+            log.debug("equip_map write falló", exc_info=True)
+
     def _process_disc_s17_continuous(self, frame, state: ScreenState) -> None:
         """
         S17 CONTINUO (Fase 1, espejo de la extracción S18): cada cadencia re-extrae
@@ -707,6 +739,11 @@ class Monitor:
             if identity in self._disc_emitted_ids:
                 return
             self._disc_emitted_ids.add(identity)
+            # Verdad de tierra (5R.C): si el disco está EQUIPADO (agente_asignado por el
+            # flujo-ancla = dueño certero), registrar firma→dueño al mapa. Candidatos no
+            # setean agente_asignado → no contaminan el mapa.
+            if merged.agente_asignado_nombre:
+                self._record_equip_map(identity, merged.agente_asignado_nombre)
             log.info(
                 "Disco detectado: set=%s slot=%d main=%s nivel=%d conf=%.2f (agg %dc%s)",
                 merged.set_name_canon or merged.set_name_raw, merged.slot,

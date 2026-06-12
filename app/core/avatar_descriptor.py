@@ -92,6 +92,10 @@ _GRAY_SAT_MAX = 45.0
 # son la guarda fina).
 _MIN_CONF = 0.45
 _MIN_MARGIN = 0.04
+# Refs por PJ (multi-ref). Subido 6→10 (Fase 5R.C): el pase full-roster cosecha 6
+# badges/PJ (slots 1-6) + acumulación entre sesiones → más variación de render por PJ
+# = menor distancia-mínima en queries imperfectas (cierra "dueño incierto"). FIFO.
+_MAX_REFS_PER_NAME = 10
 
 
 @dataclass(frozen=True)
@@ -250,7 +254,7 @@ class AvatarMatcher:
     def names(self) -> list[str]:
         return list(self._refs.keys())
 
-    def add_reference(self, name: str, bgr_or_desc, max_per_name: int = 6) -> bool:
+    def add_reference(self, name: str, bgr_or_desc, max_per_name: int = _MAX_REFS_PER_NAME) -> bool:
         """Agrega una referencia al PJ `name` (p.ej. cosecha in-game). Multi-ref:
         se acumulan hasta `max_per_name` por PJ (la cosecha más nueva desplaza a la
         más vieja)."""

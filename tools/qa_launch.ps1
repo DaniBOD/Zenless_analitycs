@@ -56,8 +56,13 @@ if ($Harvest) {
 if ($BadgeHarvest) {
     $env:DANIBOD_BADGE_HARVEST = "1"
     Write-Host "[qa_launch] DANIBOD_BADGE_HARVEST = 1 (crece avatar_badge_v2.npz · solo disco equipado · NO toca DB)"
+    # Verdad de tierra (5R.C): mapa firma_disco→dueño certero del flujo-ancla.
+    $mapPath = Join-Path $repoRoot ("audit\equip_map_{0}.json" -f (Get-Date -Format "yyyyMMdd"))
+    $env:DANIBOD_EQUIP_MAP = $mapPath
+    Write-Host "[qa_launch] DANIBOD_EQUIP_MAP = $mapPath (mapa disco->dueño · verdad de tierra)"
 } else {
     Remove-Item Env:\DANIBOD_BADGE_HARVEST -ErrorAction SilentlyContinue
+    Remove-Item Env:\DANIBOD_EQUIP_MAP -ErrorAction SilentlyContinue
 }
 Write-Host "[qa_launch] Lanzando $exe ..."
 
