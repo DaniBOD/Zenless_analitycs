@@ -88,6 +88,10 @@ class DiscParsed:
     # PJ identificado del avatar (puede ser otro distinto del latch), o None.
     equip_detectado: bool | None = None
     equip_pj_visual: str | None = None
+    # LIBRE/disponible (5R.B): True si el disco NO lo equipa nadie (badge consistente
+    # en reject-set/conf-muy-baja entre frames + nunca se identificó dueño). Conservador:
+    # ante duda queda False ("dueño incierto") para no marcar libre un disco equipado.
+    equip_libre: bool = False
 
 
 def _parse_titulo(raw: str) -> tuple[str, int]:

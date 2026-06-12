@@ -94,6 +94,12 @@ _S17_AGG_MAX_CYCLES = 5
 # in-place) → se sesga a sensibilidad. Ver Dev_IA 2026-06-07.
 _S17_SIG_DETAIL_MAX = 5.0
 _S17_SIG_HEX_MAX = 3.0
+# Detector LIBRE/equipado (5R.B): un frame es "evidencia de libre" si el badge cae en
+# el reject-set o su conf < _S17_FREE_CONF (nada se parece a una cara → sin dueño). Se
+# declara LIBRE solo con ≥ _S17_FREE_MIN_FRAMES de evidencia mayoritaria y cero dueños
+# identificados (conservador: ante duda → "dueño incierto").
+_S17_FREE_CONF = 0.58
+_S17_FREE_MIN_FRAMES = 2
 
 # Intervalo de captura rápida (entre frames para buffer, sin procesar)
 _FAST_CAPTURE_MS = 100  # 10 fps — MSS captura en ~20ms, template match en ~50ms
@@ -213,6 +219,8 @@ class Monitor:
         # idle del modelo 3D y el resaltado deslizante). Resetea al cambiar de disco.
         self._s17_owner_sig: tuple | None = None
         self._s17_owner_votes: dict[str, float] = {}
+        self._s17_free_evidence: int = 0   # frames con badge sin cara (5R.B)
+        self._s17_samples: int = 0         # frames muestreados del disco actual
         # Cosecha de frames etiquetados por latch (Fase 5R.3, solo si DANIBOD_HARVEST
         # está seteado). Cap por (PJ, estado) para no spamear. Read-only: solo escribe
         # PNGs de frame completo a la carpeta indicada, nunca toca la DB.
@@ -628,21 +636,34 @@ class Monitor:
         # Anchor de flujo (5R.5b): al re-entrar a un slot, el primer disco vuelve a ser
         # el equipado por el latch (estructura del juego) → resetear el slot rastreado.
         self._s17_last_slot = 0
-        # Votación del dueño (5R.5c): olvidar al salir de S17.
+        # Votación del dueño (5R.5c) + evidencia-libre (5R.B): olvidar al salir de S17.
         self._s17_owner_sig = None
         self._s17_owner_votes = {}
+        self._s17_free_evidence = 0
+        self._s17_samples = 0
 
     @staticmethod
     def _disc_identity(d) -> tuple:
         """Identidad estable de un disco para dedup de emisión (sin firma visual).
         Normaliza nombre de set y main con `_norm_key` (sin tildes/mojibake): el OCR
         del crop (Fase 2) lee la tilde de forma inestable entre ciclos
-        ('Faetón'/'Faeton'/'Faetön') y sin normalizar re-emitía el MISMO disco."""
+        ('Faetón'/'Faeton'/'Faetön') y sin normalizar re-emitía el MISMO disco.
+
+        Incluye los 4 substats (nombre+rolls) porque (set, slot, main) es DEMASIADO
+        grueso: en slot 1 el main es siempre HP → dos discos distintos del MISMO set
+        en slot 1 colapsaban a la misma identidad y el segundo NUNCA se emitía (bug
+        2026-06-12: 'Yanagi no logueaba'). Los substats (nombre canónico + rolls) son
+        OCR-estables y distinguen builds; los valores se omiten (más ruidosos)."""
         from app.core.stats_vocab import _norm_key
+        subs = tuple(sorted(
+            (_norm_key(s.nombre_canon or s.nombre_raw or ""), s.rolls)
+            for s in (d.subs or [])
+        ))
         return (
             _norm_key(d.set_name_canon or d.set_name_raw or ""),
             d.slot,
             _norm_key(d.main_stat_canon or d.main_stat_raw or ""),
+            subs,
         )
 
     def _is_new_s17_disc(self, sig) -> bool:
@@ -984,23 +1005,39 @@ class Monitor:
         if self._s17_owner_sig is None or not self._sig_close(sig, self._s17_owner_sig):
             self._s17_owner_sig = sig          # disco nuevo → empezar votación limpia
             self._s17_owner_votes = {}
+            self._s17_free_evidence = 0
+            self._s17_samples = 0
         badge = crop_grid_selected_badge(frame)
         if badge is None:
             return
-        owner = self._identifier.identify_s17(badge)
-        if owner:
-            name, conf = owner
+        name, conf, rejected = self._identifier.s17_match(badge)
+        self._s17_samples += 1
+        if name:
             self._s17_owner_votes[name] = self._s17_owner_votes.get(name, 0.0) + float(conf)
+        elif rejected or conf < _S17_FREE_CONF:   # crop sin cara (lock/disco/vacío)
+            self._s17_free_evidence += 1
 
     def _s17_voted_owner(self, frame) -> str | None:
         """Dueño ganador (mayor confianza acumulada) del disco mirado, si la votación
         del loop rápido corresponde a ESTE disco. None si no hay votos confiables."""
-        if not self._s17_owner_votes:
-            return None
-        sig = self._s17_disc_signature(frame)
-        if sig is None or self._s17_owner_sig is None or not self._sig_close(sig, self._s17_owner_sig):
+        if not self._s17_owner_votes or not self._s17_owner_sig_matches(frame):
             return None
         return max(self._s17_owner_votes.items(), key=lambda kv: kv[1])[0]
+
+    def _s17_owner_sig_matches(self, frame) -> bool:
+        sig = self._s17_disc_signature(frame)
+        return not (sig is None or self._s17_owner_sig is None
+                    or not self._sig_close(sig, self._s17_owner_sig))
+
+    def _s17_is_libre(self, frame) -> bool:
+        """True si el disco mirado está LIBRE (nadie lo equipa). CONSERVADOR: exige que
+        NUNCA se haya identificado un dueño y que la evidencia de 'libre' (badge en
+        reject-set / conf muy baja) sea consistente y mayoritaria. Un frame malo suelto
+        (p.ej. Jane rechazada una vez) NO alcanza → queda 'dueño incierto', no LIBRE."""
+        if self._s17_owner_votes or not self._s17_owner_sig_matches(frame):
+            return False
+        return (self._s17_free_evidence >= _S17_FREE_MIN_FRAMES
+                and self._s17_free_evidence >= 0.5 * max(1, self._s17_samples))
 
     def _assign_s17_pj(self, disc: DiscParsed, frame) -> None:
         """
@@ -1053,14 +1090,21 @@ class Monitor:
         if sim is not None and sim >= _S17_GUARD_MIN:
             self._set_latch_assignment(disc, latch, round(sim, 3), f"{sim:.3f}")
             return
-        # Dueño por VOTACIÓN del loop rápido (5R.5c): ganador acumulado entre los ~15
-        # frames del disco, no el recorte de este frame suelto → sin parpadeo.
+        # Decisión 3-vías por VOTACIÓN del loop rápido (5R.5c + 5R.B), no por el frame
+        # suelto → sin parpadeo: (1) dueño votado, (2) LIBRE consistente, (3) incierto.
         owner = self._s17_voted_owner(frame)
-        disc.equip_pj_visual = owner
-        self._log_s17_assign(
-            ("grid_owner", owner or "?"),
-            "[grilla] disco de otro PJ · dueño=%s.", owner or "incierto",
-        )
+        if owner:
+            disc.equip_pj_visual = owner
+            disc.equip_libre = False
+            self._log_s17_assign(("grid_owner", owner), "[grilla] disco de otro PJ · dueño=%s.", owner)
+        elif self._s17_is_libre(frame):
+            disc.equip_pj_visual = None
+            disc.equip_libre = True
+            self._log_s17_assign(("grid_libre",), "[grilla] disco LIBRE (no equipado por nadie).")
+        else:
+            disc.equip_pj_visual = None
+            disc.equip_libre = False
+            self._log_s17_assign(("grid_owner", "?"), "[grilla] disco equipado · dueño incierto.")
 
     def _set_latch_assignment(self, disc: DiscParsed, latch: str, conf: float, sim_str: str) -> None:
         """Asigna el disco equipado al latch (trust-latch) + log."""

@@ -41,9 +41,12 @@ _REJECT_DIR = _RESOURCES / "avatar_reject"
 # instancias (cada una recibe listas propias, así su cosecha no se filtra).
 _ICO_SEED_CACHE: tuple[dict, list] | None = None
 
-# Similitud mínima para confirmar "mismo PJ que el latch" (guarda S17). Con el
-# descriptor robusto multi-ref, same-badge ~0.95+; distinto cae bastante.
-_S17_GUARD_DEFAULT = 0.86
+# Similitud mínima para NOMBRAR al dueño de un candidato (identify_s17). Bajado de
+# 0.86 → 0.80 (sub-fase B, 2026-06-12): recupera matches correctos sub-0.86 (Burnice,
+# Nicole) manteniendo el techo seguro > 0.766 (la conf de los falsos-Seth César/Sunna,
+# que a 0.80 quedan en "dueño incierto", nunca asertados). El guard latch (mismo PJ)
+# es aparte (_S17_GUARD_MIN en monitor, sigue 0.86).
+_S17_GUARD_DEFAULT = 0.80
 
 
 def _badge_harvest_enabled() -> bool:
@@ -244,3 +247,13 @@ class AgentIdentifier:
         if r.name is None or r.conf < min_sim:
             return None
         return r.name, r.conf
+
+    def s17_match(self, face, min_sim: float = _S17_GUARD_DEFAULT):
+        """Match del badge con detalle para el detector LIBRE/equipado (5R.B): devuelve
+        (nombre|None, conf, rejected). nombre no-None solo si conf≥guard. rejected=True
+        si el crop cae en el reject-set (lock/disco/vacío → señal de disco SUELTO)."""
+        if face is None:
+            return None, 0.0, False
+        r = self._badge.match(face)
+        name = r.name if (r.name is not None and r.conf >= min_sim) else None
+        return name, r.conf, r.rejected

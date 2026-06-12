@@ -534,12 +534,14 @@ class MonitorController(QObject):
         # Estado de equipamiento (VISUALIZACIÓN, modo navegación de grilla): equipado
         # o no + qué PJ, independiente de si se persistió. None = no aplicable (S3/S6/S7).
         if disc.equip_detectado is not None:
-            if not disc.equip_detectado:
-                self.log_message.emit("[equipamiento] NO equipado (disco disponible)")
-            elif disc.equip_pj_visual:
+            if disc.equip_pj_visual:
                 self.log_message.emit(f"[equipamiento] equipado por: {disc.equip_pj_visual}")
+            elif disc.equip_libre:
+                self.log_message.emit("[equipamiento] LIBRE (disponible)")
+            elif not disc.equip_detectado:
+                self.log_message.emit("[equipamiento] badge no localizado (reposá sobre el disco)")
             else:
-                self.log_message.emit("[equipamiento] equipado (PJ no identificado)")
+                self.log_message.emit("[equipamiento] equipado · dueño incierto")
         # Conjunto: tier ACTIVO para este disco (2pc vs 4pc, por color del texto)
         # + el bono 2pc curado (corto). NO se vuelca la descripción 4pc completa.
         set_name = disc.set_name_canon or disc.set_name_raw or "?"

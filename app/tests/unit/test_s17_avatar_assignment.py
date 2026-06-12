@@ -162,6 +162,26 @@ def _disc(slot=1, set_name="Jazz caótico"):
     )
 
 
+def test_disc_identity_distingue_mismo_set_slot_distintos_substats():
+    """Bug 2026-06-12 ('Yanagi no logueaba'): (set, slot, main) es demasiado grueso —
+    en slot 1 el main es siempre HP → dos discos distintos del MISMO set en slot 1
+    colapsaban y el 2º nunca se emitía. La identidad ahora incluye substats."""
+    from app.core.monitor import Monitor
+    base = dict(set_name_raw="Jazz oscilante", set_name_canon="Jazz oscilante", slot=1,
+                main_stat_raw="PV", main_stat_canon="HP", main_valor=2200.0,
+                main_unidad="flat", nivel=15, rareza="S", confianza_global=0.95)
+    d1 = DiscParsed(**base, subs=[SubstatParsed("ATK", "ATK", 38.0, "flat", 1, 0.95),
+                                  SubstatParsed("Daño Crítico", "Daño Crítico", 9.6, "%", 1, 0.95)])
+    d2 = DiscParsed(**base, subs=[SubstatParsed("Perforación", "Perforación", 9.0, "flat", 0, 0.95),
+                                  SubstatParsed("HP%", "HP%", 3.0, "%", 0, 0.95)])
+    # mismo set+slot+main pero substats distintos → identidades DISTINTAS (ambos emiten)
+    assert Monitor._disc_identity(d1) != Monitor._disc_identity(d2)
+    # el MISMO disco re-parseado (animación) → misma identidad (sigue deduplicando)
+    d1b = DiscParsed(**base, subs=[SubstatParsed("Daño Crítico", "Daño Crítico", 9.6, "%", 1, 0.95),
+                                   SubstatParsed("ATK", "ATK", 38.0, "flat", 1, 0.95)])  # orden distinto
+    assert Monitor._disc_identity(d1) == Monitor._disc_identity(d1b)
+
+
 @pytest.fixture
 def disc_db():
     con = sqlite3.connect(":memory:")
@@ -280,15 +300,21 @@ def test_maybe_harvest_gates(tmp_path, monkeypatch):
 class _StubIdent:
     """Identificador controlado para testear la lógica de `_assign_s17_pj` (5R.5)
     sin depender de fixtures: define la similitud al latch y el dueño identificado."""
-    def __init__(self, sim=None, owner=None):
+    def __init__(self, sim=None, owner=None, free=False):
         self._sim = sim; self._owner = owner; self.learned = []
-        self._roster_norm = {}
+        self._roster_norm = {}; self._free = free
 
     def s17_similarity(self, badge, name):
         return self._sim
 
-    def identify_s17(self, badge, min_sim=0.86):
+    def identify_s17(self, badge, min_sim=0.80):
         return self._owner
+
+    def s17_match(self, badge, min_sim=0.80):
+        if self._owner:
+            return self._owner[0], self._owner[1], False
+        # sin dueño: 'free' simula badge en reject-set/conf baja; si no, conf media.
+        return (None, 0.40, True) if self._free else (None, 0.70, False)
 
     def learn_s17(self, badge, name):
         self.learned.append(name); return True
@@ -362,14 +388,44 @@ def test_monitor_candidato_de_otro_pj_reporta_no_asigna(monkeypatch):
 
 
 def test_monitor_candidato_incierto_abstiene(monkeypatch):
-    """Mismo slot + badge no reconocido (sin votos) → incierto, sin asignar."""
-    m = _monitor_badge(monkeypatch, sim=0.40, owner=None)
+    """Mismo slot + cara presente bajo guard (conf media, NO reject) → 'dueño incierto',
+    NO libre, sin asignar."""
+    m = _monitor_badge(monkeypatch, sim=0.40, owner=None)   # _StubIdent free=False → conf 0.70
     m._s17_last_slot = 1
     disc = _disc(slot=1)
-    m._sample_s17_owner(_frame())                    # no acumula voto (owner None)
+    for _ in range(3):
+        m._sample_s17_owner(_frame())                # cara presente, no evidencia de libre
     m._assign_s17_pj(disc, _frame())
     assert disc.agente_asignado_nombre is None
     assert disc.equip_pj_visual is None
+    assert disc.equip_libre is False                 # NO se declara libre ante duda
+
+
+def test_monitor_disco_libre_consistente(monkeypatch):
+    """5R.B: badge en reject-set/conf-muy-baja de forma consistente + cero dueños →
+    LIBRE. (Conservador: requiere ≥2 frames de evidencia mayoritaria.)"""
+    m = _monitor_badge(monkeypatch, sim=0.40, owner=None)
+    m._identifier = _StubIdent(sim=0.40, owner=None, free=True)   # s17_match → rejected
+    m._s17_last_slot = 1
+    disc = _disc(slot=1)
+    for _ in range(4):
+        m._sample_s17_owner(_frame())
+    m._assign_s17_pj(disc, _frame())
+    assert disc.equip_libre is True
+    assert disc.equip_pj_visual is None
+    assert disc.agente_asignado_nombre is None
+
+
+def test_monitor_un_frame_rejected_no_declara_libre(monkeypatch):
+    """Anti-falso-LIBRE (caso Jane): un solo frame rechazado NO alcanza para LIBRE
+    (mínimo de evidencia) → queda 'dueño incierto'."""
+    m = _monitor_badge(monkeypatch, sim=0.40, owner=None)
+    m._identifier = _StubIdent(sim=0.40, owner=None, free=True)
+    m._s17_last_slot = 1
+    disc = _disc(slot=1)
+    m._sample_s17_owner(_frame())                    # 1 solo frame de evidencia
+    m._assign_s17_pj(disc, _frame())
+    assert disc.equip_libre is False                 # < _S17_FREE_MIN_FRAMES → no libre
 
 
 def test_monitor_voto_dueno_gana_pese_a_frames_inciertos(monkeypatch):
@@ -385,9 +441,10 @@ def test_monitor_voto_dueno_gana_pese_a_frames_inciertos(monkeypatch):
         """Alterna incierto/Yuzuha frame a frame (como el recorte real)."""
         def __init__(self): self._i = 0; self.learned = []
         def s17_similarity(self, badge, name): return 0.40   # no es el latch
-        def identify_s17(self, badge, min_sim=0.86):
+        def s17_match(self, badge, min_sim=0.80):
             self._i += 1
-            return ("Yuzuha", 0.90) if self._i % 2 == 0 else None
+            # frames pares: Yuzuha nítido; impares: cara presente pero bajo guard (no libre)
+            return ("Yuzuha", 0.90, False) if self._i % 2 == 0 else (None, 0.70, False)
         def learn_s17(self, badge, name): self.learned.append(name); return True
 
     m = _monitor()
