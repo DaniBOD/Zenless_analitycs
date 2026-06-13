@@ -58,6 +58,10 @@ class MonitorController(QObject):
     # Auto-start: el monitor arranca cuando se detecta el proceso de ZZZ
     auto_start_enabled = Signal(bool)        # True cuando se habilita el auto-arranque
 
+    # Watchdog RNF-06: el monitor (thread daemon) pide auto-restart del .exe ante RAM
+    # crítica. La signal marshalla al main thread (relaunch + quit deben correr ahí).
+    ram_critical = Signal()
+
     # Intervalo del watcher que detecta ZZZ corriendo (segundos)
     AUTO_DETECT_INTERVAL_S = 3
 
@@ -82,6 +86,9 @@ class MonitorController(QObject):
         self._auto_detect_timer.timeout.connect(self._check_zzz_window)
         self._auto_detect_enabled = False
         self._was_window_present = False
+        # Watchdog RNF-06: relanzar el .exe ante RAM crítica (una sola vez).
+        self._restart_requested = False
+        self.ram_critical.connect(self._handle_ram_critical)
 
     # ---- Public API ----------------------------------------------------------
 
@@ -112,6 +119,7 @@ class MonitorController(QObject):
             on_diagnostic=self._on_diagnostic_from_monitor,
             on_agent_detail=self._on_agent_detail_from_monitor,
             set_repo=self._disc_set_repo,
+            on_ram_critical=self.ram_critical.emit,   # watchdog RNF-06 → main thread
         )
         self._monitor.start()
         self.monitor_started.emit()
@@ -138,6 +146,33 @@ class MonitorController(QObject):
                 pass
             self._con = None
         self.monitor_stopped.emit()
+
+    @Slot()
+    def _handle_ram_critical(self):
+        """Auto-restart del .exe ante RAM crítica (watchdog RNF-06). Corre en el MAIN
+        thread (la signal lo marshalla desde el monitor). Relanza un proceso fresco —
+        hereda el entorno, así que conserva las env vars de qa_launch (DANIBOD_DB_PATH,
+        BADGE_HARVEST, etc.) — y cierra el actual. La cosecha persiste (equip_map + npz)
+        → sin pérdida. Dispara una sola vez por proceso."""
+        if self._restart_requested:
+            return
+        self._restart_requested = True
+        import os
+        import sys
+        from PySide6.QtCore import QProcess, QTimer
+        from PySide6.QtWidgets import QApplication
+        try:
+            log.critical("Auto-restart por RAM (RNF-06): relanzando %s", sys.executable)
+            # El hijo hereda el entorno → marcarlo para que bypasee el single-instance
+            # (esta instancia sigue viva ~1.2s; sin esto el hijo se autocierra → 0 apps).
+            os.environ["DANIBOD_RESTART"] = "1"
+            ok = QProcess.startDetached(sys.executable, sys.argv[1:])
+            log.info("startDetached → %s", ok)
+        except Exception:
+            log.exception("Falló el relanzamiento del .exe; se cierra igual")
+        # Pequeño respiro para que el proceso nuevo arranque y el toast/log se vean,
+        # luego cerrar este. La cosecha ya está persistida en disco.
+        QTimer.singleShot(1200, QApplication.quit)
 
     @Slot()
     def toggle_pause(self):

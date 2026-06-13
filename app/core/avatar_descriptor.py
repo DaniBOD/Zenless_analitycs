@@ -299,10 +299,18 @@ class AvatarMatcher:
             return 0
         try:
             data = np.load(str(path), allow_pickle=True)
-            names = data["names"]; n = 0
+            # RNF-06: leer cada array UNA vez. `data["ncc"]` recarga la array completa del
+            # npz en CADA acceso, y `data["ncc"][i]` es una VIEW que mantiene viva esa array
+            # completa (~23 MB) → con N refs se retenían N copias completas (~28 GB en el
+            # arranque con las 3 librerías). `.copy()` deja cada descriptor con su fila chica
+            # y libera las arrays completas al salir. Ver audit/mem_diag_20260613.md.
+            names = data["names"]
+            hist, ncc = data["hist"], data["ncc"]
+            reg, gray, isg = data["regions"], data["gray"], data["is_gray"]
+            n = 0
             for i in range(len(names)):
-                d = AvatarDescriptor(data["hist"][i], data["ncc"][i], data["regions"][i],
-                                     data["gray"][i], bool(data["is_gray"][i]))
+                d = AvatarDescriptor(hist[i].copy(), ncc[i].copy(), reg[i].copy(),
+                                     gray[i].copy(), bool(isg[i]))
                 self._refs.setdefault(str(names[i]), []).append(d)
                 n += 1
             return n

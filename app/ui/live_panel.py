@@ -267,6 +267,9 @@ class LivePanel(QWidget):
 
         self._log = QTextEdit()
         self._log.setReadOnly(True)
+        # Poda RNF-06: cap del documento Qt para que el log no crezca sin límite en sesiones
+        # largas (cada .append agrega un bloque; sin tope el QTextDocument acumula memoria).
+        self._log.document().setMaximumBlockCount(1000)
         self._log.setFont(T.font_mono(9))
         self._log.setStyleSheet(f"""
             QTextEdit {{

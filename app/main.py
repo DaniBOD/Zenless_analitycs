@@ -682,7 +682,14 @@ def main():
     # --- Single-instance guard ---------------------------------------------
     # Si ya hay una sesión abierta, le pedimos que se muestre y abortamos:
     # nunca quedan dos ventanas/tray del sistema a la vez.
-    if _try_signal_existing_instance():
+    # EXCEPCIÓN (RNF-06): un auto-restart del watchdog trae DANIBOD_RESTART=1. La instancia
+    # vieja se está cerrando (ventana de ~1.2s) → si chequeáramos single-instance la veríamos
+    # viva y abortaríamos, quedando CERO apps (bug observado 2026-06-13). Bypass en ese caso.
+    if os.environ.pop("DANIBOD_RESTART", None):
+        logging.getLogger("app").info(
+            "Arranque por auto-restart (RNF-06): bypass del single-instance."
+        )
+    elif _try_signal_existing_instance():
         logging.getLogger("app").info(
             "Ya hay una instancia corriendo — se le pidió foco y esta sale."
         )

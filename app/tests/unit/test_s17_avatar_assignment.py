@@ -1326,3 +1326,83 @@ def test_persist_s17_devuelve_composicion(syncer_db):
         assert "incompleta" in res.set_composition
     finally:
         sync.close()
+
+
+# --- 5. Fixes de la fuga RNF-06 (gates de OCR + watchdog) --------------------
+
+def test_s18_stats_signature_gate():
+    """Gate OCR S18 (RNF-06): firma del panel derecho. Cambio en la mitad IZQUIERDA
+    (modelo 3D animado) NO mueve la firma → skip OCR; cambio EN el panel (cambio de
+    agente) sí → re-OCR."""
+    from app.core.monitor import Monitor, _S18_SIG_MAX
+    H, W = 1439, 2557
+    a = np.zeros((H, W, 3), np.uint8)
+    a[int(0.39 * H):int(0.74 * H), int(0.54 * W):int(0.96 * W)] = 30   # panel de stats
+    sig_a = Monitor._s18_stats_signature(a)
+    assert sig_a is not None
+    # "Animación" en la mitad izquierda (modelo del PJ) → la firma del panel no cambia.
+    b = a.copy()
+    b[:, :int(0.50 * W)] = 220
+    assert Monitor._sig_component_diff(sig_a, Monitor._s18_stats_signature(b)) <= _S18_SIG_MAX
+    # Cambio DENTRO del panel (otro agente / level-up) → diff grande → re-OCR.
+    c = a.copy()
+    c[int(0.40 * H):int(0.73 * H), int(0.55 * W):int(0.95 * W)] = 220
+    assert Monitor._sig_component_diff(sig_a, Monitor._s18_stats_signature(c)) > _S18_SIG_MAX
+
+
+def test_s17_post_emit_skip_no_ocr(monkeypatch):
+    """Gate RNF-06: un disco YA emitido con firma sin cambios NO vuelve a llamar OCR
+    (parse_disc_s17_full) cada ciclo — era el desperdicio que alimentaba el leak."""
+    from app.core import monitor as _mon
+    from app.core.detector import ScreenState
+    calls = {"n": 0}
+    monkeypatch.setattr(_mon, "parse_disc_s17_full",
+                        lambda frame, ocr: (calls.__setitem__("n", calls["n"] + 1), (None, None))[1])
+    m = _monitor()
+    frame = np.full((1439, 2557, 3), 50, np.uint8)
+    m._disc_agg_sig = m._s17_disc_signature(frame)   # ancla = este disco (firma estable)
+    m._disc_emitted = True                            # ya procesado/emitido
+    m._process_disc_s17_continuous(frame, ScreenState("S17", 0.9, ""))
+    assert calls["n"] == 0                            # OCR salteado por el gate
+
+
+def test_ram_watchdog_dispara_restart_una_vez(monkeypatch):
+    """Watchdog RNF-06: cruzar el umbral de private dispara el callback 1×; respeta el
+    guard de 'ya disparado', el kill-switch env y el umbral."""
+    from app.core import monitor as _mon
+    fired = {"n": 0}
+    bump = lambda: fired.__setitem__("n", fired["n"] + 1)
+
+    # Cruza umbral → dispara una vez; segundo llamado no re-dispara (guard).
+    m = _monitor(); m._on_ram_critical = bump
+    monkeypatch.setattr(_mon.mem_diag, "mem_counters",
+                        lambda: (0.0, float(_mon._RAM_RESTART_MB + 100)))
+    m._ram_watchdog(1000.0)
+    assert fired["n"] == 1
+    m._ram_watchdog(2000.0)
+    assert fired["n"] == 1
+
+    # Bajo umbral → no dispara.
+    m2 = _monitor(); m2._on_ram_critical = bump
+    monkeypatch.setattr(_mon.mem_diag, "mem_counters",
+                        lambda: (0.0, float(_mon._RAM_RESTART_MB - 500)))
+    m2._ram_watchdog(1000.0)
+    assert fired["n"] == 1
+
+    # Kill-switch env → no dispara aunque cruce.
+    m3 = _monitor(); m3._on_ram_critical = bump
+    monkeypatch.setenv("DANIBOD_NO_RAM_GUARD", "1")
+    monkeypatch.setattr(_mon.mem_diag, "mem_counters",
+                        lambda: (0.0, float(_mon._RAM_RESTART_MB + 100)))
+    m3._ram_watchdog(1000.0)
+    assert fired["n"] == 1
+
+
+def test_mem_counters_lee_memoria():
+    """mem_counters() debe devolver WS y commit > 0. Regresión: la reescritura a ctypes-only
+    devolvía (0,0) → el heartbeat y el watchdog leían 0 y el watchdog NUNCA disparaba (la app
+    llegó a 29 GB en la medición post-gates antes de detectar esto)."""
+    from app.core import mem_diag
+    ws, commit = mem_diag.mem_counters()
+    assert ws > 0, f"WorkingSet leyó {ws}"
+    assert commit > 0, f"commit/private leyó {commit}"

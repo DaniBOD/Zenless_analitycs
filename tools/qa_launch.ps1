@@ -17,8 +17,10 @@ param(
     [string]$Harvest,        # carpeta destino: cosecha frames etiquetados por latch (5R.3)
     [switch]$BadgeHarvest,   # crece la librería de badges (avatar_badge_v2.npz) en vivo,
                              # gateada por flujo-ancla (solo disco equipado). NO toca DB.
-    [string]$GridDiag        # carpeta destino: vuelca recortes de badge S17 + verdicto por
+    [string]$GridDiag,       # carpeta destino: vuelca recortes de badge S17 + verdicto por
                              # disco (DANIBOD_GRID_DIAG). Diagnóstico de crops. NO toca DB.
+    [switch]$MemDiag         # heartbeat de memoria RNF-06 (DANIBOD_MEM_DIAG): loguea RSS +
+                             # heap Python + contador OCR cada ~20s al app.log. Diagnóstico.
 )
 
 $ErrorActionPreference = "Stop"
@@ -73,6 +75,12 @@ if ($GridDiag) {
     Write-Host "[qa_launch] DANIBOD_GRID_DIAG = $diagDir (vuelca recortes de badge S17 + verdicto)"
 } else {
     Remove-Item Env:\DANIBOD_GRID_DIAG -ErrorAction SilentlyContinue
+}
+if ($MemDiag) {
+    $env:DANIBOD_MEM_DIAG = "1"
+    Write-Host "[qa_launch] DANIBOD_MEM_DIAG = 1 (heartbeat RSS + pyheap + ocr_calls cada ~20s -> app.log)"
+} else {
+    Remove-Item Env:\DANIBOD_MEM_DIAG -ErrorAction SilentlyContinue
 }
 Write-Host "[qa_launch] Lanzando $exe ..."
 

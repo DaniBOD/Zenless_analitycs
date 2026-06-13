@@ -7,6 +7,7 @@ Hook win32 para EVENT_SYSTEM_FOREGROUND (forzar scan al volver al juego).
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ from typing import Callable
 
 import numpy as np
 
+from app.core import mem_diag
 from app.core.capturer import WindowBounds, capture_window, find_zzz_window
 from app.core.detector import (
     ScreenDetector, ScreenState, TemporalBuffer, AGENT_STATS_STATES,
@@ -94,6 +96,27 @@ _S17_AGG_MAX_CYCLES = 5
 # in-place) → se sesga a sensibilidad. Ver Dev_IA 2026-06-07.
 _S17_SIG_DETAIL_MAX = 5.0
 _S17_SIG_HEX_MAX = 3.0
+# Gate de OCR S18 (RNF-06): umbral de diff de la firma del panel de stats. Sensible
+# (bajo) a propósito — errar hacia re-OCR de más (sin riesgo) antes que saltarse un
+# cambio real (stats viejos). El cambio de agente es un diff enorme; el shimmer de
+# fondo del panel queda por debajo.
+_S18_SIG_MAX = 2.5
+# Throttle del fallback deep_detect S18 sobre S12 (RNF-06): máx 1 intento de OCR cada
+# N seg. En pantallas de carga/transición clasificadas como S12, esto corría OCR cada
+# frame → spike que colgaba la UI al abrir el juego. Un deep_detect exitoso igual promueve
+# de inmediato (promote_now); el throttle solo limita la FRECUENCIA de intentos.
+_DEEP_DETECT_MIN_S = 0.8
+# Gate de frame para deep_detect (RNF-06): si el frame S12 no cambió desde el último
+# intento (pantalla estática/colgada que el classify no reconoce), no re-OCR-earlo —
+# era el driver del leak en el tramo S12 (la medición post-gates mostró que S12 seguía
+# OCR-eando ~48/min). Umbral sobre la firma whole-frame 32×32.
+_S12_SIG_MAX = 2.0
+# Watchdog de RAM (RNF-06): defensa en profundidad. Cada ~15s lee el private bytes; al
+# cruzar el umbral pide auto-restart del .exe (la cosecha persiste entre reinicios —
+# equip_map + npz — así que NO se pierde). Umbral alto: rara vez dispara si los gates de
+# OCR funcionan, pero corta antes del cuelgue (~12 GB). Desactivable con DANIBOD_NO_RAM_GUARD=1.
+_RAM_RESTART_MB = 6000
+_RAM_CHECK_INTERVAL_S = 15.0
 # Detector LIBRE/equipado (5R.B): un frame es "evidencia de libre" si el badge cae en
 # el reject-set o su conf < _S17_FREE_CONF (nada se parece a una cara → sin dueño). Se
 # declara LIBRE solo con ≥ _S17_FREE_MIN_FRAMES de evidencia mayoritaria y cero dueños
@@ -135,6 +158,7 @@ class Monitor:
         on_diagnostic: Callable[[str], None] | None = None,
         on_agent_detail: Callable[[ScreenState, str | None, bool, str | None], None] | None = None,
         agent_identifier: AgentIdentifier | None = None,
+        on_ram_critical: Callable[[], None] | None = None,
     ):
         self._ocr = ocr
         self._detector = detector
@@ -182,6 +206,19 @@ class Monitor:
         self._disc_emitted_ids: set = set()
         # Última firma del log "[S17] asignado" (edge-trigger: 1× por cambio).
         self._s17_assign_sig = None
+        # Gate de OCR S18 (RNF-06): última firma del panel de stats. Si no cambió, se
+        # saltea el OCR (la extracción continua existe para detectar cambio de agente;
+        # sin cambio visual no hay nada nuevo que extraer). Self-correcting: cualquier
+        # cambio (agente nuevo, level-up) supera el umbral → re-OCR.
+        self._s18_last_sig = None
+        # Throttle del fallback deep_detect S18 sobre S12 (RNF-06).
+        self._last_deep_detect_t = 0.0
+        # Firma del último frame S12 al que se le intentó deep_detect (gate anti-re-OCR).
+        self._s12_deep_sig = None
+        # Watchdog de RAM (RNF-06): pide auto-restart al cruzar el umbral. Dispara 1×.
+        self._on_ram_critical = on_ram_critical
+        self._ram_restart_fired = False
+        self._last_ram_check_t = 0.0
         # Último estado confirmado por votación. Persiste aunque el buffer
         # dedupee (devuelva None por mismo estado), para permitir
         # re-extracción CONTINUA de S18 sin requerir cambio de estado ni F8.
@@ -347,6 +384,12 @@ class Monitor:
             # ---- Paso 1: clasificar frame individual ----
             raw_state = self._detector.classify(frame)
 
+            # Heartbeat de memoria (RNF-06, env-gated DANIBOD_MEM_DIAG). No-op si está
+            # apagado; throttle interno ~20s → seguro llamar cada iteración.
+            mem_diag.heartbeat({"ticks": self._loop_ticks, "st": raw_state.code})
+            # Watchdog de RAM (RNF-06): cota dura con auto-restart. Throttle interno ~15s.
+            self._ram_watchdog(now)
+
             # Muestreo RÁPIDO de identidad en S8/S19 (10 fps, no cadencia): el
             # avatar-row es deslizante y se auto-oculta; muestrear en cada frame
             # captura la ventana breve en que el avatar es visible (al seleccionar
@@ -367,10 +410,19 @@ class Monitor:
             # Gate (2026-06-03): NO correr si hay un tab-bar activo — ahí la familia
             # (S8/S18/S19) ya la resolvió `classify` por tab. Evita re-disparar S18
             # sobre la pestaña Equipamiento. El tentativo visual-solo fue eliminado.
-            if raw_state.code == "S12" and detect_active_tab(frame) is None:
-                deep = _deep_detect_s18(frame, self._ocr)
-                if deep is not None:
-                    raw_state = deep
+            if (raw_state.code == "S12" and detect_active_tab(frame) is None
+                    and now - self._last_deep_detect_t >= _DEEP_DETECT_MIN_S):
+                # Gate RNF-06: solo intentar deep_detect si el frame S12 CAMBIÓ desde el último
+                # intento. Pantalla estática/colgada que el classify deja en S12 → no re-OCR
+                # (era el driver del leak en S12). Si no hay firma, se intenta igual (degrada bien).
+                s12_sig = self._frame_lo_sig(frame)
+                if (self._s12_deep_sig is None or s12_sig is None
+                        or self._sig_component_diff(s12_sig, self._s12_deep_sig) > _S12_SIG_MAX):
+                    self._s12_deep_sig = s12_sig
+                    self._last_deep_detect_t = now
+                    deep = _deep_detect_s18(frame, self._ocr)
+                    if deep is not None:
+                        raw_state = deep
 
             # Slot detection. S17 ya NO usa gate one-shot: es CONTINUO con aggregator
             # (Fase 1), igual que S18. La firma del disco se evalúa dentro del handler
@@ -436,6 +488,29 @@ class Monitor:
                 self._on_diagnostic(msg)
             except Exception:
                 log.exception("Error en on_diagnostic")
+
+    def _ram_watchdog(self, now: float) -> None:
+        """Cota de RAM (RNF-06): cada ~15s lee el private bytes; al cruzar _RAM_RESTART_MB
+        pide auto-restart del .exe vía callback (la cosecha persiste → sin pérdida). Dispara
+        una sola vez. No-op si DANIBOD_NO_RAM_GUARD está seteado o no hay callback."""
+        if (self._ram_restart_fired or self._on_ram_critical is None
+                or os.environ.get("DANIBOD_NO_RAM_GUARD")):
+            return
+        if now - self._last_ram_check_t < _RAM_CHECK_INTERVAL_S:
+            return
+        self._last_ram_check_t = now
+        _ws, priv = mem_diag.mem_counters()
+        if 0 < _RAM_RESTART_MB <= priv:
+            self._ram_restart_fired = True
+            log.critical("[RAM] private=%.0fMB ≥ %dMB → auto-restart del .exe (RNF-06)",
+                         priv, _RAM_RESTART_MB)
+            self._emit_diagnostic(
+                f"RAM alta ({priv / 1024:.1f} GB) — reiniciando la app para liberar memoria "
+                f"(la cosecha NO se pierde)")
+            try:
+                self._on_ram_critical()
+            except Exception:
+                log.exception("on_ram_critical falló")
 
     def _get_frame(self):
         """Captura el frame actual. Gestiona búsqueda y pérdida de ventana."""
@@ -614,6 +689,40 @@ class Monitor:
             return None
 
     @staticmethod
+    def _frame_lo_sig(frame):
+        """Firma whole-frame 32×32 gris, sin OCR (RNF-06). Para gatear deep_detect en S12:
+        si el frame no cambió, no vale re-intentar el OCR. None si no se puede leer."""
+        if frame is None or getattr(frame, "size", 0) == 0:
+            return None
+        try:
+            import cv2
+            return cv2.cvtColor(
+                cv2.resize(frame, (32, 32), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
+            ).astype(np.float32)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _s18_stats_signature(frame):
+        """Firma del panel de stats S18, sin OCR (RNF-06). 32×32 gris del panel AGENT
+        INFO (x∈[0.54,0.96], y∈[0.39,0.74]) — texto estático en la mitad DERECHA, donde
+        NO está el modelo 3D animado del PJ (mitad izquierda). Cambia al cambiar de agente
+        o subir de nivel. None si no se puede leer."""
+        if frame is None or getattr(frame, "size", 0) == 0:
+            return None
+        try:
+            import cv2
+            H, W = frame.shape[:2]
+            panel = frame[int(0.39 * H):int(0.74 * H), int(0.54 * W):int(0.96 * W)]
+            if panel.size == 0:
+                return None
+            return cv2.cvtColor(
+                cv2.resize(panel, (32, 32), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
+            ).astype(np.float32)
+        except Exception:
+            return None
+
+    @staticmethod
     def _sig_component_diff(a, b) -> float:
         """Diff medio absoluto de una componente; inf si falta o cambia de forma."""
         if a is None or b is None or getattr(a, "shape", None) != getattr(b, "shape", None):
@@ -734,6 +843,12 @@ class Monitor:
             self._disc_agg_sig = sig
             self._disc_emitted = False
             self._disc_agg_cycles = 0
+        # Gate RNF-06: si este disco YA se emitió (procesado completo) y la firma no cambió,
+        # NO re-OCR-earlo cada ciclo — era OCR puro desperdicio que alimentaba el leak nativo
+        # de Paddle (la cosecha = parar en discos → este era el driver). El badge del dueño
+        # sigue votando aparte en _sample_s17_owner (10 fps) sin OCR.
+        if self._disc_emitted:
+            return
         try:
             disc, _face = parse_disc_s17_full(frame, self._ocr)
         except Exception:
@@ -810,6 +925,16 @@ class Monitor:
                 "[S18] Perfil de agente reconocido — extracción continua activa "
                 "(conf=%.2f)", state.confidence,
             )
+
+        # Gate RNF-06: saltar el OCR si el panel de stats no cambió desde el último ciclo.
+        # La extracción continua existe para detectar cambio de agente; sin cambio visual no
+        # hay nada nuevo que extraer ni re-loggear (el log del controller es edge-triggered).
+        # Self-correcting: cualquier cambio (agente nuevo, level-up) supera _S18_SIG_MAX → OCR.
+        sig = self._s18_stats_signature(frame)
+        if (sig is not None and self._s18_last_sig is not None
+                and self._sig_component_diff(sig, self._s18_last_sig) <= _S18_SIG_MAX):
+            return
+        self._s18_last_sig = sig
 
         # 2b) Extracción de datos en pantalla (cada ciclo). El log del RESULTADO es
         # edge-triggered (lo emite el controller solo cuando cambia); este marcador

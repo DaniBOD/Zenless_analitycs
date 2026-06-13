@@ -8,11 +8,21 @@ path automáticamente si paddleocr no es importable desde site-packages.
 """
 from __future__ import annotations
 
+import os
 import sys
 
 import numpy as np
 
+from app.core import mem_diag
 from app.core.ocr_backend import OcrBackend
+
+# Flags de memoria de paddlepaddle (RNF-06) — DEBEN setearse ANTES de importar paddle.
+# `eager_delete_tensor_gb=0.0` libera los tensores intermedios apenas dejan de usarse
+# (mitiga el crecimiento nativo per-inferencia que detectamos: ~1.8 GB/min, ver
+# audit/mem_diag_20260613.md). `allocator_strategy=auto_growth` evita sobre-reservar el pool.
+# Idempotente vía setdefault → respeta overrides externos.
+os.environ.setdefault("FLAGS_eager_delete_tensor_gb", "0.0")
+os.environ.setdefault("FLAGS_allocator_strategy", "auto_growth")
 
 _PADDLE_SITE = r"D:\paddle_site"
 
@@ -71,6 +81,7 @@ class PaddleBackend(OcrBackend):
     def text(self, img: np.ndarray, psm: int = 6, lang: str = "spa") -> tuple[str, float]:
         # PaddleOCR no usa PSM — el parámetro se ignora para compatibilidad
         ocr = self._get_ocr()
+        mem_diag.bump_ocr()
         try:
             result = ocr.ocr(img, cls=False)
         except Exception:
@@ -99,6 +110,7 @@ class PaddleBackend(OcrBackend):
         cuadrilátero que devuelve el detector DBNet.
         """
         ocr = self._get_ocr()
+        mem_diag.bump_ocr()
         try:
             result = ocr.ocr(img, cls=False)
         except Exception:
