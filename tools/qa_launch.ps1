@@ -15,8 +15,10 @@
 param(
     [switch]$ReadOnly,
     [string]$Harvest,        # carpeta destino: cosecha frames etiquetados por latch (5R.3)
-    [switch]$BadgeHarvest    # crece la librería de badges (avatar_badge_v2.npz) en vivo,
+    [switch]$BadgeHarvest,   # crece la librería de badges (avatar_badge_v2.npz) en vivo,
                              # gateada por flujo-ancla (solo disco equipado). NO toca DB.
+    [string]$GridDiag        # carpeta destino: vuelca recortes de badge S17 + verdicto por
+                             # disco (DANIBOD_GRID_DIAG). Diagnóstico de crops. NO toca DB.
 )
 
 $ErrorActionPreference = "Stop"
@@ -63,6 +65,14 @@ if ($BadgeHarvest) {
 } else {
     Remove-Item Env:\DANIBOD_BADGE_HARVEST -ErrorAction SilentlyContinue
     Remove-Item Env:\DANIBOD_EQUIP_MAP -ErrorAction SilentlyContinue
+}
+if ($GridDiag) {
+    $diagDir = if ([System.IO.Path]::IsPathRooted($GridDiag)) { $GridDiag } else { Join-Path $repoRoot $GridDiag }
+    New-Item -ItemType Directory -Force -Path $diagDir | Out-Null
+    $env:DANIBOD_GRID_DIAG = $diagDir
+    Write-Host "[qa_launch] DANIBOD_GRID_DIAG = $diagDir (vuelca recortes de badge S17 + verdicto)"
+} else {
+    Remove-Item Env:\DANIBOD_GRID_DIAG -ErrorAction SilentlyContinue
 }
 Write-Host "[qa_launch] Lanzando $exe ..."
 

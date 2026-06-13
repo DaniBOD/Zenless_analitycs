@@ -352,9 +352,10 @@ def test_maybe_harvest_gates(tmp_path, monkeypatch):
 class _StubIdent:
     """Identificador controlado para testear la lógica de `_assign_s17_pj` (5R.5)
     sin depender de fixtures: define la similitud al latch y el dueño identificado."""
-    def __init__(self, sim=None, owner=None, free=False):
+    def __init__(self, sim=None, owner=None, free=False, det_owner=None):
         self._sim = sim; self._owner = owner; self.learned = []
         self._roster_norm = {}; self._free = free
+        self._det_owner = det_owner; self.learned_detail = []
 
     def s17_similarity(self, badge, name):
         return self._sim
@@ -368,8 +369,14 @@ class _StubIdent:
         # sin dueño: 'free' simula badge en reject-set/conf baja; si no, conf media.
         return (None, 0.40, True) if self._free else (None, 0.70, False)
 
+    def s17_match_detail(self, badge, min_sim=0.80):
+        return (self._det_owner[0], self._det_owner[1], False) if self._det_owner else (None, 0.0, False)
+
     def learn_s17(self, badge, name):
         self.learned.append(name); return True
+
+    def learn_s17_detail(self, badge, name):
+        self.learned_detail.append(name); return True
 
 
 def _monitor_badge(monkeypatch, sim=None, owner=None):
@@ -497,7 +504,9 @@ def test_monitor_voto_dueno_gana_pese_a_frames_inciertos(monkeypatch):
             self._i += 1
             # frames pares: Yuzuha nítido; impares: cara presente pero bajo guard (no libre)
             return ("Yuzuha", 0.90, False) if self._i % 2 == 0 else (None, 0.70, False)
+        def s17_match_detail(self, badge, min_sim=0.80): return None, 0.0, False
         def learn_s17(self, badge, name): self.learned.append(name); return True
+        def learn_s17_detail(self, badge, name): return True
 
     m = _monitor()
     m._identifier = _Flicker()
@@ -584,6 +593,52 @@ def test_identifier_prune_to_roster(tmp_path):
     ident._badge._refs = {"Nangong Yu": d(), "Sporos_bogus": d()}
     assert ident.prune_to_roster() == 2
     assert ident.names == ["Nangong Yu"] and ident.names_s17 == ["Nangong Yu"]
+
+
+def test_crop_detail_badge_localiza_y_none():
+    """5R.C.4: crop_detail_badge encuentra el blob saturado en la franja del detalle
+    (robusto a resolución por regiones fraccionales) y devuelve None si no hay avatar."""
+    import numpy as np
+    import cv2
+    from app.core.detector import crop_detail_badge
+    H, W = 720, 1280
+    frame = np.zeros((H, W, 3), np.uint8)              # fondo oscuro (header)
+    # avatar saturado en la franja del detalle: centro ~ (0.495 W, 0.19 H)
+    cv2.circle(frame, (int(0.495 * W), int(0.19 * H)), 16, (40, 60, 220), -1)  # rojo saturado
+    crop = crop_detail_badge(frame)
+    assert crop is not None and crop.size > 0
+    # sin avatar (todo oscuro) → None
+    assert crop_detail_badge(np.zeros((H, W, 3), np.uint8)) is None
+
+
+def test_learn_s17_detail_readonly_gateado_por_badge_harvest(tmp_path, monkeypatch):
+    """En readonly, learn_s17_detail NO persiste salvo en cosecha de badges
+    (DANIBOD_BADGE_HARVEST) — mismo gating que learn_s17, librería propia de detalle."""
+    import numpy as np
+    import app.core.agent_identifier as ai
+    monkeypatch.setattr(ai, "is_readonly", lambda: True)
+    face = np.full((48, 48, 3), 127, np.uint8)
+    ident = ai.AgentIdentifier(library_path=tmp_path / "lib.npz", autoload=False,
+                               roster={"Nangong Yu"})
+    monkeypatch.delenv("DANIBOD_BADGE_HARVEST", raising=False)
+    assert ident.learn_s17_detail(face, "Nangong Yu") is False      # readonly puro → inerte
+    monkeypatch.setenv("DANIBOD_BADGE_HARVEST", "1")
+    assert ident.learn_s17_detail(face, "Nangong Yu") is True       # cosecha → persiste
+    assert "Nangong Yu" in ident._detbadge._refs
+
+
+def test_monitor_voto_detalle_suma_dueno_aunque_grid_falle(monkeypatch):
+    """5R.C.4: el detalle-badge vota al MISMO acumulador. Si el grid da NOLOC pero el
+    detalle localiza e identifica, el dueño se acumula igual (sube el yield del voto)."""
+    import numpy as np
+    import app.core.monitor as mon
+    monkeypatch.setattr(mon, "crop_grid_selected_badge", lambda f: None)        # grid NOLOC
+    monkeypatch.setattr(mon, "crop_detail_badge", lambda f: np.zeros((40, 40, 3), np.uint8))
+    m = _monitor()
+    m._identifier = _StubIdent(det_owner=("Yuzuha", 0.90))
+    for _ in range(3):
+        m._sample_s17_owner(_frame())
+    assert m._s17_voted_owner(_frame()) == "Yuzuha"
 
 
 def test_retroceso_s17_a_s8_hereda_pj(monkeypatch):

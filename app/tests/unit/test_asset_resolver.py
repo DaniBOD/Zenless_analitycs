@@ -143,8 +143,16 @@ def test_agent_avatar_invalid_variant():
 # Cobertura full contra DB (test de integración liviano)
 # ---------------------------------------------------------------------------
 
+# Agentes con onboarding PARCIAL (assets diferidos por diseño — RNF-02). Quedan exentos
+# del check de Pj_stats hasta que se complete el onboarding (se captura su screenshot
+# HoYoLAB). Ver audit/onboarding_billy_estelar_20260612.md. Sus splash -extend/-ico SÍ
+# existen y se verifican normalmente.
+_PJ_STATS_DEFERIDO = {"Billy Estelar"}
+
+
 def test_full_coverage_against_db():
-    """Verifica que TODOS los 26 sets y 46 agentes resuelven."""
+    """Verifica que TODOS los sets y agentes resuelven (-extend siempre; Pj_stats salvo
+    onboarding parcial diferido)."""
     pytest.importorskip("sqlite3")
     from app.db.connection import get_connection
     from app.db.repositories import AgentRepo, DiscSetRepo
@@ -164,7 +172,7 @@ def test_full_coverage_against_db():
         for a in AgentRepo(con).get_all():
             if agent_avatar_path(a.nombre, variant="extend") is None:
                 agent_misses_extend.append(a.nombre)
-            if agent_avatar_path(a.nombre, variant="pj_stats") is None:
+            if a.nombre not in _PJ_STATS_DEFERIDO and agent_avatar_path(a.nombre, variant="pj_stats") is None:
                 agent_misses_pj.append(a.nombre)
         assert not agent_misses_extend, f"Agentes sin -extend.webp: {agent_misses_extend}"
         assert not agent_misses_pj, f"Agentes sin Pj_stats.jpeg: {agent_misses_pj}"

@@ -274,6 +274,16 @@ _TILE_H_FRAC = np.array([0.095, 0.140])     # [min,max] alto / H
 _TILE_ASPECT_MIN, _TILE_ASPECT_MAX = 0.78, 1.28
 _TILE_FILL_MAX = 0.45
 
+# Detalle-badge (5R.C.4): avatar del dueño junto a 'Nivel 15/15' del panel de detalle.
+# Localización MUCHO más robusta que el grid-tile (100% vs 73% en video): fija en X
+# (~0.495), fondo oscuro (sin confound de arte amarillo), siempre presente (sin NOLOC de
+# transición). Robusto al corrimiento en Y (nombre 1 vs 2 líneas) localizando el blob
+# saturado en la franja. Encuadre DISTINTO al grid-badge → librería propia (avatar_detbadge).
+_DET_REGION = (0.475, 0.515, 0.12, 0.26)     # x0,x1,y0,y1 norm (franja del detalle-badge)
+_DET_SAT_MIN = 50                            # saturación mínima (avatar colorido vs texto blanco)
+_DET_MIN_AREA = 200
+_DET_R_F = 0.019                             # radio del crop / W
+
 
 def _selected_grid_tile_bbox(frame: np.ndarray):
     """Bbox (en frame) del tile resaltado de la grilla izquierda S17, o None.
@@ -339,6 +349,37 @@ def crop_grid_selected_badge(frame: np.ndarray) -> np.ndarray | None:
     H, W = frame.shape[:2]
     crop = frame[max(0, cy - r):min(H, cy + r), max(0, cx - r):min(W, cx + r)]
     return crop if crop.size else None
+
+
+def crop_detail_badge(frame: np.ndarray) -> np.ndarray | None:
+    """Recorta (círculo) el avatar del dueño del PANEL DE DETALLE S17 (junto a 'Nivel
+    15/15'). Localiza el blob saturado en la franja derecha del header — robusto al
+    corrimiento en Y (nombre de 1 vs 2 líneas) y sin el confound de arte amarillo ni el
+    NOLOC de transición del grid-tile (100% loc en video). Encuadre DISTINTO al grid-badge
+    → su match requiere la librería propia avatar_detbadge_v2.npz. None si no localiza."""
+    if frame is None or frame.size == 0:
+        return None
+    try:
+        H, W = frame.shape[:2]
+        x0, x1, y0, y1 = _DET_REGION
+        sub = frame[int(y0 * H):int(y1 * H), int(x0 * W):int(x1 * W)]
+        if sub.size == 0:
+            return None
+        hsv = cv2.cvtColor(sub, cv2.COLOR_BGR2HSV)
+        mask = (hsv[:, :, 1] > _DET_SAT_MIN).astype(np.uint8) * 255
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+        n, _lab, stats, cent = cv2.connectedComponentsWithStats(mask, 8)
+        if n <= 1 or stats[1:, 4].max() < _DET_MIN_AREA:
+            return None
+        i = 1 + int(np.argmax(stats[1:, 4]))
+        ccx, ccy = cent[i]
+        cx, cy, r = int(x0 * W + ccx), int(y0 * H + ccy), int(_DET_R_F * W)
+        if r < 8:
+            return None
+        crop = frame[max(0, cy - r):min(H, cy + r), max(0, cx - r):min(W, cx + r)]
+        return crop if crop.size else None
+    except Exception:
+        return None
 
 
 def detect_active_tab(frame: np.ndarray) -> str | None:

@@ -45,6 +45,8 @@ _AGENT_SPLASH_OVERRIDES: dict[str, str] = {
     "César":          "Caesar",
     "Astra Yao":      "Astra-yao",     # case lowercase del archivo
     "Cissia":         "cissia",        # archivo en lowercase con _
+    "Billy Estelar":  "Billy-starlight",  # Billy Kid (v2.x); archivo EN. -extend usa "_"
+                                          # → lo resuelve el fallback de separador.
 }
 
 # Algunos archivos cissia usan "_" en lugar de "-" como separador

@@ -19,7 +19,7 @@ from app.core.detector import (
     ScreenDetector, ScreenState, TemporalBuffer, AGENT_STATS_STATES,
     extract_s17_slot, extract_s9_slot, polling_cadence_ms,
     _deep_detect_s18, detect_active_tab, selected_avatar_x,
-    crop_grid_selected_badge,
+    crop_grid_selected_badge, crop_detail_badge,
 )
 from app.core.stats_vocab import _norm_key
 from app.core.parser_disc import DiscParsed, parse_modal_detalle
@@ -226,6 +226,7 @@ class Monitor:
         # dueño certero) se registra firma_disco→dueño a ese JSON. Readonly-safe (no DB).
         self._equip_map: dict[str, str] = {}
         self._equip_map_loaded: bool = False  # lazy-load del JSON existente 1× por instancia
+        self._grid_diag_counts: dict[str, int] = {}  # cap por disco del volcado DANIBOD_GRID_DIAG
         # Cosecha de frames etiquetados por latch (Fase 5R.3, solo si DANIBOD_HARVEST
         # está seteado). Cap por (PJ, estado) para no spamear. Read-only: solo escribe
         # PNGs de frame completo a la carpeta indicada, nunca toca la DB.
@@ -646,6 +647,7 @@ class Monitor:
         self._s17_owner_votes = {}
         self._s17_free_evidence = 0
         self._s17_samples = 0
+        self._grid_diag_counts.clear()
 
     @staticmethod
     def _disc_identity(d) -> tuple:
@@ -1060,13 +1062,56 @@ class Monitor:
             self._s17_samples = 0
         badge = crop_grid_selected_badge(frame)
         if badge is None:
+            self._dump_grid_diag(frame, None, None, 0.0, False, sig)   # grid no localizó (NOLOC)
+        else:
+            name, conf, rejected = self._identifier.s17_match(badge)
+            self._dump_grid_diag(frame, badge, name, conf, rejected, sig)
+            self._s17_samples += 1
+            if name:
+                self._s17_owner_votes[name] = self._s17_owner_votes.get(name, 0.0) + float(conf)
+            elif rejected or conf < _S17_FREE_CONF:   # crop sin cara (lock/disco/vacío)
+                self._s17_free_evidence += 1
+        # DETALLE-badge (5R.C.4): localiza ~siempre (incl. cuando el grid da NOLOC) →
+        # suma voto del dueño al MISMO acumulador, subiendo el yield del voto. NO toca
+        # _s17_samples/free (la detección LIBRE sigue calibrada por el grid). Inerte
+        # (sin voto) hasta que la librería de detalle se cosecha.
+        det = crop_detail_badge(frame)
+        if det is not None:
+            dname, dconf, _drej = self._identifier.s17_match_detail(det)
+            if dname:
+                self._s17_owner_votes[dname] = self._s17_owner_votes.get(dname, 0.0) + float(dconf)
+
+    def _dump_grid_diag(self, frame, badge, name, conf: float, rejected: bool, sig) -> None:
+        """Diagnóstico de recortes de badge S17 (gated DANIBOD_GRID_DIAG). Por cada
+        frame muestreado vuelca el crop de badge + verdicto en el nombre del archivo
+        (o la región de grilla cuando la localización falló), capeado por disco. Para
+        auditar por qué un disco posado queda 'incierto'/'no localizado'. No toca DB."""
+        import os
+        d = os.environ.get("DANIBOD_GRID_DIAG")
+        if not d:
             return
-        name, conf, rejected = self._identifier.s17_match(badge)
-        self._s17_samples += 1
-        if name:
-            self._s17_owner_votes[name] = self._s17_owner_votes.get(name, 0.0) + float(conf)
-        elif rejected or conf < _S17_FREE_CONF:   # crop sin cara (lock/disco/vacío)
-            self._s17_free_evidence += 1
+        try:
+            import hashlib
+            import cv2
+            from pathlib import Path
+            key = hashlib.md5(repr(sig).encode()).hexdigest()[:8]
+            cnt = self._grid_diag_counts.get(key, 0)
+            if cnt >= 12:
+                return
+            self._grid_diag_counts[key] = cnt + 1
+            outdir = Path(d); outdir.mkdir(parents=True, exist_ok=True)
+            if badge is not None and getattr(badge, "size", 0):
+                tag = (name or ("REJECT" if rejected else "none")).replace(" ", "").replace(":", "")
+                cv2.imwrite(str(outdir / f"{key}_{cnt:02d}_badge_{tag}_{conf:.2f}.png"), badge)
+            else:
+                from app.core.detector import _GRID_REGION
+                H, W = frame.shape[:2]
+                x0, y0, x1, y1 = _GRID_REGION
+                sub = frame[int(y0 * H):int(y1 * H), int(x0 * W):int(x1 * W)]
+                if sub.size:
+                    cv2.imwrite(str(outdir / f"{key}_{cnt:02d}_NOLOC.png"), sub)
+        except Exception:
+            log.debug("grid_diag dump falló", exc_info=True)
 
     def _s17_voted_owner(self, frame) -> str | None:
         """Dueño ganador (mayor confianza acumulada) del disco mirado, si la votación
@@ -1117,6 +1162,11 @@ class Monitor:
             if badge is not None:                      # cosecha con label CERTERO
                 if self._identifier.learn_s17(badge, latch) and self._on_diagnostic:
                     self._on_diagnostic(f"[cosecha] badge de {latch} (slot {slot})")
+            # Cosecha PARALELA del detalle-badge (5R.C.4): mismo latch certero, librería
+            # propia. Localiza ~siempre (no depende del anillo del tile).
+            det = crop_detail_badge(frame) if frame is not None else None
+            if det is not None:
+                self._identifier.learn_s17_detail(det, latch)
             self._set_latch_assignment(disc, latch, 1.0, "equipado")
             return
         if badge is None:

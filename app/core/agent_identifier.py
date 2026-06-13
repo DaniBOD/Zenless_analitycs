@@ -75,8 +75,13 @@ class AgentIdentifier:
         base = Path(library_path) if library_path else _default_library_path()
         self._row_path = base.with_name("avatar_row_v2.npz")
         self._badge_path = base.with_name("avatar_badge_v2.npz")
+        # Detalle-badge (5R.C.4): librería PROPIA del avatar del panel de detalle S17
+        # (junto a 'Nivel 15/15'). Encuadre distinto al grid-badge → no comparte refs.
+        # Localización 100% (vs 73% del grid) → sube el yield del voto en S17.
+        self._detbadge_path = base.with_name("avatar_detbadge_v2.npz")
         self._row = AvatarMatcher()
         self._badge = AvatarMatcher()
+        self._detbadge = AvatarMatcher()
         self._ico_names: set[str] = set()   # refs sembradas de -ico (no podar)
         self._roster_norm: dict[str, str] | None = (
             {_norm_key(n): n for n in roster} if roster is not None else None
@@ -85,6 +90,7 @@ class AgentIdentifier:
             self._seed_ico()
             self.load()
             self.load_s17()
+            self.load_s17_detail()
             self.prune_to_roster()
 
     # ---- semilla -ico (badge) -----------------------------------------------
@@ -109,6 +115,7 @@ class AgentIdentifier:
                 self._badge._refs.setdefault(name, []).extend(lst)
             self._badge._rejects = list(rejects)
             self._row._rejects = list(rejects)
+            self._detbadge._rejects = list(rejects)   # detalle comparte reject-set, NO los -ico
             self._ico_names = set(refs.keys())
         except Exception:
             log.exception("AgentIdentifier: error sembrando -ico")
@@ -147,12 +154,12 @@ class AgentIdentifier:
             return 0
         valid = set(self._roster_norm.values()) | self._ico_names
         removed = 0
-        for matcher in (self._row, self._badge):
+        for matcher in (self._row, self._badge, self._detbadge):
             for n in [k for k in matcher._refs if k not in valid]:
                 del matcher._refs[n]; removed += 1
         if removed and not is_readonly():
             log.info("AgentIdentifier: podadas %d refs fuera del roster", removed)
-            self.save(); self.save_s17()
+            self.save(); self.save_s17(); self.save_s17_detail()
         return removed
 
     # ---- Persistencia -------------------------------------------------------
@@ -172,6 +179,14 @@ class AgentIdentifier:
 
     def save_s17(self) -> None:
         self._badge.save(self._badge_path)
+
+    def load_s17_detail(self) -> None:
+        n = self._detbadge.load_merge(self._detbadge_path)
+        if n:
+            log.info("AgentIdentifier: %d refs de detalle-badge cargadas de %s", n, self._detbadge_path)
+
+    def save_s17_detail(self) -> None:
+        self._detbadge.save(self._detbadge_path)
 
     # ---- API: avatar de FILA (S8/S18/S19) -----------------------------------
 
@@ -255,5 +270,33 @@ class AgentIdentifier:
         if face is None:
             return None, 0.0, False
         r = self._badge.match(face)
+        name = r.name if (r.name is not None and r.conf >= min_sim) else None
+        return name, r.conf, r.rejected
+
+    # ---- API: DETALLE-badge (panel de detalle S17, librería propia) ----------
+
+    def learn_s17_detail(self, face, name: str) -> bool:
+        """Cosecha el detalle-badge de `name` (ground-truth del latch) a su librería
+        PROPIA. Mismo gating que learn_s17: en readonly NO persiste salvo en cosecha
+        de badges (DANIBOD_BADGE_HARVEST), que escribe solo la librería (no la DB)."""
+        if not name or face is None or (is_readonly() and not _badge_harvest_enabled()):
+            return False
+        canon = self._canonical_name(name)
+        if canon is None:
+            return False
+        new = canon not in self._detbadge._refs
+        self._detbadge.add_reference(canon, face)
+        self.save_s17_detail()
+        if new:
+            log.info("AgentIdentifier: detalle-badge aprendido para '%s'", canon)
+        return True
+
+    def s17_match_detail(self, face, min_sim: float = _S17_GUARD_DEFAULT):
+        """Match del detalle-badge contra su librería propia: (nombre|None, conf, rejected).
+        Inerte (None, 0, False) hasta que la librería se cosecha. nombre no-None solo si
+        conf≥guard. Señal PRIMARIA en S17 por su localización 100% (vs 73% del grid)."""
+        if face is None or not self._detbadge._refs:
+            return None, 0.0, False
+        r = self._detbadge.match(face)
         name = r.name if (r.name is not None and r.conf >= min_sim) else None
         return name, r.conf, r.rejected
