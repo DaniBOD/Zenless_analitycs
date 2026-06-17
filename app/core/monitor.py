@@ -264,6 +264,12 @@ class Monitor:
         self._equip_map: dict[str, str] = {}
         self._equip_map_loaded: bool = False  # lazy-load del JSON existente 1× por instancia
         self._grid_diag_counts: dict[str, int] = {}  # cap por disco del volcado DANIBOD_GRID_DIAG
+        # Instrumentación de identidad (L.0, gated DANIBOD_ID_DIAG): por disco emitido
+        # loguea el desglose grid/detalle (loc + match + voto) para cruzar contra el
+        # equip_map y ubicar el cuello (localización vs voto vs discriminación). Cero
+        # overhead si el flag está apagado.
+        self._id_diag_on: bool = bool(os.environ.get("DANIBOD_ID_DIAG"))
+        self._id_diag: dict = {}
         # Cosecha de frames etiquetados por latch (Fase 5R.3, solo si DANIBOD_HARVEST
         # está seteado). Cap por (PJ, estado) para no spamear. Read-only: solo escribe
         # PNGs de frame completo a la carpeta indicada, nunca toca la DB.
@@ -875,6 +881,8 @@ class Monitor:
             # setean agente_asignado → no contaminan el mapa.
             if merged.agente_asignado_nombre:
                 self._record_equip_map(identity, merged.agente_asignado_nombre)
+            if self._id_diag_on:
+                self._log_id_diag(merged, identity)
             log.info(
                 "Disco detectado: set=%s slot=%d main=%s nivel=%d conf=%.2f (agg %dc%s)",
                 merged.set_name_canon or merged.set_name_raw, merged.slot,
@@ -1185,26 +1193,45 @@ class Monitor:
             self._s17_owner_votes = {}
             self._s17_free_evidence = 0
             self._s17_samples = 0
+            if self._id_diag_on:
+                self._id_diag = {"samples": 0, "grid_loc": 0, "grid_match": 0,
+                                 "det_loc": 0, "det_match": 0, "grid_votes": {}, "det_votes": {}}
         badge = crop_grid_selected_badge(frame)
+        g_name, g_conf = None, 0.0
         if badge is None:
             self._dump_grid_diag(frame, None, None, 0.0, False, sig)   # grid no localizó (NOLOC)
         else:
-            name, conf, rejected = self._identifier.s17_match(badge)
-            self._dump_grid_diag(frame, badge, name, conf, rejected, sig)
+            g_name, g_conf, rejected = self._identifier.s17_match(badge)
+            self._dump_grid_diag(frame, badge, g_name, g_conf, rejected, sig)
             self._s17_samples += 1
-            if name:
-                self._s17_owner_votes[name] = self._s17_owner_votes.get(name, 0.0) + float(conf)
-            elif rejected or conf < _S17_FREE_CONF:   # crop sin cara (lock/disco/vacío)
+            if g_name:
+                self._s17_owner_votes[g_name] = self._s17_owner_votes.get(g_name, 0.0) + float(g_conf)
+            elif rejected or g_conf < _S17_FREE_CONF:   # crop sin cara (lock/disco/vacío)
                 self._s17_free_evidence += 1
         # DETALLE-badge (5R.C.4): localiza ~siempre (incl. cuando el grid da NOLOC) →
         # suma voto del dueño al MISMO acumulador, subiendo el yield del voto. NO toca
         # _s17_samples/free (la detección LIBRE sigue calibrada por el grid). Inerte
         # (sin voto) hasta que la librería de detalle se cosecha.
         det = crop_detail_badge(frame)
+        d_name, d_conf = None, 0.0
         if det is not None:
-            dname, dconf, _drej = self._identifier.s17_match_detail(det)
-            if dname:
-                self._s17_owner_votes[dname] = self._s17_owner_votes.get(dname, 0.0) + float(dconf)
+            d_name, d_conf, _drej = self._identifier.s17_match_detail(det)
+            if d_name:
+                self._s17_owner_votes[d_name] = self._s17_owner_votes.get(d_name, 0.0) + float(d_conf)
+        # Instrumentación L.0 (gated): desglose por-disco grid/detalle (loc + match + voto).
+        if self._id_diag_on and self._id_diag:
+            d = self._id_diag
+            d["samples"] += 1
+            if badge is not None:
+                d["grid_loc"] += 1
+                if g_name:
+                    d["grid_match"] += 1
+                    d["grid_votes"][g_name] = d["grid_votes"].get(g_name, 0.0) + float(g_conf)
+            if det is not None:
+                d["det_loc"] += 1
+                if d_name:
+                    d["det_match"] += 1
+                    d["det_votes"][d_name] = d["det_votes"].get(d_name, 0.0) + float(d_conf)
 
     def _dump_grid_diag(self, frame, badge, name, conf: float, rejected: bool, sig) -> None:
         """Diagnóstico de recortes de badge S17 (gated DANIBOD_GRID_DIAG). Por cada
@@ -1237,6 +1264,28 @@ class Monitor:
                     cv2.imwrite(str(outdir / f"{key}_{cnt:02d}_NOLOC.png"), sub)
         except Exception:
             log.debug("grid_diag dump falló", exc_info=True)
+
+    def _log_id_diag(self, merged, identity: str) -> None:
+        """Una línea por disco emitido con el desglose de identificación (L.0, gated
+        DANIBOD_ID_DIAG): localización + match de grid vs detalle, voto ganador y dueño
+        asignado por flujo-ancla. Cruzable con equip_map por `identity` → ubica el cuello
+        (¿NOLOC del grid? ¿el detalle no matchea? ¿el voto elige mal?)."""
+        d = self._id_diag or {}
+        voted = (max(self._s17_owner_votes.items(), key=lambda kv: kv[1])[0]
+                 if self._s17_owner_votes else None)
+
+        def _top(v):
+            return ",".join(f"{k}:{val:.2f}" for k, val in
+                            sorted(v.items(), key=lambda kv: -kv[1])[:3]) or "-"
+
+        log.info(
+            "[id_diag] id=%s slot=%s assigned=%s voted=%s samples=%d "
+            "grid_loc=%d grid_match=%d det_loc=%d det_match=%d grid_votes=[%s] det_votes=[%s]",
+            identity, getattr(merged, "slot", "?"), merged.agente_asignado_nombre or "-",
+            voted or "-", d.get("samples", 0), d.get("grid_loc", 0), d.get("grid_match", 0),
+            d.get("det_loc", 0), d.get("det_match", 0),
+            _top(d.get("grid_votes", {})), _top(d.get("det_votes", {})),
+        )
 
     def _s17_voted_owner(self, frame) -> str | None:
         """Dueño ganador (mayor confianza acumulada) del disco mirado, si la votación

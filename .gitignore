@@ -20,9 +20,14 @@ htmlcov/
 
 # Virtual envs
 .venv/
+.venv_spike/
 venv/
 env/
 ENV/
+
+# Embedder ONNX (pivote E.0 descartado 2026-06-16 — regenerable con tools/export_embedder_onnx.py)
+app/resources/avatar_embedder.onnx
+app/resources/avatar_embedder.json
 
 # Build / dist artifacts
 build/
