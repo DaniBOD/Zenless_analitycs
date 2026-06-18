@@ -1281,7 +1281,7 @@ class Monitor:
         log.info(
             "[id_diag] id=%s slot=%s assigned=%s voted=%s samples=%d "
             "grid_loc=%d grid_match=%d det_loc=%d det_match=%d grid_votes=[%s] det_votes=[%s]",
-            identity, getattr(merged, "slot", "?"), merged.agente_asignado_nombre or "-",
+            self._identity_to_key(identity), getattr(merged, "slot", "?"), merged.agente_asignado_nombre or "-",
             voted or "-", d.get("samples", 0), d.get("grid_loc", 0), d.get("grid_match", 0),
             d.get("det_loc", 0), d.get("det_match", 0),
             _top(d.get("grid_votes", {})), _top(d.get("det_votes", {})),

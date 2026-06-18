@@ -38,6 +38,23 @@ def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (s or "").lower())
 
 
+def _id_to_key(id_str: str) -> str:
+    """Compat: builds viejos logueaban la identidad como tupla repr
+    `('set', slot, 'main', (('sub', roll), ...))`; el equip_map usa la clave string
+    `set#slot#main#sub:roll|...`. Convierte la tupla a la clave (idéntico a
+    Monitor._identity_to_key). Si ya es string, la devuelve tal cual."""
+    s = id_str.strip()
+    if not s.startswith("("):
+        return s
+    try:
+        import ast
+        setn, slot, main, subs = ast.literal_eval(s)
+        subs_s = "|".join(f"{n}:{r}" for n, r in subs)
+        return f"{setn}#{slot}#{main}#{subs_s}"
+    except Exception:
+        return s
+
+
 def _default_log() -> str:
     return os.path.join(os.environ.get("LOCALAPPDATA", ""),
                         "DaniBOD_ZZZ_Analytics", "app.log")
@@ -67,7 +84,7 @@ def main() -> int:
     for ln in lines:
         m = _LINE.search(ln)
         if m:
-            rows[m.group("id")] = m.groupdict()
+            rows[_id_to_key(m.group("id"))] = m.groupdict()
     if not rows:
         print(f"Sin líneas [id_diag] en {log_path}. ¿Corriste con DANIBOD_ID_DIAG=1?")
         return 1

@@ -28,9 +28,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from app.core.detector import crop_grid_selected_badge, crop_detail_badge  # noqa: E402
 
+# Ambos badges salen del MISMO frame S17 (el panel de detalle del disco vive en S17,
+# NO en S18 que es la pantalla de stats del agente — correr crop_detail_badge sobre
+# S18 daba ruido de texto). grid = avatar grande del tile; det = avatar chico del header.
 _OUT = ROOT / "audit" / "harvest_badges"
 _SURFACES = [("S17", "grid", crop_grid_selected_badge),
-             ("S18", "det", crop_detail_badge)]
+             ("S17", "det", crop_detail_badge)]
 
 
 def _imread(p: str) -> np.ndarray | None:
