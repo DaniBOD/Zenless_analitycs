@@ -28,8 +28,8 @@ param(
     [switch]$Recapture,      # QA: re-emite cualquier disco al VOLVER a verlo (desactiva la
                              # dedup de sesión, DANIBOD_RECAPTURE). Para re-testear/confirmar.
     [switch]$NoRamGuard      # QA: apaga el watchdog de RAM (DANIBOD_NO_RAM_GUARD) para no
-                             # interrumpir sesiones largas. La RAM crece (fuga residual RNF-06)
-                             # → usar en QA acotado, cerrar la app al terminar.
+                             # interrumpir sesiones largas. La RAM crece (fuga residual RNF-06):
+                             # usar en QA acotado, cerrar la app al terminar.
 )
 
 $ErrorActionPreference = "Stop"
@@ -105,7 +105,7 @@ if ($Recapture) {
 }
 if ($NoRamGuard) {
     $env:DANIBOD_NO_RAM_GUARD = "1"
-    Write-Host "[qa_launch] DANIBOD_NO_RAM_GUARD = 1 (watchdog RAM OFF — sesión continua)"
+    Write-Host "[qa_launch] DANIBOD_NO_RAM_GUARD = 1 (watchdog RAM OFF - sesion continua)"
 } else {
     Remove-Item Env:\DANIBOD_NO_RAM_GUARD -ErrorAction SilentlyContinue
 }
