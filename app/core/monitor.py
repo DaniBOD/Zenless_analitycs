@@ -124,6 +124,51 @@ _RAM_CHECK_INTERVAL_S = 15.0
 _S17_FREE_CONF = 0.58
 _S17_FREE_MIN_FRAMES = 2
 
+# Voto del dueño grid+detail (5R.L.3) — acumuladores SEPARADOS + política con garantía
+# RNF-02 (cero wrong). El GRID es la fuente primaria (sus reads son 0-wrong, verificado en
+# QA: solo-grilla = 62% ok / 0% wrong). El DETAIL (post-fix L.2b: crop Hough, 90% top-1 /
+# 0 wrong cross-domain) SUMA yield en los discos donde el grid da NOLOC, pero su margen
+# per-frame es menor → para PROPONER un dueño SIN respaldo del grid exige evidencia
+# acumulada fuerte + dominancia (no puede introducir un PJ que el grid nunca propuso salvo
+# este guard alto). Calibrables en L.4 (QA en vivo).
+# Un voto del detalle YA pasó su propio guard (conf≥0.80 + margen + reject-set en
+# `s17_match_detail`), así que UN frame confiable es señal válida. En vivo los discos
+# reciben ~1 frame por visita (el usuario navega rápido) → exigir ≥2 frames dejaba a
+# Yanagi/Seth (det@1.00/0.81, 1 frame) en "incierto" (bug QA 2026-06-18). Bajado 1.30→0.80
+# = "al menos un frame confiable del detalle". La DOMINANCIA sigue cortando empates
+# (dos PJs alternando un frame c/u → se abstiene).
+_DET_SOLO_MIN_SCORE = 0.80   # suma de conf del detail ganador (≈ 1 frame confiable)
+_DET_SOLO_DOMINANCE = 1.50   # ganador ≥ 1.5× el 2º acumulado (sin empate cerrado)
+
+
+def _vote_winner(votes: dict[str, float]) -> tuple[str | None, float, float]:
+    """(nombre, score_1º, score_2º) del dict de votos acumulados, o (None, 0, 0)."""
+    if not votes:
+        return None, 0.0, 0.0
+    ordered = sorted(votes.items(), key=lambda kv: -kv[1])
+    name, score = ordered[0]
+    second = ordered[1][1] if len(ordered) > 1 else 0.0
+    return name, score, second
+
+
+def _decide_s17_owner(grid_votes: dict[str, float],
+                      det_votes: dict[str, float]) -> tuple[str | None, str | None]:
+    """Decide el dueño votado de un disco CANDIDATO combinando grid + detail con
+    garantía RNF-02. Devuelve (owner|None, source):
+      - grid-PRIMARIO: si el grid votó, manda el grid; el detail solo corrobora (no puede
+        introducir otro PJ). source='grid+det' si coinciden, 'grid' si no.
+      - detail-SOLO: si el grid no votó (NOLOC), el detail propone dueño SOLO con score
+        acumulado ≥ _DET_SOLO_MIN_SCORE y dominancia ≥ _DET_SOLO_DOMINANCE. source='det'.
+      - si nada alcanza, (None, None) → incierto (abstención antes que error).
+    """
+    g_name, _gs, _g2 = _vote_winner(grid_votes)
+    d_name, d_score, d2 = _vote_winner(det_votes)
+    if g_name:
+        return g_name, ("grid+det" if d_name == g_name else "grid")
+    if d_name and d_score >= _DET_SOLO_MIN_SCORE and d_score >= _DET_SOLO_DOMINANCE * max(d2, 1e-9):
+        return d_name, "det"
+    return None, None
+
 # Intervalo de captura rápida (entre frames para buffer, sin procesar)
 _FAST_CAPTURE_MS = 100  # 10 fps — MSS captura en ~20ms, template match en ~50ms
 
@@ -255,7 +300,10 @@ class Monitor:
         # parpadeo Yuzuha↔incierto (el recorte varía frame a frame por la animación
         # idle del modelo 3D y el resaltado deslizante). Resetea al cambiar de disco.
         self._s17_owner_sig: tuple | None = None
-        self._s17_owner_votes: dict[str, float] = {}
+        # Acumuladores de voto SEPARADOS (5R.L.3): grid (primario, 0-wrong) y detail
+        # (boost de yield bajo guard). La decisión la toma `_decide_s17_owner`.
+        self._s17_grid_votes: dict[str, float] = {}
+        self._s17_det_votes: dict[str, float] = {}
         self._s17_free_evidence: int = 0   # frames con badge sin cara (5R.B)
         self._s17_samples: int = 0         # frames muestreados del disco actual
         # Mapa disco→dueño (5R.C): verdad de tierra automática. Si DANIBOD_EQUIP_MAP
@@ -270,6 +318,15 @@ class Monitor:
         # overhead si el flag está apagado.
         self._id_diag_on: bool = bool(os.environ.get("DANIBOD_ID_DIAG"))
         self._id_diag: dict = {}
+        # Re-captura QA (DANIBOD_RECAPTURE): desactiva la dedup de sesión por identidad
+        # → cualquier disco re-emite al volver a verlo. Para QA (confirmar consistencia,
+        # re-testear tras un fix). En producción queda apagado (dedup normal: ahorro de
+        # OCR + sin spam). El parpadeo del modelo 3D puede re-emitir el mismo disco, pero
+        # parse_id_diag dedupea por id → inofensivo en QA.
+        self._recapture_on: bool = bool(os.environ.get("DANIBOD_RECAPTURE"))
+        # Última identidad de disco emitida (re-captura estilo S18): re-emite solo al
+        # CAMBIAR de disco, no en cada parpadeo del modelo 3D (que reabre la firma visual).
+        self._last_emitted_identity = None
         # Cosecha de frames etiquetados por latch (Fase 5R.3, solo si DANIBOD_HARVEST
         # está seteado). Cap por (PJ, estado) para no spamear. Read-only: solo escribe
         # PNGs de frame completo a la carpeta indicada, nunca toca la DB.
@@ -753,13 +810,15 @@ class Monitor:
         self._disc_emitted = False
         self._disc_agg_cycles = 0
         self._disc_emitted_ids.clear()
+        self._last_emitted_identity = None
         self._s17_assign_sig = None
         # Anchor de flujo (5R.5b): al re-entrar a un slot, el primer disco vuelve a ser
         # el equipado por el latch (estructura del juego) → resetear el slot rastreado.
         self._s17_last_slot = 0
         # Votación del dueño (5R.5c) + evidencia-libre (5R.B): olvidar al salir de S17.
         self._s17_owner_sig = None
-        self._s17_owner_votes = {}
+        self._s17_grid_votes = {}
+        self._s17_det_votes = {}
         self._s17_free_evidence = 0
         self._s17_samples = 0
         self._grid_diag_counts.clear()
@@ -873,9 +932,17 @@ class Monitor:
             # Dedup por IDENTIDAD: si la firma parpadeó (modelo 3D animado) y este
             # disco ya se emitió en esta sesión S17, no re-emitir (ni re-persistir).
             identity = self._disc_identity(merged)
-            if identity in self._disc_emitted_ids:
+            if self._recapture_on:
+                # Re-captura QA estilo S18: re-emite al CAMBIAR de disco, NO en cada
+                # parpadeo del modelo 3D (que reabre la firma visual del MISMO disco). El
+                # parpadeo deja la identidad-OCR igual → se saltea; navegar a otro disco la
+                # cambia → re-emite (incluso al VOLVER a uno ya visto).
+                if identity == self._last_emitted_identity:
+                    return
+            elif identity in self._disc_emitted_ids:
                 return
             self._disc_emitted_ids.add(identity)
+            self._last_emitted_identity = identity
             # Verdad de tierra (5R.C): si el disco está EQUIPADO (agente_asignado por el
             # flujo-ancla = dueño certero), registrar firma→dueño al mapa. Candidatos no
             # setean agente_asignado → no contaminan el mapa.
@@ -1190,7 +1257,8 @@ class Monitor:
             return
         if self._s17_owner_sig is None or not self._sig_close(sig, self._s17_owner_sig):
             self._s17_owner_sig = sig          # disco nuevo → empezar votación limpia
-            self._s17_owner_votes = {}
+            self._s17_grid_votes = {}
+            self._s17_det_votes = {}
             self._s17_free_evidence = 0
             self._s17_samples = 0
             if self._id_diag_on:
@@ -1205,19 +1273,20 @@ class Monitor:
             self._dump_grid_diag(frame, badge, g_name, g_conf, rejected, sig)
             self._s17_samples += 1
             if g_name:
-                self._s17_owner_votes[g_name] = self._s17_owner_votes.get(g_name, 0.0) + float(g_conf)
+                self._s17_grid_votes[g_name] = self._s17_grid_votes.get(g_name, 0.0) + float(g_conf)
             elif rejected or g_conf < _S17_FREE_CONF:   # crop sin cara (lock/disco/vacío)
                 self._s17_free_evidence += 1
-        # DETALLE-badge (5R.C.4): localiza ~siempre (incl. cuando el grid da NOLOC) →
-        # suma voto del dueño al MISMO acumulador, subiendo el yield del voto. NO toca
-        # _s17_samples/free (la detección LIBRE sigue calibrada por el grid). Inerte
-        # (sin voto) hasta que la librería de detalle se cosecha.
+        # DETALLE-badge (5R.C.4 + L.2b/L.3): localiza ~siempre (incl. cuando el grid da
+        # NOLOC) → vota a su PROPIO acumulador (separado del grid). `_decide_s17_owner`
+        # combina ambos con grid-primario: el detail sube yield en NOLOC del grid sin poder
+        # meter wrongs (RNF-02). NO toca _s17_samples/free (la detección LIBRE sigue
+        # calibrada por el grid). Inerte hasta que la librería de detalle se cosecha.
         det = crop_detail_badge(frame)
         d_name, d_conf = None, 0.0
         if det is not None:
             d_name, d_conf, _drej = self._identifier.s17_match_detail(det)
             if d_name:
-                self._s17_owner_votes[d_name] = self._s17_owner_votes.get(d_name, 0.0) + float(d_conf)
+                self._s17_det_votes[d_name] = self._s17_det_votes.get(d_name, 0.0) + float(d_conf)
         # Instrumentación L.0 (gated): desglose por-disco grid/detalle (loc + match + voto).
         if self._id_diag_on and self._id_diag:
             d = self._id_diag
@@ -1271,8 +1340,7 @@ class Monitor:
         asignado por flujo-ancla. Cruzable con equip_map por `identity` → ubica el cuello
         (¿NOLOC del grid? ¿el detalle no matchea? ¿el voto elige mal?)."""
         d = self._id_diag or {}
-        voted = (max(self._s17_owner_votes.items(), key=lambda kv: kv[1])[0]
-                 if self._s17_owner_votes else None)
+        voted, _src = _decide_s17_owner(self._s17_grid_votes, self._s17_det_votes)
 
         def _top(v):
             return ",".join(f"{k}:{val:.2f}" for k, val in
@@ -1288,11 +1356,12 @@ class Monitor:
         )
 
     def _s17_voted_owner(self, frame) -> str | None:
-        """Dueño ganador (mayor confianza acumulada) del disco mirado, si la votación
-        del loop rápido corresponde a ESTE disco. None si no hay votos confiables."""
-        if not self._s17_owner_votes or not self._s17_owner_sig_matches(frame):
+        """Dueño ganador del disco mirado por la política grid+detail (`_decide_s17_owner`),
+        si la votación del loop rápido corresponde a ESTE disco. None si incierto."""
+        if not self._s17_owner_sig_matches(frame):
             return None
-        return max(self._s17_owner_votes.items(), key=lambda kv: kv[1])[0]
+        owner, _src = _decide_s17_owner(self._s17_grid_votes, self._s17_det_votes)
+        return owner
 
     def _s17_owner_sig_matches(self, frame) -> bool:
         sig = self._s17_disc_signature(frame)
@@ -1303,8 +1372,9 @@ class Monitor:
         """True si el disco mirado está LIBRE (nadie lo equipa). CONSERVADOR: exige que
         NUNCA se haya identificado un dueño y que la evidencia de 'libre' (badge en
         reject-set / conf muy baja) sea consistente y mayoritaria. Un frame malo suelto
-        (p.ej. Jane rechazada una vez) NO alcanza → queda 'dueño incierto', no LIBRE."""
-        if self._s17_owner_votes or not self._s17_owner_sig_matches(frame):
+        (p.ej. Jane rechazada una vez) NO alcanza → queda 'dueño incierto', no LIBRE.
+        Cualquier voto (grid O detail) = hubo un avatar → NO libre (RNF-02 conservador)."""
+        if self._s17_grid_votes or self._s17_det_votes or not self._s17_owner_sig_matches(frame):
             return False
         return (self._s17_free_evidence >= _S17_FREE_MIN_FRAMES
                 and self._s17_free_evidence >= 0.5 * max(1, self._s17_samples))
@@ -1333,7 +1403,25 @@ class Monitor:
         is_equipped = bool(latch) and slot != 0 and slot != self._s17_last_slot
         if is_equipped:
             self._s17_last_slot = slot
-            if badge is not None:                      # cosecha con label CERTERO
+            # CROSS-CHECK ancla vs badge (5R.L.4): el ancla asume "1er disco del slot =
+            # equipado por el latch", pero esa suposición se ROMPE si el latch quedó viejo
+            # (saltaste de página) o si re-entramos a S17 sobre un CANDIDATO → mislabel +
+            # (fuera de readonly) cosecha contaminada bajo el nombre del latch. El badge
+            # (grilla+detalle) es 0-wrong en QA → si dice OTRO PJ con confianza, le creemos
+            # al badge y NO cosechamos (QA 2026-06-19: ancla 3 wrong vs badge 0 wrong).
+            from app.core.stats_vocab import _norm_key
+            voted = self._s17_voted_owner(frame)
+            if voted and _norm_key(voted) != _norm_key(latch):
+                disc.equip_detectado = True
+                disc.equip_pj_visual = voted
+                disc.equip_libre = False
+                self._log_s17_assign(
+                    ("anchor_badge_conflict", voted),
+                    "[badge] ancla decía '%s' pero el badge dice '%s' → badge (sin cosechar).",
+                    latch, voted,
+                )
+                return
+            if badge is not None:                      # cosecha con label CERTERO (badge concuerda)
                 if self._identifier.learn_s17(badge, latch) and self._on_diagnostic:
                     self._on_diagnostic(f"[cosecha] badge de {latch} (slot {slot})")
             # Cosecha PARALELA del detalle-badge (5R.C.4): mismo latch certero, librería
@@ -1344,10 +1432,23 @@ class Monitor:
             self._set_latch_assignment(disc, latch, 1.0, "equipado")
             return
         if badge is None:
+            # La GRILLA no localizó (NOLOC), pero el DETALLE localiza ~100% → puede
+            # RESCATAR al dueño (5R.L.4). Antes acá se cortaba sin consultar el voto del
+            # detalle → discos con grid-NOLOC quedaban "incierto" aunque el detalle los
+            # tuviera (bug QA 2026-06-18: Yanagi det@1.00 → incierto). Consultamos el voto.
+            owner = self._s17_voted_owner(frame)
+            if owner:
+                disc.equip_detectado = True
+                disc.equip_pj_visual = owner
+                disc.equip_libre = False
+                self._log_s17_assign(
+                    ("det_owner", owner), "[detalle] grilla NOLOC · dueño=%s (detalle).", owner
+                )
+                return
             disc.equip_pj_visual = None
             if latch:
                 self._log_s17_assign(
-                    ("no_badge", latch), "[S17] disco sin badge de dueño → sin asignar."
+                    ("no_badge", latch), "[S17] grilla NOLOC y el detalle no resolvió → sin asignar."
                 )
             return
         if not latch:

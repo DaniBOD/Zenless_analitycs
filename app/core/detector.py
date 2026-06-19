@@ -282,7 +282,15 @@ _TILE_FILL_MAX = 0.45
 _DET_REGION = (0.475, 0.515, 0.12, 0.26)     # x0,x1,y0,y1 norm (franja del detalle-badge)
 _DET_SAT_MIN = 50                            # saturación mínima (avatar colorido vs texto blanco)
 _DET_MIN_AREA = 200
-_DET_R_F = 0.019                             # radio del crop / W
+# Refine L.2b (5R, 2026-06-17): el crop con radio FIJO (_DET_R_F·W ≈ 96 px) dejaba al
+# avatar (~55 px) ahogado en fondo a rayas IDÉNTICO por página → el descriptor se agrupaba
+# por fondo → imán correlacionado con la página (audit/detbadge_magnet_diag_20260617.md).
+# Fix: localizar el CÍRCULO real del avatar por Hough dentro de la franja y recortar ajustado
+# a la cara (excluye el fondo). Cross-domain (page≠dueño): 20%→91% top-1, 0 wrong, imán
+# eliminado. El radio fijo queda solo como referencia histórica (no se usa).
+_DET_HOUGH_RMIN_F = 0.008                     # radio mín del avatar / W
+_DET_HOUGH_RMAX_F = 0.015                     # radio máx del avatar / W
+_DET_HOUGH_PAD = 1.05                         # margen sobre el radio Hough (no comer la oreja)
 
 
 def _selected_grid_tile_bbox(frame: np.ndarray):
@@ -353,10 +361,13 @@ def crop_grid_selected_badge(frame: np.ndarray) -> np.ndarray | None:
 
 def crop_detail_badge(frame: np.ndarray) -> np.ndarray | None:
     """Recorta (círculo) el avatar del dueño del PANEL DE DETALLE S17 (junto a 'Nivel
-    15/15'). Localiza el blob saturado en la franja derecha del header — robusto al
-    corrimiento en Y (nombre de 1 vs 2 líneas) y sin el confound de arte amarillo ni el
-    NOLOC de transición del grid-tile (100% loc en video). Encuadre DISTINTO al grid-badge
-    → su match requiere la librería propia avatar_detbadge_v2.npz. None si no localiza."""
+    15/15'). Two-stage (5R.L.2b): (1) franja fija del header como recorte grueso + gate
+    de presencia (blob saturado = hay avatar; sin él → disco sin dueño → None); (2) Hough
+    localiza el CÍRCULO real del avatar y recorta AJUSTADO a la cara, excluyendo el fondo
+    a rayas que antes ahogaba al descriptor (imán por página, ver
+    audit/detbadge_magnet_diag_20260617.md). Encuadre propio → librería avatar_detbadge_v2.
+    None si no hay avatar (disco libre) o si Hough no halla el círculo (abstención segura;
+    el voto multi-frame cubre el frame perdido — RNF-02)."""
     if frame is None or frame.size == 0:
         return None
     try:
@@ -365,15 +376,26 @@ def crop_detail_badge(frame: np.ndarray) -> np.ndarray | None:
         sub = frame[int(y0 * H):int(y1 * H), int(x0 * W):int(x1 * W)]
         if sub.size == 0:
             return None
+        # (1) gate de presencia: ¿hay un avatar (blob saturado) en la franja? Un disco
+        # SIN dueño tiene fondo oscuro sin avatar → sin blob → None (no inventamos dueño).
         hsv = cv2.cvtColor(sub, cv2.COLOR_BGR2HSV)
         mask = (hsv[:, :, 1] > _DET_SAT_MIN).astype(np.uint8) * 255
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
-        n, _lab, stats, cent = cv2.connectedComponentsWithStats(mask, 8)
+        n, _lab, stats, _cent = cv2.connectedComponentsWithStats(mask, 8)
         if n <= 1 or stats[1:, 4].max() < _DET_MIN_AREA:
             return None
-        i = 1 + int(np.argmax(stats[1:, 4]))
-        ccx, ccy = cent[i]
-        cx, cy, r = int(x0 * W + ccx), int(y0 * H + ccy), int(_DET_R_F * W)
+        # (2) Hough sobre la franja → círculo del avatar → crop ajustado a la cara.
+        gray = cv2.medianBlur(cv2.cvtColor(sub, cv2.COLOR_BGR2GRAY), 3)
+        circles = cv2.HoughCircles(
+            gray, cv2.HOUGH_GRADIENT, dp=1.2, minDist=int(0.05 * W),
+            param1=120, param2=22,
+            minRadius=int(_DET_HOUGH_RMIN_F * W), maxRadius=int(_DET_HOUGH_RMAX_F * W),
+        )
+        if circles is None:
+            return None
+        c0 = circles[0][0]
+        cx, cy = int(x0 * W + c0[0]), int(y0 * H + c0[1])
+        r = int(c0[2] * _DET_HOUGH_PAD)
         if r < 8:
             return None
         crop = frame[max(0, cy - r):min(H, cy + r), max(0, cx - r):min(W, cx + r)]

@@ -224,6 +224,7 @@ D:\Proyectos\Zenless_analitycs\
 8. **Para RF-12/14 con Claude API:** respetar `cap_usd_mensual` del usuario, usar prompt caching, registrar cada llamada en `ai_catalog_runs`.
 9. **Antes de cerrar cualquier RF en producción:** consultar `Documentacion/QA/QA-0X_*.md` correspondiente y verificar la "cobertura mínima" listada al final del doc.
 10. **Tras cada patch del juego:** ejecutar checklist `Documentacion/QA/QA-07_Regresion_Patches.md` paso a paso antes de tocar nada.
+11. **Estilo de comunicación con Daniel (está aprendiendo a desarrollar con IA):** usar un **lenguaje semi-técnico** — ni puro jerga ni excesivamente simplificado. Cuando aparezca un concepto técnico complejo (p. ej. "descriptor", "umbral/threshold", "dedup", "early return", "Hough"), **aclararlo en el momento, en una frase**, sin asumir que ya se conoce. Preferir explicar el *porqué* de una decisión, no solo el *qué*. Reportes operativos cortos (ver CLAUDE.md §8).
 
 ---
 

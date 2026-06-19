@@ -21,8 +21,12 @@ param(
                              # disco (DANIBOD_GRID_DIAG). Diagnóstico de crops. NO toca DB.
     [switch]$MemDiag,        # heartbeat de memoria RNF-06 (DANIBOD_MEM_DIAG): loguea RSS +
                              # heap Python + contador OCR cada ~20s al app.log. Diagnóstico.
-    [switch]$IdDiag          # instrumentación de identidad (DANIBOD_ID_DIAG): por disco emitido
+    [switch]$IdDiag,         # instrumentación de identidad (DANIBOD_ID_DIAG): por disco emitido
                              # loguea [id_diag] grid/det loc+match+voto al app.log. Diagnóstico L.0.
+    [switch]$FromSource,     # corre desde fuente (.venv python -m app.main) en vez del .exe.
+                             # NECESARIO para instrumentación nueva (id_diag) hasta rebuildear el .exe.
+    [switch]$Recapture       # QA: re-emite cualquier disco al VOLVER a verlo (desactiva la
+                             # dedup de sesión, DANIBOD_RECAPTURE). Para re-testear/confirmar.
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,7 +37,7 @@ $repoDb   = Join-Path $repoRoot "db\danibod_zzz_v2.db"
 $exe      = Join-Path $repoRoot "app\build\dist\DaniBOD_ZZZ_Analytics\DaniBOD_ZZZ_Analytics.exe"
 
 if (-not (Test-Path $repoDb)) { throw "No existe la DB del repo: $repoDb" }
-if (-not (Test-Path $exe))    { throw "No existe el .exe (rebuildeá primero): $exe" }
+if (-not $FromSource -and -not (Test-Path $exe)) { throw "No existe el .exe (rebuildeá primero o usá -FromSource): $exe" }
 
 # Backup RNF-01 (gitignoreado: db\*.backup_premig_*.db)
 $ts  = Get-Date -Format "yyyyMMdd_HHmmss"
@@ -90,6 +94,18 @@ if ($IdDiag) {
 } else {
     Remove-Item Env:\DANIBOD_ID_DIAG -ErrorAction SilentlyContinue
 }
-Write-Host "[qa_launch] Lanzando $exe ..."
-
-& $exe
+if ($Recapture) {
+    $env:DANIBOD_RECAPTURE = "1"
+    Write-Host "[qa_launch] DANIBOD_RECAPTURE = 1 (QA: re-emite discos al volver a verlos)"
+} else {
+    Remove-Item Env:\DANIBOD_RECAPTURE -ErrorAction SilentlyContinue
+}
+if ($FromSource) {
+    $py = Join-Path $repoRoot ".venv\Scripts\python.exe"
+    if (-not (Test-Path $py)) { throw "No existe el venv: $py" }
+    Write-Host "[qa_launch] Lanzando desde FUENTE: $py -m app.main ..."
+    & $py -m app.main
+} else {
+    Write-Host "[qa_launch] Lanzando $exe ..."
+    & $exe
+}
