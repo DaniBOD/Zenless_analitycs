@@ -699,8 +699,13 @@ def _identify_by_stats(stats: dict | None) -> dict | None:
 # tanto en Paddle como en Tesseract.
 
 _RE_NIVEL = re.compile(r"(?:nivel|nv\.?)\s*(\d{1,2})")
-# PV: tolera "pv", "p v", concatenación "pv10797", separación "10 797"
-_RE_PV = re.compile(r"\bp\s*v\s*(\d{1,2}(?:\s*\d{3})?)")
+# PV: tolera "pv", "p v", concatenación "pv10797", separación "10 797".
+# Bug PV-4díg (QA 2026-06-19): el patrón viejo `\d{1,2}(?:\s*\d{3})?` exigía
+# "NN NNN" (5 díg con miles) o caía a ≤2 díg → un PV de 4 dígitos SIN separador
+# ("pv 9763", "pv 6508") se truncaba a "97"/"65". Afecta agentes de PV bajo
+# (nivel bajo / sin invertir); el roster maxeado (≥10k, 5 díg) leía bien. Las
+# dos alternativas: "NN NNN" (miles separados) o un run llano de 3-5 dígitos.
+_RE_PV = re.compile(r"\bp\s*v\s*(\d{1,2}\s*\d{3}|\d{3,5})")
 # Ataque: case-insensitive (ya normalizado)
 _RE_ATAQUE = re.compile(r"\bataque\s*(\d+)")
 _RE_DEFENSA = re.compile(r"\bdefensa\s*(\d+)")
@@ -714,14 +719,40 @@ _RE_DANO_CRIT = re.compile(r"da\w{0,3}o\s*crit\w*\s*(\d+(?:\.\d+)?)\s*%")
 _RE_TASA_ANOMALIA = re.compile(r"tasa\s*(?:de\s*)?anomal\w*\s*(\d+)")
 # Maestría de Anomalía
 _RE_MAESTRIA_ANOMALIA = re.compile(r"maestr\w*\s*(?:de\s*)?anomal\w*\s*(\d+)")
-# Fuerza Bruta (disruptivos)
-_RE_FUERZA_BRUTA = re.compile(r"fuerza\s*bruta\s*(\d+)")
-# PEN: SOLO "Tasa de Perforacion" (excluye "Fuerza Bruta")
-# El número debe estar dentro de ~10 chars del label y seguido por '%'
-# para evitar capturar números de otras filas (e.g. el "20" del "X 20%" de
-# Y Pistas de disco que aparece más abajo en el panel).
+# Fuerza Bruta (disruptivos). Bug FB-orden (ZZZ v3.0, QA 2026-06-19): MISMA falla
+# que TP — el layout v3.0 reordena la última fila (FB izq. + "Acumulación
+# Automática de Adrenalina" der., label largo multilínea). El valor de FB se lee
+# ANTES de su label, intercalado con el label de Adrenalina:
+#   v2.x:  "...fuerza bruta 2669 de adrenalina..."
+#   v3.0:  "...2669 acumulacion automatica fuerza bruta de adrenalina..."
+# La alt "antes" se ANCLA en "acumulaci…" (el label de Adrenalina que se cuela
+# entre el valor y "fuerza bruta") para NO robar el valor de Maestría de Anomalía
+# de la fila de arriba (que sí precede a "fuerza bruta" en el orden v2.x, pero sin
+# "acumulaci" en medio). FB no lleva '%', por eso no se puede anclar con % como TP.
+_RE_FUERZA_BRUTA = re.compile(
+    r"(\d+)\s*acumulaci\w*[^\d\n]{0,25}?fuerza\s*bruta"  # "<valor> acumulacion automatica … fuerza bruta" (flip v3.0)
+    r"|fuerza\s*bruta\s*(\d+)"                            # "fuerza bruta <valor>" (orden v2.x)
+)
+# PEN: SOLO "Tasa de Perforacion" (excluye "Fuerza Bruta"). El valor SIEMPRE
+# va seguido de '%' (es lo que lo distingue de Recup. Energía, que no lleva %),
+# así que ese ancla evita capturar números de otras filas.
+#
+# Bug TP-orden (QA 2026-06-19, ZZZ v3.0): la pantalla S18 no cambió de label ni
+# de valor, pero el nuevo layout v3.0 alteró el CLUSTERING de filas de PaddleOCR
+# en la última fila (TP izq. + "Recuperación de Energía" der., label de 2 líneas).
+# Resultado: el valor de TP ("0 %") a veces se lee ANTES del label, intercalado
+# con la 1ª línea del label de ER:
+#   v2.x (estable):  "...recuperacion de tasa de perforacion 0 % 1.2 energia..."
+#   v3.0 (flip):     "...0 % recuperacion de tasa de perforacion 2.16 energia..."
+# En el caso flip, el número que sigue al label es el de ER (sin %), así que el
+# patrón viejo (solo "<label> <valor>%") no matcheaba → TP=None → "faltan TP".
+# Mismo fenómeno y mismo arreglo que el Bug B de Recup. Energía: hacer el patrón
+# BIDIRECCIONAL (captura el número %-terminado ADYACENTE al label, antes o después).
+# La ventana entre valor y label es [^\d\n] (sin dígitos): no puede cruzar otra
+# fila porque cualquier otro valor (un dígito) corta la ventana → sin falsos +.
 _RE_TASA_PERFORACION = re.compile(
-    r"tasa\s*(?:de\s*)?perfor\w*[^\d%\n]{0,10}(\d+(?:\.\d+)?)\s*%"
+    r"(\d+(?:\.\d+)?)\s*%[^\d\n]{0,20}?tasa\s*(?:de\s*)?perfor"   # "<valor> % [recuperacion de] tasa de perforacion" (flip v3.0)
+    r"|tasa\s*(?:de\s*)?perfor\w*[^\d%\n]{0,10}(\d+(?:\.\d+)?)\s*%"  # "tasa de perforacion <valor> %" (orden v2.x)
 )
 # Recup Energía: "Recuperación de Energía" se renderiza en 2 LÍNEAS en el
 # juego ("Recuperación de" / "Energía") y PaddleOCR las lee por filas, así que

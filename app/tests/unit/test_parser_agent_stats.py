@@ -343,6 +343,92 @@ class TestFuerzaBrutaBugC:
         assert _extract_by_regex(txt)["fuerza_bruta"] == "2296"
 
 
+class TestFuerzaBrutaFlipV30:
+    """Bug FB-orden (ZZZ v3.0, QA 2026-06-19): mismo reordenamiento OCR que TP,
+    en la fila inferior de Disruptivos (FB izq. + Adrenalina der.). El valor de
+    FB se lee ANTES del label, intercalado con el label de Adrenalina. Textos OCR
+    REALES de Ejemplo_7 (Billy Estelar) v3.0."""
+
+    def test_orden_v2x_sigue_andando(self):
+        # "fuerza bruta <valor>" — orden estable v2.x.
+        assert _extract_by_regex("ca fuerza bruta 2296 de adrenalina 2")["fuerza_bruta"] == "2296"
+
+    def test_flip_v30_valor_antes_del_label(self):
+        # Flip v3.0 REAL (Ejemplo_7): "2669 acumulacion automatica fuerza bruta".
+        txt = ("maestria de anomalia 89 2669 acumulacion automatica fuerza bruta "
+               "de adrenalina atributos secundarios")
+        assert _extract_by_regex(txt)["fuerza_bruta"] == "2669"   # antes daba None
+
+    def test_no_roba_maestria_anomalia(self):
+        # En orden v2.x, Maestría de Anomalía (89) PRECEDE a "fuerza bruta" pero
+        # SIN "acumulaci…" en medio → el ancla evita robar ese 89 como FB.
+        txt = "maestria de anomalia 89 fuerza bruta 2669 de adrenalina"
+        assert _extract_by_regex(txt)["fuerza_bruta"] == "2669"
+
+
+class TestPvCuatroDigitos:
+    """Bug PV-4díg (QA 2026-06-19, pre-existente): un PV de 4 dígitos sin
+    separador de miles se truncaba a 2 dígitos. Textos OCR REALES v3.0."""
+
+    def test_pv_4_digitos_velina(self):
+        # Ejemplo_8 (Velina, lvl 50): "pv 6508" daba 65.
+        assert _extract_by_regex("pv 6508 ataque 676 defensa 511")["pv"] == "6508"
+
+    def test_pv_4_digitos_billy_kid(self):
+        # Ejemplo_9 (Billy Kid): "pv 9763" daba 97.
+        assert _extract_by_regex("pv 9763 ataque 2671 defensa 1038")["pv"] == "9763"
+
+    def test_pv_5_digitos_separado_regresion(self):
+        # "pv 20 573" (Ejemplo_7, separador de miles) → 20573 (sin regresión).
+        assert _extract_by_regex("pv 20 573 ataque 2043")["pv"] == "20573"
+
+    def test_pv_5_digitos_junto_regresion(self):
+        assert _extract_by_regex("pv 10797 ataque 2531")["pv"] == "10797"
+
+
+class TestTasaPerforacionFlipV30:
+    """Bug TP-orden (ZZZ v3.0, QA 2026-06-19): el nuevo layout S18 cambió el
+    clustering de filas de PaddleOCR en la última fila (TP izq. + Recup. Energía
+    der., label de 2 líneas). El valor de TP a veces se lee ANTES del label,
+    intercalado con la 1ª línea del label de Recup. Energía. El patrón viejo
+    (solo '<label> <valor>%') no matcheaba → TP=None → 'faltan 1/11: TP'.
+    Los textos son fragmentos OCR REALES de Ejemplo_8/9/10 v3.0."""
+
+    def test_orden_v2x_sigue_andando(self):
+        # Orden estable v2.x (Ejemplo_8/10): valor DESPUÉS del label.
+        ext = _extract_by_regex("tasa de perforacion 0 % 1.2 energia recomendacion")
+        assert ext["tasa_perforacion"] == "0"
+        assert ext["recup_energia"] == "1.2"
+
+    def test_flip_v30_valor_antes_del_label(self):
+        # Flip v3.0 REAL (Ejemplo_9, Billy Kid): '0 %' (TP) se lee antes del
+        # label, y el '2.16' tras el label es el de Recup. Energía (sin %).
+        ext = _extract_by_regex(
+            "maestria de anomalia 109 0 % recuperacion de tasa de perforacion "
+            "2.16 energia atributos secundarios"
+        )
+        assert ext["tasa_perforacion"] == "0"     # antes daba None
+        assert ext["recup_energia"] == "2.16"     # no debe robarlo TP
+
+    def test_flip_v30_tp_no_cero(self):
+        # Mismo flip pero con TP no-cero: el valor %-terminado adyacente al
+        # label es el de TP, sin importar que esté antes.
+        ext = _extract_by_regex(
+            "8 % recuperacion de tasa de perforacion 1.2 energia"
+        )
+        assert ext["tasa_perforacion"] == "8"
+        assert ext["recup_energia"] == "1.2"
+
+    def test_no_captura_otro_porcentaje_lejano(self):
+        # El % de Daño Crítico (lejos, con dígitos de TA/MA en medio) NO debe
+        # capturarse como TP cuando el valor real de TP no se leyó.
+        ext = _extract_by_regex(
+            "dano critico 112.4 % tasa de anomalia 92 maestria de anomalia 109 "
+            "recuperacion de tasa de perforacion 2.16 energia"
+        )
+        assert ext["tasa_perforacion"] is None    # no inventa (RNF-02)
+
+
 # ---------------------------------------------------------------------------
 # R1/R2 (2026-05-31): rol+elemento desde PANTALLA (autoritativo) + doble nombre
 # ---------------------------------------------------------------------------
