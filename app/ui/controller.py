@@ -166,7 +166,17 @@ class MonitorController(QObject):
             # El hijo hereda el entorno → marcarlo para que bypasee el single-instance
             # (esta instancia sigue viva ~1.2s; sin esto el hijo se autocierra → 0 apps).
             os.environ["DANIBOD_RESTART"] = "1"
-            ok = QProcess.startDetached(sys.executable, sys.argv[1:])
+            # Reconstruir args: corrido desde FUENTE (`python -m app.main`) sys.argv[1:] va
+            # VACÍO → relanzaba python pelado y la app NO volvía (parecía crash, QA 2026-06-19).
+            # Detectar el `-m` por __main__.__spec__ y reponerlo. Frozen (.exe) → spec None →
+            # sys.argv[1:] como antes.
+            import __main__
+            spec = getattr(__main__, "__spec__", None)
+            if spec is not None and getattr(spec, "name", None):
+                args = ["-m", spec.name] + sys.argv[1:]
+            else:
+                args = sys.argv[1:]
+            ok = QProcess.startDetached(sys.executable, args)
             log.info("startDetached → %s", ok)
         except Exception:
             log.exception("Falló el relanzamiento del .exe; se cierra igual")

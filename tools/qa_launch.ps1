@@ -25,8 +25,11 @@ param(
                              # loguea [id_diag] grid/det loc+match+voto al app.log. Diagnóstico L.0.
     [switch]$FromSource,     # corre desde fuente (.venv python -m app.main) en vez del .exe.
                              # NECESARIO para instrumentación nueva (id_diag) hasta rebuildear el .exe.
-    [switch]$Recapture       # QA: re-emite cualquier disco al VOLVER a verlo (desactiva la
+    [switch]$Recapture,      # QA: re-emite cualquier disco al VOLVER a verlo (desactiva la
                              # dedup de sesión, DANIBOD_RECAPTURE). Para re-testear/confirmar.
+    [switch]$NoRamGuard      # QA: apaga el watchdog de RAM (DANIBOD_NO_RAM_GUARD) para no
+                             # interrumpir sesiones largas. La RAM crece (fuga residual RNF-06)
+                             # → usar en QA acotado, cerrar la app al terminar.
 )
 
 $ErrorActionPreference = "Stop"
@@ -99,6 +102,12 @@ if ($Recapture) {
     Write-Host "[qa_launch] DANIBOD_RECAPTURE = 1 (QA: re-emite discos al volver a verlos)"
 } else {
     Remove-Item Env:\DANIBOD_RECAPTURE -ErrorAction SilentlyContinue
+}
+if ($NoRamGuard) {
+    $env:DANIBOD_NO_RAM_GUARD = "1"
+    Write-Host "[qa_launch] DANIBOD_NO_RAM_GUARD = 1 (watchdog RAM OFF — sesión continua)"
+} else {
+    Remove-Item Env:\DANIBOD_NO_RAM_GUARD -ErrorAction SilentlyContinue
 }
 if ($FromSource) {
     $py = Join-Path $repoRoot ".venv\Scripts\python.exe"
