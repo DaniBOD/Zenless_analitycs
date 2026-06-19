@@ -43,6 +43,15 @@ from app.core.stats_vocab import _norm_key  # noqa: E402
 _HARVEST = ROOT / "audit" / "harvest"
 _REFS = ROOT / "app" / "resources" / "avatar_refs"
 
+# PJs CONTAMINADOS en la cosecha vieja (anclas con bug + crop viejo, pre-2026-06-19):
+# sus frames `*__S17__*` no son del PJ etiquetado. Verificado visualmente
+# (audit/detbadge_magnet_diag/CONTACT_det_all.png):
+#   - ben    → las caras son SOUKAKU (hacía empatar/abstener a Soukaku, QA 2026-06-19).
+#   - cissia → fragmentos de texto "(5)" en vez de cara.
+# Se EXCLUYEN del rebuild para no re-introducir las refs malas. Re-cosechar en vivo con
+# `-BadgeHarvest` (el ancla ya cross-checkea → cosecha limpia) y se re-agregan solas.
+_CONTAMINATED = {_norm_key(x) for x in ("ben", "cissia")}
+
 
 def _imread(p: str) -> np.ndarray | None:
     d = np.fromfile(p, np.uint8)
@@ -71,20 +80,25 @@ def main() -> int:
     m = AvatarMatcher()   # SIN -ico (el detail no comparte refs con el grid), sin reject (se carga en runtime)
     per_pj = Counter()
     loc = 0
+    skipped_contam = 0
     for p in frames:
+        label = os.path.basename(p).split("__S17__")[0]
+        if _norm_key(label) in _CONTAMINATED:        # frames mal-etiquetados (cosecha vieja)
+            skipped_contam += 1
+            continue
         fr = _imread(p)
         if fr is None:
             continue
         crop = crop_detail_badge(fr)
         if crop is None:
             continue
-        label = os.path.basename(p).split("__S17__")[0]
         canon = canon_map.get(_norm_key(label)) or nm.get(label) or label
         if m.add_reference(canon, crop, max_per_name=99):
             per_pj[canon] += 1
             loc += 1
 
-    print(f"Frames S17: {len(frames)} | det localizado (Hough): {loc} | PJs: {len(per_pj)}")
+    print(f"Frames S17: {len(frames)} | excluidos (contaminados): {skipped_contam} "
+          f"| det localizado (Hough): {loc} | PJs: {len(per_pj)}")
     miss = [k for k, v in sorted(per_pj.items()) if v < 2]
     if miss:
         print(f"PJs con <2 refs (LOO flojo / baja-sat): {miss}")
