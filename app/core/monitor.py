@@ -96,8 +96,10 @@ _S17_AGG_MAX_CYCLES = 5
 # Acotado: si el dueño no aparece tras el warmup (o se llega al techo de ciclos), emite igual
 # (incierto/libre, RNF-02 abstención). Los equipados (latch certero) y los ya-votados NO
 # esperan → cero latencia extra; el costo se paga solo donde había riesgo de incierto.
-_S17_OWNER_MIN_SAMPLES = 4     # pasadas del loop rápido para "calentar" el voto del dueño
-_S17_WARM_CADENCE_MS = 100     # mientras calienta, re-chequear el voto rápido (no esperar 1s)
+_S17_OWNER_MIN_SAMPLES = 3     # pasadas del loop rápido para "calentar" el voto del dueño
+                              # (QA 2026-06-20: 4→3 para más responsividad en incierto/libre;
+                              #  P(grilla localiza ≥1 de 3 frames) ≈ 99% → casi sin costo de yield)
+_S17_WARM_CADENCE_MS = 80     # mientras calienta, re-chequear el voto rápido (no esperar 1s)
 
 # Firma HÍBRIDA del disco S17 (gobierna la re-captura; BARATA, sin OCR — RNF-06).
 # Dos componentes en gris comparadas con OR:
