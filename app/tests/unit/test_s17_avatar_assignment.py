@@ -400,8 +400,10 @@ def _frame():
 def test_monitor_equipado_por_flujo_asigna_y_cosecha(monkeypatch):
     """Anchor de flujo (5R.5b): disco en un slot NUEVO = equipado por el latch
     (certero) → asigna conf 1.0 + cosecha el badge, sin depender del sim."""
+    from app.core.monitor import _S17_OWNER_MIN_SAMPLES
     m = _monitor_badge(monkeypatch, sim=None, owner=None)
     m._s17_last_slot = 0                       # slot 1 será "nuevo" → equipado
+    m._s17_owner_passes = _S17_OWNER_MIN_SAMPLES  # warmup ya corrió, sin voto del badge → trust anchor
     disc = _disc(slot=1)
     m._assign_s17_pj(disc, _frame())
     assert disc.agente_asignado_nombre == "Zhu Yuan"
@@ -418,6 +420,7 @@ def test_monitor_equipado_sin_badge_igual_asigna(monkeypatch):
     m._identifier = _StubIdent()
     m._last_agent_name = "Zhu Yuan"
     m._s17_last_slot = 0
+    m._s17_owner_passes = mon._S17_OWNER_MIN_SAMPLES  # warmup ya corrió → trust anchor
     disc = _disc(slot=2)
     m._assign_s17_pj(disc, _frame())
     assert disc.agente_asignado_nombre == "Zhu Yuan"
@@ -1185,12 +1188,40 @@ def test_assign_s17_visualizacion_no_equipado(monkeypatch):
 def test_assign_s17_visualizacion_equipado_por_latch(monkeypatch):
     """Con badge del PJ latcheado (equipado por flujo) → equip_detectado True +
     equip_pj_visual = latch."""
+    from app.core.monitor import _S17_OWNER_MIN_SAMPLES
     m = _monitor_badge(monkeypatch, sim=0.95, owner=("Zhu Yuan", 0.95))
     m._s17_last_slot = 0                       # slot nuevo → equipado
+    m._s17_owner_passes = _S17_OWNER_MIN_SAMPLES   # warmup ya corrió → trust anchor
     disc = _disc(slot=1)
     m._assign_s17_pj(disc, _frame())
     assert disc.equip_detectado is True
     assert disc.equip_pj_visual == "Zhu Yuan"
+
+
+def test_assign_s17_anchor_difiere_hasta_voto_y_badge_gana(monkeypatch):
+    """QA 2026-06-20 (Nana de Seth marcado 'Nicole'): el ancla NO debe asignar el latch
+    antes de que el badge vote. (a) sin voto y sin warmup → DIFIERE (no asigna). (b) con un
+    voto que CONTRADICE al latch → gana el badge, no se cosecha bajo el latch."""
+    from app.core.monitor import _S17_OWNER_MIN_SAMPLES
+    from app.core.stats_vocab import _norm_key
+    import app.core.monitor as mon
+    # (a) Primer frame: sin voto acumulado, warmup en 0 → diferir (no fijar nada).
+    m = _monitor_badge(monkeypatch, sim=None, owner=None)
+    m._last_agent_name = "Nicole"
+    m._s17_last_slot = 0
+    m._s17_owner_passes = 0
+    monkeypatch.setattr(m, "_s17_voted_owner", lambda f: None)   # voto aún no listo
+    disc = _disc(slot=1)
+    m._assign_s17_pj(disc, _frame())
+    assert disc.agente_asignado_nombre is None, "sin voto + sin warmup → no asignar (diferir)"
+    assert m._s17_last_slot == 0, "no debe fijar el slot al diferir"
+    # (b) Ya hay voto y CONTRADICE al latch (badge dice Seth, latch Nicole) → gana el badge.
+    monkeypatch.setattr(m, "_s17_voted_owner", lambda f: "Seth")
+    disc2 = _disc(slot=1)
+    m._assign_s17_pj(disc2, _frame())
+    assert disc2.equip_pj_visual == "Seth", "el badge debe ganar al ancla"
+    assert disc2.agente_asignado_nombre is None, "no se asigna el latch (no cosecha bajo Nicole)"
+    assert "Nicole" not in m._identifier.learned
 
 
 def test_persist_s17_sin_pj_no_pisa_lo_curado(syncer_db):

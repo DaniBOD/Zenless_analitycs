@@ -1533,6 +1533,16 @@ class Monitor:
         slot = disc.slot or 0
         is_equipped = bool(latch) and slot != 0 and slot != self._s17_last_slot
         if is_equipped:
+            from app.core.stats_vocab import _norm_key
+            voted = self._s17_voted_owner(frame)
+            # ANCHOR-WARMUP (QA 2026-06-20): el ancla ("1er disco del slot = equipado por el
+            # latch") puede caer sobre un CANDIDATO si el usuario NAVEGÓ dentro del slot. Si
+            # finaliza ANTES de que el badge cante, mislabela (Nana de Seth → 'Nicole', el PJ
+            # de la página) y queda pegado en agente_asignado. Esperar el voto del badge: si
+            # aún no llegó y no calentamos, DIFERIR — no fijar el slot ni cosechar → el próximo
+            # frame re-evalúa con el voto listo (el warmup posterga la emisión mientras tanto).
+            if voted is None and self._s17_owner_passes < _S17_OWNER_MIN_SAMPLES:
+                return
             self._s17_last_slot = slot
             # CROSS-CHECK ancla vs badge (5R.L.4): el ancla asume "1er disco del slot =
             # equipado por el latch", pero esa suposición se ROMPE si el latch quedó viejo
@@ -1540,8 +1550,6 @@ class Monitor:
             # (fuera de readonly) cosecha contaminada bajo el nombre del latch. El badge
             # (grilla+detalle) es 0-wrong en QA → si dice OTRO PJ con confianza, le creemos
             # al badge y NO cosechamos (QA 2026-06-19: ancla 3 wrong vs badge 0 wrong).
-            from app.core.stats_vocab import _norm_key
-            voted = self._s17_voted_owner(frame)
             if voted and _norm_key(voted) != _norm_key(latch):
                 disc.equip_detectado = True
                 disc.equip_pj_visual = voted
