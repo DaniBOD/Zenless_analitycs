@@ -258,16 +258,13 @@ def test_monitor_dispatch_invoca_on_agent_stats():
     assert state.code == "S18"
 
 
-def test_monitor_dispatch_continuo_re_extrae_mismo_estado(monkeypatch):
+def test_monitor_dispatch_continuo_re_extrae_en_cambio(monkeypatch):
     """
-    Extracción CONTINUA (cambio 2026-05-31, punto 2): dos
-    `_dispatch_state(frame, S18)` consecutivos disparan el callback DOS veces.
-
-    Antes había un dedup one-shot (1 sola emisión por entrada a S18); ahora,
-    mientras el usuario está en el perfil, cada ciclo de cadencia re-extrae y
-    re-emite. La cadencia real (no re-procesar más rápido que ~1500ms) la
-    controla el loop `_run`, no `_dispatch_state` — por eso a nivel de
-    dispatch directo cada llamada procesa.
+    Extracción CONTINUA con gate RNF-06 (2026-06-20): mientras se está en S18, el gate
+    re-extrae cuando el PANEL cambia (otro agente / level-up) y saltea el panel IDÉNTICO
+    (evita re-OCR de un panel estático = fuga). Una extracción UTILIZABLE (con stats reales)
+    commitea la firma → el siguiente dispatch del MISMO frame se saltea; un frame con el
+    panel cambiado re-extrae.
     """
     if not S18_FIXTURES:
         pytest.skip("Sin fixtures S18")
@@ -281,7 +278,9 @@ def test_monitor_dispatch_continuo_re_extrae_mismo_estado(monkeypatch):
 
     monkeypatch.setattr(
         monitor_mod, "parse_agent_stats",
-        lambda f, o: AgentStatsParsed(nivel=60, pv=10797, ataque=2531, defensa=925),
+        # Extracción UTILIZABLE (pv/ataque presentes) → commitea la firma del panel.
+        lambda f, o: AgentStatsParsed(nivel=60, pv=10797, ataque=2531, defensa=925,
+                                      confianza_global=0.95),
     )
 
     received: list = []
@@ -293,12 +292,18 @@ def test_monitor_dispatch_continuo_re_extrae_mismo_estado(monkeypatch):
     )
 
     s18 = ScreenState("S18", 0.75, "deep_detect", method="deep_detect")
-    monitor._dispatch_state(frame, s18)
-    monitor._dispatch_state(frame, s18)
-
+    monitor._dispatch_state(frame, s18)            # 1ra extracción (utilizable)
+    monitor._dispatch_state(frame, s18)            # MISMO panel → gate saltea
+    assert len(received) == 1, (
+        f"el gate debe saltear el panel idéntico (anti-fuga), recibió {len(received)}"
+    )
+    # Panel CAMBIADO (otro agente: regiones de nombre + stats distintas) → re-extrae.
+    f2 = frame.copy()
+    H, W = f2.shape[:2]
+    f2[int(0.18 * H):int(0.74 * H), int(0.55 * W):int(0.95 * W)] = 200
+    monitor._dispatch_state(f2, s18)
     assert len(received) == 2, (
-        f"Extracción continua rota: esperaba 2 invocaciones para 2 dispatch "
-        f"del mismo estado S18, recibió {len(received)}."
+        f"un panel cambiado (otro agente) debe re-extraer, recibió {len(received)}"
     )
 
 
@@ -335,6 +340,38 @@ def test_monitor_dispatch_retry_si_stats_son_none(monkeypatch):
     assert len(received) == 2, (
         f"Retry roto: esperaba 2 invocaciones (stats None permite retry), "
         f"recibió {len(received)}"
+    )
+
+
+def test_monitor_s18_no_latchea_frame_de_transicion(monkeypatch):
+    """
+    QA 2026-06-20 ('Area'): un frame de TRANSICIÓN (al cambiar de agente, panel cargando)
+    trae los stats en None aunque el OCR lea basura como nombre con conf alta. Ese nombre
+    NO debe fijar el latch — el latch fantasma 'Area' luego BLOQUEABA la cosecha (el
+    cross-check ancla-vs-badge veía 'ancla=Area' ≠ 'badge=Seth' → no cosechaba). El latch
+    solo se actualiza con una extracción UTILIZABLE (PV o Ataque presentes).
+    """
+    if not S18_FIXTURES:
+        pytest.skip("Sin fixtures S18")
+    frame = _read_frame(S18_FIXTURES[0])
+    if frame is None:
+        pytest.skip("No se pudo cargar fixture")
+
+    from app.core.detector import ScreenState
+    from app.core.monitor import Monitor
+    from app.core import monitor as monitor_mod
+
+    # Extracción de transición: nombre presente pero TODOS los stats en None.
+    monkeypatch.setattr(
+        monitor_mod, "parse_agent_stats",
+        lambda f, o: AgentStatsParsed(agente_nombre="Area", confianza_global=0.97),
+    )
+    monitor = Monitor(ocr=_StubOcr(banner_text="", stats_text=""), detector=ScreenDetector())
+    monitor._last_agent_name = "Seth"   # latch previo válido
+    s18 = ScreenState("S18", 0.75, "deep_detect", method="deep_detect")
+    monitor._dispatch_state(frame, s18)
+    assert monitor._last_agent_name != "Area", (
+        "un frame de transición (stats None) no debe fijar el latch con el nombre basura"
     )
 
 

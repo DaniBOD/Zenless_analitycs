@@ -1110,16 +1110,23 @@ class Monitor:
         # per-ciclo queda en debug para no spamear.
         log.debug("[S18] Extrayendo stats de pantalla...")
         result = self._process_agent_stats(frame, state)
-        # Gate RNF-06 (cont.): comprometer el sig SOLO si la extracción fue UTILIZABLE. Un
-        # frame de transición (confianza 0 / None) NO debe comprometer el gate → el próximo
-        # dispatch reintenta el MISMO panel en vez de quedar PEGADO con una lectura mala
-        # (parte del 'S18 pegado', QA 2026-06-20). Una lectura buena commitea → panel
-        # estático se saltea (anti-fuga intacto).
-        if result is None or getattr(result, "confianza_global", 0.0) <= 0.0:
+        # ¿Extracción UTILIZABLE? Un frame de TRANSICIÓN (al cambiar de agente / panel
+        # cargando) trae TODOS los stats en None, aunque el OCR haya leído basura con conf
+        # alta (caso 'Area' conf 0.97, QA 2026-06-20). Ancla = PV o Ataque (todo agente real
+        # los tiene). Si NO es utilizable:
+        #   - NO comprometer el gate → el próximo dispatch reintenta el mismo panel (anti
+        #     'S18 pegado'); una lectura buena sí commitea → panel estático se saltea.
+        #   - NO tocar el latch ni aprender el avatar → evita el LATCH FANTASMA ('Area') que
+        #     después bloqueaba la cosecha vía el cross-check ancla-vs-badge.
+        usable = result is not None and (
+            getattr(result, "pv", None) is not None
+            or getattr(result, "ataque", None) is not None
+        )
+        if not usable:
             self._s18_last_sig = None
 
-        # Detección explícita de cambio de agente para el log.
-        if result is not None and getattr(result, "agente_nombre", None):
+        # Detección explícita de cambio de agente para el log + latch — SOLO si es utilizable.
+        if usable and getattr(result, "agente_nombre", None):
             nombre = result.agente_nombre
             if self._last_agent_name and nombre != self._last_agent_name:
                 log.info(
