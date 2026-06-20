@@ -31,6 +31,7 @@ from app.core.parser_disc_s17 import (
 from app.core.parser_agent_stats import AgentStatsParsed, parse_agent_stats, AgentStatsAggregator
 from app.core.agent_identifier import AgentIdentifier
 from app.core.ocr_backend import OcrBackend
+from app.core.stats_vocab import _norm_key
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +83,21 @@ _S17_GUARD_MIN = 0.86
 # de emitir BEST-EFFORT si el disco no maduró (red de seguridad). Si madura antes
 # (todos los campos), se emite en ese ciclo. ~5 ciclos cubre OCR no-determinista.
 _S17_AGG_MAX_CYCLES = 5
+
+# 5R.L.6 — Refuerzo del reconocimiento del dueño (multi-frame warmup). El disco se EMITE
+# apenas el OCR madura, lo que a veces pasa en el 1er frame del disco (al navegar desde un
+# disco viejo, la cadencia ya está vencida → dispatch inmediato). Con 1 sola muestra del
+# loop de owner, el voto es frágil: la grilla localiza ~81%/frame (ese frame puede ser
+# NOLOC) y el detalle (avatar chico, margen chico) se abstiene seguido → el disco sale con
+# "dueño incierto" aunque al re-visitarlo (más frames) se reconozca. Fix: si el disco maduró
+# pero el dueño quedó INCIERTO, DIFERIR la emisión hasta juntar _S17_OWNER_MIN_SAMPLES
+# pasadas del loop rápido (10fps) — cada superficie consigue varios intentos independientes
+# y los votos se acumulan. SIN re-OCR (RNF-06): se re-lee el merge con aggregator.current().
+# Acotado: si el dueño no aparece tras el warmup (o se llega al techo de ciclos), emite igual
+# (incierto/libre, RNF-02 abstención). Los equipados (latch certero) y los ya-votados NO
+# esperan → cero latencia extra; el costo se paga solo donde había riesgo de incierto.
+_S17_OWNER_MIN_SAMPLES = 4     # pasadas del loop rápido para "calentar" el voto del dueño
+_S17_WARM_CADENCE_MS = 100     # mientras calienta, re-chequear el voto rápido (no esperar 1s)
 
 # Firma HÍBRIDA del disco S17 (gobierna la re-captura; BARATA, sin OCR — RNF-06).
 # Dos componentes en gris comparadas con OR:
@@ -152,7 +168,8 @@ def _vote_winner(votes: dict[str, float]) -> tuple[str | None, float, float]:
 
 
 def _decide_s17_owner(grid_votes: dict[str, float],
-                      det_votes: dict[str, float]) -> tuple[str | None, str | None]:
+                      det_votes: dict[str, float],
+                      latch: str | None = None) -> tuple[str | None, str | None]:
     """Decide el dueño votado de un disco CANDIDATO combinando grid + detail con
     garantía RNF-02. Devuelve (owner|None, source):
       - grid-PRIMARIO: si el grid votó, manda el grid; el detail solo corrobora (no puede
@@ -160,12 +177,21 @@ def _decide_s17_owner(grid_votes: dict[str, float],
       - detail-SOLO: si el grid no votó (NOLOC), el detail propone dueño SOLO con score
         acumulado ≥ _DET_SOLO_MIN_SCORE y dominancia ≥ _DET_SOLO_DOMINANCE. source='det'.
       - si nada alcanza, (None, None) → incierto (abstención antes que error).
+    `latch` (opcional) = agente cuya página se está viendo; activa el guard anti-imán.
     """
     g_name, _gs, _g2 = _vote_winner(grid_votes)
     d_name, d_score, d2 = _vote_winner(det_votes)
     if g_name:
         return g_name, ("grid+det" if d_name == g_name else "grid")
     if d_name and d_score >= _DET_SOLO_MIN_SCORE and d_score >= _DET_SOLO_DOMINANCE * max(d2, 1e-9):
+        # ANTI-IMÁN (5R.L.6b): un CANDIDATO cuyo detalle solo-propone al MISMO agente cuya
+        # página estamos viendo (latch) es la firma del imán — refs del latch sobre-representadas
+        # + correlación de fondo tiran del descriptor hacia el dueño de la página. El disco
+        # realmente equipado lo asigna el ANCLA (no este path); un candidato que "casualmente"
+        # matchea al latch sin que la grilla corrobore es sospechoso → abstenerse (RNF-02:
+        # incierto > wrong). Se libera solo cuando el PJ correcto entra a la librería (cosecha).
+        if latch is not None and _norm_key(d_name) == _norm_key(latch):
+            return None, None
         return d_name, "det"
     return None, None
 
@@ -306,6 +332,10 @@ class Monitor:
         self._s17_det_votes: dict[str, float] = {}
         self._s17_free_evidence: int = 0   # frames con badge sin cara (5R.B)
         self._s17_samples: int = 0         # frames muestreados del disco actual
+        # 5R.L.6 — warmup del dueño: pasadas TOTALES del loop rápido para el disco actual
+        # (cuenta todas, no solo las localizadas) + flag de "maduró pero dueño aún frío".
+        self._s17_owner_passes: int = 0
+        self._s17_warming: bool = False
         # Mapa disco→dueño (5R.C): verdad de tierra automática. Si DANIBOD_EQUIP_MAP
         # está seteado, al emitir un disco EQUIPADO (agente_asignado por flujo-ancla,
         # dueño certero) se registra firma_disco→dueño a ese JSON. Readonly-safe (no DB).
@@ -519,6 +549,11 @@ class Monitor:
             active_state = voted_state if voted_state is not None else self._confirmed_state
             if active_state is not None:
                 cadence_ms = polling_cadence_ms(active_state)
+                # 5R.L.6: mientras un disco S17 espera calentar el voto del dueño (incierto en
+                # el 1er frame), re-chequear rápido en vez de esperar el ciclo completo de 1s.
+                # No agrega OCR (el path de warmup re-lee el merge); solo apura la re-decisión.
+                if active_state.code == "S17" and self._s17_warming:
+                    cadence_ms = _S17_WARM_CADENCE_MS
                 elapsed_ms = (now - last_process_time) * 1000
                 forced = self._force_event.is_set()
                 # S18 (stats) y S8/S19 (detalle de agente) se re-procesan en cada
@@ -821,6 +856,8 @@ class Monitor:
         self._s17_det_votes = {}
         self._s17_free_evidence = 0
         self._s17_samples = 0
+        self._s17_owner_passes = 0
+        self._s17_warming = False
         self._grid_diag_counts.clear()
 
     @staticmethod
@@ -908,12 +945,30 @@ class Monitor:
             self._disc_agg_sig = sig
             self._disc_emitted = False
             self._disc_agg_cycles = 0
+            self._s17_warming = False
         # Gate RNF-06: si este disco YA se emitió (procesado completo) y la firma no cambió,
         # NO re-OCR-earlo cada ciclo — era OCR puro desperdicio que alimentaba el leak nativo
         # de Paddle (la cosecha = parar en discos → este era el driver). El badge del dueño
         # sigue votando aparte en _sample_s17_owner (10 fps) sin OCR.
         if self._disc_emitted:
             return
+        # 5R.L.6 — WARMUP del dueño: el disco ya maduró (OCR completo) pero salía con dueño
+        # INCIERTO sobre 1 frame. Mientras calienta, NO re-OCR (RNF-06): el loop rápido (10fps)
+        # sigue votando aparte; acá solo refrescamos la asignación con los votos nuevos sobre el
+        # merge ya logrado (aggregator.current) y emitimos apenas el dueño se resuelve, o tras
+        # juntar _S17_OWNER_MIN_SAMPLES pasadas, o al llegar al techo de ciclos.
+        if self._s17_warming:
+            merged = self._disc_aggregator.current
+            if merged is None:
+                self._s17_warming = False
+            else:
+                self._assign_s17_pj(merged, frame)   # re-decide el dueño con más votos (sin OCR)
+                warm = self._s17_owner_passes >= _S17_OWNER_MIN_SAMPLES
+                ceiling = self._disc_agg_cycles >= _S17_AGG_MAX_CYCLES
+                if self._s17_owner_resolved(merged) or warm or ceiling:
+                    self._s17_warming = False
+                    self._emit_s17_disc(merged, state, True)
+                return
         try:
             disc, _face = parse_disc_s17_full(frame, self._ocr)
         except Exception:
@@ -927,41 +982,60 @@ class Monitor:
         if self._disc_emitted or merged is None:
             return
         mature = disc_is_mature(merged)
-        if mature or self._disc_agg_cycles >= _S17_AGG_MAX_CYCLES:
-            self._disc_emitted = True
-            # Dedup por IDENTIDAD: si la firma parpadeó (modelo 3D animado) y este
-            # disco ya se emitió en esta sesión S17, no re-emitir (ni re-persistir).
-            identity = self._disc_identity(merged)
-            if self._recapture_on:
-                # Re-captura QA estilo S18: re-emite al CAMBIAR de disco, NO en cada
-                # parpadeo del modelo 3D (que reabre la firma visual del MISMO disco). El
-                # parpadeo deja la identidad-OCR igual → se saltea; navegar a otro disco la
-                # cambia → re-emite (incluso al VOLVER a uno ya visto).
-                if identity == self._last_emitted_identity:
-                    return
-            elif identity in self._disc_emitted_ids:
+        ceiling = self._disc_agg_cycles >= _S17_AGG_MAX_CYCLES
+        if not (mature or ceiling):
+            return
+        # 5R.L.6: maduró pero el dueño quedó INCIERTO y aún no juntamos muestras → DIFERIR la
+        # emisión y dejar que el loop rápido caliente el voto (re-chequeo a _S17_WARM_CADENCE_MS,
+        # ver run()). Los equipados (latch) y los ya-votados pasan derecho (resolved=True).
+        if mature and not ceiling and not self._s17_owner_resolved(merged) \
+                and self._s17_owner_passes < _S17_OWNER_MIN_SAMPLES:
+            self._s17_warming = True
+            return
+        self._emit_s17_disc(merged, state, mature)
+
+    def _s17_owner_resolved(self, disc) -> bool:
+        """True si el dueño del disco ya quedó DECIDIDO (no hace falta seguir calentando):
+        asignado por latch, dueño visual votado, o declarado LIBRE. False = 'incierto'."""
+        return bool(disc.agente_asignado_nombre or disc.equip_pj_visual or disc.equip_libre)
+
+    def _emit_s17_disc(self, merged, state: ScreenState, mature: bool) -> None:
+        """Emite (dedup + equip_map + id_diag + log + on_disc) un disco S17 ya resuelto.
+        Extraído de `_process_disc_s17_continuous` para reusarlo desde el path de warmup."""
+        self._disc_emitted = True
+        # Dedup por IDENTIDAD: si la firma parpadeó (modelo 3D animado) y este
+        # disco ya se emitió en esta sesión S17, no re-emitir (ni re-persistir).
+        identity = self._disc_identity(merged)
+        if self._recapture_on:
+            # Re-captura QA estilo S18: re-emite al CAMBIAR de disco, NO en cada
+            # parpadeo del modelo 3D (que reabre la firma visual del MISMO disco). El
+            # parpadeo deja la identidad-OCR igual → se saltea; navegar a otro disco la
+            # cambia → re-emite (incluso al VOLVER a uno ya visto).
+            if identity == self._last_emitted_identity:
                 return
-            self._disc_emitted_ids.add(identity)
-            self._last_emitted_identity = identity
-            # Verdad de tierra (5R.C): si el disco está EQUIPADO (agente_asignado por el
-            # flujo-ancla = dueño certero), registrar firma→dueño al mapa. Candidatos no
-            # setean agente_asignado → no contaminan el mapa.
-            if merged.agente_asignado_nombre:
-                self._record_equip_map(identity, merged.agente_asignado_nombre)
-            if self._id_diag_on:
-                self._log_id_diag(merged, identity)
-            log.info(
-                "Disco detectado: set=%s slot=%d main=%s nivel=%d conf=%.2f (agg %dc%s)",
-                merged.set_name_canon or merged.set_name_raw, merged.slot,
-                merged.main_stat_canon or merged.main_stat_raw, merged.nivel,
-                merged.confianza_global, self._disc_agg_cycles,
-                "" if mature else " best-effort",
-            )
-            if self._on_disc:
-                try:
-                    self._on_disc(merged, state)
-                except Exception:
-                    log.exception("Error en on_disc S17")
+        elif identity in self._disc_emitted_ids:
+            return
+        self._disc_emitted_ids.add(identity)
+        self._last_emitted_identity = identity
+        # Verdad de tierra (5R.C): si el disco está EQUIPADO (agente_asignado por el
+        # flujo-ancla = dueño certero), registrar firma→dueño al mapa. Candidatos no
+        # setean agente_asignado → no contaminan el mapa.
+        if merged.agente_asignado_nombre:
+            self._record_equip_map(identity, merged.agente_asignado_nombre)
+        if self._id_diag_on:
+            self._log_id_diag(merged, identity)
+        log.info(
+            "Disco detectado: set=%s slot=%d main=%s nivel=%d conf=%.2f (agg %dc%s)",
+            merged.set_name_canon or merged.set_name_raw, merged.slot,
+            merged.main_stat_canon or merged.main_stat_raw, merged.nivel,
+            merged.confianza_global, self._disc_agg_cycles,
+            "" if mature else " best-effort",
+        )
+        if self._on_disc:
+            try:
+                self._on_disc(merged, state)
+            except Exception:
+                log.exception("Error en on_disc S17")
 
     def _maybe_process_disc(self, frame, state: ScreenState) -> None:
         """
@@ -1261,9 +1335,14 @@ class Monitor:
             self._s17_det_votes = {}
             self._s17_free_evidence = 0
             self._s17_samples = 0
+            self._s17_owner_passes = 0         # 5R.L.6: reiniciar el warmup del dueño
             if self._id_diag_on:
                 self._id_diag = {"samples": 0, "grid_loc": 0, "grid_match": 0,
                                  "det_loc": 0, "det_match": 0, "grid_votes": {}, "det_votes": {}}
+        # 5R.L.6: cada pasada del loop rápido (10fps) cuenta para el warmup del dueño,
+        # localice o no la grilla (el detalle vota aparte). `_process_disc_s17_continuous`
+        # difiere la emisión de discos con dueño INCIERTO hasta juntar varias pasadas.
+        self._s17_owner_passes += 1
         badge = crop_grid_selected_badge(frame)
         g_name, g_conf = None, 0.0
         if badge is None:
@@ -1340,7 +1419,8 @@ class Monitor:
         asignado por flujo-ancla. Cruzable con equip_map por `identity` → ubica el cuello
         (¿NOLOC del grid? ¿el detalle no matchea? ¿el voto elige mal?)."""
         d = self._id_diag or {}
-        voted, _src = _decide_s17_owner(self._s17_grid_votes, self._s17_det_votes)
+        voted, _src = _decide_s17_owner(
+            self._s17_grid_votes, self._s17_det_votes, latch=self._last_agent_name)
 
         def _top(v):
             return ",".join(f"{k}:{val:.2f}" for k, val in
@@ -1360,7 +1440,8 @@ class Monitor:
         si la votación del loop rápido corresponde a ESTE disco. None si incierto."""
         if not self._s17_owner_sig_matches(frame):
             return None
-        owner, _src = _decide_s17_owner(self._s17_grid_votes, self._s17_det_votes)
+        owner, _src = _decide_s17_owner(
+            self._s17_grid_votes, self._s17_det_votes, latch=self._last_agent_name)
         return owner
 
     def _s17_owner_sig_matches(self, frame) -> bool:

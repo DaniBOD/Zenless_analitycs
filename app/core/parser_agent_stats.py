@@ -629,6 +629,13 @@ _STATS_ID_MAX_DIST = 0.045
 # El 2do mejor candidato debe estar al menos esto más lejos (evita ambigüedad
 # entre dos agentes de stats parecidos cuando el build difiere del de la DB).
 _STATS_ID_MIN_GAP = 0.030
+# Distancia bajo la cual el match de stats se considera NEAR-EXACTO (build == DB,
+# sin drift): a esa confianza el vector identifica al agente con certeza y se le
+# CREE por encima de un banner de rol/elem contradictorio (la metadata DB puede
+# estar stale —p.ej. rol es-ES 'Disruptivos' vs pantalla 'Ruptura'/'Ataque'— o el
+# banner pudo malleerse). Con drift >= este umbral, el cross-check del banner sí
+# descarta (posible match ambiguo al PJ equivocado). QA 2026-06-20: Billy Estelar.
+_STATS_ID_TRUST_DIST = 0.012
 
 
 def _stat_rel_err(x: float | None, a: float | None) -> float | None:
@@ -642,11 +649,18 @@ def _stats_distance(stats: dict, ag: dict) -> float | None:
     """
     Error relativo medio entre los stats de pantalla y los del agente (DB).
 
-    Requiere PV + Ataque como ancla y al menos un crit (Prob/Daño) para
-    discriminar entre DPS de PV/ATK parecidos. Devuelve None si no hay
-    suficientes campos comparables (el agente cae al matcher de nombre).
+    Ancla = Ataque (siempre presente y discriminante) + al menos un crit
+    (Prob/Daño). PV es DESEABLE pero NO obligatorio: exigirlo hacía que un frame
+    con PV faltante (flakiness del OCR en la celda superior, QA 2026-06-20)
+    abortara la identificación-por-stats para TODOS los agentes y cayera al OCR
+    de nombre — poco fiable en tarjetas como 'Billy Kid Estelar' (el OCR leía
+    'Centelleante' del fondo) → el PJ no se identificaba ni se podía cosechar.
+    Con PV ausente quedan ataque+defensa+2 crits (>=3 campos, abajo); cuando PV
+    SÍ se lee, suma como discriminante. El gap-check de _identify_by_stats
+    mantiene RNF-02: ante ambigüedad sin PV, abstiene (None → matcher de nombre).
+    Devuelve None si no hay suficientes campos comparables.
     """
-    if stats.get("pv") is None or stats.get("ataque") is None:
+    if stats.get("ataque") is None:
         return None
     if stats.get("prob_crit") is None and stats.get("dano_crit") is None:
         return None
@@ -687,7 +701,9 @@ def _identify_by_stats(stats: dict | None) -> dict | None:
         return None
     if len(ranked) > 1 and (ranked[1][0] - best_d) < _STATS_ID_MIN_GAP:
         return None  # ambiguo: dos agentes igual de cerca
-    return best_ag
+    # Adjunta la distancia del match (copia, no mutar el roster cacheado) para que el
+    # cross-check del banner sepa si confiar en el match cuando es near-exacto (5R QA).
+    return {**best_ag, "_stats_dist": best_d}
 
 
 # ---------------------------------------------------------------------------
@@ -891,6 +907,10 @@ def _extract_agent_info(
     name_reg = _name_region(full_text)
 
     # --- 0) Identificación por STATS (señal primaria si hay datos) ---
+    # Flags: el banner contradijo un stats-match EXACTO en rol/elem → ese campo del
+    # banner es un misread → preferir el canónico de la DB para ese campo (abajo).
+    trust_db_rol = False
+    trust_db_elem = False
     stat_ag = _identify_by_stats(stats)
     if stat_ag is not None:
         # Cross-check: si el banner se leyó y contradice al agente identificado
@@ -898,10 +918,25 @@ def _extract_agent_info(
         # caer al matcher de nombre (conservador, RNF-02).
         sa_rol = _strip_accents(stat_ag.get("rol") or "").lower()
         sa_elem = _strip_accents(stat_ag.get("elemento") or "").lower()
-        if rol_screen and sa_rol and _strip_accents(rol_screen).lower() != sa_rol:
-            stat_ag = None
-        elif elem_screen and sa_elem and _strip_accents(elem_screen).lower() != sa_elem:
-            stat_ag = None
+        rol_mismatch = bool(rol_screen and sa_rol
+                            and _strip_accents(rol_screen).lower() != sa_rol)
+        elem_mismatch = bool(elem_screen and sa_elem
+                             and _strip_accents(elem_screen).lower() != sa_elem)
+        if rol_mismatch or elem_mismatch:
+            # El banner contradice al agente identificado por stats. Si el match es
+            # NEAR-EXACTO (build == DB) la identificación es CERTERA → se le cree al
+            # vector (la metadata rol/elem de la DB puede estar stale, o el banner
+            # malleyó); el rol/elem se resuelven con prioridad-pantalla más abajo. Con
+            # drift apreciable sí se descarta (posible match ambiguo) → matcher de nombre.
+            if stat_ag.get("_stats_dist", 1.0) >= _STATS_ID_TRUST_DIST:
+                stat_ag = None
+            else:
+                notas.append("stats_exacto_pese_a_banner")
+                # El banner malleyó el campo que no coincide (el vector es certero) →
+                # usar el rol/elem canónico de la DB, no el del banner. Esto además
+                # corrige el role-aware downstream (p.ej. Disruptivos no pide TP/ER).
+                trust_db_rol = rol_mismatch
+                trust_db_elem = elem_mismatch
 
     if stat_ag is not None:
         nombre_db, rol_db, elemento_db = (
@@ -934,8 +969,10 @@ def _extract_agent_info(
     # --- 3) Resolución autoritativa: PANTALLA gana sobre DB ---
     # (excepto rol/elem que vienen de la identificación por stats, que ya son
     # los canónicos correctos de la DB; el banner solo rellena si stats no IDó).
-    rol = rol_screen or rol_db
-    elemento = elem_screen or elemento_db
+    # Si confiamos en un stats-match exacto a pesar del banner, ese campo del banner
+    # es un misread → usar el canónico de la DB (trust_db_rol/elem).
+    rol = rol_db if trust_db_rol else (rol_screen or rol_db)
+    elemento = elemento_db if trust_db_elem else (elem_screen or elemento_db)
     nombre_final = nombre_db or (dual[0] if dual else None)
 
     # Notas de diagnóstico

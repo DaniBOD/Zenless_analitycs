@@ -64,3 +64,23 @@ def test_detail_solo_dominante_un_competidor_chico_pasa():
 def test_vacio_incierto():
     owner, src = _decide_s17_owner({}, {})
     assert owner is None and src is None
+
+
+def test_anti_iman_detail_solo_igual_al_latch_se_abstiene():
+    """5R.L.6b: candidato cuyo detail-solo == el agente de la página (latch) y la grilla NO
+    corrobora → es la firma del imán (caso QA Koleda→'Nangong Yu'@0.83 en la página de Nangong
+    Yu). Se abstiene (RNF-02: incierto > wrong)."""
+    owner, src = _decide_s17_owner({}, {"Nangong Yu": 0.83}, latch="Nangong Yu")
+    assert owner is None and src is None
+    # Insensible a mojibake/acentos del latch (mismo PJ).
+    assert _decide_s17_owner({}, {"César": 1.0}, latch="Cesar") == (None, None)
+
+
+def test_anti_iman_no_afecta_otro_pj_ni_corroboracion_del_grid():
+    """El guard solo aplica al det-SOLO == latch. Un det-solo de OTRO PJ pasa; y si la grilla
+    corrobora al latch (dueño real en su página) manda el grid, no se suprime."""
+    # det-solo de otro PJ con el latch puesto → propone normal.
+    assert _decide_s17_owner({}, {"Burnice": 1.0}, latch="Nangong Yu") == ("Burnice", "det")
+    # grilla vota al latch (disco realmente suyo) → grid manda, sin supresión.
+    owner, src = _decide_s17_owner({"Nangong Yu": 0.9}, {"Nangong Yu": 1.5}, latch="Nangong Yu")
+    assert owner == "Nangong Yu" and src == "grid+det"

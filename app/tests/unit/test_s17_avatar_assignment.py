@@ -979,7 +979,9 @@ def test_s17_continuo_emite_una_vez_al_madurar(monkeypatch):
     # Firma estable (mismo disco) y sin avatar.
     sig = (np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
     monkeypatch.setattr(m, "_s17_disc_signature", lambda frame: sig)
-    monkeypatch.setattr(m, "_assign_s17_pj", lambda disc, face: None)
+    # 5R.L.6: el real SIEMPRE resuelve el dueño (owner/libre/incierto); acá lo marcamos
+    # 'libre' (resuelto) para que emita al madurar sin entrar al warmup del dueño incierto.
+    monkeypatch.setattr(m, "_assign_s17_pj", lambda disc, face: setattr(disc, "equip_libre", True))
 
     seq = iter([_partial := _disc_full(), _disc_full(), _disc_full()])
     _partial.subs[2].valor = None  # frame 1 incompleto
@@ -992,6 +994,59 @@ def test_s17_continuo_emite_una_vez_al_madurar(monkeypatch):
     assert len(emitted) == 1
     m._process_disc_s17_continuous(None, st)   # frame 3: mismo disco → no re-emite
     assert len(emitted) == 1
+
+
+def test_s17_warmup_difiere_emision_si_dueno_incierto(monkeypatch):
+    """
+    5R.L.6: si el disco MADURA pero el dueño quedó INCIERTO (no resuelto), la emisión se
+    DIFIERE hasta juntar _S17_OWNER_MIN_SAMPLES pasadas del loop rápido (que vota el badge
+    a 10fps, sin re-OCR). Evita cerrar el disco como 'incierto' sobre un único frame ruidoso
+    (la grilla localiza ~81%/frame; el detalle se abstiene seguido). Al calentar, emite.
+    """
+    from app.core.detector import ScreenState
+    import numpy as np
+    import app.core.monitor as mon
+    emitted = []
+    m = _monitor()
+    m._on_disc = lambda disc, st: emitted.append(disc)
+    sig = (np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
+    monkeypatch.setattr(m, "_s17_disc_signature", lambda frame: sig)
+    # Dueño SIEMPRE incierto: el stub NO setea equip_* → _s17_owner_resolved False.
+    monkeypatch.setattr(m, "_assign_s17_pj", lambda disc, face: None)
+    monkeypatch.setattr("app.core.monitor.parse_disc_s17_full",
+                        lambda frame, ocr: (_disc_full(), None))
+    st = ScreenState("S17", 1.0, "tmpl")
+    # Sin pasadas del loop rápido (owner_passes=0): madura pero DIFIERE (no emite, queda warming).
+    m._process_disc_s17_continuous(None, st)
+    assert emitted == [] and m._s17_warming is True
+    # Aún frío: re-chequeo sin re-OCR sigue difiriendo.
+    m._s17_owner_passes = mon._S17_OWNER_MIN_SAMPLES - 1
+    m._process_disc_s17_continuous(None, st)
+    assert emitted == [] and m._s17_warming is True
+    # Simular que el loop rápido (10fps) llegó al umbral → emite (incierto, RNF-02 abstención).
+    m._s17_owner_passes = mon._S17_OWNER_MIN_SAMPLES
+    m._process_disc_s17_continuous(None, st)
+    assert len(emitted) == 1 and m._s17_warming is False
+
+
+def test_s17_warmup_no_difiere_equipado(monkeypatch):
+    """5R.L.6 (no-regresión de latencia): un disco con dueño RESUELTO (equipado/latch o
+    votado) emite al madurar SIN esperar warmup — el costo se paga solo en los inciertos."""
+    from app.core.detector import ScreenState
+    import numpy as np
+    emitted = []
+    m = _monitor()
+    m._on_disc = lambda disc, st: emitted.append(disc)
+    sig = (np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
+    monkeypatch.setattr(m, "_s17_disc_signature", lambda frame: sig)
+    # Dueño resuelto por latch (equipado): _s17_owner_resolved True → sin warmup.
+    monkeypatch.setattr(m, "_assign_s17_pj",
+                        lambda disc, face: setattr(disc, "agente_asignado_nombre", "Koleda"))
+    monkeypatch.setattr("app.core.monitor.parse_disc_s17_full",
+                        lambda frame, ocr: (_disc_full(), None))
+    st = ScreenState("S17", 1.0, "tmpl")
+    m._process_disc_s17_continuous(None, st)   # owner_passes=0 pero RESUELTO → emite ya
+    assert len(emitted) == 1 and m._s17_warming is False
 
 
 def test_s17_continuo_no_re_emite_por_parpadeo_de_firma(monkeypatch):
@@ -1014,7 +1069,8 @@ def test_s17_continuo_no_re_emite_por_parpadeo_de_firma(monkeypatch):
         m, "_s17_disc_signature",
         lambda frame: (np.full((48, 48), next(seqsig), np.float32), np.zeros((24, 24), np.float32)),
     )
-    monkeypatch.setattr(m, "_assign_s17_pj", lambda disc, face: None)
+    # 5R.L.6: dueño 'resuelto' (libre) → emite al madurar sin warmup.
+    monkeypatch.setattr(m, "_assign_s17_pj", lambda disc, face: setattr(disc, "equip_libre", True))
     monkeypatch.setattr("app.core.monitor.parse_disc_s17_full",
                         lambda frame, ocr: (_disc_full(), None))
     st = ScreenState("S17", 1.0, "tmpl")
@@ -1048,7 +1104,8 @@ def test_s17_dedup_identidad_insensible_a_mojibake_de_tilde(monkeypatch):
     # firma fija (mismo disco), pero el set cambia de mojibake cada ciclo
     sig = (np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
     monkeypatch.setattr(m, "_s17_disc_signature", lambda frame: sig)
-    monkeypatch.setattr(m, "_assign_s17_pj", lambda disc, face: None)
+    # 5R.L.6: dueño 'resuelto' (libre) → emite al madurar sin warmup.
+    monkeypatch.setattr(m, "_assign_s17_pj", lambda disc, face: setattr(disc, "equip_libre", True))
     variants = iter(["Melodia de Faetón", "Melodia de Faeton", "Melodia de Faetön"])
 
     def _parse(frame, ocr):

@@ -650,8 +650,19 @@ class TestIdentifyByStatsCapa4:
         # Sin ningún crit no se puede discriminar DPS parecidos → None (fallback).
         assert self._id(pv=10558, ataque=2630, defensa=914) is None
 
-    def test_sin_pv_no_identifica(self):
-        assert self._id(ataque=2630, prob_crit=0.538, dano_crit=1.764) is None
+    def test_sin_pv_identifica_por_ataque_y_crits(self):
+        # 5R QA 2026-06-20: PV es OPCIONAL. Sin PV pero con ataque + 2 crits (3 campos)
+        # y gap claro, la ID por stats SIGUE resolviendo. Antes el PV obligatorio abortaba
+        # la ID y caía al OCR de nombre (que en 'Billy Kid Estelar' leía 'Centelleante' del
+        # fondo) → el PJ no se identificaba ni se podía cosechar.
+        ag = self._id(ataque=2630, prob_crit=0.538, dano_crit=1.764)
+        assert ag is not None and ag["nombre"] == "N.º 0: Anby"
+
+    def test_sin_pv_ambiguo_abstiene(self):
+        # RNF-02: sin PV, si dos agentes quedan igual de cerca (atk+crits a <gap), el
+        # gap-check abstiene (None → matcher de nombre). Query a mitad de camino entre
+        # N.º 0: Anby (2630/.538/1.764) y Zhu Yuan (2600/.500/1.700).
+        assert self._id(ataque=2615, prob_crit=0.519, dano_crit=1.732) is None
 
     def test_stats_none_no_identifica(self):
         from app.core.parser_agent_stats import _identify_by_stats
@@ -671,19 +682,37 @@ class TestIdentifyByStatsCapa4:
         assert elemento == "Fuego"
         assert any("identificado_por_stats" in n for n in notas), notas
 
-    def test_banner_contradice_stats_cae_a_nombre(self):
-        # Si el banner se leyó y su rol contradice al agente identificado por
-        # stats, se descarta la ID por stats (cross-check conservador).
+    def test_banner_contradice_stats_con_drift_cae_a_nombre(self):
+        # Si el banner contradice al agente de stats Y el match tiene DRIFT apreciable
+        # (build != DB, dist >= _STATS_ID_TRUST_DIST), se descarta la ID por stats
+        # (posible match ambiguo al PJ equivocado) → cae al matcher de nombre.
         from app.core.parser_agent_stats import _extract_agent_info
-        # Banner dice rol Ataque (Hielo Ataque), pero los stats son de Lucy
-        # (Soporte). El cross-check descarta stats → cae a matcher de nombre.
-        full_text = "Zephyr Zephyr Nivel 60 60 MAX Hielo Ataque PV 12392 Ataque 1774"
+        # Stats de Lucy DRIFTADOS ~4% (pv/atk) → dist ~0.0145 (>= 0.012). Banner dice
+        # rol Ataque (Hielo Ataque), pero Lucy es Soporte → cross-check descarta.
+        full_text = "Zephyr Zephyr Nivel 60 60 MAX Hielo Ataque PV 12900 Ataque 1830"
+        stats = {"pv": 12900, "ataque": 1830, "defensa": 1003,
+                 "prob_crit": 0.242, "dano_crit": 0.836}
+        nombre, rol, elemento, notas = _extract_agent_info(full_text, stats)
+        # No debe afirmar "Lucy" (Soporte) cuando el banner dice Ataque y hay drift.
+        assert nombre != "Lucy"
+        assert rol == "Ataque"
+
+    def test_banner_contradice_stats_exacto_confia_en_stats(self):
+        # 5R QA 2026-06-20 (Billy Estelar): con match de stats EXACTO (build == DB,
+        # dist < _STATS_ID_TRUST_DIST), un banner de rol contradictorio NO descarta —
+        # se confía en el vector (metadata DB stale, p.ej. rol es-ES 'Disruptivos' vs
+        # pantalla). El rol se resuelve con prioridad-pantalla.
+        from app.core.parser_agent_stats import _extract_agent_info
+        # Stats EXACTOS de Lucy; banner dice rol 'Ataque' (contradice su 'Soporte').
+        full_text = "Lucy Lucy Nivel 60 60 MAX Fuego Ataque PV 12392 Ataque 1774"
         stats = {"pv": 12392, "ataque": 1774, "defensa": 1003,
                  "prob_crit": 0.242, "dano_crit": 0.836}
         nombre, rol, elemento, notas = _extract_agent_info(full_text, stats)
-        # No debe afirmar "Lucy" (Soporte) cuando el banner dice Ataque.
-        assert nombre != "Lucy"
-        assert rol == "Ataque"
+        assert nombre == "Lucy", f"nombre={nombre}"
+        assert any("stats_exacto_pese_a_banner" in n for n in notas), notas
+        # El banner malleyó el rol → se usa el canónico de la DB de Lucy (Soporte), no
+        # 'Ataque'. (Corrige el role-aware downstream: Disruptivos no pide TP/ER.)
+        assert rol == "Soporte", f"rol={rol}"
 
 
 def test_get_roster_honra_db_path_override(monkeypatch, tmp_path):
