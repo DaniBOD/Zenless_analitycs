@@ -44,7 +44,7 @@ Sistema de análisis y optimización de cuenta para ZZZ porque el juego carece d
 
 | Capa | Tabla | Filas | Notas |
 |------|-------|------:|-------|
-| 1 Catálogos | `agents` | **47** | 45 originales + Cissia v2.7 (2026-05-04) + Billy Estelar v2.x (2026-06-12, onboarding PARCIAL: identidad+stats, pendiente synergy/splash/IA) |
+| 1 Catálogos | `agents` | **48** | 45 originales + Cissia v2.7 + Billy Estelar v2.x + Velina v3.x (2026-06-19, **elemento VIENTO nuevo**, onboarding PARCIAL: identidad+ico, stats pending_capture, pendiente thresholds/synergy/splash/IA) |
 | 1 | `weapons` | 53 | 49 base + 4 nuevas (Street Superstar, Florescencia aurífera, Wild Gastronome, Hertz Transit). Ya tiene `pasiva_modelada` + `sensibilidad_contexto` |
 | 1 | `disc_sets` | 26 | Post-merge (id 47→40 Puffer Electro; id 50→35 Nana luz cenicienta) |
 | 1 | `agent_awakenings` | **7** | 1 verificado (Burnice nv6) + 4 placeholder `pending_capture` (Lycaon, Ellen, Grace, N.°0:Anby) + 1 placeholder Cissia + 1 placeholder Billy Estelar. Harumasa y N.°11 sin insertar hasta confirmar nivel |
@@ -138,7 +138,7 @@ RF-14 coordina con RF-06 (build full = arma + 6 discos)
 
 ## 6. Roster (rápido)
 
-**47 PJs** · Distribución elemento: Físico 14 · Eléctrico 12 · Fuego 9 · Éter 7 · Hielo 5
+**48 PJs** · Distribución elemento: Físico 14 · Eléctrico 12 · Fuego 9 · Éter 7 · Hielo 5 · Viento 1 (Velina)
 **Distribución rol:** Ataque 14 · Aturdimiento 9 · Anomalía 8 · Soporte 8 · Defensa 5 · Disruptivos 3
 
 > Corrección rol/elemento mig 07+08 (2026-06-01): se reasignaron 6 roles mal seedeados

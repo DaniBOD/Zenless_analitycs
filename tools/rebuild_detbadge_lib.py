@@ -46,11 +46,13 @@ _REFS = ROOT / "app" / "resources" / "avatar_refs"
 # PJs CONTAMINADOS en la cosecha vieja (anclas con bug + crop viejo, pre-2026-06-19):
 # sus frames `*__S17__*` no son del PJ etiquetado. Verificado visualmente
 # (audit/detbadge_magnet_diag/CONTACT_det_all.png):
-#   - ben    → las caras son SOUKAKU (hacía empatar/abstener a Soukaku, QA 2026-06-19).
-#   - cissia → fragmentos de texto "(5)" en vez de cara.
+#   - ben      → las caras son SOUKAKU (hacía empatar/abstener a Soukaku, QA 2026-06-19).
+#   - cissia   → fragmentos de texto "(5)" en vez de cara.
+#   - anton    → par contaminado con Harumasa (refs idénticas dist=0.000, escaneo 2026-06-19).
+#   - harumasa → idem (par Antón↔Harumasa).
 # Se EXCLUYEN del rebuild para no re-introducir las refs malas. Re-cosechar en vivo con
 # `-BadgeHarvest` (el ancla ya cross-checkea → cosecha limpia) y se re-agregan solas.
-_CONTAMINATED = {_norm_key(x) for x in ("ben", "cissia")}
+_CONTAMINATED = {_norm_key(x) for x in ("ben", "cissia", "anton", "harumasa")}
 
 
 def _imread(p: str) -> np.ndarray | None:
