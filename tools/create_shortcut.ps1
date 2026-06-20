@@ -11,7 +11,9 @@
 
 param(
     [string]$ExePath,
-    [string]$ShortcutName = "DaniBOD ZZZ Analytics"
+    [string]$ShortcutName = "DaniBOD ZZZ Analytics",
+    [switch]$Direct   # opt-out: apunta al .exe plano (modo normal, escribe DB). Por
+                      # defecto el shortcut va por el launcher READONLY (QA sin tocar datos).
 )
 
 $ErrorActionPreference = "Stop"
@@ -40,10 +42,24 @@ $lnkPath  = Join-Path $desktop "$ShortcutName.lnk"
 # Crear shortcut
 $wsh = New-Object -ComObject WScript.Shell
 $lnk = $wsh.CreateShortcut($lnkPath)
-$lnk.TargetPath       = $ExePath
+if ($Direct) {
+    # Modo normal: el .exe plano (escribe DB/avatares).
+    $lnk.TargetPath  = $ExePath
+    $lnk.Arguments   = ""
+    $lnk.Description  = "DaniBOD ZZZ Analytics - modo normal (escribe DB)"
+    $mode = "NORMAL (.exe directo)"
+} else {
+    # Modo READONLY (default): via launcher VBS que setea DANIBOD_READONLY=1 y lanza el
+    # .exe sin ventana de consola. El .exe NO escribe DB ni la libreria de avatares.
+    $vbs = Join-Path $repoRoot "tools\launch_readonly.vbs"
+    if (-not (Test-Path $vbs)) { Write-Host "ERROR: falta $vbs" -ForegroundColor Red; exit 1 }
+    $lnk.TargetPath  = (Join-Path $env:WINDIR "System32\wscript.exe")
+    $lnk.Arguments   = "`"$vbs`""
+    $lnk.Description  = "DaniBOD ZZZ Analytics - modo READONLY (QA: no escribe DB ni avatares)"
+    $mode = "READONLY (via launch_readonly.vbs)"
+}
 $lnk.WorkingDirectory = $workDir
 $lnk.WindowStyle      = 1   # Normal
-$lnk.Description      = "DaniBOD ZZZ Analytics - Captura y scoring de discos de Zenless Zone Zero"
 if (Test-Path $iconPath) {
     $lnk.IconLocation = "$iconPath,0"
 } else {
@@ -52,6 +68,8 @@ if (Test-Path $iconPath) {
 $lnk.Save()
 
 Write-Host "OK: shortcut creado." -ForegroundColor Green
-Write-Host "  Target  : $ExePath"
+Write-Host "  Modo    : $mode"
+Write-Host "  Target  : $($lnk.TargetPath) $($lnk.Arguments)"
+Write-Host "  Exe     : $ExePath"
 Write-Host "  Shortcut: $lnkPath"
 Write-Host "  Icon    : $($lnk.IconLocation)"
