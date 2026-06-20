@@ -1012,6 +1012,13 @@ def _parse_via_full_frame(
         notas.append("nivel_no_detectado")
 
     pv = _parse_int(extracted["pv"])
+    # Rescate por REGIÓN si el OCR full-frame perdió el PV (frame animado / dígitos
+    # espaciados). Se hace ANTES del vector de identificación → además robustece la
+    # ID-por-stats. Solo dispara cuando pv quedó None (RNF-06: sin costo en lo normal).
+    if pv is None:
+        pv = _rescue_int_roi(frame, ocr, "pv_valor")
+        if pv is not None:
+            notas.append("pv_rescatado_roi")
     ataque = _parse_int(extracted["ataque"])
     defensa = _parse_int(extracted["defensa"])
     impacto = _parse_int(extracted["impacto"])
@@ -1042,6 +1049,13 @@ def _parse_via_full_frame(
     fuerza_bruta = _parse_int(extracted["fuerza_bruta"])
     if fuerza_bruta is not None:
         tasa_perforacion = None
+        # FB (Sheer Force) es EXCLUSIVA de Disruptivos → su presencia PRUEBA el rol, por
+        # encima del banner (que malleía 'Ruptura'→'Ataque' o no lo lee) o de un name-match
+        # con rol que cayó al banner por prioridad-pantalla. Corrige el catálogo sin depender
+        # del trust-stats (que requiere build==DB). QA 2026-06-20: Manato/Yixuan salían 'Ataque'.
+        if rol_db is not None and _strip_accents(rol_db).lower() != "disruptivos":
+            notas.append(f"rol_corregido_por_fb_de_{rol_db}_a_disruptivos")
+            rol_db = "Disruptivos"
         if extracted["tasa_perforacion"] is not None:
             notas.append("tp_ignorada_disruptivo")
     else:
@@ -1053,6 +1067,13 @@ def _parse_via_full_frame(
     # recuperacion_energia NO aplica (y viceversa). Esto evita meter el valor de
     # adrenalina en el campo de energy regen (Bug D, QA 2026-05-31).
     acumulacion_adrenalina = _parse_int(extracted["adrenalina"])
+    # Rescate por REGIÓN del dígito de Adrenalina (Disruptivos): es chico/aislado y la
+    # detección full-frame lo pierde aunque sí lea el label. Solo si es Disruptivos
+    # (Fuerza Bruta presente = label exclusivo) y AD quedó None → recortar su celda.
+    if acumulacion_adrenalina is None and fuerza_bruta is not None:
+        acumulacion_adrenalina = _rescue_int_roi(frame, ocr, "adrenalina_valor")
+        if acumulacion_adrenalina is not None:
+            notas.append("ad_rescatado_roi")
     if acumulacion_adrenalina is not None:
         recuperacion_energia = None
         if extracted["recup_energia"] is not None:
@@ -1087,6 +1108,26 @@ def _ocr_stat(roi: np.ndarray, ocr: OcrBackend) -> tuple[str, float]:
         return ocr.text(roi, psm=7)
     except Exception:
         return "", 0.0
+
+
+def _rescue_int_roi(frame: np.ndarray, ocr: OcrBackend, region_key: str) -> int | None:
+    """Rescata un stat ENTERO que el OCR full-frame perdió: recorta la celda nombrada
+    (rois.toml::perfil_agente_atributos), la escala ×3 y la OCR-ea AISLADA (psm 7).
+    Para valores chicos/aislados que la detección global no engancha (PV en un frame
+    animado, el dígito de Acumulación de Adrenalina). Devuelve el int o None si falla.
+    Solo se invoca cuando el stat quedó None → costo nulo en el caso normal (RNF-06)."""
+    try:
+        import cv2
+        roi = crop_named_roi(frame, "perfil_agente_atributos", region_key)
+        if roi is None or roi.size < 100:
+            return None
+        up = cv2.resize(roi, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+        text, conf = ocr.text(up, psm=7)
+        if conf == 0.0 and not text:
+            return None
+        return _parse_int(_clean_number(text))
+    except Exception:
+        return None
 
 
 def _parse_via_rois(frame: np.ndarray, ocr: OcrBackend) -> AgentStatsParsed:

@@ -715,6 +715,90 @@ class TestIdentifyByStatsCapa4:
         assert rol == "Soporte", f"rol={rol}"
 
 
+class TestRescateRoiStats:
+    """Rescate por REGIÓN de stats que el OCR full-frame pierde (QA 2026-06-20, Billy
+    Estelar): PV en frame animado, dígito de Adrenalina. Recorta la celda nombrada y la
+    OCR-ea aislada. Mock de OCR: psm=7 = llamada del rescate (ROI), sino = full-frame."""
+
+    def _frame(self):
+        return np.zeros((1440, 2560, 3), np.uint8)
+
+    def test_rescue_int_roi_recorta_y_parsea(self):
+        from app.core import parser_agent_stats as p
+
+        class _Ocr:
+            def text(self, img, psm=None):
+                return ("2", 1.0)
+        assert p._rescue_int_roi(self._frame(), _Ocr(), "adrenalina_valor") == 2
+
+    def test_rescue_int_roi_vacio_devuelve_none(self):
+        from app.core import parser_agent_stats as p
+
+        class _Ocr:
+            def text(self, img, psm=None):
+                return ("", 0.0)
+        assert p._rescue_int_roi(self._frame(), _Ocr(), "pv_valor") is None
+
+    def test_parse_disruptivo_rescata_ad(self, monkeypatch):
+        # Full-frame lee el label de adrenalina pero NO su dígito (chico/aislado) →
+        # se rescata por región. Solo dispara en Disruptivos (Fuerza Bruta presente).
+        from app.core import parser_agent_stats as p
+        monkeypatch.setattr(p, "_get_roster", lambda: [])
+        full = ("nivel 60 max fisico disruptivo pv 20 573 ataque 2043 defensa 689 "
+                "impacto 95 probabilidad de 72.2 % dano critico 118.8 % critico "
+                "tasa de anomalia 90 maestria de anomalia 89 2669 acumulacion "
+                "automatica fuerza bruta de adrenalina")
+
+        class _Ocr:
+            def text(self, img, psm=None):
+                return ("2", 1.0) if psm == 7 else (full, 0.95)
+        r = p.parse_agent_stats(self._frame(), _Ocr())
+        assert r.fuerza_bruta == 2669
+        assert r.acumulacion_adrenalina == 2          # rescatado por región
+        assert r.recuperacion_energia is None         # Disruptivos: ER no aplica
+        assert any("ad_rescatado_roi" in n for n in r.notas), r.notas
+
+    def test_parse_rescata_pv_cuando_falta(self, monkeypatch):
+        # Full-frame perdió el PV (frame animado) → rescate por región. Sin Fuerza Bruta
+        # (no Disruptivos) → el rescate de AD no dispara; solo el de PV.
+        from app.core import parser_agent_stats as p
+        monkeypatch.setattr(p, "_get_roster", lambda: [])
+        full = ("nivel 60 max fisico ataque 2671 defensa 1038 impacto 91 "
+                "probabilidad de 48.2 % dano critico 112.4 % critico "
+                "tasa de anomalia 92 maestria de anomalia 109")  # SIN pv
+
+        class _Ocr:
+            def text(self, img, psm=None):
+                return ("9763", 1.0) if psm == 7 else (full, 0.95)
+        r = p.parse_agent_stats(self._frame(), _Ocr())
+        assert r.pv == 9763                           # rescatado por región
+        assert any("pv_rescatado_roi" in n for n in r.notas), r.notas
+
+    def test_fb_corrige_rol_a_disruptivos(self, monkeypatch):
+        # QA 2026-06-20 (Manato/Yixuan): Disruptivos en DB pero el banner malleía el rol
+        # a 'Ataque' y los stats DRIFTARON (no matchean exacto → sin trust-stats) → el rol
+        # caía a 'Ataque'. La FB (exclusiva de Disruptivos) PRUEBA el rol → se corrige.
+        from app.core import parser_agent_stats as p
+        monkeypatch.setattr(p, "_get_roster", lambda: [
+            {"nombre": "Manato", "rol": "Disruptivos", "elemento": "Fuego",
+             "norm": "manato", "tokens": {"manato"}, "pv": 16362, "ataque": 2304,
+             "defensa": 729, "prob_crit": 0.65, "dano_crit": 0.996},
+        ])
+        # Banner dice 'fuego ataque' (rol misread); stats drifteados; FB presente.
+        full = ("manato manato nivel 60 60 max fuego ataque pv 16123 ataque 2361 "
+                "defensa 729 impacto 95 probabilidad de 73.0 % dano critico 90.0 % critico "
+                "tasa de anomalia 87 maestria de anomalia 117 2320 acumulacion "
+                "automatica fuerza bruta de adrenalina")
+
+        class _Ocr:
+            def text(self, img, psm=None):
+                return ("0", 1.0) if psm == 7 else (full, 0.95)
+        r = p.parse_agent_stats(self._frame(), _Ocr())
+        assert r.fuerza_bruta == 2320
+        assert r.rol == "Disruptivos", f"rol={r.rol}"   # corregido por FB (no 'Ataque')
+        assert any("rol_corregido_por_fb" in n for n in r.notas), r.notas
+
+
 def test_get_roster_honra_db_path_override(monkeypatch, tmp_path):
     """Regresión 2026-06-12: _get_roster usaba un _DB_PATH hardcodeado (relativo al
     fuente) con sqlite3 crudo, ignorando DANIBOD_DB_PATH. En el .exe frozen leía la

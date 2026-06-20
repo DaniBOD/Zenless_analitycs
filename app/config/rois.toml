@@ -275,6 +275,12 @@ tasa_perforacion_valor  = [0.690, 0.700, 0.080, 0.030]
 recup_energia_nombre    = [0.745, 0.690, 0.140, 0.050]
 recup_energia_valor     = [0.880, 0.700, 0.060, 0.030]
 
+# Acumulación Automática de Adrenalina (Disruptivos) — celda inferior-derecha. El
+# label es más largo/multilínea que "Recup. Energía" → corre el valor (un dígito
+# chico que el OCR full-frame pierde). Región propia, un toque más ancha/alta, para
+# el rescate por región (parse_agent_stats._rescue_int_roi). QA 2026-06-20 Billy Estelar.
+adrenalina_valor        = [0.855, 0.690, 0.110, 0.055]
+
 
 # ===========================================================================
 # Compatibilidad legacy modal_upgrade
