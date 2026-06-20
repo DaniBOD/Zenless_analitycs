@@ -1388,23 +1388,33 @@ def test_persist_s17_devuelve_composicion(syncer_db):
 # --- 5. Fixes de la fuga RNF-06 (gates de OCR + watchdog) --------------------
 
 def test_s18_stats_signature_gate():
-    """Gate OCR S18 (RNF-06): firma del panel derecho. Cambio en la mitad IZQUIERDA
-    (modelo 3D animado) NO mueve la firma → skip OCR; cambio EN el panel (cambio de
-    agente) sí → re-OCR."""
-    from app.core.monitor import Monitor, _S18_SIG_MAX
+    """Gate OCR S18 (RNF-06): firma de DOS componentes (nombre+banner / stats) de la mitad
+    DERECHA. Cambio en la mitad IZQUIERDA (modelo 3D) NO mueve ninguna → skip OCR; cambio
+    en el bloque de stats O en el NOMBRE → re-OCR."""
+    from app.core.monitor import Monitor, _S18_SIG_MAX, _S18_SIG_NAME_MAX
     H, W = 1439, 2557
+
+    def _reocr(s1, s2):
+        """Replica la condición del gate: re-OCR si CUALQUIERA de las 2 componentes cambió."""
+        return (Monitor._sig_component_diff(s1[0], s2[0]) > _S18_SIG_NAME_MAX
+                or Monitor._sig_component_diff(s1[1], s2[1]) > _S18_SIG_MAX)
+
     a = np.zeros((H, W, 3), np.uint8)
-    a[int(0.39 * H):int(0.74 * H), int(0.54 * W):int(0.96 * W)] = 30   # panel de stats
+    a[int(0.18 * H):int(0.39 * H), int(0.54 * W):int(0.96 * W)] = 40   # nombre + banner
+    a[int(0.39 * H):int(0.74 * H), int(0.54 * W):int(0.96 * W)] = 30   # bloque de stats
     sig_a = Monitor._s18_stats_signature(a)
-    assert sig_a is not None
-    # "Animación" en la mitad izquierda (modelo del PJ) → la firma del panel no cambia.
-    b = a.copy()
-    b[:, :int(0.50 * W)] = 220
-    assert Monitor._sig_component_diff(sig_a, Monitor._s18_stats_signature(b)) <= _S18_SIG_MAX
-    # Cambio DENTRO del panel (otro agente / level-up) → diff grande → re-OCR.
-    c = a.copy()
-    c[int(0.40 * H):int(0.73 * H), int(0.55 * W):int(0.95 * W)] = 220
-    assert Monitor._sig_component_diff(sig_a, Monitor._s18_stats_signature(c)) > _S18_SIG_MAX
+    assert sig_a is not None and isinstance(sig_a, tuple) and len(sig_a) == 2
+    # "Animación" en la mitad izquierda (modelo del PJ) → ninguna componente cambia → skip.
+    b = a.copy(); b[:, :int(0.50 * W)] = 220
+    assert not _reocr(sig_a, Monitor._s18_stats_signature(b))
+    # Cambio en el bloque de STATS (level-up) → re-OCR.
+    c = a.copy(); c[int(0.40 * H):int(0.73 * H), int(0.55 * W):int(0.95 * W)] = 220
+    assert _reocr(sig_a, Monitor._s18_stats_signature(c))
+    # Cambio SOLO en el NOMBRE (otro agente del MISMO rol, stats parecidos) → re-OCR. Fix
+    # QA 2026-06-20 (N.º 11 -> Sporos, ambos Ataque): antes el gate quedaba pegado porque la
+    # firma solo miraba el bloque de stats y a 32×32 la diferencia de dígitos se diluía.
+    e = a.copy(); e[int(0.19 * H):int(0.31 * H), int(0.55 * W):int(0.95 * W)] = 220
+    assert _reocr(sig_a, Monitor._s18_stats_signature(e))
 
 
 def test_s17_post_emit_skip_no_ocr(monkeypatch):

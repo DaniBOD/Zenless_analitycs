@@ -117,6 +117,10 @@ _S17_SIG_HEX_MAX = 3.0
 # cambio real (stats viejos). El cambio de agente es un diff enorme; el shimmer de
 # fondo del panel queda por debajo.
 _S18_SIG_MAX = 2.5
+# Umbral de la componente NOMBRE+banner de la firma S18 (QA 2026-06-20): un cambio de
+# agente mueve mucho esta región (nombre/rol/elemento distintos); el shimmer del mismo
+# agente queda bien por debajo. Algo más holgado que el de stats por los bordes del texto.
+_S18_SIG_NAME_MAX = 3.0
 # Throttle del fallback deep_detect S18 sobre S12 (RNF-06): máx 1 intento de OCR cada
 # N seg. En pantallas de carga/transición clasificadas como S12, esto corría OCR cada
 # frame → spike que colgaba la UI al abrir el juego. Un deep_detect exitoso igual promueve
@@ -802,21 +806,34 @@ class Monitor:
 
     @staticmethod
     def _s18_stats_signature(frame):
-        """Firma del panel de stats S18, sin OCR (RNF-06). 32×32 gris del panel AGENT
-        INFO (x∈[0.54,0.96], y∈[0.39,0.74]) — texto estático en la mitad DERECHA, donde
-        NO está el modelo 3D animado del PJ (mitad izquierda). Cambia al cambiar de agente
-        o subir de nivel. None si no se puede leer."""
+        """Firma del panel S18, sin OCR (RNF-06). Devuelve una TUPLA de dos 32×32 grises de
+        la mitad DERECHA (estática, sin el modelo 3D animado de la izquierda):
+          [0] NOMBRE+banner (y∈[0.18,0.39]): nombre del PJ + nivel + rol/elemento.
+          [1] STATS (y∈[0.39,0.74]): el bloque de atributos.
+        El gate re-OCR-ea si CUALQUIERA cambió. La componente de nombre distingue agentes del
+        MISMO rol con stats parecidos (N.º 11 vs Sporos, ambos Ataque) — donde el bloque de
+        stats solo, a 32×32, diluía la diferencia de dígitos y el gate quedaba pegado (QA
+        2026-06-20). None si no se puede leer."""
         if frame is None or getattr(frame, "size", 0) == 0:
             return None
         try:
             import cv2
             H, W = frame.shape[:2]
-            panel = frame[int(0.39 * H):int(0.74 * H), int(0.54 * W):int(0.96 * W)]
-            if panel.size == 0:
+            x0, x1 = int(0.54 * W), int(0.96 * W)
+
+            def _band(y_a, y_b):
+                sub = frame[int(y_a * H):int(y_b * H), x0:x1]
+                if sub.size == 0:
+                    return None
+                return cv2.cvtColor(
+                    cv2.resize(sub, (32, 32), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
+                ).astype(np.float32)
+
+            name_sig = _band(0.18, 0.39)   # nombre + banner rol/elemento (identidad del PJ)
+            stats_sig = _band(0.39, 0.74)  # bloque de atributos
+            if name_sig is None or stats_sig is None:
                 return None
-            return cv2.cvtColor(
-                cv2.resize(panel, (32, 32), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
-            ).astype(np.float32)
+            return (name_sig, stats_sig)
         except Exception:
             return None
 
@@ -1075,13 +1092,16 @@ class Monitor:
                 "(conf=%.2f)", state.confidence,
             )
 
-        # Gate RNF-06: saltar el OCR si el panel de stats no cambió desde el último ciclo.
+        # Gate RNF-06: saltar el OCR si el panel S18 no cambió desde el último ciclo.
         # La extracción continua existe para detectar cambio de agente; sin cambio visual no
         # hay nada nuevo que extraer ni re-loggear (el log del controller es edge-triggered).
-        # Self-correcting: cualquier cambio (agente nuevo, level-up) supera _S18_SIG_MAX → OCR.
+        # Firma de DOS componentes (nombre+banner / stats): re-OCR si CUALQUIERA cambió. La
+        # componente de nombre destraba el cambio entre agentes del mismo rol con stats
+        # parecidos (antes el bloque de stats solo, a 32×32, no superaba el umbral → pegado).
         sig = self._s18_stats_signature(frame)
         if (sig is not None and self._s18_last_sig is not None
-                and self._sig_component_diff(sig, self._s18_last_sig) <= _S18_SIG_MAX):
+                and self._sig_component_diff(sig[0], self._s18_last_sig[0]) <= _S18_SIG_NAME_MAX
+                and self._sig_component_diff(sig[1], self._s18_last_sig[1]) <= _S18_SIG_MAX):
             return
         self._s18_last_sig = sig
 
@@ -1090,6 +1110,13 @@ class Monitor:
         # per-ciclo queda en debug para no spamear.
         log.debug("[S18] Extrayendo stats de pantalla...")
         result = self._process_agent_stats(frame, state)
+        # Gate RNF-06 (cont.): comprometer el sig SOLO si la extracción fue UTILIZABLE. Un
+        # frame de transición (confianza 0 / None) NO debe comprometer el gate → el próximo
+        # dispatch reintenta el MISMO panel en vez de quedar PEGADO con una lectura mala
+        # (parte del 'S18 pegado', QA 2026-06-20). Una lectura buena commitea → panel
+        # estático se saltea (anti-fuga intacto).
+        if result is None or getattr(result, "confianza_global", 0.0) <= 0.0:
+            self._s18_last_sig = None
 
         # Detección explícita de cambio de agente para el log.
         if result is not None and getattr(result, "agente_nombre", None):
