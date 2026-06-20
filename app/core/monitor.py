@@ -342,6 +342,13 @@ class Monitor:
         self._s17_det_votes: dict[str, float] = {}
         self._s17_free_evidence: int = 0   # frames con badge sin cara (5R.B)
         self._s17_samples: int = 0         # frames muestreados del disco actual
+        # 5R.L.7.3 — PRESENCIA de badge (estructural, desacoplada de identidad): cuántos
+        # frames del disco actual tuvieron / no tuvieron avatar de dueño en cada superficie.
+        # El detail (loc ~100%) ARBITRA libre/equipado; el grid (post-gate L.7.2) corrobora.
+        self._s17_detail_present: int = 0
+        self._s17_detail_absent: int = 0
+        self._s17_grid_present: int = 0
+        self._s17_grid_absent: int = 0
         # 5R.L.6 — warmup del dueño: pasadas TOTALES del loop rápido para el disco actual
         # (cuenta todas, no solo las localizadas) + flag de "maduró pero dueño aún frío".
         self._s17_owner_passes: int = 0
@@ -889,6 +896,10 @@ class Monitor:
         self._s17_det_votes = {}
         self._s17_free_evidence = 0
         self._s17_samples = 0
+        self._s17_detail_present = 0
+        self._s17_detail_absent = 0
+        self._s17_grid_present = 0
+        self._s17_grid_absent = 0
         self._s17_owner_passes = 0
         self._s17_warming = False
         self._grid_diag_counts.clear()
@@ -1385,6 +1396,10 @@ class Monitor:
             self._s17_det_votes = {}
             self._s17_free_evidence = 0
             self._s17_samples = 0
+            self._s17_detail_present = 0
+            self._s17_detail_absent = 0
+            self._s17_grid_present = 0
+            self._s17_grid_absent = 0
             self._s17_owner_passes = 0         # 5R.L.6: reiniciar el warmup del dueño
             if self._id_diag_on:
                 self._id_diag = {"samples": 0, "grid_loc": 0, "grid_match": 0,
@@ -1396,8 +1411,10 @@ class Monitor:
         badge = crop_grid_selected_badge(frame)
         g_name, g_conf = None, 0.0
         if badge is None:
+            self._s17_grid_absent += 1         # gate L.7.2: sin avatar en el tile (libre/NOLOC)
             self._dump_grid_diag(frame, None, None, 0.0, False, sig)   # grid no localizó (NOLOC)
         else:
+            self._s17_grid_present += 1        # hay avatar de dueño en el tile (equipado)
             g_name, g_conf, rejected = self._identifier.s17_match(badge)
             self._dump_grid_diag(frame, badge, g_name, g_conf, rejected, sig)
             self._s17_samples += 1
@@ -1412,7 +1429,10 @@ class Monitor:
         # calibrada por el grid). Inerte hasta que la librería de detalle se cosecha.
         det = crop_detail_badge(frame)
         d_name, d_conf = None, 0.0
-        if det is not None:
+        if det is None:
+            self._s17_detail_absent += 1       # 5R.L.7.3: el árbitro no vio avatar (libre?)
+        else:
+            self._s17_detail_present += 1       # hay avatar de dueño en el panel (equipado)
             d_name, d_conf, _drej = self._identifier.s17_match_detail(det)
             if d_name:
                 self._s17_det_votes[d_name] = self._s17_det_votes.get(d_name, 0.0) + float(d_conf)
@@ -1500,15 +1520,21 @@ class Monitor:
                     or not self._sig_close(sig, self._s17_owner_sig))
 
     def _s17_is_libre(self, frame) -> bool:
-        """True si el disco mirado está LIBRE (nadie lo equipa). CONSERVADOR: exige que
-        NUNCA se haya identificado un dueño y que la evidencia de 'libre' (badge en
-        reject-set / conf muy baja) sea consistente y mayoritaria. Un frame malo suelto
-        (p.ej. Jane rechazada una vez) NO alcanza → queda 'dueño incierto', no LIBRE.
-        Cualquier voto (grid O detail) = hubo un avatar → NO libre (RNF-02 conservador)."""
+        """True si el disco mirado está LIBRE (nadie lo equipa). ÁRBITRO DE PRESENCIA
+        (5R.L.7.3, desacoplado de la identidad): un disco está libre si NINGUNA superficie
+        vio un avatar de dueño. Como el grid ya está gateado por presencia (L.7.2) y el
+        detail tiene su propio gate (L.2b), CUALQUIER voto implica que una superficie vio
+        un avatar real → NO libre. Regla completa y conservadora (≥2 frames):
+          - sin votos (grid ni detail),
+          - el grid (post-gate) NUNCA presentó avatar en el disco,
+          - el detail (loc ~100%, el árbitro) NUNCA presentó avatar y se intentó ≥2 veces.
+        Un frame de transición suelto no declara libre. Si alguna superficie vio avatar
+        (voto o presencia) → queda 'equipado/incierto', nunca falso-libre (RNF-02)."""
         if self._s17_grid_votes or self._s17_det_votes or not self._s17_owner_sig_matches(frame):
             return False
-        return (self._s17_free_evidence >= _S17_FREE_MIN_FRAMES
-                and self._s17_free_evidence >= 0.5 * max(1, self._s17_samples))
+        if self._s17_grid_present or self._s17_detail_present:
+            return False                      # alguna superficie vio un avatar → no libre
+        return self._s17_detail_absent >= _S17_FREE_MIN_FRAMES
 
     def _assign_s17_pj(self, disc: DiscParsed, frame) -> None:
         """
@@ -1581,6 +1607,18 @@ class Monitor:
                 disc.equip_libre = False
                 self._log_s17_assign(
                     ("det_owner", owner), "[detalle] grilla NOLOC · dueño=%s (detalle).", owner
+                )
+                return
+            # ÁRBITRO DE PRESENCIA (5R.L.7.3): grid gateado (sin avatar) + detalle sin
+            # resolver. Si NINGUNA superficie vio un avatar en ≥2 frames → el disco está
+            # LIBRE (estructural, no por identidad). Antes acá se cortaba en "sin asignar"
+            # → los discos libres nunca declaraban LIBRE (quedaban en limbo, QA 2026-06-20).
+            if self._s17_is_libre(frame):
+                disc.equip_detectado = False
+                disc.equip_pj_visual = None
+                disc.equip_libre = True
+                self._log_s17_assign(
+                    ("libre",), "[S17] disco LIBRE (sin dueño en grilla ni detalle)."
                 )
                 return
             disc.equip_pj_visual = None

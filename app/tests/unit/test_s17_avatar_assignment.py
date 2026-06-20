@@ -464,10 +464,16 @@ def test_monitor_candidato_incierto_abstiene(monkeypatch):
 
 
 def test_monitor_disco_libre_consistente(monkeypatch):
-    """5R.B: badge en reject-set/conf-muy-baja de forma consistente + cero dueños →
-    LIBRE. (Conservador: requiere ≥2 frames de evidencia mayoritaria.)"""
-    m = _monitor_badge(monkeypatch, sim=0.40, owner=None)
-    m._identifier = _StubIdent(sim=0.40, owner=None, free=True)   # s17_match → rejected
+    """5R.L.7.3: ÁRBITRO DE PRESENCIA. Disco libre = ninguna superficie ve avatar
+    (grid gateado a None por L.7.2 + detalle None) en ≥2 frames → LIBRE. Desacoplado
+    de la identidad (no depende de que el matcher rechace)."""
+    import numpy as np
+    import app.core.monitor as mon
+    monkeypatch.setattr(mon, "crop_grid_selected_badge", lambda f: None)   # gate: sin avatar
+    monkeypatch.setattr(mon, "crop_detail_badge", lambda f: None)          # detalle: sin avatar
+    m = _monitor()
+    m._identifier = _StubIdent(sim=0.40, owner=None, free=True)
+    m._last_agent_name = "Zhu Yuan"
     m._s17_last_slot = 1
     disc = _disc(slot=1)
     for _ in range(4):
@@ -479,15 +485,40 @@ def test_monitor_disco_libre_consistente(monkeypatch):
 
 
 def test_monitor_un_frame_rejected_no_declara_libre(monkeypatch):
-    """Anti-falso-LIBRE (caso Jane): un solo frame rechazado NO alcanza para LIBRE
-    (mínimo de evidencia) → queda 'dueño incierto'."""
-    m = _monitor_badge(monkeypatch, sim=0.40, owner=None)
+    """Anti-falso-LIBRE (conservador, 2 frames): un solo frame sin avatar NO alcanza
+    para LIBRE (detail_absent < _S17_FREE_MIN_FRAMES) → queda 'dueño incierto'."""
+    import app.core.monitor as mon
+    monkeypatch.setattr(mon, "crop_grid_selected_badge", lambda f: None)
+    monkeypatch.setattr(mon, "crop_detail_badge", lambda f: None)
+    m = _monitor()
     m._identifier = _StubIdent(sim=0.40, owner=None, free=True)
+    m._last_agent_name = "Zhu Yuan"
     m._s17_last_slot = 1
     disc = _disc(slot=1)
-    m._sample_s17_owner(_frame())                    # 1 solo frame de evidencia
+    m._sample_s17_owner(_frame())                    # 1 solo frame sin avatar
     m._assign_s17_pj(disc, _frame())
     assert disc.equip_libre is False                 # < _S17_FREE_MIN_FRAMES → no libre
+
+
+def test_monitor_detalle_ve_avatar_no_declara_libre(monkeypatch):
+    """5R.L.7.3 (guard Lycaon/RNF-02): si el DETALLE ve un avatar (aunque el matcher no
+    lo identifique) con el grid en NOLOC → NO es libre. La presencia manda: hubo un dueño
+    visible → 'incierto', nunca falso-libre."""
+    import numpy as np
+    import app.core.monitor as mon
+    monkeypatch.setattr(mon, "crop_grid_selected_badge", lambda f: None)            # grid NOLOC
+    monkeypatch.setattr(mon, "crop_detail_badge",
+                        lambda f: np.zeros((40, 40, 3), np.uint8))                  # detalle CON avatar
+    m = _monitor()
+    m._identifier = _StubIdent(sim=0.40, owner=None, det_owner=None)   # detalle no resuelve PJ
+    m._last_agent_name = "Zhu Yuan"
+    m._s17_last_slot = 1
+    disc = _disc(slot=1)
+    for _ in range(4):
+        m._sample_s17_owner(_frame())
+    m._assign_s17_pj(disc, _frame())
+    assert disc.equip_libre is False                 # detalle vio avatar → no libre
+    assert disc.equip_pj_visual is None              # pero el matcher no lo identificó → incierto
 
 
 def test_monitor_voto_dueno_gana_pese_a_frames_inciertos(monkeypatch):
@@ -1065,6 +1096,37 @@ def test_s17_warmup_no_difiere_equipado(monkeypatch):
     st = ScreenState("S17", 1.0, "tmpl")
     m._process_disc_s17_continuous(None, st)   # owner_passes=0 pero RESUELTO → emite ya
     assert len(emitted) == 1 and m._s17_warming is False
+
+
+def test_s17_libre_emite_sin_warmup_completo(monkeypatch):
+    """5R.L.7.4: un disco LIBRE resuelto por el ÁRBITRO DE PRESENCIA (detalle ausente ≥2,
+    grid gateado sin avatar) queda 'resuelto' (equip_libre) y emite al madurar SIN esperar
+    las _S17_OWNER_MIN_SAMPLES pasadas de warmup — la latencia se paga solo en los inciertos."""
+    from app.core.detector import ScreenState
+    import numpy as np
+    import app.core.monitor as mon
+    monkeypatch.setattr(mon, "crop_grid_selected_badge", lambda f: None)   # gate: sin avatar
+    monkeypatch.setattr(mon, "crop_detail_badge", lambda f: None)          # detalle: sin avatar
+    emitted = []
+    m = _monitor()
+    m._on_disc = lambda disc, st: emitted.append(disc)
+    m._identifier = _StubIdent(sim=0.40, owner=None)
+    m._last_agent_name = "Zhu Yuan"
+    m._s17_last_slot = 1                        # mismo slot que el disco → NO anchor (candidato/NOLOC)
+    sig = (np.zeros((48, 24), np.float32), np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
+    monkeypatch.setattr(m, "_s17_disc_signature", lambda frame: sig)
+    monkeypatch.setattr("app.core.monitor.parse_disc_s17_full",
+                        lambda frame, ocr: (_disc_full(slot=1), None))
+    # El loop rápido (10fps) ya juntó la evidencia de presencia: 2 frames sin avatar.
+    m._s17_owner_sig = sig
+    m._s17_detail_absent = mon._S17_FREE_MIN_FRAMES
+    m._s17_owner_passes = 1                     # < _S17_OWNER_MIN_SAMPLES (no calentó)
+    st = ScreenState("S17", 1.0, "tmpl")
+    m._process_disc_s17_continuous(None, st)
+    assert len(emitted) == 1
+    assert emitted[0].equip_libre is True
+    assert m._s17_owner_passes < mon._S17_OWNER_MIN_SAMPLES   # emitió sin warmup completo
+    assert m._s17_warming is False
 
 
 def test_s17_continuo_no_re_emite_por_parpadeo_de_firma(monkeypatch):

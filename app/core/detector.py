@@ -274,6 +274,19 @@ _TILE_H_FRAC = np.array([0.095, 0.140])     # [min,max] alto / H
 _TILE_ASPECT_MIN, _TILE_ASPECT_MAX = 0.78, 1.28
 _TILE_FILL_MAX = 0.45
 
+# Gate de PRESENCIA del badge del grid (5R.L.7.2): un tile EQUIPADO lleva un retrato
+# circular del dueño en la esquina; un tile LIBRE NO (arte/candado/oscuro). El crop de
+# offset fijo (crop_grid_selected_badge) no distinguía → en libres recortaba la esquina
+# vacía y el matcher la votaba a un PJ (falso "Cissia", QA 2026-06-20 → viola RNF-02).
+# Gate = el avatar real tiene (a) un ANILLO (Hough) + (b) un blob saturado. Calibrado sobre
+# 218 esquinas equipadas (audit/free_disc_presence_diag.md): hough≥1 en 218/218, blob≥245.
+# Umbral de área 150 (margen bajo el piso 245 → 0 regresión en equipados). El lado LIBRE
+# (no validable offline) lo respalda el árbitro del detail; se afina en QA en vivo.
+_GRID_BADGE_SAT_MIN = 50                       # saturación del blob de avatar (== _DET_SAT_MIN)
+_GRID_BADGE_MIN_AREA = 150                     # área mín del blob saturado (px)
+_GRID_BADGE_HOUGH_RMIN_F = 0.30                # radio mín del anillo / lado del crop
+_GRID_BADGE_HOUGH_RMAX_F = 0.60                # radio máx del anillo / lado del crop
+
 # Detalle-badge (5R.C.4): avatar del dueño junto a 'Nivel 15/15' del panel de detalle.
 # Localización MUCHO más robusta que el grid-tile (100% vs 73% en video): fija en X
 # (~0.495), fondo oscuro (sin confound de arte amarillo), siempre presente (sin NOLOC de
@@ -343,9 +356,36 @@ def _selected_grid_tile_bbox(frame: np.ndarray):
         return None
 
 
+def _grid_badge_present(crop: np.ndarray | None) -> bool:
+    """¿El crop de esquina del tile contiene un AVATAR de dueño (equipado) y no una
+    esquina vacía/arte/candado (libre)? (5R.L.7.2). Un avatar real = anillo circular
+    (Hough) + blob saturado. Sin ambos → no hay dueño → el grid no debe votar (RNF-02:
+    evita el falso 'Cissia' en discos libres). Calibrado en audit/free_disc_presence_diag.md
+    para 0 regresión en 218 equipados; el lado libre lo respalda el árbitro del detail."""
+    if crop is None or crop.size == 0:
+        return False
+    try:
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        mask = (hsv[:, :, 1] > _GRID_BADGE_SAT_MIN).astype(np.uint8) * 255
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+        n, _lab, stats, _c = cv2.connectedComponentsWithStats(mask, 8)
+        if n <= 1 or int(stats[1:, 4].max()) < _GRID_BADGE_MIN_AREA:
+            return False                      # sin blob saturado → esquina vacía/oscura
+        h = crop.shape[0]
+        gray = cv2.medianBlur(cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY), 3)
+        circles = cv2.HoughCircles(
+            gray, cv2.HOUGH_GRADIENT, dp=1.2, minDist=h, param1=120, param2=18,
+            minRadius=int(_GRID_BADGE_HOUGH_RMIN_F * h), maxRadius=int(_GRID_BADGE_HOUGH_RMAX_F * h),
+        )
+        return circles is not None             # anillo del avatar presente
+    except Exception:
+        return False
+
+
 def crop_grid_selected_badge(frame: np.ndarray) -> np.ndarray | None:
     """Recorta (círculo) el badge de dueño del tile seleccionado de la grilla S17.
-    Devuelve el crop BGR o None si no hay tile resaltado. Es el ícono que el matcher
+    Devuelve el crop BGR o None si no hay tile resaltado O si el tile NO tiene avatar
+    de dueño (disco LIBRE → gate de presencia, 5R.L.7.2). Es el ícono que el matcher
     de badge identifica para saber QUÉ PJ tiene equipado el disco candidato."""
     bb = _selected_grid_tile_bbox(frame)
     if bb is None:
@@ -356,7 +396,9 @@ def crop_grid_selected_badge(frame: np.ndarray) -> np.ndarray | None:
         return None
     H, W = frame.shape[:2]
     crop = frame[max(0, cy - r):min(H, cy + r), max(0, cx - r):min(W, cx + r)]
-    return crop if crop.size else None
+    if not crop.size or not _grid_badge_present(crop):
+        return None                            # tile sin avatar = disco libre → NOLOC
+    return crop
 
 
 def crop_detail_badge(frame: np.ndarray) -> np.ndarray | None:
