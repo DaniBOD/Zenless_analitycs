@@ -1533,7 +1533,6 @@ class Monitor:
         slot = disc.slot or 0
         is_equipped = bool(latch) and slot != 0 and slot != self._s17_last_slot
         if is_equipped:
-            from app.core.stats_vocab import _norm_key
             voted = self._s17_voted_owner(frame)
             # ANCHOR-WARMUP (QA 2026-06-20): el ancla ("1er disco del slot = equipado por el
             # latch") puede caer sobre un CANDIDATO si el usuario NAVEGÓ dentro del slot. Si
@@ -1599,20 +1598,29 @@ class Monitor:
                 "[S17] sin latch · dueño=%s.", owner[0] if owner else "incierto",
             )
             return
-        # Mismo slot, disco distinto → CANDIDATO. Si el badge matchea el latch (volviste
-        # al equipado) re-confirma; si no, nombra el dueño SIN asignar al latch.
+        # Mismo slot, disco distinto → CANDIDATO. El badge VOTADO (identify vs TODO el roster,
+        # 0-wrong) es el dueño real y MANDA — sea el latch (volviste al equipado) u OTRO PJ.
+        # NO re-confirmar el latch por un sim-a-latch alto ANTES de mirar el voto: un candidato
+        # puede parecerse al PJ de la página (QA 2026-06-20: el badge de Seth vota 0.99 pero
+        # sim-a-Nicole 0.91 ≥ guard → lo asignaba a Nicole). El sim-a-latch queda de FALLBACK,
+        # solo cuando el voto no resolvió.
+        owner = self._s17_voted_owner(frame)
+        if owner:
+            disc.equip_detectado = True
+            disc.equip_pj_visual = owner
+            disc.equip_libre = False
+            if _norm_key(owner) == _norm_key(latch):
+                self._set_latch_assignment(disc, latch, 1.0, "voto=latch")   # volviste al equipado
+            else:
+                self._log_s17_assign(("grid_owner", owner), "[grilla] disco de otro PJ · dueño=%s.", owner)
+            return
+        # Sin voto confiable: re-confirmar por sim-a-latch (badge se parece al equipado), o LIBRE
+        # consistente, o incierto.
         sim = self._identifier.s17_similarity(badge, latch)
         if sim is not None and sim >= _S17_GUARD_MIN:
             self._set_latch_assignment(disc, latch, round(sim, 3), f"{sim:.3f}")
             return
-        # Decisión 3-vías por VOTACIÓN del loop rápido (5R.5c + 5R.B), no por el frame
-        # suelto → sin parpadeo: (1) dueño votado, (2) LIBRE consistente, (3) incierto.
-        owner = self._s17_voted_owner(frame)
-        if owner:
-            disc.equip_pj_visual = owner
-            disc.equip_libre = False
-            self._log_s17_assign(("grid_owner", owner), "[grilla] disco de otro PJ · dueño=%s.", owner)
-        elif self._s17_is_libre(frame):
+        if self._s17_is_libre(frame):
             disc.equip_pj_visual = None
             disc.equip_libre = True
             self._log_s17_assign(("grid_libre",), "[grilla] disco LIBRE (no equipado por nadie).")
