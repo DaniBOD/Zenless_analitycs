@@ -870,6 +870,21 @@ def test_s17_firma_detecta_cambio_de_disco():
     assert m._is_new_s17_disc(sigB)        # otro disco
 
 
+def test_s17_firma_distingue_set_por_nombre():
+    """QA 2026-06-20: dos discos del MISMO slot (candidatos) con detail+hex IDÉNTICOS pero
+    SET distinto se separan por el TÍTULO. Antes colisionaban (Monarca↔Nana, ambos main
+    HP 2200, mismo hex) → el 2º no se re-detectaba. El título no estaba en la firma."""
+    m = _monitor()
+    base = np.full((1440, 2560, 3), 30, np.uint8)
+    fa = base.copy()
+    fb = base.copy()
+    # Solo difiere la región del TÍTULO del set (y∈[0.05,0.19], x∈[0.31,0.58]).
+    fb[int(0.05 * 1440):int(0.19 * 1440), int(0.31 * 2560):int(0.58 * 2560)] = 220
+    sa, sb = m._s17_disc_signature(fa), m._s17_disc_signature(fb)
+    assert m._sig_close(sa, sa)
+    assert not m._sig_close(sa, sb), "distinto set (título) debe verse como disco distinto"
+
+
 _SLOTS_DIR = REPO / "Documentacion" / "Screenshots_Triggers" / "Discos_Triggers" / "14_Slots_equipamiento"
 
 
@@ -977,7 +992,7 @@ def test_s17_continuo_emite_una_vez_al_madurar(monkeypatch):
     m = _monitor()
     m._on_disc = lambda disc, st: emitted.append(disc)
     # Firma estable (mismo disco) y sin avatar.
-    sig = (np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
+    sig = (np.zeros((48, 24), np.float32), np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
     monkeypatch.setattr(m, "_s17_disc_signature", lambda frame: sig)
     # 5R.L.6: el real SIEMPRE resuelve el dueño (owner/libre/incierto); acá lo marcamos
     # 'libre' (resuelto) para que emita al madurar sin entrar al warmup del dueño incierto.
@@ -1009,7 +1024,7 @@ def test_s17_warmup_difiere_emision_si_dueno_incierto(monkeypatch):
     emitted = []
     m = _monitor()
     m._on_disc = lambda disc, st: emitted.append(disc)
-    sig = (np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
+    sig = (np.zeros((48, 24), np.float32), np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
     monkeypatch.setattr(m, "_s17_disc_signature", lambda frame: sig)
     # Dueño SIEMPRE incierto: el stub NO setea equip_* → _s17_owner_resolved False.
     monkeypatch.setattr(m, "_assign_s17_pj", lambda disc, face: None)
@@ -1037,7 +1052,7 @@ def test_s17_warmup_no_difiere_equipado(monkeypatch):
     emitted = []
     m = _monitor()
     m._on_disc = lambda disc, st: emitted.append(disc)
-    sig = (np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
+    sig = (np.zeros((48, 24), np.float32), np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
     monkeypatch.setattr(m, "_s17_disc_signature", lambda frame: sig)
     # Dueño resuelto por latch (equipado): _s17_owner_resolved True → sin warmup.
     monkeypatch.setattr(m, "_assign_s17_pj",
@@ -1067,7 +1082,8 @@ def test_s17_continuo_no_re_emite_por_parpadeo_de_firma(monkeypatch):
     seqsig = itertools.cycle([0.0, 100.0])
     monkeypatch.setattr(
         m, "_s17_disc_signature",
-        lambda frame: (np.full((48, 48), next(seqsig), np.float32), np.zeros((24, 24), np.float32)),
+        lambda frame: (np.zeros((48, 24), np.float32),
+                       np.full((48, 48), next(seqsig), np.float32), np.zeros((24, 24), np.float32)),
     )
     # 5R.L.6: dueño 'resuelto' (libre) → emite al madurar sin warmup.
     monkeypatch.setattr(m, "_assign_s17_pj", lambda disc, face: setattr(disc, "equip_libre", True))
@@ -1102,7 +1118,7 @@ def test_s17_dedup_identidad_insensible_a_mojibake_de_tilde(monkeypatch):
     m = _monitor()
     m._on_disc = lambda disc, st: emitted.append(disc)
     # firma fija (mismo disco), pero el set cambia de mojibake cada ciclo
-    sig = (np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
+    sig = (np.zeros((48, 24), np.float32), np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
     monkeypatch.setattr(m, "_s17_disc_signature", lambda frame: sig)
     # 5R.L.6: dueño 'resuelto' (libre) → emite al madurar sin warmup.
     monkeypatch.setattr(m, "_assign_s17_pj", lambda disc, face: setattr(disc, "equip_libre", True))
@@ -1142,7 +1158,7 @@ def test_s17_continuo_baja_confianza_no_contamina(monkeypatch):
     emitted = []
     m = _monitor()
     m._on_disc = lambda disc, st: emitted.append(disc)
-    sig = (np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
+    sig = (np.zeros((48, 24), np.float32), np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
     monkeypatch.setattr(m, "_s17_disc_signature", lambda frame: sig)
     monkeypatch.setattr(m, "_assign_s17_pj", lambda disc, face: None)
     bad = _disc_full(); bad.confianza_global = 0.5

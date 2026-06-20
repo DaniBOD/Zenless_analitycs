@@ -96,10 +96,8 @@ _S17_AGG_MAX_CYCLES = 5
 # Acotado: si el dueño no aparece tras el warmup (o se llega al techo de ciclos), emite igual
 # (incierto/libre, RNF-02 abstención). Los equipados (latch certero) y los ya-votados NO
 # esperan → cero latencia extra; el costo se paga solo donde había riesgo de incierto.
-_S17_OWNER_MIN_SAMPLES = 3     # pasadas del loop rápido para "calentar" el voto del dueño
-                              # (QA 2026-06-20: 4→3 para más responsividad en incierto/libre;
-                              #  P(grilla localiza ≥1 de 3 frames) ≈ 99% → casi sin costo de yield)
-_S17_WARM_CADENCE_MS = 80     # mientras calienta, re-chequear el voto rápido (no esperar 1s)
+_S17_OWNER_MIN_SAMPLES = 4     # pasadas del loop rápido para "calentar" el voto del dueño
+_S17_WARM_CADENCE_MS = 100     # mientras calienta, re-chequear el voto rápido (no esperar 1s)
 
 # Firma HÍBRIDA del disco S17 (gobierna la re-captura; BARATA, sin OCR — RNF-06).
 # Dos componentes en gris comparadas con OR:
@@ -112,7 +110,13 @@ _S17_WARM_CADENCE_MS = 80     # mientras calienta, re-chequear el voto rápido (
 # umbral); frame idéntico = 0. La firma 12×12 vieja NO distinguía slots del mismo
 # set (bug QA 2026-06-07). Re-capturar el mismo disco es idempotente (update
 # in-place) → se sesga a sensibilidad. Ver Dev_IA 2026-06-07.
-_S17_SIG_DETAIL_MAX = 5.0
+# Nombre del set (título): texto estático; un set distinto = diff grande, mismo set = ~0.
+# QA 2026-06-20: separa discos de SET distinto en el MISMO slot (Monarca↔Nana, ambos main
+# HP 2200, que el detail solo no distinguía). DETAIL bajó 5.0→3.5 para captar mejor las
+# diferencias de substats entre discos del MISMO set (el bloque es texto estático → sin
+# riesgo de falso-nuevo por animación).
+_S17_SIG_NAME_MAX = 3.0
+_S17_SIG_DETAIL_MAX = 3.5
 _S17_SIG_HEX_MAX = 3.0
 # Gate de OCR S18 (RNF-06): umbral de diff de la firma del panel de stats. Sensible
 # (bajo) a propósito — errar hacia re-OCR de más (sin riesgo) antes que saltarse un
@@ -764,31 +768,38 @@ class Monitor:
     @staticmethod
     def _s17_disc_signature(frame):
         """
-        Firma HÍBRIDA del disco S17, sin OCR (RNF-06). Devuelve `(sig_detail,
+        Firma HÍBRIDA del disco S17, sin OCR (RNF-06). Devuelve `(sig_name, sig_detail,
         sig_hex)` o None:
-          - sig_detail: 48×48 gris del bloque main+substats (x∈[0.30,0.52],
-            y∈[0.22,0.56]) — lo que difiere entre discos del mismo set.
-          - sig_hex: 24×24 gris del hexágono (x∈[0.58,0.95], y∈[0.18,0.88]) — el
-            anillo de selección se mueve al cambiar de slot.
-        Identifica el disco mirado y cambia al navegar la grilla / cambiar de slot
-        aunque el set sea el mismo.
+          - sig_name: 48×24 gris del TÍTULO del set + slot (x∈[0.31,0.58], y∈[0.05,0.19]).
+            Distingue discos de SET distinto en el MISMO slot (caso QA 2026-06-20:
+            Monarca↔Nana, ambos main HP 2200 → el detail solo no los separaba; el título
+            NO estaba en la firma). Texto estático → sin ruido de animación.
+          - sig_detail: 48×48 gris del bloque main+substats (x∈[0.30,0.52], y∈[0.22,0.56]) —
+            distingue discos del MISMO set por sus substats.
+          - sig_hex: 24×24 gris del hexágono (x∈[0.58,0.95], y∈[0.18,0.88]) — el anillo de
+            selección se mueve al cambiar de SLOT (pero NO al navegar candidatos del mismo
+            slot: ahí mandan name+detail).
         """
         if frame is None or getattr(frame, "size", 0) == 0:
             return None
         try:
             import cv2
             H, W = frame.shape[:2]
+            name = frame[int(0.05 * H):int(0.19 * H), int(0.31 * W):int(0.58 * W)]
             det = frame[int(0.22 * H):int(0.56 * H), int(0.30 * W):int(0.52 * W)]
             hexr = frame[int(0.18 * H):int(0.88 * H), int(0.58 * W):int(0.95 * W)]
-            if det.size == 0 or hexr.size == 0:
+            if name.size == 0 or det.size == 0 or hexr.size == 0:
                 return None
+            sig_name = cv2.cvtColor(
+                cv2.resize(name, (48, 24), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
+            ).astype(np.float32)
             sig_detail = cv2.cvtColor(
                 cv2.resize(det, (48, 48), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
             ).astype(np.float32)
             sig_hex = cv2.cvtColor(
                 cv2.resize(hexr, (24, 24), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
             ).astype(np.float32)
-            return (sig_detail, sig_hex)
+            return (sig_name, sig_detail, sig_hex)
         except Exception:
             return None
 
@@ -849,13 +860,16 @@ class Monitor:
     @staticmethod
     def _sig_close(a, b) -> bool:
         """
-        True si dos firmas híbridas son del MISMO disco: AMBAS componentes dentro de
-        su umbral. Si cualquiera supera su umbral ⇒ disco distinto (OR para disparar).
+        True si dos firmas híbridas son del MISMO disco: las TRES componentes (nombre,
+        detail, hex) dentro de su umbral. Si cualquiera supera su umbral ⇒ disco distinto
+        (OR para disparar). El nombre separa sets distintos en el mismo slot; el detail,
+        discos del mismo set; el hex, slots distintos.
         """
         if a is None or b is None:
             return False
-        return (Monitor._sig_component_diff(a[0], b[0]) <= _S17_SIG_DETAIL_MAX
-                and Monitor._sig_component_diff(a[1], b[1]) <= _S17_SIG_HEX_MAX)
+        return (Monitor._sig_component_diff(a[0], b[0]) <= _S17_SIG_NAME_MAX
+                and Monitor._sig_component_diff(a[1], b[1]) <= _S17_SIG_DETAIL_MAX
+                and Monitor._sig_component_diff(a[2], b[2]) <= _S17_SIG_HEX_MAX)
 
     def _reset_s17_disc_tracking(self) -> None:
         """Olvida el disco S17 en fusión (al salir de S17 o forzar re-captura)."""
