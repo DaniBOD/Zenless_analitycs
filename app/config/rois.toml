@@ -289,3 +289,17 @@ adrenalina_valor        = [0.855, 0.690, 0.110, 0.055]
 
 nivel_actual    = [0.470, 0.165, 0.10, 0.060]
 exp_barra       = [0.430, 0.435, 0.30, 0.045]
+
+
+# ===========================================================================
+# S15 — Menú de personajes (roster). El PJ SELECCIONADO se muestra como arte
+# grande a la izquierda + nombre en la barra inferior-izquierda. El nombre
+# basta para identificar (Fase M.1, parser_agent_stats.identify_menu_agent →
+# _match_agent → rol+elemento desde DB). Calibrado sobre Menu_Personajes/
+# Ejemplo_1-5 (2559x1439): "Nangong Yu"/"Astra Yao"/"Jane"/"Orfia y Magas"/
+# "César" OCR 0.95-1.00 (psm 7). x recorta tras el ícono redondo de cuenta y
+# antes de los sub-íconos de elemento/facción.
+# ===========================================================================
+[menu_personajes]
+
+nombre_seleccionado = [0.085, 0.855, 0.170, 0.070]

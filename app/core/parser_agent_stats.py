@@ -608,6 +608,31 @@ def _lookup_agent(nombre_ocr: str) -> tuple[str | None, str | None, str | None]:
     return _match_agent(nombre_ocr)
 
 
+def identify_menu_agent(
+    frame: np.ndarray, ocr: "OcrBackend"
+) -> tuple[str | None, str | None, str | None]:
+    """Identifica al PJ SELECCIONADO en el MENÚ DE PERSONAJES (S15) leyendo su nombre de
+    la barra inferior-izquierda y matcheándolo contra el roster (Fase M.1). Devuelve
+    (nombre, rol, elemento) — rol+elemento salen de la DB vía `_match_agent`. Read-only
+    (no escribe DB). Abstención (None, None, None) si el nombre no se lee o no matchea
+    (RNF-02). Calibrado: el OCR del nombre rinde 0.95-1.00 (psm 7); el match tolera el
+    sub-ícono que se cuela ('Astra Yao &' → Astra Yao) y nombres sin espacios
+    ('OrfiayMagas' → Orfia y Magas) y acentos ('César')."""
+    try:
+        roi = crop_named_roi(frame, "menu_personajes", "nombre_seleccionado")
+    except Exception:
+        return (None, None, None)
+    if roi is None or roi.size < 100:
+        return (None, None, None)
+    try:
+        text, _conf = ocr.text(roi, psm=7)
+    except Exception:
+        return (None, None, None)
+    if not text or not text.strip():
+        return (None, None, None)
+    return _match_agent(text)
+
+
 # ---------------------------------------------------------------------------
 # Capa 4 (2026-06-02) — Identificación por STATS (backbone determinista).
 #

@@ -28,7 +28,9 @@ from app.core.parser_disc import DiscParsed, parse_modal_detalle
 from app.core.parser_disc_s17 import (
     parse_disc_s17, parse_disc_s17_full, DiscAggregator, disc_is_mature,
 )
-from app.core.parser_agent_stats import AgentStatsParsed, parse_agent_stats, AgentStatsAggregator
+from app.core.parser_agent_stats import (
+    AgentStatsParsed, parse_agent_stats, AgentStatsAggregator, identify_menu_agent,
+)
 from app.core.agent_identifier import AgentIdentifier
 from app.core.ocr_backend import OcrBackend
 from app.core.stats_vocab import _norm_key
@@ -127,6 +129,10 @@ _S18_SIG_MAX = 2.5
 # agente mueve mucho esta región (nombre/rol/elemento distintos); el shimmer del mismo
 # agente queda bien por debajo. Algo más holgado que el de stats por los bordes del texto.
 _S18_SIG_NAME_MAX = 3.0
+# Gate del menú de personajes S15 (Fase M.1, RNF-06): firma 32×32 gris de la barra del
+# nombre (bottom-left); re-OCR solo si cambió el PJ seleccionado. Un cambio de PJ mueve mucho
+# el texto del nombre; el shimmer del mismo queda por debajo.
+_MENU_SIG_MAX = 3.0
 # Throttle del fallback deep_detect S18 sobre S12 (RNF-06): máx 1 intento de OCR cada
 # N seg. En pantallas de carga/transición clasificadas como S12, esto corría OCR cada
 # frame → spike que colgaba la UI al abrir el juego. Un deep_detect exitoso igual promueve
@@ -333,6 +339,10 @@ class Monitor:
         # Firma del último log de detalle S8/S19 emitido (edge-triggered): solo se
         # re-loguea cuando (code, name, identified, source) cambia.
         self._last_detail_sig: tuple | None = None
+        # Menú de personajes S15 (Fase M.1): firma del nombre (gate RNF-06) + firma del
+        # log emitido (edge-triggered). Se resetean al salir de S15 → re-entrar re-loguea.
+        self._menu_last_sig = None
+        self._last_menu_log_sig: tuple | None = None
         # Código del estado del ciclo anterior (para detectar el retroceso S17→S8:
         # Fase 4 — al volver del detalle del disco al hexágono es el MISMO PJ, así
         # que se hereda el latch en vez de re-identificar por avatar).
@@ -690,6 +700,11 @@ class Monitor:
         prev_code = self._prev_state_code
         self._prev_state_code = state.code
         self._handle_upgrade(frame, state)
+        # Menú de personajes (Fase M.1): al salir de S15, olvidar la firma del nombre y del
+        # log → re-entrar re-identifica y re-loguea. Barato (set a None cada frame no-S15).
+        if state.code != "S15":
+            self._menu_last_sig = None
+            self._last_menu_log_sig = None
         if state.code in _DISC_DETAIL_STATES:
             self._maybe_process_disc(frame, state)
             # Salimos de un agent-stats state → reset para que la próxima
@@ -727,6 +742,13 @@ class Monitor:
             # S8/S19: logging persistente + identidad heredada de S18 (sin stats).
             self._process_agent_detail_continuous(frame, state)
             self._processed_disc_state_code = None
+        elif state.code == "S15":
+            # Menú de personajes (Fase M.1): reconocer al PJ SELECCIONADO por el nombre
+            # bottom-left → log. Informativo (no escribe DB, no toca el latch de detalle).
+            self._process_agent_menu(frame, state)
+            self._processed_disc_state_code = None
+            self._reported_agent_stats_state_code = None
+            self._agent_stats_screen_logged = False
         else:
             # Estado intermedio (S1/S12/S15/etc.) — resetear dedup flags para
             # que la próxima entrada a un capturable o S18 re-dispare/re-loggee.
@@ -864,6 +886,26 @@ class Monitor:
             if name_sig is None or stats_sig is None:
                 return None
             return (name_sig, stats_sig)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _menu_name_signature(frame):
+        """Firma 32×32 gris de la barra del NOMBRE del menú de personajes S15 (bottom-left),
+        sin OCR (RNF-06). Gatea el re-OCR: si no cambió el PJ seleccionado, no vale re-leer.
+        Banda x∈[0.08,0.26] y∈[0.85,0.93] (= ROI menu_personajes::nombre_seleccionado). None
+        si no se puede leer."""
+        if frame is None or getattr(frame, "size", 0) == 0:
+            return None
+        try:
+            import cv2
+            H, W = frame.shape[:2]
+            sub = frame[int(0.85 * H):int(0.93 * H), int(0.08 * W):int(0.26 * W)]
+            if sub.size == 0:
+                return None
+            return cv2.cvtColor(
+                cv2.resize(sub, (32, 32), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
+            ).astype(np.float32)
         except Exception:
             return None
 
@@ -1296,6 +1338,31 @@ class Monitor:
         # ([reconocido]/[stats]/[completo]) EDGE-triggered (solo cuando el resultado
         # cambia). El procesamiento sí corre cada ciclo (madura parciales); el
         # post-merge interno quedó en debug.
+
+    def _process_agent_menu(self, frame, state: ScreenState) -> None:
+        """Menú de personajes (S15, Fase M.1): reconoce al PJ SELECCIONADO leyendo su
+        nombre de la barra bottom-left → `identify_menu_agent` → `_match_agent` (rol+elemento
+        de la DB). Loguea EDGE-triggered (1× por PJ). Gate RNF-06: re-OCR solo si la firma
+        del nombre cambió (cambió la selección). Informativo: no escribe DB ni toca el latch."""
+        sig = self._menu_name_signature(frame)
+        if (sig is not None and self._menu_last_sig is not None
+                and self._sig_component_diff(sig, self._menu_last_sig) <= _MENU_SIG_MAX):
+            return                          # mismo PJ seleccionado → no re-OCR
+        self._menu_last_sig = sig
+        nombre, rol, elemento = identify_menu_agent(frame, self._ocr)
+        logsig = (nombre, rol, elemento)
+        if logsig == self._last_menu_log_sig:
+            return                          # mismo resultado → no re-loguear
+        self._last_menu_log_sig = logsig
+        log.info(
+            "[S15] Menú de personajes reconocido — PJ=%s · rol=%s · elemento=%s",
+            nombre or "incierto", rol or "-", elemento or "-",
+        )
+        if self._on_agent_detail:
+            try:
+                self._on_agent_detail(state, nombre, bool(nombre), "menu")
+            except Exception:
+                log.exception("Error en on_agent_detail callback (menú)")
 
     @staticmethod
     def _stats_result_is_useful(stats) -> bool:
