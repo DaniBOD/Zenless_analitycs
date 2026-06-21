@@ -44,15 +44,15 @@ Sistema de análisis y optimización de cuenta para ZZZ porque el juego carece d
 
 | Capa | Tabla | Filas | Notas |
 |------|-------|------:|-------|
-| 1 Catálogos | `agents` | **48** | 45 originales + Cissia v2.7 + Billy Estelar v2.x + Velina v3.x (2026-06-19, **elemento VIENTO nuevo**, onboarding PARCIAL: identidad+ico, stats pending_capture, pendiente thresholds/synergy/splash/IA) |
+| 1 Catálogos | `agents` | **49** | 45 originales + Cissia v2.7 + Billy Estelar v2.x + Velina v3.x + **Pyrois v3.x** (2026-06-21, **rango ∞ "infinito" + facción Faetón nuevos**, Éter/Ataque/M0, onboarding PARCIAL: identidad+stats Nv1 provisorios+synergy+score_thr+awakening; pendiente agent_thresholds Prydwen + splash + IA) |
 | 1 | `weapons` | 53 | 49 base + 4 nuevas (Street Superstar, Florescencia aurífera, Wild Gastronome, Hertz Transit). Ya tiene `pasiva_modelada` + `sensibilidad_contexto` |
 | 1 | `disc_sets` | 26 | Post-merge (id 47→40 Puffer Electro; id 50→35 Nana luz cenicienta) |
-| 1 | `agent_awakenings` | **7** | 1 verificado (Burnice nv6) + 4 placeholder `pending_capture` (Lycaon, Ellen, Grace, N.°0:Anby) + 1 placeholder Cissia + 1 placeholder Billy Estelar. Harumasa y N.°11 sin insertar hasta confirmar nivel |
+| 1 | `agent_awakenings` | **9** | 1 verificado (Burnice nv6) + 4 placeholder `pending_capture` (Lycaon, Ellen, Grace, N.°0:Anby) + 1 placeholder Cissia + 1 Billy Estelar + 1 Velina + 1 Pyrois. Harumasa y N.°11 sin insertar hasta confirmar nivel |
 | 2 Inventarios | `agent_discs` | 270 | 45 PJs × 6 slots; incluye EMPTY (Antón, Ben, builds 3+3). Cissia usa inventory_discs directamente hasta sync RF-04 |
 | 2 | `inventory_discs` | **334** | 263 equipados + 71 sueltos (+ 2 nuevos Cissia slot 4/6) |
 | 2 | `inventory_weapons` | 50 | 40 equipadas + 10 sueltas |
-| 3 Thresholds | `agent_thresholds` | **110** | 47/47 PJs con ≥1 stat · +5 Cissia · +2 Billy Estelar (CR/CDmg) |
-| 3 | `agent_score_thresholds` | **47** | Defaults equip 0.75 / stock 0.50, overridable |
+| 3 Thresholds | `agent_thresholds` | **111** | 47/49 PJs con ≥1 stat · Velina y Pyrois PENDIENTE (objetivos Prydwen, RNF-02) |
+| 3 | `agent_score_thresholds` | **49** | Defaults equip 0.75 / stock 0.50, overridable (todos los 49 PJs) |
 | 3 | `agent_substat_preferences` | 0 | Cae al arquetipo del rol hasta que se cargue |
 | 4 Scoring | `disc_archetypes` | 6 | ATK_DPS, HP_DISRUPT, ANOMALY, STUN, SUPPORT_ER, DEFENSE |
 | 4 | `disc_set_archetype` | 34 | N:M con prioridad 1=primario, 2=secundario |
@@ -72,7 +72,7 @@ Sistema de análisis y optimización de cuenta para ZZZ porque el juego carece d
 | 8 | `content_profiles` | 4 | seed: shiyu_critical, da, hollow_zero, general |
 | 8 | `weapon_evaluations` | 0 | Cache scores (PJ × weapon × refinamiento × contenido) |
 | 8 | `prydwen_weapon_recommendations_snapshots` | 0 | Snapshot semanal scraper |
-| 8 | `pj_weapon_synergy` | **276** | 46 PJs × 6 categorías · Billy Estelar PENDIENTE (rol Disruptivos/Rupture sin matriz confirmada — RNF-02) |
+| 8 | `pj_weapon_synergy` | **282** | 47 PJs × 6 categorías (+ Pyrois matriz Ataque) · Billy Estelar PENDIENTE (rol Disruptivos/Rupture sin matriz confirmada — RNF-02) |
 
 **Migraciones aplicadas:** 9/9 (`01_archetypes_and_scoring`, `02_optimizer_pending`, `03_team_synergies`, `04_lategame_validation`, `05_weapon_optimizer`, `06_onboarding_cissia`, `07_re_estandarizacion`, `08_fix_archetypes_mains`, `09_add_protected_build`). Integrity OK, 0 FK violations.
 
