@@ -547,17 +547,27 @@ def _get_roster() -> list[dict]:
 def _name_similarity(ocr_tokens: set[str], ocr_norm: str,
                      db_tokens: set[str], db_norm: str) -> float:
     """
-    Similitud de nombre 0..1. 1.0 si un conjunto de tokens contiene al otro
+    Similitud de nombre 0..1. Si un conjunto de tokens contiene al otro
     (nombre DB ⊆ OCR, o OCR ⊆ nombre DB — cubre "Anby" vs "N.º 0: Anby" y
-    nombres display con prefijo de facción). Si no, max(ratio de edición,
+    nombres display con prefijo de facción) la similitud es ALTA pero se GRADÚA
+    por Jaccard de tokens (1.0 si los conjuntos son iguales; menor si uno es
+    subconjunto estricto) para que el match MÁS ESPECÍFICO gane el empate:
+      OCR "Billy Estelar" → "Billy Estelar"(1.0) > "Billy"(0.92);
+      OCR "N.º 0: Anby"    → "N.º 0: Anby"(1.0)   > "Anby"(0.90);
+      OCR "Anby" solo      → "Anby"(1.0)          > "N.º 0: Anby"(0.90).
+    Antes devolvía 1.0 plano a CUALQUIER subconjunto → empate, y ganaba el 1º del
+    roster (bug QA 2026-06-21: Billy id12 antes que Billy Estelar id47; Anby antes
+    que N.º 0: Anby). Si no hay relación de subconjunto: max(ratio de edición,
     jaccard de tokens).
     """
     if not db_tokens or not ocr_tokens:
         return 0.0
-    if db_tokens <= ocr_tokens or ocr_tokens <= db_tokens:
-        return 1.0
-    ratio = SequenceMatcher(None, db_norm, ocr_norm).ratio()
     jaccard = len(db_tokens & ocr_tokens) / len(db_tokens | ocr_tokens)
+    if db_tokens <= ocr_tokens or ocr_tokens <= db_tokens:
+        # 1.0 si son iguales; ≥0.85 para subconjunto estricto (sigue muy por
+        # encima de _NAME_MIN_SIM=0.55 y de un ratio coincidental de otro PJ).
+        return 0.85 + 0.15 * jaccard
+    ratio = SequenceMatcher(None, db_norm, ocr_norm).ratio()
     return max(ratio, jaccard)
 
 

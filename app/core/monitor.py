@@ -131,8 +131,11 @@ _S18_SIG_MAX = 2.5
 _S18_SIG_NAME_MAX = 3.0
 # Gate del menú de personajes S15 (Fase M.1, RNF-06): firma 32×32 gris de la barra del
 # nombre (bottom-left); re-OCR solo si cambió el PJ seleccionado. Un cambio de PJ mueve mucho
-# el texto del nombre; el shimmer del mismo queda por debajo.
-_MENU_SIG_MAX = 3.0
+# el texto del nombre (diffs reales medidos 12-37); el shimmer/anti-aliasing del MISMO PJ
+# queda por debajo. Subido 3.0→6.0 (QA 2026-06-21): a 3.0 el ruido del mismo PJ podía cruzar
+# el umbral → re-OCR espurio cada segundo (presión de memoria, RNF-06); 6.0 absorbe ese ruido
+# y conserva margen amplio (≈2×) contra el cambio real de PJ.
+_MENU_SIG_MAX = 6.0
 # Throttle del fallback deep_detect S18 sobre S12 (RNF-06): máx 1 intento de OCR cada
 # N seg. En pantallas de carga/transición clasificadas como S12, esto corría OCR cada
 # frame → spike que colgaba la UI al abrir el juego. Un deep_detect exitoso igual promueve

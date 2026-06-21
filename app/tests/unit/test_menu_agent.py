@@ -53,6 +53,25 @@ def test_identify_menu_agent_ocr_vacio_abstiene():
     assert identify_menu_agent(_frame(), _StubOcr("", 0.0)) == (None, None, None)
 
 
+def test_match_agent_prefiere_el_nombre_mas_especifico():
+    """Bug QA 2026-06-21: con OCR del nombre LARGO, `_match_agent` devolvía el PJ
+    CORTO que es substring (Billy ⊂ 'Billy Estelar', Anby ⊂ 'N.º 0: Anby') porque el
+    subconjunto puntuaba 1.0 plano → empate → ganaba el 1º del roster. Ahora el match
+    más específico (más tokens) gana, sin perder el corto cuando va solo. Requiere el
+    roster real (ambos PJs); se saltea si no están."""
+    from app.core.parser_agent_stats import _match_agent, _get_roster
+    if not _get_roster():
+        pytest.skip("roster DB no disponible")
+    nombres = {ag["nombre"] for ag in _get_roster()}
+    if {"Billy", "Billy Estelar"} <= nombres:
+        assert _match_agent("Billy Estelar")[0] == "Billy Estelar"
+        assert _match_agent("Billy")[0] == "Billy"          # el corto solo → el corto
+    n0 = next((n for n in nombres if n.startswith("N.") and "Anby" in n), None)
+    if n0 and "Anby" in nombres:
+        assert _match_agent("N.º 0: Anby")[0] == n0
+        assert _match_agent("Anby")[0] == "Anby"            # el corto solo → Anby base
+
+
 def test_identify_menu_agent_tolera_subicono_y_sin_espacios(monkeypatch):
     """El match recibe el texto crudo ('Astra Yao &' / 'OrfiayMagas'); la canonicalización
     la hace _match_agent (probado aparte). Acá: el ROI/abstención y el ruteo no rompen."""
@@ -110,7 +129,10 @@ def test_monitor_salir_de_s15_resetea_gate(monkeypatch):
 # --- Frame real (skip si no están las capturas) ------------------------------
 
 _REAL = {"Ejemplo_1": "Nangong Yu", "Ejemplo_2": "Astra Yao", "Ejemplo_3": "Jane",
-         "Ejemplo_4": "Orfia y Magas", "Ejemplo_5": "César"}
+         "Ejemplo_4": "Orfia y Magas", "Ejemplo_5": "César",
+         # QA 2026-06-21: nombres LARGOS que contienen a un PJ corto (regresión del
+         # matcher de especificidad). Billy Estelar ⊃ Billy; N.º 0: Anby ⊃ Anby.
+         "Ejemplo_7": "Billy Estelar", "Ejemplo_8": "N.º 0: Anby"}
 
 
 @pytest.mark.skipif(not (_MENU / "Ejemplo_1.png").exists(),
