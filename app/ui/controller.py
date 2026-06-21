@@ -301,9 +301,14 @@ class MonitorController(QObject):
         # %LOCALAPPDATA%, no la relativa al source). Backup de sesión RNF-01 una
         # sola vez antes de habilitar writes.
         from app.core.sync_equip import DiscSyncer
+        from app.core.sync_agent_stats import AgentStatsSyncer
         resolved_db = self._db_path or get_db_path()
         self._backup_db_session(resolved_db)
         self._disc_syncer = DiscSyncer(db_path=Path(resolved_db))
+        # Persistencia EN VIVO de stats base de agente (S18 → agents). Mismo patrón
+        # que el disc syncer: write propio + guard readonly. Usa el backup de sesión
+        # ya hecho arriba (RNF-01).
+        self._agent_stats_syncer = AgentStatsSyncer(db_path=Path(resolved_db))
 
     # ---- Callbacks desde el Monitor (thread daemon) ----------------------------
 
@@ -448,6 +453,14 @@ class MonitorController(QObject):
         if stats_sig == self._last_stats_sig:
             return
         self._last_stats_sig = stats_sig
+
+        # Persistencia EN VIVO → agents (RF-04). Corre solo cuando el resultado
+        # cambió (post-dedup de firma) y fuera de readonly. El syncer abstiene si la
+        # identidad no resuelve y hace update PARCIAL solo de los campos que cambiaron.
+        try:
+            self._agent_stats_syncer.sync(stats)
+        except Exception:
+            log.exception("Error en sync en vivo de stats de agente")
 
         log.info(
             "Stats agente %s (%s/%s): Nv=%s PV=%s ATK=%s DEF=%s IMP=%s "
