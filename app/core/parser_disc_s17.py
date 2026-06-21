@@ -46,11 +46,26 @@ if TYPE_CHECKING:
 from app.core.parser_disc import DiscParsed, SubstatParsed, _detect_rareza
 from app.core.stats_vocab import normalize_stat_name, is_valid_main_for_slot
 
-# Franja horizontal (x normalizada) del panel de detalle central.
-_BAND_X_MIN = 0.30
-_BAND_X_MAX = 0.52
-# Umbral que separa columna de NOMBRE (izq) de columna de VALOR (der).
-_COL_SPLIT = 0.42
+# Layout del panel de detalle (x normalizada): banda horizontal + split nombre/valor.
+# S17 = panel CENTRAL; S9 (inventario global) = panel DERECHO. El parser es el mismo;
+# solo cambian estos 3 umbrales → se pasan como `PanelLayout` (default S17).
+from typing import NamedTuple
+
+
+class PanelLayout(NamedTuple):
+    band_min: float   # x normalizada mínima del panel
+    band_max: float   # x normalizada máxima del panel
+    col_split: float  # umbral que separa columna NOMBRE (izq) de VALOR (der)
+
+
+# Panel central S17 (verificado sobre 8 capturas reales).
+_S17_LAYOUT = PanelLayout(0.30, 0.52, 0.42)
+# Panel derecho S9 (inventario global de discos; calibrado 2026-06-21 sobre 6 capturas).
+_S9_LAYOUT = PanelLayout(0.70, 0.98, 0.86)
+# Compat: constantes sueltas (las usan funciones que aún no toman layout).
+_BAND_X_MIN = _S17_LAYOUT.band_min
+_BAND_X_MAX = _S17_LAYOUT.band_max
+_COL_SPLIT = _S17_LAYOUT.col_split
 # Tolerancia vertical (px) para emparejar nombre↔valor de la misma fila.
 _ROW_DY = 40
 
@@ -223,7 +238,8 @@ def _ocr_roll_digit(band, ocr, regex) -> int | None:
     return None
 
 
-def _rescue_roll(frame, name_line: "_Line", ocr, W: int, H: int) -> int | None:
+def _rescue_roll(frame, name_line: "_Line", ocr, W: int, H: int,
+                 layout: PanelLayout = _S17_LAYOUT) -> int | None:
     """
     Recupera el badge de rolls "+N" (naranja, chico) que PaddleOCR dropea, en sus
     dos disposiciones:
@@ -243,7 +259,7 @@ def _rescue_roll(frame, name_line: "_Line", ocr, W: int, H: int) -> int | None:
         # 1) INLINE — fila completa del nombre, recortada antes de la col. de valor.
         iy0 = max(0, name_line.y1 - int(0.25 * hp))
         iy1 = min(H, name_line.y2 + int(0.25 * hp))
-        ix1 = min(W, int((_COL_SPLIT + 0.035) * W))  # ~0.455·W, antes del valor
+        ix1 = min(W, int((layout.col_split + 0.035) * W))  # antes de la col. de valor
         inline = frame[iy0:iy1, name_line.x1:ix1]
         if _orange_badge_frac(inline) >= _BADGE_ORANGE_FRAC_MIN:
             d = _ocr_roll_digit(inline, ocr, _RE_INLINE_ROLL)
@@ -332,7 +348,8 @@ def _rescue_slot_from_title(frame, ocr, W: int, H: int) -> int:
     return 0
 
 
-def _rescue_missing_value(frame, name_line: "_Line", ocr, W: int, H: int):
+def _rescue_missing_value(frame, name_line: "_Line", ocr, W: int, H: int,
+                          layout: PanelLayout = _S17_LAYOUT):
     """
     Re-OCRiza el valor de un substat cuando PaddleOCR lo dropeó (dígito chico a baja
     resolución; mismo problema que el badge "+N"). Crop de la columna de valor a la
@@ -344,7 +361,7 @@ def _rescue_missing_value(frame, name_line: "_Line", ocr, W: int, H: int):
         import cv2
         hp = max(1, name_line.y2 - name_line.y1)
         vx0 = min(W - 1, name_line.x2 + 8)          # a la derecha del nombre
-        vx1 = min(W, int(_BAND_X_MAX * W) + int(0.012 * W))
+        vx1 = min(W, int(layout.band_max * W) + int(0.012 * W))
         vy0 = max(0, name_line.y1 - 4)
         vy1 = min(H, name_line.y1 + int(1.1 * hp) + 4)  # alineado a la 1ª línea
         crop = frame[vy0:vy1, vx0:vx1]
@@ -366,9 +383,12 @@ def _parse_s17_from_lines(
     H: int,
     frame=None,
     ocr=None,
+    layout: PanelLayout = _S17_LAYOUT,
+    detect_slot_hexagon: bool = True,
+    max_substats: int | None = None,
 ) -> DiscParsed:
     """
-    Core testeable: parsea S17 a partir de las líneas OCR con bbox.
+    Core testeable: parsea el panel de detalle de disco a partir de las líneas OCR con bbox.
 
     `lines` = [(texto, confianza, (x1,y1,x2,y2)), ...] (salida de
     `OcrBackend.text_with_bboxes`). Separado del OCR para testear con
@@ -377,11 +397,17 @@ def _parse_s17_from_lines(
     `frame`/`ocr` opcionales: si se pasan, se intenta rescatar los badges de rolls
     "+N" envueltos a 2ª línea que PaddleOCR no detecta (re-OCR de crop tight con
     gate naranja). Los tests del core puro los omiten (rolls quedan como se leyeron).
+
+    `layout`: umbrales del panel (S17 central por default; `_S9_LAYOUT` para el
+    inventario global). `detect_slot_hexagon`: el hexágono de equipados es exclusivo
+    de S17 → S9 lo apaga y usa el slot del título "(N)". `max_substats`: cap (S9 lo
+    fija en 4 porque su header "Efecto de conjunto" se lee como basura y, sin
+    delimitar el final, agregaría un substat fantasma).
     """
     notas: list[str] = []
     L = [_Line(t, c, bb, W) for (t, c, bb) in lines]
-    # Solo el panel de detalle central (excluye grid izq + hexágono der).
-    detail = [ln for ln in L if _BAND_X_MIN <= ln.xn <= _BAND_X_MAX]
+    # Solo el panel de detalle (excluye grid + hexágono/columnas vecinas).
+    detail = [ln for ln in L if layout.band_min <= ln.xn <= layout.band_max]
     detail.sort(key=lambda ln: (ln.y1, ln.x1))
 
     # --- Headers de sección (delimitadores Y) ---
@@ -438,13 +464,13 @@ def _parse_s17_from_lines(
     # marcada da el slot sin OCR → es AUTORITATIVO (Paddle dropea el '1' fino del
     # '(1)' en algunos fondos, dejando slot=0). Cae al OCR del título y luego al
     # rescate de franja solo si el hexágono se abstiene.
-    hex_slot = _detect_s17_slot_by_hexagon(frame) if frame is not None else None
+    hex_slot = _detect_s17_slot_by_hexagon(frame) if (detect_slot_hexagon and frame is not None) else None
     if hex_slot is not None:
         if slot and slot != hex_slot:
             notas.append(f"slot_ocr{slot}_vs_hex{hex_slot}")
         slot = hex_slot
-    elif slot == 0 and frame is not None and ocr is not None:
-        # Fallback (Fase 2): re-OCR de una franja fina del título.
+    elif slot == 0 and detect_slot_hexagon and frame is not None and ocr is not None:
+        # Fallback (Fase 2, S17): re-OCR de una franja fina del título (ROI S17).
         rs = _rescue_slot_from_title(frame, ocr, W, H)
         if rs:
             slot = rs
@@ -453,8 +479,8 @@ def _parse_s17_from_lines(
 
     # --- Main stat: única fila nombre/valor entre 'Atributo principal' y 'Atributos secundarios' ---
     main_region = [ln for ln in detail if _ymain < ln.y1 < _ysubs and ln.y1 not in header_ys]
-    main_names = [ln for ln in main_region if ln.xn < _COL_SPLIT]
-    main_vals = [ln for ln in main_region if ln.xn >= _COL_SPLIT]
+    main_names = [ln for ln in main_region if ln.xn < layout.col_split]
+    main_vals = [ln for ln in main_region if ln.xn >= layout.col_split]
     main_raw = main_names[0].txt.strip() if main_names else ""
     main_val_raw = main_vals[0].txt if main_vals else ""
     if main_names:
@@ -469,14 +495,19 @@ def _parse_s17_from_lines(
     # --- Substats: pares nombre(izq)/valor(der) entre 'Atributos secundarios' y 'Efecto de conjunto' ---
     sub_region = [ln for ln in detail if _ysubs < ln.y1 < _yeffect and ln.y1 not in header_ys]
     sub_names = _coalesce_rolls_fragments(
-        sorted([ln for ln in sub_region if ln.xn < _COL_SPLIT], key=lambda l: l.y1)
+        sorted([ln for ln in sub_region if ln.xn < layout.col_split], key=lambda l: l.y1)
     )
     # Descartar fragmentos SIN letras (p.ej. '12', '+', un valor/badge que cayó en
     # la columna de nombre): nunca son nombres de stat → si no se filtran generan un
     # substat fantasma con canon=None (regresión QA Burnice Slot6). Los badges "+N"
     # legítimos ya se fusionaron arriba en _coalesce_rolls_fragments.
     sub_names = [ln for ln in sub_names if any(c.isalpha() for c in ln.txt)]
-    sub_vals = sorted([ln for ln in sub_region if ln.xn >= _COL_SPLIT], key=lambda l: l.y1)
+    # Cap de substats (S9): sin delimitar el final (su 'Efecto de conjunto' se lee como
+    # basura) entrarían líneas fantasma → un disco tiene MÁX 4 substats; las reales van
+    # primero por Y, la basura queda después y se descarta.
+    if max_substats is not None:
+        sub_names = sub_names[:max_substats]
+    sub_vals = sorted([ln for ln in sub_region if ln.xn >= layout.col_split], key=lambda l: l.y1)
     subs: list[SubstatParsed] = []
     used_val: set[int] = set()
     for nl in sub_names:
@@ -493,7 +524,7 @@ def _parse_s17_from_lines(
             # El badge "+N" pudo caerse (inline mal segmentado o envuelto a 2ª
             # línea) y Paddle no detectarlo. Rescatar por color+re-OCR (no-op sin
             # frame/ocr). Gate naranja → solo re-OCRiza si hay badge real.
-            rescued = _rescue_roll(frame, nl, ocr, W, H)
+            rescued = _rescue_roll(frame, nl, ocr, W, H, layout)
             if rescued is not None:
                 rolls = rescued
         valor = unidad = None
@@ -504,7 +535,7 @@ def _parse_s17_from_lines(
             conf_v = sub_vals[best_i].conf
         if valor is None:
             # PaddleOCR dropeó el valor (dígito chico). Rescate por re-OCR upscaleado.
-            rv = _rescue_missing_value(frame, nl, ocr, W, H)
+            rv = _rescue_missing_value(frame, nl, ocr, W, H, layout)
             if rv is not None:
                 valor, unidad = rv
         canon = _canon_with_unit(nombre, unidad)
@@ -721,6 +752,76 @@ def parse_disc_s17_full(frame: np.ndarray, ocr: "OcrBackend"):
     parsed.set_active_tier = detect_active_set_tier(frame, lines, W, H)
     face = crop_s17_assigned_avatar(frame, lines, W, H)
     return parsed, face
+
+
+# --- S9: inventario global de discos (panel derecho) -------------------------
+# Estructuralmente idéntico a S17 (set+slot, Nivel, main, 4 substats con rolls) pero
+# en el panel DERECHO → ROI + layout propios (`_S9_LAYOUT`). Sin hexágono: el slot va
+# en el título "(N)". El dueño NO está en el panel: se lee del badge del tile
+# seleccionado de la grilla (aparte). Reusa TODO el parser de S17 vía parámetros.
+_S9_DETAIL_PANEL_ROI = (0.70, 0.12, 0.29, 0.72)  # x0.70-0.99, y0.12-0.84
+# Basura que PaddleOCR lee del panel (labels/íconos del top y botones): se filtra para
+# no contaminar título/substats. Tokens normalizados (sin acentos, minúscula, alfanum).
+_S9_JUNK_TOKENS = {"detail", "rarity", "empty", "ept", "rpt", "ver"}
+
+
+def _ocr_s9_detail_lines(frame: np.ndarray, ocr: "OcrBackend"):
+    """OCR del panel derecho S9 sobre crop nativo + re-offset a frame completo (igual
+    patrón que `_ocr_detail_lines` de S17). Descarta los tokens basura del panel."""
+    from app.core.capturer import crop_roi
+    H, W = frame.shape[:2]
+    x0 = int(_S9_DETAIL_PANEL_ROI[0] * W)
+    y0 = int(_S9_DETAIL_PANEL_ROI[1] * H)
+    crop = crop_roi(frame, _S9_DETAIL_PANEL_ROI)
+    raw = ocr.text_with_bboxes(crop) if (crop is not None and getattr(crop, "size", 0)) else None
+    if not raw:
+        raw = ocr.text_with_bboxes(frame)
+        x0 = y0 = 0
+    return [
+        (t, c, (b[0] + x0, b[1] + y0, b[2] + x0, b[3] + y0))
+        for (t, c, b) in raw if _norm_key(t) not in _S9_JUNK_TOKENS
+    ]
+
+
+def parse_disc_s9(frame: np.ndarray, ocr: "OcrBackend", slot: int | None = None) -> DiscParsed:
+    """Extrae el disco SELECCIONADO del inventario global S9 (panel derecho).
+
+    Reusa el parser de S17 con el layout del panel derecho (`_S9_LAYOUT`), sin
+    hexágono y con cap de 4 substats. El dueño se resuelve aparte (badge del tile
+    seleccionado de la grilla), no acá.
+
+    `slot`: override del slot (el monitor lo pasa desde `extract_s9_slot`, calibrado
+    para el título S9). Prioridad: param → "(N)" del título → lo que sacó el core.
+    El nombre del set se limpia de la basura del panel (íconos/labels del top que
+    PaddleOCR lee como tokens: 'x','7','DETAIL','ERPT'…).
+    """
+    lines = _ocr_s9_detail_lines(frame, ocr)
+    H, W = frame.shape[:2]
+    d = _parse_s17_from_lines(
+        lines, W, H, frame=frame, ocr=ocr,
+        layout=_S9_LAYOUT, detect_slot_hexagon=False, max_substats=4,
+    )
+    # Slot: param (extract_s9_slot) → "(N)" en cualquier parte del título → core.
+    slot_final = slot if (slot and 1 <= slot <= 6) else d.slot
+    if not (1 <= slot_final <= 6):
+        m = _RE_SLOT_PAREN.search(d.set_name_raw or "")
+        if m:
+            slot_final = int(m.group(1))
+    if 1 <= slot_final <= 6:
+        d.slot = slot_final
+        if "slot_no_detectado" in d.notas:
+            d.notas.remove("slot_no_detectado")
+    # Limpiar el nombre del set: los sets reales son palabras con minúscula y >=3
+    # chars; el junk del panel es all-caps corto ('ERPT','DETAIL') o tokens de 1-2
+    # chars/dígitos ('x','7','01'). Se quita además el '(N)' pegado.
+    cleaned = " ".join(
+        t for t in (d.set_name_raw or "").split()
+        if len(t) >= 3 and any(c.islower() for c in t)
+    )
+    cleaned = re.sub(r"\(\s*\d?\s*\)", "", cleaned).strip()
+    if cleaned:
+        d.set_name_raw = cleaned
+    return d
 
 
 # =====================================================================
