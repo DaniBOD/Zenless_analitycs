@@ -500,9 +500,10 @@ def test_monitor_disco_libre_consistente(monkeypatch):
     assert disc.agente_asignado_nombre is None
 
 
-def test_monitor_un_frame_rejected_no_declara_libre(monkeypatch):
-    """Anti-falso-LIBRE (conservador, 2 frames): un solo frame sin avatar NO alcanza
-    para LIBRE (detail_absent < _S17_FREE_MIN_FRAMES) → queda 'dueño incierto'."""
+def test_monitor_un_frame_sin_avatar_ya_es_libre(monkeypatch):
+    """LIBRE gana a 'incierto' (decisión usuario 2026-06-21): un frame sin avatar y SIN voto
+    YA es LIBRE — los matchers son robustos, 'nadie votó' ⇒ sin dueño. (Antes exigía ≥2
+    frames → parpadeo LIBRE↔incierto navegando rápido.)"""
     import app.core.monitor as mon
     monkeypatch.setattr(mon, "crop_grid_selected_badge", lambda f: None)
     monkeypatch.setattr(mon, "crop_detail_badge", lambda f: None)
@@ -511,9 +512,9 @@ def test_monitor_un_frame_rejected_no_declara_libre(monkeypatch):
     m._last_agent_name = "Zhu Yuan"
     m._s17_last_slot = 1
     disc = _disc(slot=1)
-    m._sample_s17_owner(_frame())                    # 1 solo frame sin avatar
+    m._sample_s17_owner(_frame())                    # 1 frame sin avatar, sin voto
     m._assign_s17_pj(disc, _frame())
-    assert disc.equip_libre is False                 # < _S17_FREE_MIN_FRAMES → no libre
+    assert disc.equip_libre is True                  # sin voto → LIBRE (no 'incierto')
 
 
 def test_monitor_detalle_ve_avatar_no_declara_libre(monkeypatch):
@@ -583,10 +584,10 @@ def test_monitor_detalle_espurio_texto_no_bloquea_libre(monkeypatch):
     assert disc.equip_pj_visual is None
 
 
-def test_s17_is_libre_tolera_spike_espurio_minoritario(monkeypatch):
-    """5R.L.7.3: el texto '(N)' tiene margen INESTABLE (0.02-0.13) → un frame suelto puede
-    superar el umbral de presencia. _s17_is_libre exige ausencia DOMINANTE (≥2:1), así un
-    spike minoritario no bloquea LIBRE, pero presencia consistente (avatar real) sí."""
+def test_s17_is_libre_libre_gana_salvo_presencia_dominante(monkeypatch):
+    """LIBRE gana a 'incierto' (usuario 2026-06-21): sin voto → LIBRE salvo que el detalle
+    vea un avatar REAL de forma DOMINANTE (present ≥ 2× absent). Tolera spikes espurios del
+    texto '(N)' (no dominantes) y no exige acumular frames."""
     import numpy as np
     import app.core.monitor as mon
     monkeypatch.setattr(mon, "_s17_disc_signature", lambda self, f: (1, 2, 3), raising=False)
@@ -594,12 +595,38 @@ def test_s17_is_libre_tolera_spike_espurio_minoritario(monkeypatch):
     sig = (np.zeros((48, 24), np.float32), np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
     monkeypatch.setattr(m, "_s17_disc_signature", lambda frame: sig)
     m._s17_owner_sig = sig
-    # 1 spike presente vs 3 ausentes (texto inestable) → dominante ausente → LIBRE.
-    m._s17_detail_present, m._s17_detail_absent = 1, 3
+    # Sin evidencia (0/0) → LIBRE (no exige 2 frames).
+    m._s17_detail_present, m._s17_detail_absent = 0, 0
     assert m._s17_is_libre(_frame()) is True
-    # 2 presentes vs 2 ausentes (presencia consistente) → NO dominante → no libre.
-    m._s17_detail_present, m._s17_detail_absent = 2, 2
+    # 1 spike presente vs 1 ausente → no dominante → LIBRE.
+    m._s17_detail_present, m._s17_detail_absent = 1, 1
+    assert m._s17_is_libre(_frame()) is True
+    # presencia DOMINANTE (4 presentes vs 1 ausente = avatar real sin nombrar) → no libre.
+    m._s17_detail_present, m._s17_detail_absent = 4, 1
     assert m._s17_is_libre(_frame()) is False
+
+
+_FREE_DIR = (REPO / "Documentacion" / "Screenshots_Triggers" / "Discos_Triggers"
+             / "17_Inventario_Disco_Vista_Individual_libres")
+
+
+@pytest.mark.skipif(not _FREE_DIR.is_dir() or not any(_FREE_DIR.glob("*.png")),
+                    reason="capturas de discos libres no presentes")
+def test_s17_discos_libres_reales_son_libre():
+    """Regresión sobre los discos LIBRES reales (carpeta 17, ampliada en QA 2026-06-21):
+    con 1 sample (peor caso, navegación rápida) cada uno debe dar is_libre=True — sin
+    parpadeo LIBRE↔incierto. Requiere la librería runtime; se saltea si no carga."""
+    import glob
+    import app.core.monitor as mon
+    from app.core.agent_identifier import AgentIdentifier
+    ident = AgentIdentifier()
+    for fp in sorted(glob.glob(str(_FREE_DIR / "*.png"))):
+        frame = cv2.imdecode(np.fromfile(fp, dtype=np.uint8), cv2.IMREAD_COLOR)
+        m = mon.Monitor(ocr=None, detector=None)
+        m._identifier = ident
+        m._last_agent_name = "Nicole"
+        m._sample_s17_owner(frame)
+        assert m._s17_is_libre(frame) is True, f"{Path(fp).name}: deberia ser LIBRE con 1 sample"
 
 
 def test_monitor_voto_dueno_gana_pese_a_frames_inciertos(monkeypatch):

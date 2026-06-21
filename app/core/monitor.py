@@ -598,7 +598,10 @@ class Monitor:
                 # El resto de estados procesa solo en la transición (voted_state no
                 # nulo) o por F8 forzado.
                 # S17 es CONTINUO (Fase 1): se re-procesa cada cadencia como S18/S8/S19.
-                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code == "S17"
+                # S15 (menú de personajes, M.1) también: al cambiar de PJ SIN cambiar de
+                # pantalla no hay transición → sin re-procesar quedaba pegado en el 1er PJ
+                # (QA 2026-06-21). El gate de firma del nombre evita el re-OCR si no cambió.
+                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15")
                 should_dispatch = forced or (
                     elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
                 )
@@ -1603,25 +1606,20 @@ class Monitor:
                     or not self._sig_close(sig, self._s17_owner_sig))
 
     def _s17_is_libre(self, frame) -> bool:
-        """True si el disco mirado está LIBRE (nadie lo equipa). ÁRBITRO POR EL DETALLE
-        (5R.L.7.3): el detail-badge (loc ~100%, gate de presencia propio L.2b) es la señal
-        FIABLE de libre/equipado. Un disco está libre si:
-          - sin votos (grid ni detail) — un voto = alguien matcheó un avatar → no libre,
-          - el detalle NUNCA presentó avatar (el árbitro no vio dueño), y
-          - el detalle se intentó ≥2 veces (conservador: un frame de transición no basta).
-        NO se exige que el grid esté ausente: su gate de presencia (L.7.2) es LEAKY en
-        libres (la esquina del tile tiene la barra 'Nivel' amarilla + arte → pasa hough+blob
-        sin ser una cara; QA 2026-06-20, audit/free_disc_presence_diag.md). Si se exigiera
-        grid_present==0, esa presencia espuria BLOQUEABA el LIBRE → 'no detectado' en vez de
-        LIBRE (el bug reportado). El grid igual no puede meter un dueño sin VOTAR (gate +
-        reject-set); el detalle arbitra la ausencia."""
+        """True si el disco mirado está LIBRE (nadie lo equipa). LIBRE GANA A 'INCIERTO'
+        (decisión del usuario 2026-06-21): los matchers de badge (grid+detail) son ROBUSTOS
+        y 0-wrong → si NADIE votó un dueño, lo más probable es que NO TENGA dueño (un disco
+        equipado habría producido un voto). El parpadeo LIBRE↔incierto del QA venía de exigir
+        evidencia acumulada (≥2 frames + mayoría) que no se junta navegando rápido.
+        Regla: sin votos (grid ni detail) → LIBRE, SALVO que el detalle haya visto un avatar
+        REAL de forma DOMINANTE (≥2× los frames ausentes) sin poder nombrarlo — ahí abstenerse
+        ('incierto', RNF-02): es el coverage-gap raro (PJ sin refs tipo Lycaon-candidato). La
+        presencia espuria del grid (gate leaky, L.7.2) NO bloquea — no votó."""
         if self._s17_grid_votes or self._s17_det_votes or not self._s17_owner_sig_matches(frame):
             return False
-        # El detalle (árbitro) debe haber estado AUSENTE de forma DOMINANTE (≥2:1 vs presente):
-        # tolera spikes espurios sueltos (un frame del texto '(N)' que ocasionalmente supera el
-        # margen) sin bloquear LIBRE, pero un avatar REAL (presencia consistente) sí bloquea.
-        return (self._s17_detail_absent >= _S17_FREE_MIN_FRAMES
-                and self._s17_detail_present * 2 <= self._s17_detail_absent)
+        # Sin voto: LIBRE salvo presencia REAL dominante del detalle (avatar visto pero no
+        # nombrado). Tolera spikes espurios sueltos del texto '(N)' (no dominantes).
+        return self._s17_detail_present < 2 * max(1, self._s17_detail_absent)
 
     def _assign_s17_pj(self, disc: DiscParsed, frame) -> None:
         """
