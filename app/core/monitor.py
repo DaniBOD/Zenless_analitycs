@@ -1520,20 +1520,22 @@ class Monitor:
                     or not self._sig_close(sig, self._s17_owner_sig))
 
     def _s17_is_libre(self, frame) -> bool:
-        """True si el disco mirado está LIBRE (nadie lo equipa). ÁRBITRO DE PRESENCIA
-        (5R.L.7.3, desacoplado de la identidad): un disco está libre si NINGUNA superficie
-        vio un avatar de dueño. Como el grid ya está gateado por presencia (L.7.2) y el
-        detail tiene su propio gate (L.2b), CUALQUIER voto implica que una superficie vio
-        un avatar real → NO libre. Regla completa y conservadora (≥2 frames):
-          - sin votos (grid ni detail),
-          - el grid (post-gate) NUNCA presentó avatar en el disco,
-          - el detail (loc ~100%, el árbitro) NUNCA presentó avatar y se intentó ≥2 veces.
-        Un frame de transición suelto no declara libre. Si alguna superficie vio avatar
-        (voto o presencia) → queda 'equipado/incierto', nunca falso-libre (RNF-02)."""
+        """True si el disco mirado está LIBRE (nadie lo equipa). ÁRBITRO POR EL DETALLE
+        (5R.L.7.3): el detail-badge (loc ~100%, gate de presencia propio L.2b) es la señal
+        FIABLE de libre/equipado. Un disco está libre si:
+          - sin votos (grid ni detail) — un voto = alguien matcheó un avatar → no libre,
+          - el detalle NUNCA presentó avatar (el árbitro no vio dueño), y
+          - el detalle se intentó ≥2 veces (conservador: un frame de transición no basta).
+        NO se exige que el grid esté ausente: su gate de presencia (L.7.2) es LEAKY en
+        libres (la esquina del tile tiene la barra 'Nivel' amarilla + arte → pasa hough+blob
+        sin ser una cara; QA 2026-06-20, audit/free_disc_presence_diag.md). Si se exigiera
+        grid_present==0, esa presencia espuria BLOQUEABA el LIBRE → 'no detectado' en vez de
+        LIBRE (el bug reportado). El grid igual no puede meter un dueño sin VOTAR (gate +
+        reject-set); el detalle arbitra la ausencia."""
         if self._s17_grid_votes or self._s17_det_votes or not self._s17_owner_sig_matches(frame):
             return False
-        if self._s17_grid_present or self._s17_detail_present:
-            return False                      # alguna superficie vio un avatar → no libre
+        if self._s17_detail_present:          # el detalle (árbitro) vio un avatar → no libre
+            return False
         return self._s17_detail_absent >= _S17_FREE_MIN_FRAMES
 
     def _assign_s17_pj(self, disc: DiscParsed, frame) -> None:

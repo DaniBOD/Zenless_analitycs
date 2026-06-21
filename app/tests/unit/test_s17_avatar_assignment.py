@@ -450,17 +450,26 @@ def test_monitor_candidato_de_otro_pj_reporta_no_asigna(monkeypatch):
 
 
 def test_monitor_candidato_incierto_abstiene(monkeypatch):
-    """Mismo slot + cara presente bajo guard (conf media, NO reject) → 'dueño incierto',
-    NO libre, sin asignar."""
-    m = _monitor_badge(monkeypatch, sim=0.40, owner=None)   # _StubIdent free=False → conf 0.70
+    """Mismo slot + avatar VISIBLE (el detalle lo ve) pero bajo guard → 'dueño incierto',
+    NO libre, sin asignar. 5R.L.7.3: 'avatar visible' = detalle presente (la superficie
+    confiable); con un avatar real que no se identifica → incierto, nunca falso-libre."""
+    import numpy as np
+    import app.core.monitor as mon
+    monkeypatch.setattr(mon, "crop_grid_selected_badge",
+                        lambda f: np.zeros((40, 40, 3), np.uint8))   # grid ve algo, no matchea
+    monkeypatch.setattr(mon, "crop_detail_badge",
+                        lambda f: np.zeros((40, 40, 3), np.uint8))   # el DETALLE ve un avatar
+    m = _monitor()
+    m._identifier = _StubIdent(sim=0.40, owner=None, det_owner=None)  # ninguno identifica al PJ
+    m._last_agent_name = "Zhu Yuan"
     m._s17_last_slot = 1
     disc = _disc(slot=1)
     for _ in range(3):
-        m._sample_s17_owner(_frame())                # cara presente, no evidencia de libre
+        m._sample_s17_owner(_frame())                # avatar presente, sin ID
     m._assign_s17_pj(disc, _frame())
     assert disc.agente_asignado_nombre is None
     assert disc.equip_pj_visual is None
-    assert disc.equip_libre is False                 # NO se declara libre ante duda
+    assert disc.equip_libre is False                 # detalle vio avatar → no libre, incierto
 
 
 def test_monitor_disco_libre_consistente(monkeypatch):
@@ -519,6 +528,30 @@ def test_monitor_detalle_ve_avatar_no_declara_libre(monkeypatch):
     m._assign_s17_pj(disc, _frame())
     assert disc.equip_libre is False                 # detalle vio avatar → no libre
     assert disc.equip_pj_visual is None              # pero el matcher no lo identificó → incierto
+
+
+def test_monitor_grid_presente_leaky_sin_voto_igual_libre(monkeypatch):
+    """5R.L.7.3 (QA 2026-06-20): la esquina del tile LIBRE pasa el gate del grid (barra
+    'Nivel' amarilla + arte → hough+blob) aunque NO sea una cara y el matcher se abstenga
+    (sin voto). El ÁRBITRO POR EL DETALLE manda: detalle ausente ≥2 + sin votos → LIBRE,
+    PESE a la presencia espuria del grid. (Antes grid_present>0 bloqueaba → 'no detectado'.)"""
+    import numpy as np
+    import app.core.monitor as mon
+    monkeypatch.setattr(mon, "crop_grid_selected_badge",
+                        lambda f: np.zeros((40, 40, 3), np.uint8))   # grid leaky: crop presente
+    monkeypatch.setattr(mon, "crop_detail_badge", lambda f: None)    # detalle: sin avatar (libre)
+    m = _monitor()
+    m._identifier = _StubIdent(sim=0.40, owner=None, free=False)      # s17_match → (None, 0.70, no-reject): SIN voto
+    m._last_agent_name = "Zhu Yuan"
+    m._s17_last_slot = 1                              # mismo slot → candidato (grid presente)
+    disc = _disc(slot=1)
+    for _ in range(4):
+        m._sample_s17_owner(_frame())
+    assert m._s17_grid_present > 0 and not m._s17_grid_votes   # grid presente pero sin voto
+    m._assign_s17_pj(disc, _frame())
+    assert disc.equip_libre is True                  # el detalle arbitra → LIBRE
+    assert disc.equip_pj_visual is None
+    assert disc.agente_asignado_nombre is None
 
 
 def test_monitor_voto_dueno_gana_pese_a_frames_inciertos(monkeypatch):
