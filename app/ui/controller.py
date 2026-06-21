@@ -538,7 +538,11 @@ class MonitorController(QObject):
         el disco completo. El resto (S3/S6/S7, discos nuevos) va al recommender.
         """
         try:
-            if state.code == "S17":
+            if state.code in ("S17", "S9"):
+                # S9 (inventario global) replica la captura de S17: misma persistencia
+                # enfocada (disco + asignación por dueño). Los discos EQUIPADOS (badge
+                # confiable) se upsertean por (PJ, slot); los LIBRES (sin dueño) no se
+                # persisten aún (persist_s17_disc exige PJ confiable; loose = follow-up).
                 result = None
                 if self._disc_syncer is not None:
                     result = self._disc_syncer.persist_s17_disc(disc_parsed)

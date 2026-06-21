@@ -263,7 +263,12 @@ def crop_selected_avatar(frame: np.ndarray) -> np.ndarray | None:
 # amarillo/lima que el row). Localizamos ese tile por highlight y recortamos su
 # badge con offset FIJO (calibrado sobre frames reales 2026-06-10): el badge
 # cuelga de la esquina sup-der. centro=(tx+0.86·tw, ty+0.13·th), radio≈0.18·tw.
-_GRID_REGION = (0.01, 0.10, 0.235, 0.95)        # x0,y0,x1,y1 norm (columna grilla)
+_GRID_REGION = (0.01, 0.10, 0.235, 0.95)        # x0,y0,x1,y1 norm (columna grilla S17)
+# Grilla del INVENTARIO GLOBAL S9: ocupa casi todo el ancho (8 columnas) menos el panel
+# derecho. El tile seleccionado tiene el MISMO indicador (aro lima/amarillo) y MISMO badge
+# de dueño en la esquina sup-der → se reusa toda la maquinaria con esta región (verificado
+# 2026-06-21: tile cuadrado w≈0.069 h≈0.122 fill 0.16, dentro de los filtros S17).
+_S9_GRID_REGION = (0.01, 0.10, 0.70, 0.95)
 _BADGE_CX_F, _BADGE_CY_F, _BADGE_R_F = 0.86, 0.13, 0.18
 _GRID_TILE_MIN_AREA = 1200
 # Filtro de forma del anillo de selección (calibrado sobre frames reales 2026-06-11):
@@ -306,8 +311,9 @@ _DET_HOUGH_RMAX_F = 0.015                     # radio máx del avatar / W
 _DET_HOUGH_PAD = 1.05                         # margen sobre el radio Hough (no comer la oreja)
 
 
-def _selected_grid_tile_bbox(frame: np.ndarray):
-    """Bbox (en frame) del tile resaltado de la grilla izquierda S17, o None.
+def _selected_grid_tile_bbox(frame: np.ndarray, region: tuple = _GRID_REGION):
+    """Bbox (en frame) del tile resaltado de la grilla, o None. `region` = la grilla
+    a inspeccionar (S17 columna izq por default; `_S9_GRID_REGION` para el inventario).
 
     El indicador es un ANILLO (aro lima/amarillo) alrededor del tile seleccionado:
     bbox ~cuadrado del tamaño del tile y HUECO (poca área de píxeles vs su bbox).
@@ -321,7 +327,7 @@ def _selected_grid_tile_bbox(frame: np.ndarray):
         return None
     try:
         H, W = frame.shape[:2]
-        x0, y0, x1, y1 = _GRID_REGION
+        x0, y0, x1, y1 = region
         gx0, gy0 = int(x0 * W), int(y0 * H)
         sub = frame[gy0:int(y1 * H), gx0:int(x1 * W)]
         if sub.size == 0:
@@ -382,12 +388,13 @@ def _grid_badge_present(crop: np.ndarray | None) -> bool:
         return False
 
 
-def crop_grid_selected_badge(frame: np.ndarray) -> np.ndarray | None:
-    """Recorta (círculo) el badge de dueño del tile seleccionado de la grilla S17.
+def crop_grid_selected_badge(frame: np.ndarray, region: tuple = _GRID_REGION) -> np.ndarray | None:
+    """Recorta (círculo) el badge de dueño del tile seleccionado de la grilla.
     Devuelve el crop BGR o None si no hay tile resaltado O si el tile NO tiene avatar
     de dueño (disco LIBRE → gate de presencia, 5R.L.7.2). Es el ícono que el matcher
-    de badge identifica para saber QUÉ PJ tiene equipado el disco candidato."""
-    bb = _selected_grid_tile_bbox(frame)
+    de badge identifica para saber QUÉ PJ tiene equipado el disco. `region` selecciona
+    la grilla (S17 izq por default; `_S9_GRID_REGION` para el inventario global)."""
+    bb = _selected_grid_tile_bbox(frame, region)
     if bb is None:
         return None
     tx, ty, tw, th = bb
@@ -399,6 +406,13 @@ def crop_grid_selected_badge(frame: np.ndarray) -> np.ndarray | None:
     if not crop.size or not _grid_badge_present(crop):
         return None                            # tile sin avatar = disco libre → NOLOC
     return crop
+
+
+def crop_s9_selected_badge(frame: np.ndarray) -> np.ndarray | None:
+    """Badge de dueño del tile seleccionado del INVENTARIO GLOBAL S9 (esquina sup-der,
+    a la derecha del nº de slot). Reusa `crop_grid_selected_badge` con la región S9.
+    El badge es del mismo tipo que el de S17 → mismo matcher/librería (avatar_badge_v2)."""
+    return crop_grid_selected_badge(frame, _S9_GRID_REGION)
 
 
 def crop_detail_badge(frame: np.ndarray) -> np.ndarray | None:

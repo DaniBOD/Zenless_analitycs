@@ -21,12 +21,12 @@ from app.core.detector import (
     ScreenDetector, ScreenState, TemporalBuffer, AGENT_STATS_STATES,
     extract_s17_slot, extract_s9_slot, polling_cadence_ms,
     _deep_detect_s18, detect_active_tab, selected_avatar_x,
-    crop_grid_selected_badge, crop_detail_badge,
+    crop_grid_selected_badge, crop_detail_badge, crop_s9_selected_badge,
 )
 from app.core.stats_vocab import _norm_key
 from app.core.parser_disc import DiscParsed, parse_modal_detalle
 from app.core.parser_disc_s17 import (
-    parse_disc_s17, parse_disc_s17_full, DiscAggregator, disc_is_mature,
+    parse_disc_s17, parse_disc_s17_full, parse_disc_s9, DiscAggregator, disc_is_mature,
 )
 from app.core.parser_agent_stats import (
     AgentStatsParsed, parse_agent_stats, AgentStatsAggregator, identify_menu_agent,
@@ -52,6 +52,9 @@ _DISC_DETAIL_STATES = _NEW_DISC_STATES | _EQUIPPED_DISC_STATES
 _AGENT_DETAIL_STATES = {"S8", "S19"}
 # Estados re-procesados en CADA ciclo de cadencia (no one-shot por entrada):
 _CONTINUOUS_STATES = AGENT_STATS_STATES | _AGENT_DETAIL_STATES
+# S9 = INVENTARIO GLOBAL de discos: panel derecho = disco seleccionado (parse_disc_s9,
+# reusa S17), dueño = badge del tile resaltado. Diff máx de firma para "mismo disco".
+_S9_SIG_MAX = 3.0
 # Tolerancia de posición x del avatar para considerar "mismo PJ" (avatares
 # adyacentes distan ~0.04-0.05 norm; media-ranura como margen anti-jitter).
 _AVATAR_X_TOL = 0.025
@@ -304,6 +307,11 @@ class Monitor:
         # estática y resetea el aggregator. Sin esto el MISMO disco quieto se
         # re-emite ~7×. Se limpia al salir de S17 o forzar (F8). RNF-06: sin OCR.
         self._disc_emitted_ids: set = set()
+        # --- S9 (inventario global): mismo patrón aggregator/dedup, estado propio ---
+        self._s9_aggregator = DiscAggregator()
+        self._s9_agg_sig = None           # firma-ancla del disco S9 que se fusiona
+        self._s9_emitted: bool = False    # ya se emitió (persist/log) este disco S9
+        self._s9_agg_cycles: int = 0
         # Última firma del log "[S17] asignado" (edge-trigger: 1× por cambio).
         self._s17_assign_sig = None
         # Gate de OCR S18 (RNF-06): última firma del panel de stats. Si no cambió, se
@@ -567,6 +575,9 @@ class Monitor:
             elif raw_state.code != "S17":
                 # Fuera de S17 → olvidar el tracking del disco mirado.
                 self._reset_s17_disc_tracking()
+            if raw_state.code != "S9":
+                # Fuera de S9 → olvidar el tracking del disco del inventario global.
+                self._reset_s9_disc_tracking()
 
             # ---- Paso 2: alimentar buffer temporal ----
             # Deep detect con alta confianza salta la votación 2/3 para
@@ -604,7 +615,7 @@ class Monitor:
                 # S15 (menú de personajes, M.1) también: al cambiar de PJ SIN cambiar de
                 # pantalla no hay transición → sin re-procesar quedaba pegado en el 1er PJ
                 # (QA 2026-06-21). El gate de firma del nombre evita el re-OCR si no cambió.
-                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15")
+                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9")
                 should_dispatch = forced or (
                     elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
                 )
@@ -748,6 +759,13 @@ class Monitor:
             # S8/S19: logging persistente + identidad heredada de S18 (sin stats).
             self._process_agent_detail_continuous(frame, state)
             self._processed_disc_state_code = None
+        elif state.code == "S9":
+            # Inventario global de discos: capturar el disco SELECCIONADO (panel derecho,
+            # reusa parse_disc_s17 vía parse_disc_s9) + dueño por badge del tile → sync.
+            self._process_disc_s9_continuous(frame, state)
+            self._processed_disc_state_code = None
+            self._reported_agent_stats_state_code = None
+            self._agent_stats_screen_logged = False
         elif state.code == "S15":
             # Menú de personajes (Fase M.1): reconocer al PJ SELECCIONADO por el nombre
             # bottom-left → log. Informativo (no escribe DB, no toca el latch de detalle).
@@ -847,6 +865,37 @@ class Monitor:
             return (sig_name, sig_detail, sig_hex)
         except Exception:
             return None
+
+    @staticmethod
+    def _s9_disc_signature(frame):
+        """Firma del disco SELECCIONADO en S9 (panel derecho), sin OCR (RNF-06). Dos
+        componentes: título del set (distingue sets) + bloque main/substats (distingue
+        discos del mismo set). None si no se puede leer."""
+        if frame is None or getattr(frame, "size", 0) == 0:
+            return None
+        try:
+            import cv2
+            H, W = frame.shape[:2]
+            title = frame[int(0.15 * H):int(0.25 * H), int(0.71 * W):int(0.97 * W)]
+            body = frame[int(0.28 * H):int(0.66 * H), int(0.71 * W):int(0.97 * W)]
+            if title.size == 0 or body.size == 0:
+                return None
+            sig_t = cv2.cvtColor(
+                cv2.resize(title, (48, 24), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
+            ).astype(np.float32)
+            sig_b = cv2.cvtColor(
+                cv2.resize(body, (48, 48), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
+            ).astype(np.float32)
+            return (sig_t, sig_b)
+        except Exception:
+            return None
+
+    def _is_new_s9_disc(self, sig) -> bool:
+        """True si la firma indica que el disco S9 mirado cambió (o no había ancla)."""
+        if self._s9_agg_sig is None or sig is None:
+            return True
+        return (self._sig_component_diff(sig[0], self._s9_agg_sig[0]) > _S9_SIG_MAX
+                or self._sig_component_diff(sig[1], self._s9_agg_sig[1]) > _S9_SIG_MAX)
 
     @staticmethod
     def _frame_lo_sig(frame):
@@ -1152,6 +1201,91 @@ class Monitor:
             return
         self._processed_disc_state_code = key
         self._process_disc(frame, state)
+
+    # --- S9: inventario global de discos (replica la captura de S17) -----------
+    def _process_disc_s9_continuous(self, frame, state: ScreenState) -> None:
+        """S9 CONTINUO: re-extrae el disco SELECCIONADO (panel derecho) y fusiona
+        parciales en el aggregator S9, igual que S17. La firma del panel detecta cambio
+        de disco y resetea. El dueño = badge del tile resaltado de la grilla. Emite
+        (sync vía on_disc) cuando madura o tras el techo de ciclos. Gate RNF-06: una vez
+        emitido + firma estable, no re-OCR."""
+        sig = self._s9_disc_signature(frame)
+        if sig is None:
+            return
+        if self._is_new_s9_disc(sig):
+            self._s9_aggregator.reset()
+            self._s9_agg_sig = sig
+            self._s9_emitted = False
+            self._s9_agg_cycles = 0
+        if self._s9_emitted:
+            return
+        try:
+            disc = parse_disc_s9(frame, self._ocr)   # slot por "(N)" del título (sin OCR extra)
+        except Exception:
+            log.exception("Error parseando disco S9")
+            return
+        self._assign_s9_owner(disc, frame)
+        if disc.confianza_global < 0.7:
+            return  # frame de transición → no contaminar el aggregator
+        merged = self._s9_aggregator.merge(disc)
+        self._s9_agg_cycles += 1
+        if self._s9_emitted or merged is None:
+            return
+        if not (disc_is_mature(merged) or self._s9_agg_cycles >= _S17_AGG_MAX_CYCLES):
+            return
+        self._emit_s9_disc(merged, state)
+
+    def _assign_s9_owner(self, disc, frame) -> None:
+        """Dueño del disco S9 por el badge del tile seleccionado (esquina sup-der de la
+        grilla). Reusa el matcher de badges de S17 (misma librería). Solo asigna si el
+        match es CONFIABLE (no rejected); si no, deja el disco SIN dueño — captura los
+        stats igual, no inventa equipamiento (RNF-02). Un disco libre da badge None."""
+        try:
+            badge = crop_s9_selected_badge(frame)
+        except Exception:
+            badge = None
+        if badge is None:
+            return
+        try:
+            name, conf, rejected = self._identifier.s17_match(badge)
+        except Exception:
+            return
+        if name and not rejected:
+            disc.agente_asignado_nombre = name
+            disc.agente_asignado_conf = conf
+
+    def _emit_s9_disc(self, merged, state: ScreenState) -> None:
+        """Emite (dedup por identidad + equip_map + log + on_disc/sync) un disco S9.
+        Espejo de `_emit_s17_disc`; comparte el dedup con S17 (un disco es un disco)."""
+        self._s9_emitted = True
+        identity = self._disc_identity(merged)
+        if self._recapture_on:
+            if identity == self._last_emitted_identity:
+                return
+        elif identity in self._disc_emitted_ids:
+            return
+        self._disc_emitted_ids.add(identity)
+        self._last_emitted_identity = identity
+        if merged.agente_asignado_nombre:
+            self._record_equip_map(identity, merged.agente_asignado_nombre)
+        log.info(
+            "Disco S9 detectado: set=%s slot=%d main=%s nivel=%d dueno=%s conf=%.2f",
+            merged.set_name_canon or merged.set_name_raw, merged.slot,
+            merged.main_stat_canon or merged.main_stat_raw, merged.nivel,
+            merged.agente_asignado_nombre or "-", merged.confianza_global,
+        )
+        if self._on_disc:
+            try:
+                self._on_disc(merged, state)
+            except Exception:
+                log.exception("Error en on_disc S9")
+
+    def _reset_s9_disc_tracking(self) -> None:
+        """Olvida el tracking del disco S9 mirado (al salir de S9)."""
+        self._s9_aggregator.reset()
+        self._s9_agg_sig = None
+        self._s9_emitted = False
+        self._s9_agg_cycles = 0
 
     def _process_agent_stats_continuous(self, frame, state: ScreenState) -> None:
         """
