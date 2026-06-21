@@ -168,12 +168,13 @@ _DET_SOLO_DOMINANCE = 1.50   # ganador ≥ 1.5× el 2º acumulado (sin empate ce
 
 # 5R.L.7.3 — PRESENCIA de avatar en el detalle (¿el crop es una cara o un crop espurio?).
 # El localizador del detalle a veces recorta el texto '(N)' del nº de slot en discos LIBRES
-# (QA 2026-06-20: '(1)' → conf 0.66, margen 0.02). Un avatar REAL matchea con conf ALTA o
-# margen CLARO; el texto da AMBOS bajos (equidistante entre refs). Cuenta como "avatar
-# presente" (bloquea LIBRE) solo si no-rejected y (conf≥CONF o margen≥MARGIN). Calibrado:
-# el texto (0.66/0.02) queda fuera; avatares reales tienen margen mediana ~0.33.
-_DET_PRESENCE_CONF = 0.70
-_DET_PRESENCE_MARGIN = 0.05
+# (QA 2026-06-20: '(1)' → conf 0.64-0.66, margen 0.02-0.054, INESTABLE). Un avatar REAL en
+# librería matchea a conf ~1.0 (vota); uno sin ref con cara clara tiene margen amplio. El
+# texto da conf baja Y margen chico. Cuenta como "avatar presente" (bloquea LIBRE) solo si
+# no-rejected y (conf≥CONF o margen≥MARGIN). Calibrado sobre 163 avatares reales (conf p5=1.0,
+# margen p5=0.092) + textos conocidos: 0/163 avatares caen ausente; los textos quedan fuera.
+_DET_PRESENCE_CONF = 0.86      # = guard de voto: un match así de fuerte ya es un avatar real
+_DET_PRESENCE_MARGIN = 0.10    # margen al 2º (avatares reales p5=0.092; textos ≤0.054 casi siempre)
 
 
 def _vote_winner(votes: dict[str, float]) -> tuple[str | None, float, float]:
@@ -1549,9 +1550,11 @@ class Monitor:
         reject-set); el detalle arbitra la ausencia."""
         if self._s17_grid_votes or self._s17_det_votes or not self._s17_owner_sig_matches(frame):
             return False
-        if self._s17_detail_present:          # el detalle (árbitro) vio un avatar → no libre
-            return False
-        return self._s17_detail_absent >= _S17_FREE_MIN_FRAMES
+        # El detalle (árbitro) debe haber estado AUSENTE de forma DOMINANTE (≥2:1 vs presente):
+        # tolera spikes espurios sueltos (un frame del texto '(N)' que ocasionalmente supera el
+        # margen) sin bloquear LIBRE, pero un avatar REAL (presencia consistente) sí bloquea.
+        return (self._s17_detail_absent >= _S17_FREE_MIN_FRAMES
+                and self._s17_detail_present * 2 <= self._s17_detail_absent)
 
     def _assign_s17_pj(self, disc: DiscParsed, frame) -> None:
         """

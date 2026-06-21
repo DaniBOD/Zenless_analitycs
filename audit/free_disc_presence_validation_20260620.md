@@ -33,15 +33,16 @@ sin VOTAR (gate + reject-set).
 detail espurio sin match → `detail_present>0` bloquea). El gate del grid sigue útil (rechazó 3/7 +
 0 regresión en 218 equipados).
 
-## Fix del 1/7 (Ejemplo_2 + Metal colmilludo en vivo) — filtro de presencia por conf/margen
+## Fix (Ejemplo_2/8 + Metal colmilludo en vivo) — filtro de presencia por conf/margen
 QA en vivo (`id_diag`: `det_loc=4 det_match=0`) + inspección: el localizador del detail recorta el
-**texto '(N)' del nº de slot** del título en algunos libres (`audit/ej2_detail_spurious.png` = "(1)").
-Ese crop matchea con **conf 0.66 + margen 0.02** (equidistante entre refs = no es una cara). **Fix:**
-`_sample_s17_owner` cuenta `detail_present` solo si `not rejected and (conf≥_DET_PRESENCE_CONF=0.70 o
-margen≥_DET_PRESENCE_MARGIN=0.05)`; el texto (ambos bajos) cuenta como AUSENTE → no bloquea LIBRE.
-`s17_match_detail` ahora devuelve también el margen.
-- **Validación libres: 7/7 LIBRE, 0 falso-equip.**
-- **0 regresión:** sobre 167 crops de avatar reales (harvest det) solo 3 caen "ausente" — y son
-  `cissia__det__*`, que son **crops de TEXTO "(5)" contaminados** (ya conocido), NO caras. 164/164
-  avatares reales → presentes.
-- Tests: `test_monitor_detalle_espurio_texto_no_bloquea_libre` (nuevo). Suite S17/grid/S18 136/136.
+**texto '(N)' del nº de slot** del título en algunos libres ("(1)"). Ese crop matchea con **conf
+0.64-0.66 + margen 0.02-0.054 (INESTABLE)** — equidistante entre refs, no es una cara. **Fix:**
+`_sample_s17_owner` cuenta `detail_present` solo si `not rejected and (conf≥_DET_PRESENCE_CONF=0.86 o
+margen≥_DET_PRESENCE_MARGIN=0.10)`; `s17_match_detail` devuelve también el margen. Además
+`_s17_is_libre` exige **ausencia DOMINANTE (≥2:1)** → tolera un spike espurio suelto del texto sin
+bloquear LIBRE; presencia consistente (avatar real) sí bloquea.
+- **Calibración** (163 avatares reales: conf p5=**1.00** [votan], margen p5=0.092; textos: conf
+  0.64-0.66, margen ≤0.054): la regla deja **0/163 avatares ausentes** y excluye todos los textos.
+- **Validación libres: 8/8 LIBRE** (Ejemplo_8 = Metal colmilludo, antes fallaba con margen 0.054),
+  0 falso-equip (el grid se abstuvo en todos).
+- Tests: `test_monitor_detalle_espurio_texto_no_bloquea_libre` + `test_s17_is_libre_tolera_spike_espurio_minoritario`. Suite S17/grid/S18 137/137.

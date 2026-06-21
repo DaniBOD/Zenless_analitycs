@@ -583,6 +583,25 @@ def test_monitor_detalle_espurio_texto_no_bloquea_libre(monkeypatch):
     assert disc.equip_pj_visual is None
 
 
+def test_s17_is_libre_tolera_spike_espurio_minoritario(monkeypatch):
+    """5R.L.7.3: el texto '(N)' tiene margen INESTABLE (0.02-0.13) → un frame suelto puede
+    superar el umbral de presencia. _s17_is_libre exige ausencia DOMINANTE (≥2:1), así un
+    spike minoritario no bloquea LIBRE, pero presencia consistente (avatar real) sí."""
+    import numpy as np
+    import app.core.monitor as mon
+    monkeypatch.setattr(mon, "_s17_disc_signature", lambda self, f: (1, 2, 3), raising=False)
+    m = _monitor()
+    sig = (np.zeros((48, 24), np.float32), np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
+    monkeypatch.setattr(m, "_s17_disc_signature", lambda frame: sig)
+    m._s17_owner_sig = sig
+    # 1 spike presente vs 3 ausentes (texto inestable) → dominante ausente → LIBRE.
+    m._s17_detail_present, m._s17_detail_absent = 1, 3
+    assert m._s17_is_libre(_frame()) is True
+    # 2 presentes vs 2 ausentes (presencia consistente) → NO dominante → no libre.
+    m._s17_detail_present, m._s17_detail_absent = 2, 2
+    assert m._s17_is_libre(_frame()) is False
+
+
 def test_monitor_voto_dueno_gana_pese_a_frames_inciertos(monkeypatch):
     """Anti-parpadeo (5R.5c): el loop rápido samplea ~varios frames del MISMO disco;
     aunque algunos den 'incierto' (recorte movido), el dueño con más confianza
