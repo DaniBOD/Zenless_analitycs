@@ -821,8 +821,16 @@ _RE_TASA_PERFORACION = re.compile(
 #                                     (ventana corta {0,12} para no cruzar filas)
 #   (c) "adrenalina <N>"           — Disruptivos: el slot inferior-derecho es
 #                                     "Acumulación Automática de Adrenalina"
+#
+# Bug ER-%-vecino (QA 2026-06-21, Pyrois Nv1): cuando el VALOR de ER es chico/aislado
+# (un dígito, "1") PaddleOCR a veces lo DROPEA del full-frame → el texto queda
+# "...tasa de perforacion 0 % energia..." (sin el valor). El patrón (a) entonces
+# agarraba el "0" del "0 %" de TP → ER=0.0 (WRONG, viola RNF-02). Como el ER NUNCA es
+# porcentaje, la ventana de (a) excluye '%' [^\d\n%]: un número %-terminado no es ER →
+# (a) no matchea → se abstiene (None) en vez de inventar 0.0. Los casos con valor real
+# adyacente ("1.2 energia", "2.16 energia", "1 energia") siguen matcheando.
 _RE_RECUP_ENERGIA = re.compile(
-    r"(\d+(?:\.\d+)?)[^\d\n]{0,4}?energ\w*"   # "<valor> [ruido] energia" ("2.5 v energia")
+    r"(\d+(?:\.\d+)?)[^\d\n%]{0,4}?energ\w*"   # "<valor> [ruido sin %] energia" ("2.5 v energia")
     r"|recup\w*[^\d\n]{0,12}?(\d+(?:\.\d+)?)"  # "recup... <valor>"
 )
 # Acumulación Automática de Adrenalina (slot inferior-derecho de Disruptivos).

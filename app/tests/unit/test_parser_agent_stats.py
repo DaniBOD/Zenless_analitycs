@@ -317,6 +317,19 @@ class TestRecupEnergiaBugB:
         txt = "tasa de perforacion 0 % 1.2 energia"
         assert _extract_by_regex(txt)["recup_energia"] != "0"
 
+    def test_valor_dropeado_se_abstiene(self):
+        # Pyrois Nv1 (QA 2026-06-21): el valor chico de ER ("1") lo DROPEA PaddleOCR
+        # del full-frame → el texto queda "...perforacion 0 % energia..." (sin valor).
+        # El ER NUNCA es %, así que NO debe agarrar el "0" del "0 %" de TP → abstiene
+        # (None) en vez de inventar 0.0 (RNF-02).
+        txt = "recuperacion de tasa de perforacion 0 % energia recomendacion"
+        assert _extract_by_regex(txt)["recup_energia"] is None
+
+    def test_valor_un_digito_si_se_captura(self):
+        # Cuando el OCR SÍ lee el dígito chico, se captura igual (no es que "1" no sirva).
+        txt = "tasa de perforacion 0 % 1 energia"
+        assert _extract_by_regex(txt)["recup_energia"] == "1"
+
 
 class TestAcumulacionAdrenalina:
     """La 'Acumulación Automática de Adrenalina' (slot inferior-derecho de
