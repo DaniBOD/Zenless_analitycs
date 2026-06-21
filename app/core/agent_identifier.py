@@ -292,11 +292,14 @@ class AgentIdentifier:
         return True
 
     def s17_match_detail(self, face, min_sim: float = _S17_GUARD_DEFAULT):
-        """Match del detalle-badge contra su librería propia: (nombre|None, conf, rejected).
-        Inerte (None, 0, False) hasta que la librería se cosecha. nombre no-None solo si
-        conf≥guard. Señal PRIMARIA en S17 por su localización 100% (vs 73% del grid)."""
+        """Match del detalle-badge contra su librería propia: (nombre|None, conf, margin,
+        rejected). Inerte (None, 0, 0, False) hasta que la librería se cosecha. nombre
+        no-None solo si conf≥guard. Señal PRIMARIA en S17 por su localización 100% (vs 73%
+        del grid). El `margin` (distancia al 2º mejor) distingue un avatar REAL (margen
+        claro) de un crop espurio tipo texto '(N)' del nº de slot (conf baja + margen ~0 =
+        equidistante entre refs → no es una cara; 5R.L.7.3, QA 2026-06-20)."""
         if face is None or not self._detbadge._refs:
-            return None, 0.0, False
+            return None, 0.0, 0.0, False
         r = self._detbadge.match(face)
         name = r.name if (r.name is not None and r.conf >= min_sim) else None
-        return name, r.conf, r.rejected
+        return name, r.conf, r.margin, r.rejected

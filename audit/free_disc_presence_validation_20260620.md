@@ -29,10 +29,19 @@ sin VOTAR (gate + reject-set).
 | Ejemplo_6 (reemplazar) | NO | — | None | **LIBRE** ✓ |
 | Ejemplo_7 (reemplazar) | sí (leaky) | None@0.51 rej | None | **LIBRE** ✓ |
 
-**6/7 LIBRE · 0 falso-equip** (el grid se abstuvo en los 7 — reject-set + guard) · **1 incierto**
-(Ejemplo_2: crop de detail espurio sin match → `detail_present>0` bloquea, abstención segura RNF-02,
-solo yield). El gate del grid sigue útil (rechazó 3/7 + 0 regresión en 218 equipados) como defensa.
+**6/7 LIBRE · 0 falso-equip** (el grid se abstuvo en los 7) · **1 incierto** (Ejemplo_2: crop de
+detail espurio sin match → `detail_present>0` bloquea). El gate del grid sigue útil (rechazó 3/7 +
+0 regresión en 218 equipados).
 
-## Pendiente menor
-Ejemplo_2: el detail localizó un crop en un disco libre (1/7). Empuje a 7/7 = ajustar el gate de
-presencia del detail, con cuidado de no romper su loc en equipados (L.2b). Diferido (abstención segura).
+## Fix del 1/7 (Ejemplo_2 + Metal colmilludo en vivo) — filtro de presencia por conf/margen
+QA en vivo (`id_diag`: `det_loc=4 det_match=0`) + inspección: el localizador del detail recorta el
+**texto '(N)' del nº de slot** del título en algunos libres (`audit/ej2_detail_spurious.png` = "(1)").
+Ese crop matchea con **conf 0.66 + margen 0.02** (equidistante entre refs = no es una cara). **Fix:**
+`_sample_s17_owner` cuenta `detail_present` solo si `not rejected and (conf≥_DET_PRESENCE_CONF=0.70 o
+margen≥_DET_PRESENCE_MARGIN=0.05)`; el texto (ambos bajos) cuenta como AUSENTE → no bloquea LIBRE.
+`s17_match_detail` ahora devuelve también el margen.
+- **Validación libres: 7/7 LIBRE, 0 falso-equip.**
+- **0 regresión:** sobre 167 crops de avatar reales (harvest det) solo 3 caen "ausente" — y son
+  `cissia__det__*`, que son **crops de TEXTO "(5)" contaminados** (ya conocido), NO caras. 164/164
+  avatares reales → presentes.
+- Tests: `test_monitor_detalle_espurio_texto_no_bloquea_libre` (nuevo). Suite S17/grid/S18 136/136.

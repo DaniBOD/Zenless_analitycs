@@ -166,6 +166,15 @@ _S17_FREE_MIN_FRAMES = 2
 _DET_SOLO_MIN_SCORE = 0.80   # suma de conf del detail ganador (≈ 1 frame confiable)
 _DET_SOLO_DOMINANCE = 1.50   # ganador ≥ 1.5× el 2º acumulado (sin empate cerrado)
 
+# 5R.L.7.3 — PRESENCIA de avatar en el detalle (¿el crop es una cara o un crop espurio?).
+# El localizador del detalle a veces recorta el texto '(N)' del nº de slot en discos LIBRES
+# (QA 2026-06-20: '(1)' → conf 0.66, margen 0.02). Un avatar REAL matchea con conf ALTA o
+# margen CLARO; el texto da AMBOS bajos (equidistante entre refs). Cuenta como "avatar
+# presente" (bloquea LIBRE) solo si no-rejected y (conf≥CONF o margen≥MARGIN). Calibrado:
+# el texto (0.66/0.02) queda fuera; avatares reales tienen margen mediana ~0.33.
+_DET_PRESENCE_CONF = 0.70
+_DET_PRESENCE_MARGIN = 0.05
+
 
 def _vote_winner(votes: dict[str, float]) -> tuple[str | None, float, float]:
     """(nombre, score_1º, score_2º) del dict de votos acumulados, o (None, 0, 0)."""
@@ -1432,8 +1441,14 @@ class Monitor:
         if det is None:
             self._s17_detail_absent += 1       # 5R.L.7.3: el árbitro no vio avatar (libre?)
         else:
-            self._s17_detail_present += 1       # hay avatar de dueño en el panel (equipado)
-            d_name, d_conf, _drej = self._identifier.s17_match_detail(det)
+            d_name, d_conf, d_margin, d_rej = self._identifier.s17_match_detail(det)
+            # ¿el crop es una CARA o un crop espurio (texto '(N)' del nº de slot)? Un avatar
+            # real matchea con conf alta O margen claro; el texto da ambos bajos → cuenta como
+            # AUSENTE (no bloquea LIBRE). RNF-02: exige ambos bajos (no piso un avatar dudoso).
+            if (not d_rej) and (d_conf >= _DET_PRESENCE_CONF or d_margin >= _DET_PRESENCE_MARGIN):
+                self._s17_detail_present += 1   # avatar de dueño plausible en el panel
+            else:
+                self._s17_detail_absent += 1    # crop espurio (texto/ambiguo) → como ausente
             if d_name:
                 self._s17_det_votes[d_name] = self._s17_det_votes.get(d_name, 0.0) + float(d_conf)
         # Instrumentación L.0 (gated): desglose por-disco grid/detalle (loc + match + voto).

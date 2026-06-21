@@ -352,10 +352,15 @@ def test_maybe_harvest_gates(tmp_path, monkeypatch):
 class _StubIdent:
     """Identificador controlado para testear la lógica de `_assign_s17_pj` (5R.5)
     sin depender de fixtures: define la similitud al latch y el dueño identificado."""
-    def __init__(self, sim=None, owner=None, free=False, det_owner=None):
+    def __init__(self, sim=None, owner=None, free=False, det_owner=None,
+                 det_conf=0.66, det_margin=0.5):
         self._sim = sim; self._owner = owner; self.learned = []
         self._roster_norm = {}; self._free = free
         self._det_owner = det_owner; self.learned_detail = []
+        # Para el gate de presencia del detalle (5R.L.7.3): conf+margen del crop cuando NO
+        # hay dueño identificado. Default = avatar real presente (margen claro); un crop
+        # espurio tipo texto '(N)' se modela con det_margin chico (~0.02).
+        self._det_conf = det_conf; self._det_margin = det_margin
 
     def s17_similarity(self, badge, name):
         return self._sim
@@ -370,7 +375,9 @@ class _StubIdent:
         return (None, 0.40, True) if self._free else (None, 0.70, False)
 
     def s17_match_detail(self, badge, min_sim=0.80):
-        return (self._det_owner[0], self._det_owner[1], False) if self._det_owner else (None, 0.0, False)
+        if self._det_owner:
+            return self._det_owner[0], self._det_owner[1], 0.5, False
+        return None, self._det_conf, self._det_margin, False
 
     def learn_s17(self, badge, name):
         self.learned.append(name); return True
@@ -554,6 +561,28 @@ def test_monitor_grid_presente_leaky_sin_voto_igual_libre(monkeypatch):
     assert disc.agente_asignado_nombre is None
 
 
+def test_monitor_detalle_espurio_texto_no_bloquea_libre(monkeypatch):
+    """5R.L.7.3 (QA 2026-06-20, Metal colmilludo): el localizador del detalle a veces recorta
+    el texto '(N)' del nº de slot en discos LIBRES (det_loc>0 pero conf 0.66 + margen 0.02 =
+    equidistante = no es cara). Ese crop espurio NO debe contar como avatar presente → no
+    bloquea LIBRE. (Antes: det_loc>0 → 'badge no localizado'/incierto.)"""
+    import app.core.monitor as mon
+    monkeypatch.setattr(mon, "crop_grid_selected_badge", lambda f: None)             # grid NOLOC
+    monkeypatch.setattr(mon, "crop_detail_badge", lambda f: np.zeros((40, 40, 3), np.uint8))  # detalle recorta algo
+    m = _monitor()
+    m._identifier = _StubIdent(sim=0.40, owner=None, det_owner=None,
+                               det_conf=0.66, det_margin=0.02)   # crop espurio: ambos bajos
+    m._last_agent_name = "Zhu Yuan"
+    m._s17_last_slot = 1
+    disc = _disc(slot=1)
+    for _ in range(4):
+        m._sample_s17_owner(_frame())
+    assert m._s17_detail_present == 0 and m._s17_detail_absent >= 2   # texto → ausente
+    m._assign_s17_pj(disc, _frame())
+    assert disc.equip_libre is True                  # crop espurio no bloquea → LIBRE
+    assert disc.equip_pj_visual is None
+
+
 def test_monitor_voto_dueno_gana_pese_a_frames_inciertos(monkeypatch):
     """Anti-parpadeo (5R.5c): el loop rápido samplea ~varios frames del MISMO disco;
     aunque algunos den 'incierto' (recorte movido), el dueño con más confianza
@@ -571,7 +600,7 @@ def test_monitor_voto_dueno_gana_pese_a_frames_inciertos(monkeypatch):
             self._i += 1
             # frames pares: Yuzuha nítido; impares: cara presente pero bajo guard (no libre)
             return ("Yuzuha", 0.90, False) if self._i % 2 == 0 else (None, 0.70, False)
-        def s17_match_detail(self, badge, min_sim=0.80): return None, 0.0, False
+        def s17_match_detail(self, badge, min_sim=0.80): return None, 0.0, 0.0, False
         def learn_s17(self, badge, name): self.learned.append(name); return True
         def learn_s17_detail(self, badge, name): return True
 
