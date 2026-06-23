@@ -330,6 +330,21 @@ class TestRecupEnergiaBugB:
         txt = "tasa de perforacion 0 % 1 energia"
         assert _extract_by_regex(txt)["recup_energia"] == "1"
 
+    def test_rescate_roi_recupera_er_dropeado(self, paddle_ocr):
+        # Pyrois Nv1 (QA 2026-06-23): el full-frame DROPEA el "1" de ER → regex abstiene.
+        # El rescate por ROI (recup_energia_valor) recorta la celda y la OCR-ea sola →
+        # recupera ER=1.0. Frame real Pyrois (Perfil_agente ejemplo_14). Nombre de
+        # fixture FUERA del glob 'atributos_base_ejemplo_*' a propósito: es una captura
+        # nueva no curada para el test estricto de los 11 stats (su Daño Crítico es
+        # single-frame flaky; en vivo lo cubre el aggregator).
+        f = FIXTURES / "pyrois_er_rescate_s18.png"
+        if not f.exists():
+            pytest.skip("fixture Pyrois ER no presente")
+        frame = cv2.imdecode(np.fromfile(str(f), np.uint8), cv2.IMREAD_COLOR)
+        r = parse_agent_stats(frame, paddle_ocr)
+        assert r.recuperacion_energia == 1.0
+        assert "er_rescatado_roi" in r.notas
+
 
 class TestAcumulacionAdrenalina:
     """La 'Acumulación Automática de Adrenalina' (slot inferior-derecho de

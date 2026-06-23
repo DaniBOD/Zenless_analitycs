@@ -58,6 +58,45 @@ def test_parse_disc_s9_frames_reales(name, expect, _ocr):
     assert set_sub in _norm(d.set_name_raw), f"{name}: set {d.set_name_raw!r} sin '{set_sub}'"
 
 
+# Casos donde PaddleOCR DROPEA el dígito "(N)" del título (típico con el "1" fino →
+# "()"): el slot se recupera por la regla determinista del main PLANO (slot 1=HP,
+# 2=ATK, 3=DEF). QA 2026-06-23 (Monarca/Nana slot 1). Ej6 NO va acá: su "(6)" sí se
+# lee por extract_s9_slot (slot 4-6 no es inferible por main).
+_EXPECT_INFER = {
+    "Ejemplo_7": ("nana",    1, "HP"),
+    "Ejemplo_8": ("monarca", 1, "HP"),
+    "Ejemplo_9": ("monarca", 1, "HP"),
+}
+
+
+@pytest.mark.skipif(not (_S9 / "Ejemplo_7.png").exists(), reason="capturas S9 (7-9) no presentes")
+@pytest.mark.parametrize("name,expect", list(_EXPECT_INFER.items()))
+def test_parse_disc_s9_slot_inferido_por_main(name, expect, _ocr):
+    """El '(N)' se pierde en el OCR → el slot se infiere por el main plano (regla ZZZ).
+    Verifica slot correcto + la nota que documenta la inferencia (no inventado)."""
+    from app.core.parser_disc_s17 import parse_disc_s9
+    from app.core.detector import extract_s9_slot
+    set_sub, slot, main_canon = expect
+    fr = cv2.imdecode(np.fromfile(str(_S9 / f"{name}.png"), np.uint8), cv2.IMREAD_COLOR)
+    d = parse_disc_s9(fr, _ocr, slot=extract_s9_slot(fr, _ocr))
+    assert d.slot == slot, f"{name}: slot {d.slot} != {slot}"
+    assert d.main_stat_canon == main_canon, f"{name}: main {d.main_stat_canon} != {main_canon}"
+    assert "slot_inferido_por_main_plano" in d.notas, f"{name}: notas {d.notas}"
+    assert set_sub in _norm(d.set_name_raw), f"{name}: set {d.set_name_raw!r} sin '{set_sub}'"
+
+
+@pytest.mark.skipif(not (_S9 / "Ejemplo_6.png").exists(), reason="captura S9 (6) no presente")
+def test_parse_disc_s9_slot_4a6_por_titulo(_ocr):
+    """Ej6 (DEF%, slot 6): el slot 4-6 NO es inferible por main → debe venir del
+    '(N)' del título (extract_s9_slot lo recupera aunque el panel detalle lo pierda)."""
+    from app.core.parser_disc_s17 import parse_disc_s9
+    from app.core.detector import extract_s9_slot
+    fr = cv2.imdecode(np.fromfile(str(_S9 / "Ejemplo_6.png"), np.uint8), cv2.IMREAD_COLOR)
+    d = parse_disc_s9(fr, _ocr, slot=extract_s9_slot(fr, _ocr))
+    assert d.slot == 6, f"slot {d.slot} != 6"
+    assert "slot_inferido_por_main_plano" not in d.notas
+
+
 @pytest.mark.skipif(not (_S9 / "Ejemplo_1.png").exists(), reason="capturas S9 no presentes")
 def test_parse_disc_s9_no_substats_fantasma(_ocr):
     """El header 'Efecto de conjunto' (que en S9 se OCR-ea como basura) NO debe

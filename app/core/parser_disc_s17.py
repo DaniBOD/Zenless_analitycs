@@ -807,6 +807,16 @@ def parse_disc_s9(frame: np.ndarray, ocr: "OcrBackend", slot: int | None = None)
         m = _RE_SLOT_PAREN.search(d.set_name_raw or "")
         if m:
             slot_final = int(m.group(1))
+    # Fallback determinista por MAIN PLANO (regla fija ZZZ): los slots 1/2/3 tienen
+    # SIEMPRE main plano de HP/ATK/DEF respectivamente; los slots 4/5/6 nunca lo
+    # tienen (siempre %/especiales). Cuando PaddleOCR DROPEA el dígito "(N)" del
+    # título (típico con el "1" fino → "()" — QA 2026-06-23 Monarca slot 1), el main
+    # plano identifica el slot sin inventar. Solo HP/ATK/DEF EXACTOS (no 'HP%'/'ATK%').
+    if not (1 <= slot_final <= 6):
+        _slot_por_main = {"HP": 1, "ATK": 2, "DEF": 3}.get(d.main_stat_canon or "")
+        if _slot_por_main is not None:
+            slot_final = _slot_por_main
+            d.notas.append("slot_inferido_por_main_plano")
     if 1 <= slot_final <= 6:
         d.slot = slot_final
         if "slot_no_detectado" in d.notas:

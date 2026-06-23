@@ -1123,6 +1123,13 @@ def _parse_via_full_frame(
             notas.append("er_ignorada_disruptivo")
     else:
         recuperacion_energia = _parse_float(extracted["recup_energia"])
+        # Rescate por REGIÓN del valor de ER: cuando es un dígito chico/aislado
+        # (Pyrois ER="1") PaddleOCR lo pierde del full-frame → regex se abstiene.
+        # Solo si quedó None (no es Disruptivos: ya cubierto por el branch). RNF-06.
+        if recuperacion_energia is None:
+            recuperacion_energia = _rescue_float_roi(frame, ocr, "recup_energia_valor")
+            if recuperacion_energia is not None:
+                notas.append("er_rescatado_roi")
 
     return AgentStatsParsed(
         nivel=nivel, pv=pv, ataque=ataque, defensa=defensa,
@@ -1169,6 +1176,26 @@ def _rescue_int_roi(frame: np.ndarray, ocr: OcrBackend, region_key: str) -> int 
         if conf == 0.0 and not text:
             return None
         return _parse_int(_clean_number(text))
+    except Exception:
+        return None
+
+
+def _rescue_float_roi(frame: np.ndarray, ocr: OcrBackend, region_key: str) -> float | None:
+    """Igual que `_rescue_int_roi` pero parsea FLOAT — para Recup. Energía, que es un
+    multiplicador chico (e.g. "1.2", "2.16"). Cuando el VALOR es un dígito aislado
+    (Pyrois ER="1") PaddleOCR lo dropea del full-frame y la regex se abstiene; este
+    rescate recorta la celda y la OCR-ea sola. Solo se invoca con el campo en None
+    (RNF-06: costo nulo en el caso normal)."""
+    try:
+        import cv2
+        roi = crop_named_roi(frame, "perfil_agente_atributos", region_key)
+        if roi is None or roi.size < 100:
+            return None
+        up = cv2.resize(roi, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+        text, conf = ocr.text(up, psm=7)
+        if conf == 0.0 and not text:
+            return None
+        return _parse_float(_clean_number(text))
     except Exception:
         return None
 

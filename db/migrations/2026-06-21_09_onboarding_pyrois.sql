@@ -11,7 +11,8 @@
 --
 -- Stats EFECTIVOS = los de NIVEL 01 / M0 con los discos al azar que el usuario le asignó
 --   (RNF-02: son reales, no inventados). Cambiarán al subir de nivel → RECAPTURAR luego.
---   rec_energia=1.2 (base universal ZZZ; la pantalla truncó a "1"). perforacion plana y
+--   rec_energia=1.0 (la pantalla muestra "1"; NO es truncamiento — los demás agentes SÍ
+--   muestran decimales como 1.2/2.16, así que el "1" de Pyrois es el valor real). perforacion plana y
 --   bono_dano_elemento no expuestos → NULL. agent_thresholds (objetivos Prydwen) → pending
 --   (RNF-02: no inventar). Se cargan synergy (matriz Ataque) + score_thresholds + awakening
 --   placeholder. Lo de acá habilita el RECONOCIMIENTO (latch por nombre/stats) y la COSECHA

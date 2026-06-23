@@ -1220,7 +1220,12 @@ class Monitor:
         if self._s9_emitted:
             return
         try:
-            disc = parse_disc_s9(frame, self._ocr)   # slot por "(N)" del título (sin OCR extra)
+            # Slot por la ROI del TÍTULO (extract_s9_slot, calibrada): es la lectura
+            # más limpia del "(N)" — el panel detalle a veces lo pierde. Fresca del
+            # frame actual (no usa state.slot, que en frames continuos viene stale).
+            # parse_disc_s9 lo usa como override; si igual se dropeó, infiere por main.
+            s9_slot = extract_s9_slot(frame, self._ocr)
+            disc = parse_disc_s9(frame, self._ocr, slot=s9_slot)
         except Exception:
             log.exception("Error parseando disco S9")
             return

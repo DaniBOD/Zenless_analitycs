@@ -273,7 +273,12 @@ tasa_perforacion_nombre = [0.555, 0.700, 0.150, 0.030]
 tasa_perforacion_valor  = [0.690, 0.700, 0.080, 0.030]
 
 recup_energia_nombre    = [0.745, 0.690, 0.140, 0.050]
-recup_energia_valor     = [0.880, 0.700, 0.060, 0.030]
+# Valor de Recup. Energía — celda inferior-derecha. La caja vieja [0.880,0.700,0.060,
+# 0.030] era muy chica/baja y devolvía vacío al recortar. Ampliada para el rescate por
+# región cuando el valor es un dígito chico/aislado (e.g. Pyrois ER=1) que el OCR
+# full-frame DROPEA. Validada sobre 8 capturas (1 · 1.2 · 1.87 · 1.92 · 2.04 · 2.16 ·
+# 2.5, todas conf≥0.96). QA 2026-06-23 Pyrois.
+recup_energia_valor     = [0.875, 0.690, 0.085, 0.050]
 
 # Acumulación Automática de Adrenalina (Disruptivos) — celda inferior-derecha. El
 # label es más largo/multilínea que "Recup. Energía" → corre el valor (un dígito
