@@ -57,6 +57,19 @@ class _StubTiebreaker:
         return self._ret
 
 
+class _DeferredIdent:
+    """Abstiene (sin dueño, no-reject) las primeras `resolve_after` llamadas a s17_match,
+    luego matchea. Modela el badge que NO localiza en la 1ª cadencia y resuelve en una
+    posterior → ejercita el WARMUP del dueño en S9."""
+    def __init__(self, name="Zhao", resolve_after=1):
+        self._name, self._resolve_after, self.calls = name, resolve_after, 0
+    def s17_match(self, badge):
+        self.calls += 1
+        if self.calls <= self._resolve_after:
+            return (None, 0.5, False)        # abstiene: ni nombre ni reject → sin dueño
+        return (self._name, 0.94, False)
+
+
 def _paddle():
     try:
         from app.core.ocr_paddle import PaddleBackend
@@ -99,13 +112,17 @@ def test_s9_mismo_disco_no_re_emite():
 
 @pytest.mark.skipif(not (_S9 / "Ejemplo_4.png").exists(), reason="capturas S9 no presentes")
 def test_s9_disco_sin_badge_se_emite_sin_dueno():
-    """Un disco cuyo tile no da badge confiable (libre/NOLOC) se emite IGUAL con los
-    stats, sin inventar dueño (RNF-02): agente_asignado_nombre = None."""
+    """Un disco cuyo tile no da badge confiable (libre/NOLOC) se emite IGUAL con los stats,
+    sin inventar dueño (RNF-02): agente_asignado_nombre = None. Con el WARMUP del dueño, la
+    emisión sin dueño se DIFIERE hasta el techo de ciclos → despachamos hasta que emita."""
     from app.core.detector import ScreenState
+    from app.core.monitor import _S17_AGG_MAX_CYCLES
     emitted = []
     m = _monitor(on_disc=lambda d, st: emitted.append(d))
     fr = cv2.imdecode(np.fromfile(str(_S9 / "Ejemplo_4.png"), np.uint8), cv2.IMREAD_COLOR)
-    m._dispatch_state(fr, ScreenState("S9", 1.0, "s9_inventario"))
+    st = ScreenState("S9", 1.0, "s9_inventario")
+    for _ in range(_S17_AGG_MAX_CYCLES + 1):     # 1 OCR + warmup hasta el techo
+        m._dispatch_state(fr, st)
     assert len(emitted) == 1
     assert emitted[0].agente_asignado_nombre is None
 
@@ -133,11 +150,14 @@ def test_s9_desempate_abstiene_deja_sin_dueno():
     """Si el tiebreaker no confirma (None), el disco queda SIN dueño (RNF-02), no se
     inventa el top-1 visual solo."""
     from app.core.detector import ScreenState
+    from app.core.monitor import _S17_AGG_MAX_CYCLES
     emitted = []
     m = _monitor(on_disc=lambda d, st: emitted.append(d),
                  ident=_MarginAbstainIdent(), tiebreaker=_StubTiebreaker(None))
     fr = cv2.imdecode(np.fromfile(str(_S9 / "Ejemplo_1.png"), np.uint8), cv2.IMREAD_COLOR)
-    m._dispatch_state(fr, ScreenState("S9", 1.0, "s9_inventario"))
+    st = ScreenState("S9", 1.0, "s9_inventario")
+    for _ in range(_S17_AGG_MAX_CYCLES + 1):     # warmup difiere el sin-dueño hasta el techo
+        m._dispatch_state(fr, st)
     assert len(emitted) == 1
     assert emitted[0].agente_asignado_nombre is None
 
@@ -147,12 +167,72 @@ def test_s9_desempate_no_corre_en_reject():
     """Un badge RECHAZADO (disco libre/lock) NO debe consultar el tiebreaker — queda sin
     dueño. El desempate es solo para abstenciones por margen, no para rejects."""
     from app.core.detector import ScreenState
+    from app.core.monitor import _S17_AGG_MAX_CYCLES
     emitted = []
     tb = _StubTiebreaker(("Velina", "build"))
     m = _monitor(on_disc=lambda d, st: emitted.append(d),
                  ident=_MarginAbstainIdent(rejected=True), tiebreaker=tb)
     fr = cv2.imdecode(np.fromfile(str(_S9 / "Ejemplo_1.png"), np.uint8), cv2.IMREAD_COLOR)
-    m._dispatch_state(fr, ScreenState("S9", 1.0, "s9_inventario"))
+    st = ScreenState("S9", 1.0, "s9_inventario")
+    for _ in range(_S17_AGG_MAX_CYCLES + 1):     # reject → sin dueño → warmup hasta el techo
+        m._dispatch_state(fr, st)
     assert len(emitted) == 1
     assert emitted[0].agente_asignado_nombre is None
     assert not tb.calls, "el tiebreaker NO debe consultarse en reject"
+
+
+# --- WARMUP del dueño S9 (fix badge=None: reintenta la localización antes de emitir) -------
+
+@pytest.mark.skipif(not (_S9 / "Ejemplo_1.png").exists(), reason="capturas S9 no presentes")
+def test_s9_warmup_difiere_y_resuelve_dueno():
+    """El badge no localiza en la 1ª cadencia (dueño None) → el disco NO se emite (warmup);
+    cuando una cadencia posterior resuelve el dueño, recién ahí emite CON dueño."""
+    from app.core.detector import ScreenState
+    emitted = []
+    ident = _DeferredIdent(name="Zhao", resolve_after=1)   # abstiene 1×, luego matchea
+    m = _monitor(on_disc=lambda d, st: emitted.append(d), ident=ident)
+    fr = cv2.imdecode(np.fromfile(str(_S9 / "Ejemplo_1.png"), np.uint8), cv2.IMREAD_COLOR)
+    st = ScreenState("S9", 1.0, "s9_inventario")
+    m._dispatch_state(fr, st)                  # 1ª: madura sin dueño → warmup, NO emite
+    assert emitted == [], "no debe emitir mientras calienta el dueño"
+    m._dispatch_state(fr, st)                  # 2ª: el badge resuelve → emite con dueño
+    assert len(emitted) == 1
+    assert emitted[0].agente_asignado_nombre == "Zhao"
+
+
+def test_tiebreak_owner_helper_asigna_y_es_compartido():
+    """El helper `_tiebreak_owner` (compartido por S9 y S17): ante un badge que abstiene por
+    margen, consulta el tiebreaker y, si confirma, asigna dueño + nota y devuelve True. Es el
+    mismo camino que cablea el fallback 'incierto' de S17."""
+    from types import SimpleNamespace
+    import app.core.monitor as mon
+    m = mon.Monitor(ocr=None, detector=None, on_disc=None,
+                    agent_identifier=_MarginAbstainIdent(),
+                    owner_tiebreaker=_StubTiebreaker(("Velina", "build")))
+    disc = SimpleNamespace(agente_asignado_nombre=None, agente_asignado_conf=None, notas=[])
+    assert m._tiebreak_owner(disc, badge=object(), tag="s17_owner") is True
+    assert disc.agente_asignado_nombre == "Velina"
+    assert "dueno_desempate_build" in disc.notas
+
+
+def test_tiebreak_owner_helper_no_asigna_en_reject():
+    """Reject (disco libre) → el helper NO consulta el tiebreaker ni asigna (RNF-02)."""
+    from types import SimpleNamespace
+    import app.core.monitor as mon
+    tb = _StubTiebreaker(("Velina", "build"))
+    m = mon.Monitor(ocr=None, detector=None, on_disc=None,
+                    agent_identifier=_MarginAbstainIdent(rejected=True), owner_tiebreaker=tb)
+    disc = SimpleNamespace(agente_asignado_nombre=None, agente_asignado_conf=None, notas=[])
+    assert m._tiebreak_owner(disc, badge=object(), tag="s17_owner") is False
+    assert disc.agente_asignado_nombre is None
+    assert not tb.calls
+
+
+def test_tiebreak_owner_helper_sin_tiebreaker():
+    """Sin tiebreaker inyectado → no-op seguro (False)."""
+    from types import SimpleNamespace
+    import app.core.monitor as mon
+    m = mon.Monitor(ocr=None, detector=None, on_disc=None,
+                    agent_identifier=_MarginAbstainIdent(), owner_tiebreaker=None)
+    disc = SimpleNamespace(agente_asignado_nombre=None, agente_asignado_conf=None, notas=[])
+    assert m._tiebreak_owner(disc, badge=object(), tag="s17_owner") is False

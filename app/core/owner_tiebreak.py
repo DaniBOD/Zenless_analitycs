@@ -52,6 +52,7 @@ class OwnerTiebreaker:
 
     def __init__(self, db_path: Path | str, resolve_set_id: Callable[["DiscParsed"], int | None]):
         self._resolve_set_id = resolve_set_id
+        self._db_path = Path(db_path)
         # build_map: nombre_normalizado -> {set_id, ...}  (4pc + 2pc, no-NULL)
         self._build_map: dict[str, set[int]] = {}
         # equip_index: (set_id, slot, main_norm) -> {nombre_normalizado, ...} — qué PJs
@@ -60,9 +61,20 @@ class OwnerTiebreaker:
         # 1/2/3 el main es fijo por slot (HP/ATK/DEF) → fingerprint preciso; para 4-6 solo
         # matchea si el string del main coincide normalizado (si no, no dispara → seguro).
         self._equip_index: dict[tuple[int, int, str], set[str]] = {}
-        self._load_maps(Path(db_path))
+        # Los índices son una foto al cargar. `mark_dirty()` (que llama el controller tras
+        # persistir un disco) fuerza una recarga LAZY en el próximo resolve() → mantiene el
+        # desempate al día con cambios de build en vivo (p.ej. reasignar discos de Velina).
+        self._dirty: bool = False
+        self._load_maps(self._db_path)
+
+    def mark_dirty(self) -> None:
+        """Marca los índices como obsoletos → el próximo `resolve()` los recarga. Lo llama
+        el controller tras persistir un disco (cambió `inventory_discs`/asignaciones)."""
+        self._dirty = True
 
     def _load_maps(self, db_path: Path) -> None:
+        self._build_map = {}
+        self._equip_index = {}
         try:
             con = sqlite3.connect(str(db_path))
             con.row_factory = sqlite3.Row
@@ -118,6 +130,9 @@ class OwnerTiebreaker:
         """
         if not top or len(top) < 2:
             return None
+        if self._dirty:                       # recarga lazy tras un persist (mark_dirty)
+            self._load_maps(self._db_path)
+            self._dirty = False
         top1, d1 = top[0]
         top2, d2 = top[1]
         if not top1 or not top2:

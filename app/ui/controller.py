@@ -556,6 +556,10 @@ class MonitorController(QObject):
                 result = None
                 if self._disc_syncer is not None:
                     result = self._disc_syncer.persist_s17_disc(disc_parsed)
+                # Persistió (cambió inventory_discs/asignación) → invalidar los índices del
+                # tiebreaker para que el próximo desempate vea los datos nuevos (build en vivo).
+                if result is not None and self._owner_tiebreaker is not None:
+                    self._owner_tiebreaker.mark_dirty()
                 self._log_s17_extraction(disc_parsed, result)
                 return
             payload = self._build_payload(disc_parsed, state)

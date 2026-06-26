@@ -317,6 +317,7 @@ class Monitor:
         self._s9_agg_sig = None           # firma-ancla del disco S9 que se fusiona
         self._s9_emitted: bool = False    # ya se emitió (persist/log) este disco S9
         self._s9_agg_cycles: int = 0
+        self._s9_warming: bool = False     # maduró pero el dueño no resolvió → reintentar badge
         # Última firma del log "[S17] asignado" (edge-trigger: 1× por cambio).
         self._s17_assign_sig = None
         # Gate de OCR S18 (RNF-06): última firma del panel de stats. Si no cambió, se
@@ -612,7 +613,8 @@ class Monitor:
                 # 5R.L.6: mientras un disco S17 espera calentar el voto del dueño (incierto en
                 # el 1er frame), re-chequear rápido en vez de esperar el ciclo completo de 1s.
                 # No agrega OCR (el path de warmup re-lee el merge); solo apura la re-decisión.
-                if active_state.code == "S17" and self._s17_warming:
+                if (active_state.code == "S17" and self._s17_warming) or \
+                        (active_state.code == "S9" and self._s9_warming):
                     cadence_ms = _S17_WARM_CADENCE_MS
                 elapsed_ms = (now - last_process_time) * 1000
                 forced = self._force_event.is_set()
@@ -1226,8 +1228,26 @@ class Monitor:
             self._s9_agg_sig = sig
             self._s9_emitted = False
             self._s9_agg_cycles = 0
+            self._s9_warming = False
         if self._s9_emitted:
             return
+        # WARMUP del dueño (fix badge=None): el disco ya maduró (stats completas) pero el
+        # badge no localizó al dueño en esa cadencia. Reintentar la localización unas
+        # cadencias más SIN re-OCR (el aggregator conserva stats + dueño; _assign_s9_owner
+        # solo SETEA el dueño, nunca lo borra). Espejo de _s17_warming, pero S9 no tiene loop
+        # 10fps → termina por techo de ciclos. Los discos LIBRES esperan el techo y emiten
+        # sin dueño (latencia acotada). Re-chequeo acelerado (cadencia de warmup, ver run()).
+        if self._s9_warming:
+            merged = self._s9_aggregator.current
+            if merged is None:
+                self._s9_warming = False
+            else:
+                self._assign_s9_owner(merged, frame)   # reintenta el badge sobre el merge
+                self._s9_agg_cycles += 1
+                if merged.agente_asignado_nombre or self._s9_agg_cycles >= _S17_AGG_MAX_CYCLES:
+                    self._s9_warming = False
+                    self._emit_s9_disc(merged, state)
+                return
         try:
             # Slot por la ROI del TÍTULO (extract_s9_slot, calibrada): es la lectura
             # más limpia del "(N)" — el panel detalle a veces lo pierde. Fresca del
@@ -1245,7 +1265,14 @@ class Monitor:
         self._s9_agg_cycles += 1
         if self._s9_emitted or merged is None:
             return
-        if not (disc_is_mature(merged) or self._s9_agg_cycles >= _S17_AGG_MAX_CYCLES):
+        mature = disc_is_mature(merged)
+        ceiling = self._s9_agg_cycles >= _S17_AGG_MAX_CYCLES
+        if not (mature or ceiling):
+            return
+        # Maduró pero el dueño no resolvió y aún hay margen de ciclos → DIFERIR (warmup): el
+        # badge tiene más cadencias para localizar antes de emitir sin dueño.
+        if mature and not ceiling and merged.agente_asignado_nombre is None:
+            self._s9_warming = True
             return
         self._emit_s9_disc(merged, state)
 
@@ -1272,39 +1299,46 @@ class Monitor:
             if self._id_diag_on:
                 log.info("[s9_owner] match directo: %s (conf %.2f)", name, conf)
             return
-        # Abstención del badge → desempate por CONTEXTO (build) si está disponible.
-        # Solo cuando NO es reject (un disco libre da reject → sin dueño, RNF-02) y el
-        # match visual es fuerte pero quedó suprimido por margen chico entre look-alikes.
-        if self._owner_tiebreaker is None or rejected:
-            if self._id_diag_on:
-                log.info("[s9_owner] sin dueno: %s (conf %.2f)",
-                         "rejected" if rejected else "sin_tiebreaker", conf)
-            return
+        # Abstención del badge → desempate por CONTEXTO (helper compartido con S17).
+        self._tiebreak_owner(disc, badge, tag="s9_owner")
+
+    def _tiebreak_owner(self, disc, badge, tag: str) -> bool:
+        """Desempate de dueño por CONTEXTO para un badge que el matcher NO resolvió por sí
+        solo (abstención por margen entre look-alikes). Compartido por S9 (`_assign_s9_owner`)
+        y S17 (`_assign_s17_pj`, fallback 'incierto'). Solo actúa si NO es reject (un disco
+        libre da reject → sin dueño, RNF-02) y el match visual es fuerte (conf≥guard) pero
+        quedó suprimido por margen chico. Si el contexto confirma, asigna + nota y devuelve
+        True. `tag` = prefijo del log ('s9_owner'/'s17_owner'). No-op si no hay tiebreaker o
+        badge. Re-deriva el match completo del badge (incl. reject/conf/top)."""
+        if self._owner_tiebreaker is None or badge is None:
+            return False
         try:
             r = self._identifier.s17_match_full(badge)
         except Exception:
-            return
+            return False
         _top_str = ", ".join(f"{n}:{1 - d:.2f}" for n, d in (r.top[:3] if r else []))
         if r is None or r.rejected or r.name is not None or r.conf < _S9_TIEBREAK_CONF_MIN:
             if self._id_diag_on:
-                log.info("[s9_owner] sin desempate (conf %.2f, rej=%s) top=[%s]",
+                log.info("[%s] sin desempate (conf %.2f, rej=%s) top=[%s]", tag,
                          (r.conf if r else 0.0), (r.rejected if r else "?"), _top_str)
-            return
+            return False
         try:
             resolved = self._owner_tiebreaker.resolve(disc, r.top)
         except Exception:
-            return
+            return False
         if resolved:
             owner, reason = resolved
             disc.agente_asignado_nombre = owner
             disc.agente_asignado_conf = r.conf
             disc.notas.append(f"dueno_desempate_{reason}")
             if self._id_diag_on:
-                log.info("[s9_owner] DESEMPATE por %s: %s (conf %.2f) top=[%s]",
-                         reason, owner, r.conf, _top_str)
-        elif self._id_diag_on:
-            log.info("[s9_owner] margen sin desempate (set no distingue top-1/top-2) top=[%s]",
-                     _top_str)
+                log.info("[%s] DESEMPATE por %s: %s (conf %.2f) top=[%s]",
+                         tag, reason, owner, r.conf, _top_str)
+            return True
+        if self._id_diag_on:
+            log.info("[%s] margen sin desempate (set no distingue top-1/top-2) top=[%s]",
+                     tag, _top_str)
+        return False
 
     def _emit_s9_disc(self, merged, state: ScreenState) -> None:
         """Emite (dedup por identidad + equip_map + log + on_disc/sync) un disco S9.
@@ -1338,6 +1372,7 @@ class Monitor:
         self._s9_agg_sig = None
         self._s9_emitted = False
         self._s9_agg_cycles = 0
+        self._s9_warming = False
 
     def _process_agent_stats_continuous(self, frame, state: ScreenState) -> None:
         """
@@ -1937,6 +1972,15 @@ class Monitor:
             disc.equip_libre = True
             self._log_s17_assign(("grid_libre",), "[grilla] disco LIBRE (no equipado por nadie).")
         else:
+            # Antes de declararlo incierto: desempate por CONTEXTO (build/equip) sobre el
+            # badge de la grilla — mismo rescate que S9. Solo actúa en este fallback (el
+            # ancla/latch/voto previos ya resolvieron lo seguro); confirma el top-1/top-2
+            # visual solo si el contexto lo distingue (RNF-02). Asigna por badge (no latch).
+            if self._tiebreak_owner(disc, badge, tag="s17_owner"):
+                disc.equip_detectado = True
+                disc.equip_pj_visual = disc.agente_asignado_nombre
+                disc.equip_libre = False
+                return
             disc.equip_pj_visual = None
             disc.equip_libre = False
             self._log_s17_assign(("grid_owner", "?"), "[grilla] disco equipado · dueño incierto.")

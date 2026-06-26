@@ -150,3 +150,21 @@ def test_equip_main_distinto_no_matchea(tb):
     # Mismo set+slot pero OTRO main (DEF) → fingerprint distinto → sin señal equip.
     d = _Disc("Monarca del Pináculo", slot=1, main="DEF")
     assert tb.resolve(d, [("Seth", 0.04), ("Yanagi", 0.06)]) is None
+
+
+# --- Frescura: mark_dirty() recarga los índices (cambios de build en vivo, p.ej. Velina) ---
+
+def test_mark_dirty_recarga_indices(tb):
+    d = _Disc("Monarca del Pináculo", slot=1, main="HP")
+    # Velina (sin build ni disco) no se puede desempatar todavía.
+    assert tb.resolve(d, [("Velina", 0.04), ("Yanagi", 0.06)]) is None
+    # Simula que el usuario le equipó un Monarca s1 HP a Velina (id 3) y se persistió.
+    con = sqlite3.connect(str(tb._db_path))
+    con.execute("INSERT INTO inventory_discs VALUES (300, 1, 'HP', 3)")
+    con.commit()
+    con.close()
+    # Sin mark_dirty, el índice viejo (foto del arranque) NO lo ve.
+    assert tb.resolve(d, [("Velina", 0.04), ("Yanagi", 0.06)]) is None
+    # Tras mark_dirty, el próximo resolve recarga y la señal equip confirma a Velina.
+    tb.mark_dirty()
+    assert tb.resolve(d, [("Velina", 0.04), ("Yanagi", 0.06)]) == ("Velina", "equip")
