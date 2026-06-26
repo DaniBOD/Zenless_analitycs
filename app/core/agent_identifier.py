@@ -273,6 +273,15 @@ class AgentIdentifier:
         name = r.name if (r.name is not None and r.conf >= min_sim) else None
         return name, r.conf, r.rejected
 
+    def s17_match_full(self, face):
+        """Como `s17_match` pero devuelve el `MatchResult` CRUDO (name, conf, margin,
+        rejected, top) para el desempate por contexto (OwnerTiebreaker). `name` aquí ya
+        viene None si el matcher se abstuvo (conf/margen/reject); `top` trae los candidatos
+        best-first para desempatar. None si no hay cara."""
+        if face is None:
+            return None
+        return self._badge.match(face)
+
     # ---- API: DETALLE-badge (panel de detalle S17, librería propia) ----------
 
     def learn_s17_detail(self, face, name: str) -> bool:

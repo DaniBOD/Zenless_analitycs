@@ -75,6 +75,7 @@ class MonitorController(QObject):
         self._disc_set_repo = None
         self._scoring_ctx = None
         self._disc_syncer = None
+        self._owner_tiebreaker = None
         # Firma del último log de stats S18 emitido (edge-triggered): re-loguea solo
         # cuando el resultado cambia. Se resetea en _on_state_from_monitor.
         self._last_stats_sig: tuple | None = None
@@ -120,6 +121,7 @@ class MonitorController(QObject):
             on_agent_detail=self._on_agent_detail_from_monitor,
             set_repo=self._disc_set_repo,
             on_ram_critical=self.ram_critical.emit,   # watchdog RNF-06 → main thread
+            owner_tiebreaker=self._owner_tiebreaker,  # desempate por contexto (look-alikes)
         )
         self._monitor.start()
         self.monitor_started.emit()
@@ -309,6 +311,14 @@ class MonitorController(QObject):
         # que el disc syncer: write propio + guard readonly. Usa el backup de sesión
         # ya hecho arriba (RNF-01).
         self._agent_stats_syncer = AgentStatsSyncer(db_path=Path(resolved_db))
+        # Desempate de dueño por contexto (build) para badges ambiguos por look-alike.
+        # Reusa el resolutor de set del disc_syncer (fuzzy sin acentos + difflib) para no
+        # duplicar la lógica. El monitor lo usa solo cuando el badge se abstiene por margen.
+        from app.core.owner_tiebreak import OwnerTiebreaker
+        self._owner_tiebreaker = OwnerTiebreaker(
+            db_path=Path(resolved_db),
+            resolve_set_id=self._disc_syncer._resolve_set_id,
+        )
 
     # ---- Callbacks desde el Monitor (thread daemon) ----------------------------
 

@@ -26,10 +26,35 @@ class _StubIdent:
         return (None, 0.5, True) if self._rejected else (self._name, 0.94, False)
 
 
-def _monitor(on_disc, ident=None):
+def _monitor(on_disc, ident=None, tiebreaker=None):
     import app.core.monitor as mon
     return mon.Monitor(ocr=_paddle(), detector=None, on_disc=on_disc,
-                       agent_identifier=ident or _StubIdent())
+                       agent_identifier=ident or _StubIdent(),
+                       owner_tiebreaker=tiebreaker)
+
+
+class _MarginAbstainIdent:
+    """Badge match que ABSTIENE por margen: s17_match da (None, conf, no-reject) y
+    s17_match_full devuelve el MatchResult crudo con `top` (los look-alikes). Modela
+    Velina@0.97 vs César. Ejercita el camino de desempate por contexto del monitor."""
+    def __init__(self, conf=0.95, rejected=False, top=None):
+        self._conf, self._rejected = conf, rejected
+        self._top = top or [("Velina", 0.05), ("César", 0.09)]
+    def s17_match(self, badge):
+        return (None, self._conf, self._rejected)
+    def s17_match_full(self, badge):
+        from app.core.avatar_descriptor import MatchResult
+        return MatchResult(None, self._conf, 0.02, self._rejected, self._top)
+
+
+class _StubTiebreaker:
+    """Tiebreaker de prueba: devuelve un resultado fijo (o None) sin tocar la DB."""
+    def __init__(self, ret):
+        self._ret = ret
+        self.calls = []
+    def resolve(self, disc, top):
+        self.calls.append((disc, top))
+        return self._ret
 
 
 def _paddle():
@@ -83,3 +108,51 @@ def test_s9_disco_sin_badge_se_emite_sin_dueno():
     m._dispatch_state(fr, ScreenState("S9", 1.0, "s9_inventario"))
     assert len(emitted) == 1
     assert emitted[0].agente_asignado_nombre is None
+
+
+@pytest.mark.skipif(not (_S9 / "Ejemplo_1.png").exists(), reason="capturas S9 no presentes")
+def test_s9_desempate_por_contexto_asigna_dueno():
+    """Badge ambiguo por margen (no-reject, conf alta): el monitor consulta el tiebreaker
+    y, si confirma el top-1, asigna ese dueño + nota. Ejercita el camino completo
+    `_assign_s9_owner` → `s17_match_full` → `OwnerTiebreaker.resolve`."""
+    from app.core.detector import ScreenState
+    emitted = []
+    tb = _StubTiebreaker(("Velina", "build"))
+    m = _monitor(on_disc=lambda d, st: emitted.append(d),
+                 ident=_MarginAbstainIdent(), tiebreaker=tb)
+    fr = cv2.imdecode(np.fromfile(str(_S9 / "Ejemplo_1.png"), np.uint8), cv2.IMREAD_COLOR)
+    m._dispatch_state(fr, ScreenState("S9", 1.0, "s9_inventario"))
+    assert len(emitted) == 1
+    assert emitted[0].agente_asignado_nombre == "Velina"
+    assert "dueno_desempate_build" in emitted[0].notas
+    assert tb.calls, "el tiebreaker debió ser consultado"
+
+
+@pytest.mark.skipif(not (_S9 / "Ejemplo_1.png").exists(), reason="capturas S9 no presentes")
+def test_s9_desempate_abstiene_deja_sin_dueno():
+    """Si el tiebreaker no confirma (None), el disco queda SIN dueño (RNF-02), no se
+    inventa el top-1 visual solo."""
+    from app.core.detector import ScreenState
+    emitted = []
+    m = _monitor(on_disc=lambda d, st: emitted.append(d),
+                 ident=_MarginAbstainIdent(), tiebreaker=_StubTiebreaker(None))
+    fr = cv2.imdecode(np.fromfile(str(_S9 / "Ejemplo_1.png"), np.uint8), cv2.IMREAD_COLOR)
+    m._dispatch_state(fr, ScreenState("S9", 1.0, "s9_inventario"))
+    assert len(emitted) == 1
+    assert emitted[0].agente_asignado_nombre is None
+
+
+@pytest.mark.skipif(not (_S9 / "Ejemplo_1.png").exists(), reason="capturas S9 no presentes")
+def test_s9_desempate_no_corre_en_reject():
+    """Un badge RECHAZADO (disco libre/lock) NO debe consultar el tiebreaker — queda sin
+    dueño. El desempate es solo para abstenciones por margen, no para rejects."""
+    from app.core.detector import ScreenState
+    emitted = []
+    tb = _StubTiebreaker(("Velina", "build"))
+    m = _monitor(on_disc=lambda d, st: emitted.append(d),
+                 ident=_MarginAbstainIdent(rejected=True), tiebreaker=tb)
+    fr = cv2.imdecode(np.fromfile(str(_S9 / "Ejemplo_1.png"), np.uint8), cv2.IMREAD_COLOR)
+    m._dispatch_state(fr, ScreenState("S9", 1.0, "s9_inventario"))
+    assert len(emitted) == 1
+    assert emitted[0].agente_asignado_nombre is None
+    assert not tb.calls, "el tiebreaker NO debe consultarse en reject"

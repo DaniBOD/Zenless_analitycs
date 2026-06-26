@@ -77,6 +77,10 @@ _HARVEST_CAP = 4
 #   sim ≥ MIN → avatar confirma el latch → asignar.
 #   sim < MIN → avatar es de OTRO PJ (disco del grid) → abstener (preservar DB).
 _S17_GUARD_MIN = 0.86
+# Conf mínima para INTENTAR el desempate por contexto (build) cuando el badge se abstuvo
+# por margen chico: solo desempatamos matches VISUALMENTE FUERTES pero ambiguos por
+# look-alike (Velina@0.97, Ye Shunguang@0.84). Descarta los reject/low-conf (Ej10/12 @0.50).
+_S9_TIEBREAK_CONF_MIN = 0.80
 # Fase 4 (revisado tras QA 2026-06-09): se CONFÍA EN EL LATCH para asignar el disco
 # equipado; `sim` (avatar circular S17) solo decide si re-aprender el descriptor
 # (sim baja/ausente → refrescar; self-heal del falso-rechazo de Nangong 0.734). El
@@ -262,6 +266,7 @@ class Monitor:
         on_agent_detail: Callable[[ScreenState, str | None, bool, str | None], None] | None = None,
         agent_identifier: AgentIdentifier | None = None,
         on_ram_critical: Callable[[], None] | None = None,
+        owner_tiebreaker=None,                                  # OwnerTiebreaker opcional
     ):
         self._ocr = ocr
         self._detector = detector
@@ -422,6 +427,10 @@ class Monitor:
         # en S8/S19. Permite nombrar al PJ tras un switch directo (sin pasar por
         # Atributos base), siempre que ese PJ ya se haya visto en S18 antes.
         self._identifier = agent_identifier if agent_identifier is not None else AgentIdentifier()
+        # Desempate de dueño por contexto (build) cuando el badge se abstiene por margen
+        # chico entre look-alikes. Opcional: si es None, el comportamiento es el de antes
+        # (abstención = sin dueño). Lo inyecta el controller con acceso a la DB.
+        self._owner_tiebreaker = owner_tiebreaker
 
     # ---- Control ----------------------------------------------------------------
 
@@ -1258,6 +1267,27 @@ class Monitor:
         if name and not rejected:
             disc.agente_asignado_nombre = name
             disc.agente_asignado_conf = conf
+            return
+        # Abstención del badge → desempate por CONTEXTO (build) si está disponible.
+        # Solo cuando NO es reject (un disco libre da reject → sin dueño, RNF-02) y el
+        # match visual es fuerte pero quedó suprimido por margen chico entre look-alikes.
+        if self._owner_tiebreaker is None or rejected:
+            return
+        try:
+            r = self._identifier.s17_match_full(badge)
+        except Exception:
+            return
+        if r is None or r.rejected or r.name is not None or r.conf < _S9_TIEBREAK_CONF_MIN:
+            return
+        try:
+            resolved = self._owner_tiebreaker.resolve(disc, r.top)
+        except Exception:
+            return
+        if resolved:
+            owner, reason = resolved
+            disc.agente_asignado_nombre = owner
+            disc.agente_asignado_conf = r.conf
+            disc.notas.append(f"dueno_desempate_{reason}")
 
     def _emit_s9_disc(self, merged, state: ScreenState) -> None:
         """Emite (dedup por identidad + equip_map + log + on_disc/sync) un disco S9.
