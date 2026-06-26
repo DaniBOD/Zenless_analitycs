@@ -70,9 +70,17 @@ def test_confirma_top1_si_distingue(tb):
     assert r == ("César", "build")
 
 
-def test_no_promueve_top2(tb):
-    # top-1 Velina (sin build), top-2 César (corre Punk): NUNCA promueve el top-2.
-    assert tb.resolve(_Disc("Punk Primitivo"), [("Velina", 0.10), ("César", 0.13)]) is None
+def test_promueve_top2_con_margen_infimo(tb):
+    # Caso real César/Punk s4: top-1 Corin (sin Punk) y top-2 César (corre Punk) casi
+    # empatados (margen 0.02 ≤ 0.03) → promueve César por 'build_top2'.
+    r = tb.resolve(_Disc("Punk Primitivo"), [("Velina", 0.10), ("César", 0.12)])
+    assert r == ("César", "build_top2")
+
+
+def test_no_promueve_top2_con_margen_grande(tb):
+    # Si el empate NO es ínfimo (margen 0.10 > 0.03), NO se promueve el top-2 aunque el
+    # contexto lo corrobore: el matcher visual mandó con holgura.
+    assert tb.resolve(_Disc("Punk Primitivo"), [("Velina", 0.10), ("César", 0.20)]) is None
 
 
 def test_abstiene_si_ambos_corren_el_set(tb):
@@ -113,10 +121,16 @@ def test_equip_rescata_filler_por_asignacion(tb):
     assert tb.resolve(d, [("Seth", 0.04), ("Yanagi", 0.06)]) == ("Seth", "equip")
 
 
-def test_equip_no_promueve_top2(tb):
-    # Si el dueño real (Seth) es el top-2, NO se promueve sobre el top-1 visual.
+def test_equip_promueve_top2_con_margen_infimo(tb):
+    # Seth (dueño real, tiene el disco) como top-2 casi empatado (margen 0.02) → 'equip_top2'.
     d = _Disc("Monarca del Pináculo", slot=1, main="HP")
-    assert tb.resolve(d, [("Yanagi", 0.04), ("Seth", 0.06)]) is None
+    assert tb.resolve(d, [("Yanagi", 0.04), ("Seth", 0.06)]) == ("Seth", "equip_top2")
+
+
+def test_equip_no_promueve_top2_con_margen_grande(tb):
+    # Mismo Seth top-2 con el disco, pero margen 0.10 > 0.03 → NO se promueve.
+    d = _Disc("Monarca del Pináculo", slot=1, main="HP")
+    assert tb.resolve(d, [("Yanagi", 0.04), ("Seth", 0.14)]) is None
 
 
 def test_equip_abstiene_si_ambos_tienen_el_disco(tb):

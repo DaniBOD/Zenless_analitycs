@@ -36,6 +36,12 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# Promoción del TOP-2: solo si el empate visual es ÍNFIMO (distancia top-2 − top-1 por
+# debajo de esto) Y el contexto corrobora EXCLUSIVAMENTE al top-2. El matcher ya abstuvo
+# por margen < 0.04; esto es más estricto aún (decisión DaniBOD 2026-06-26, "guardas
+# estrictas"): rescata el caso "dueño real es el top-2 casi empatado" (César/Punk s4).
+_TOP2_MARGIN_MAX = 0.03
+
 
 class OwnerTiebreaker:
     """Confirma el top-1 visual de un badge ambiguo usando el build (set firma) de la DB.
@@ -83,40 +89,55 @@ class OwnerTiebreaker:
         except Exception:
             log.exception("[owner_tiebreak] no se pudieron cargar los mapas de contexto")
 
+    def _exclusive_signal(self, set_id, slot, main, a_key, b_key) -> str | None:
+        """¿Alguna señal distingue EXCLUSIVAMENTE al candidato `a` del `b`? Devuelve la
+        razón ('build' | 'equip') o None. `a`/`b` son nombres ya normalizados."""
+        # BUILD firma (set_4p/2p): el set del disco es firma de `a` y no de `b`.
+        a_sets = self._build_map.get(a_key, set())
+        b_sets = self._build_map.get(b_key, set())
+        if set_id in a_sets and set_id not in b_sets:
+            return "build"
+        # ASIGNACIÓN existente: `a` YA tiene un disco con este fingerprint (set, slot, main)
+        # en inventory_discs y `b` no. Rescata filler/slots 1-3 (Nana s1) que el build no
+        # distingue. Para slots 1-3 el main es fijo por slot → fingerprint preciso.
+        if slot and 1 <= int(slot) <= 6:
+            fp = (set_id, int(slot), _norm_key(main))
+            owners = self._equip_index.get(fp, set())
+            if a_key in owners and b_key not in owners:
+                return "equip"
+        return None
+
     def resolve(self, disc: "DiscParsed", top: list[tuple[str, float]]) -> tuple[str, str] | None:
-        """Devuelve (nombre, razon) si el contexto confirma el top-1; si no, None.
+        """Devuelve (nombre, razon) si el contexto confirma un candidato; si no, None.
 
         `top`: candidatos del matcher best-first `[(nombre, distancia), ...]` (MatchResult.top).
-        Solo CONFIRMA el top-1 visual cuando una señal lo distingue EXCLUSIVAMENTE del top-2
-        (RNF-02: nunca promueve el top-2, nunca asigna un PJ que el matcher no rankeó #1).
+        Confirma el TOP-1 cuando una señal lo distingue EXCLUSIVAMENTE del top-2. Si el top-1
+        no se corrobora, promueve el TOP-2 SOLO si el empate visual es ínfimo (margen <
+        _TOP2_MARGIN_MAX) y el contexto corrobora EXCLUSIVAMENTE al top-2 (caso "dueño real
+        es el top-2 casi empatado"). RNF-02: corroboración siempre EXCLUSIVA.
         """
         if not top or len(top) < 2:
             return None
-        top1 = top[0][0]
-        top2 = top[1][0]
+        top1, d1 = top[0]
+        top2, d2 = top[1]
         if not top1 or not top2:
             return None
         set_id = self._resolve_set_id(disc)
         if set_id is None:
             return None
         n1, n2 = _norm_key(top1), _norm_key(top2)
-
-        # Señal 1 — BUILD firma (set_4p/2p): el set del disco es el set firma del top-1
-        # y no del top-2. Sirve para PJs establecidos con set distintivo.
-        t1_sets = self._build_map.get(n1, set())
-        t2_sets = self._build_map.get(n2, set())
-        if set_id in t1_sets and set_id not in t2_sets:
-            return top1, "build"
-
-        # Señal 2 — ASIGNACIÓN existente: el top-1 YA tiene un disco con este fingerprint
-        # (set, slot, main) asignado en inventory_discs y el top-2 no. Rescata filler/slots
-        # 1-3 (Nana s1, Monarca s1) que el build no distingue (validado: Seth/Nana s1).
         slot = getattr(disc, "slot", None)
         main = getattr(disc, "main_stat_canon", None) or getattr(disc, "main_stat_raw", None) or ""
-        if slot and 1 <= int(slot) <= 6:
-            fp = (set_id, int(slot), _norm_key(main))
-            owners = self._equip_index.get(fp, set())
-            if n1 in owners and n2 not in owners:
-                return top1, "equip"
+
+        # TOP-1: corroboración exclusiva sobre el top-2.
+        reason = self._exclusive_signal(set_id, slot, main, n1, n2)
+        if reason:
+            return top1, reason
+
+        # TOP-2: solo con empate visual ÍNFIMO y corroboración exclusiva sobre el top-1.
+        if (d2 - d1) <= _TOP2_MARGIN_MAX:
+            reason = self._exclusive_signal(set_id, slot, main, n2, n1)
+            if reason:
+                return top2, f"{reason}_top2"
 
         return None
