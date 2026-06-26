@@ -1259,6 +1259,8 @@ class Monitor:
         except Exception:
             badge = None
         if badge is None:
+            if self._id_diag_on:
+                log.info("[s9_owner] badge=None (tile sin localizar / disco libre) -> sin dueno")
             return
         try:
             name, conf, rejected = self._identifier.s17_match(badge)
@@ -1267,17 +1269,26 @@ class Monitor:
         if name and not rejected:
             disc.agente_asignado_nombre = name
             disc.agente_asignado_conf = conf
+            if self._id_diag_on:
+                log.info("[s9_owner] match directo: %s (conf %.2f)", name, conf)
             return
         # Abstención del badge → desempate por CONTEXTO (build) si está disponible.
         # Solo cuando NO es reject (un disco libre da reject → sin dueño, RNF-02) y el
         # match visual es fuerte pero quedó suprimido por margen chico entre look-alikes.
         if self._owner_tiebreaker is None or rejected:
+            if self._id_diag_on:
+                log.info("[s9_owner] sin dueno: %s (conf %.2f)",
+                         "rejected" if rejected else "sin_tiebreaker", conf)
             return
         try:
             r = self._identifier.s17_match_full(badge)
         except Exception:
             return
+        _top_str = ", ".join(f"{n}:{1 - d:.2f}" for n, d in (r.top[:3] if r else []))
         if r is None or r.rejected or r.name is not None or r.conf < _S9_TIEBREAK_CONF_MIN:
+            if self._id_diag_on:
+                log.info("[s9_owner] sin desempate (conf %.2f, rej=%s) top=[%s]",
+                         (r.conf if r else 0.0), (r.rejected if r else "?"), _top_str)
             return
         try:
             resolved = self._owner_tiebreaker.resolve(disc, r.top)
@@ -1288,6 +1299,12 @@ class Monitor:
             disc.agente_asignado_nombre = owner
             disc.agente_asignado_conf = r.conf
             disc.notas.append(f"dueno_desempate_{reason}")
+            if self._id_diag_on:
+                log.info("[s9_owner] DESEMPATE por %s: %s (conf %.2f) top=[%s]",
+                         reason, owner, r.conf, _top_str)
+        elif self._id_diag_on:
+            log.info("[s9_owner] margen sin desempate (set no distingue top-1/top-2) top=[%s]",
+                     _top_str)
 
     def _emit_s9_disc(self, merged, state: ScreenState) -> None:
         """Emite (dedup por identidad + equip_map + log + on_disc/sync) un disco S9.
