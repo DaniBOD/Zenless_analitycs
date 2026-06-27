@@ -267,6 +267,7 @@ class Monitor:
         agent_identifier: AgentIdentifier | None = None,
         on_ram_critical: Callable[[], None] | None = None,
         owner_tiebreaker=None,                                  # OwnerTiebreaker opcional
+        farm_session=None,                                      # FarmSession opcional (gate S2)
     ):
         self._ocr = ocr
         self._detector = detector
@@ -318,6 +319,11 @@ class Monitor:
         self._s9_emitted: bool = False    # ya se emitió (persist/log) este disco S9
         self._s9_agg_cycles: int = 0
         self._s9_warming: bool = False     # maduró pero el dueño no resolvió → reintentar badge
+        # --- S3 (modal de drop farmeado): mismo patrón aggregator/dedup, sin dueño ni warmup ---
+        self._s3_aggregator = DiscAggregator()
+        self._s3_agg_sig = None            # firma-ancla del modal de drop que se fusiona
+        self._s3_emitted: bool = False
+        self._s3_agg_cycles: int = 0
         # Última firma del log "[S17] asignado" (edge-trigger: 1× por cambio).
         self._s17_assign_sig = None
         # Gate de OCR S18 (RNF-06): última firma del panel de stats. Si no cambió, se
@@ -432,6 +438,11 @@ class Monitor:
         # chico entre look-alikes. Opcional: si es None, el comportamiento es el de antes
         # (abstención = sin dueño). Lo inyecta el controller con acceso a la DB.
         self._owner_tiebreaker = owner_tiebreaker
+        # Gate de confianza por flujo de farmeo (S13→S14→S2→S3). Opcional: si es None, el
+        # resumen S2 sale siempre como tentativo. Lo inyecta el controller. Ver farm_session.py.
+        self._farm_session = farm_session
+        # S2 (resultados de farmeo): resumen display-only 1× por entrada al estado.
+        self._s2_reported: bool = False
 
     # ---- Control ----------------------------------------------------------------
 
@@ -588,6 +599,9 @@ class Monitor:
             if raw_state.code != "S9":
                 # Fuera de S9 → olvidar el tracking del disco del inventario global.
                 self._reset_s9_disc_tracking()
+            if raw_state.code != "S3":
+                # Fuera de S3 → olvidar el tracking del modal de drop farmeado.
+                self._reset_s3_disc_tracking()
 
             # ---- Paso 2: alimentar buffer temporal ----
             # Deep detect con alta confianza salta la votación 2/3 para
@@ -727,6 +741,11 @@ class Monitor:
         """Enruta el frame al handler correspondiente según el estado."""
         prev_code = self._prev_state_code
         self._prev_state_code = state.code
+        # Gate de farmeo: alimentar el contexto de flujo en CADA ciclo (arma con S13/S14).
+        if self._farm_session is not None:
+            self._farm_session.on_state(state.code, time.monotonic())
+        if state.code != "S2":
+            self._s2_reported = False
         self._handle_upgrade(frame, state)
         # Menú de personajes (Fase M.1): al salir de S15, olvidar la firma del nombre y del
         # log → re-entrar re-identifica y re-loguea. Barato (set a None cada frame no-S15).
@@ -784,6 +803,13 @@ class Monitor:
             self._processed_disc_state_code = None
             self._reported_agent_stats_state_code = None
             self._agent_stats_screen_logged = False
+        elif state.code == "S2":
+            # Resultados de farmeo: resumen display-only (discos tier S en la grilla) con el
+            # contexto de confianza de FarmSession. No persiste ni puntúa (eso es S3).
+            self._process_s2_resultado(frame, state)
+            self._processed_disc_state_code = None
+            self._reported_agent_stats_state_code = None
+            self._agent_stats_screen_logged = False
         else:
             # Estado intermedio (S1/S12/S15/etc.) — resetear dedup flags para
             # que la próxima entrada a un capturable o S18 re-dispare/re-loggee.
@@ -826,6 +852,33 @@ class Monitor:
                 self._on_diagnostic(f"[harvest] {safe} {state.code} #{n}")
         except Exception:
             log.debug("harvest falló", exc_info=True)
+
+    def _process_s2_resultado(self, frame, state: ScreenState) -> None:
+        """Resultados de farmeo (S2): detecta discos tier S en la grilla (display-only) y
+        emite un resumen 1× por entrada al estado. El contexto de confianza lo da FarmSession
+        (flujo S13→S14→S2 = farmeo real; sin flujo = tentativo). No persiste ni puntúa — la
+        captura completa llega al abrir cada disco en S3."""
+        if self._s2_reported:
+            return
+        self._s2_reported = True
+        try:
+            from app.core.parser_s2 import parse_s2_resultado
+            res = parse_s2_resultado(frame)
+        except Exception:
+            log.exception("Error parseando resultados S2")
+            return
+        if not res.has_s_discs:
+            return   # sin discos S visibles → no afirmamos farmeo (B/A: futuro)
+        armado = self._farm_session is not None and self._farm_session.is_armed(time.monotonic())
+        contexto = "flujo" if armado else "tentativo"
+        msg = (f"[farmeo] resultados: {res.n_s_approx} disco(s) tier S visibles "
+               f"· contexto={contexto}")
+        log.info("Farmeo detectado: %d disco(s) S · contexto=%s", res.n_s_approx, contexto)
+        if self._on_diagnostic:
+            try:
+                self._on_diagnostic(msg)
+            except Exception:
+                log.debug("on_diagnostic S2 falló", exc_info=True)
 
     def _handle_upgrade(self, frame, state: ScreenState) -> None:
         if self._upgrade_syncer is None:
@@ -907,6 +960,36 @@ class Monitor:
             return True
         return (self._sig_component_diff(sig[0], self._s9_agg_sig[0]) > _S9_SIG_MAX
                 or self._sig_component_diff(sig[1], self._s9_agg_sig[1]) > _S9_SIG_MAX)
+
+    @staticmethod
+    def _s3_disc_signature(frame):
+        """Firma del modal de drop S3 (centrado), sin OCR (RNF-06). Título (distingue sets) +
+        bloque main/substats (distingue discos del mismo set). None si no se puede leer."""
+        if frame is None or getattr(frame, "size", 0) == 0:
+            return None
+        try:
+            import cv2
+            H, W = frame.shape[:2]
+            title = frame[int(0.21 * H):int(0.28 * H), int(0.32 * W):int(0.60 * W)]
+            body = frame[int(0.39 * H):int(0.61 * H), int(0.32 * W):int(0.68 * W)]
+            if title.size == 0 or body.size == 0:
+                return None
+            sig_t = cv2.cvtColor(
+                cv2.resize(title, (48, 24), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
+            ).astype(np.float32)
+            sig_b = cv2.cvtColor(
+                cv2.resize(body, (48, 48), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
+            ).astype(np.float32)
+            return (sig_t, sig_b)
+        except Exception:
+            return None
+
+    def _is_new_s3_disc(self, sig) -> bool:
+        """True si la firma indica que el modal de drop cambió (o no había ancla)."""
+        if self._s3_agg_sig is None or sig is None:
+            return True
+        return (self._sig_component_diff(sig[0], self._s3_agg_sig[0]) > _S9_SIG_MAX
+                or self._sig_component_diff(sig[1], self._s3_agg_sig[1]) > _S9_SIG_MAX)
 
     @staticmethod
     def _frame_lo_sig(frame):
@@ -1207,6 +1290,10 @@ class Monitor:
         if state.code == "S17":
             self._process_disc_s17_continuous(frame, state)
             return
+        if state.code == "S3":
+            # Drop farmeado: handler CONTINUO con aggregator (parser espacial S3 de 2 columnas).
+            self._process_disc_s3_continuous(frame, state)
+            return
         key = state.code
         if self._processed_disc_state_code == key:
             return
@@ -1373,6 +1460,73 @@ class Monitor:
         self._s9_emitted = False
         self._s9_agg_cycles = 0
         self._s9_warming = False
+
+    # --- S3: modal de drop farmeado (parser espacial 2 columnas) ----------------
+    def _process_disc_s3_continuous(self, frame, state: ScreenState) -> None:
+        """S3 CONTINUO: re-extrae el disco del modal de drop (parser espacial 2 columnas) y
+        fusiona parciales en el aggregator S3, igual que S9 pero SIN dueño (un drop no está
+        equipado) ni warmup. La firma del modal detecta cambio de disco y resetea. Emite vía
+        on_disc cuando madura o tras el techo de ciclos. Gate RNF-06: emitido + firma estable →
+        no re-OCR."""
+        sig = self._s3_disc_signature(frame)
+        if sig is None:
+            return
+        if self._is_new_s3_disc(sig):
+            self._s3_aggregator.reset()
+            self._s3_agg_sig = sig
+            self._s3_emitted = False
+            self._s3_agg_cycles = 0
+        if self._s3_emitted:
+            return
+        try:
+            from app.core.parser_disc_s3 import parse_disc_s3_full
+            disc = parse_disc_s3_full(frame, self._ocr)
+        except Exception:
+            log.exception("Error parseando disco S3 (drop)")
+            return
+        if disc.confianza_global < 0.7:
+            return  # frame de transición → no contaminar el aggregator
+        merged = self._s3_aggregator.merge(disc)
+        self._s3_agg_cycles += 1
+        if self._s3_emitted or merged is None:
+            return
+        mature = disc_is_mature(merged)
+        ceiling = self._s3_agg_cycles >= _S17_AGG_MAX_CYCLES
+        if not (mature or ceiling):
+            return
+        self._emit_s3_disc(merged, state)
+
+    def _emit_s3_disc(self, merged, state: ScreenState) -> None:
+        """Emite (dedup por identidad + log + on_disc) un disco de drop S3. Comparte el dedup
+        de identidad con S9/S17 (un disco es un disco). El controller lo enruta a _build_payload
+        (score + toast); no persiste en esta fase (display-first)."""
+        self._s3_emitted = True
+        identity = self._disc_identity(merged)
+        if self._recapture_on:
+            if identity == self._last_emitted_identity:
+                return
+        elif identity in self._disc_emitted_ids:
+            return
+        self._disc_emitted_ids.add(identity)
+        self._last_emitted_identity = identity
+        log.info(
+            "Disco S3 (drop) detectado: set=%s slot=%d main=%s nivel=%d conf=%.2f",
+            merged.set_name_canon or merged.set_name_raw, merged.slot,
+            merged.main_stat_canon or merged.main_stat_raw, merged.nivel,
+            merged.confianza_global,
+        )
+        if self._on_disc:
+            try:
+                self._on_disc(merged, state)
+            except Exception:
+                log.exception("Error en on_disc S3")
+
+    def _reset_s3_disc_tracking(self) -> None:
+        """Olvida el tracking del modal de drop S3 (al salir de S3)."""
+        self._s3_aggregator.reset()
+        self._s3_agg_sig = None
+        self._s3_emitted = False
+        self._s3_agg_cycles = 0
 
     def _process_agent_stats_continuous(self, frame, state: ScreenState) -> None:
         """

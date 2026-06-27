@@ -76,6 +76,7 @@ class MonitorController(QObject):
         self._scoring_ctx = None
         self._disc_syncer = None
         self._owner_tiebreaker = None
+        self._farm_session = None
         # Firma del último log de stats S18 emitido (edge-triggered): re-loguea solo
         # cuando el resultado cambia. Se resetea en _on_state_from_monitor.
         self._last_stats_sig: tuple | None = None
@@ -122,6 +123,7 @@ class MonitorController(QObject):
             set_repo=self._disc_set_repo,
             on_ram_critical=self.ram_critical.emit,   # watchdog RNF-06 → main thread
             owner_tiebreaker=self._owner_tiebreaker,  # desempate por contexto (look-alikes)
+            farm_session=self._farm_session,          # gate de farmeo (contexto S13→S14→S2)
         )
         self._monitor.start()
         self.monitor_started.emit()
@@ -319,6 +321,10 @@ class MonitorController(QObject):
             db_path=Path(resolved_db),
             resolve_set_id=self._disc_syncer._resolve_set_id,
         )
+        # Gate de confianza por flujo de farmeo (S13→S14→S2→S3): distingue un farmeo de discos
+        # de otros "resultados de desafío". Sin DB ni dependencias; solo observa transiciones.
+        from app.core.farm_session import FarmSession
+        self._farm_session = FarmSession()
 
     # ---- Callbacks desde el Monitor (thread daemon) ----------------------------
 
