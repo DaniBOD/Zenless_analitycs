@@ -46,7 +46,7 @@ Sistema de análisis y optimización de cuenta para ZZZ porque el juego carece d
 |------|-------|------:|-------|
 | 1 Catálogos | `agents` | **49** | 45 originales + Cissia v2.7 + Billy Estelar v2.x + Velina v3.x + **Pyrois v3.x** (2026-06-21, **rango ∞ "infinito" + facción Faetón nuevos**, Éter/Ataque/M0, onboarding PARCIAL: identidad+stats Nv1 provisorios+synergy+score_thr+awakening; pendiente agent_thresholds Prydwen + splash + IA) |
 | 1 | `weapons` | 53 | 49 base + 4 nuevas (Street Superstar, Florescencia aurífera, Wild Gastronome, Hertz Transit). Ya tiene `pasiva_modelada` + `sensibilidad_contexto` |
-| 1 | `disc_sets` | 27 | +Salón huracanado (Wuthering Salon, id 52, v3.x, set firma Velina) 2026-06-26 |
+| 1 | `disc_sets` | 28 | +Firmamento llameante (The Sky Ablaze, id 53, v3.0, Éter, set firma Pyrois) 2026-06-27; +Salón huracanado (Wuthering Salon, id 52, v3.x, set firma Velina) 2026-06-26 |
 | 1 | `agent_awakenings` | **9** | 1 verificado (Burnice nv6) + 4 placeholder `pending_capture` (Lycaon, Ellen, Grace, N.°0:Anby) + 1 placeholder Cissia + 1 Billy Estelar + 1 Velina + 1 Pyrois. Harumasa y N.°11 sin insertar hasta confirmar nivel |
 | 2 Inventarios | `agent_discs` | 270 | 45 PJs × 6 slots; incluye EMPTY (Antón, Ben, builds 3+3). Cissia usa inventory_discs directamente hasta sync RF-04 |
 | 2 | `inventory_discs` | **334** | 263 equipados + 71 sueltos (+ 2 nuevos Cissia slot 4/6) |
