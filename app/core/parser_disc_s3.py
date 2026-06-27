@@ -96,27 +96,49 @@ def _rescue_slot_s3(frame, ocr, titulo_lines, W, H) -> int:
 
 
 def _ocr_s3_lines(frame: np.ndarray, ocr):
-    """OCR del modal S3 sobre crop nativo + re-offset a frame completo (igual patrón que S17/S9).
-    Fallback al frame entero si el crop falla."""
-    from app.core.capturer import crop_roi
-    H, W = frame.shape[:2]
-    x0 = int(_S3_MODAL_ROI[0] * W)
-    y0 = int(_S3_MODAL_ROI[1] * H)
-    crop = crop_roi(frame, _S3_MODAL_ROI)
-    raw = ocr.text_with_bboxes(crop) if (crop is not None and getattr(crop, "size", 0)) else None
-    if not raw:
-        raw = ocr.text_with_bboxes(frame)
-        x0 = y0 = 0
-    return [(t, c, (b[0] + x0, b[1] + y0, b[2] + x0, b[3] + y0)) for (t, c, b) in raw]
+    """OCR del modal S3 sobre el FRAME COMPLETO. A diferencia de S17/S9 (que recortan el panel
+    por latencia), el crop nativo del modal S3 dropea el '(N)' fino del título (slot) en algunos
+    fondos → slot=0. El full-frame lo lee fiable ('(1)/(2)/(4)' verificados) y los substats
+    igual; el filtro de banda (`_S3_BAND`) deja solo el modal. S3 es un modal que el usuario abre
+    deliberadamente (no el path crítico), así que la latencia extra es aceptable."""
+    return ocr.text_with_bboxes(frame)
+
+
+def _coalesce_wrapped_names(name_lines):
+    """Une nombres de substat ENVUELTOS a 2 líneas. En la grilla 2×2 de S3 las columnas son
+    angostas y los nombres largos se parten: "Probabilidad de"/"Crítico", "Maestría de"/"Anomalía".
+    Sin fusionar, cada mitad se leería como un substat fantasma. Solo fusiona si la 1ª línea NO
+    es un stat conocido por sí sola Y la combinación SÍ lo es (gate seguro → cero falsos merges).
+    Tolera el badge "+N" de rolls en cualquiera de las dos líneas (lo separa antes de validar)."""
+    def _known(txt):
+        base, _ = _split_rolls(txt.strip())
+        return normalize_stat_name(base) is not None
+
+    out = []
+    i, n = 0, len(name_lines)
+    while i < n:
+        ln = name_lines[i]
+        if not _known(ln.txt) and i + 1 < n:
+            nxt = name_lines[i + 1]
+            hp = max(1, ln.y2 - ln.y1)
+            combo = (ln.txt.strip() + " " + nxt.txt.strip()).strip()
+            if 0 < (nxt.y1 - ln.y1) <= 2.2 * hp and _known(combo):
+                ln.txt = combo
+                out.append(ln)
+                i += 2
+                continue
+        out.append(ln)
+        i += 1
+    return out
 
 
 def _column_substats(sub_region, col: PanelLayout, frame, ocr, W, H, notas, confs):
     """Extrae los substats de UNA columna (nombre izq / valor der dentro de la banda de la
     columna), con los mismos rescates de rolls y valor que S17. Devuelve [(y1, x1, SubstatParsed)]
     para luego mezclar las dos columnas en orden de lectura."""
-    names = _coalesce_rolls_fragments(
-        sorted([ln for ln in sub_region if col.band_min <= ln.xn < col.col_split], key=lambda l: l.y1)
-    )
+    names = sorted([ln for ln in sub_region if col.band_min <= ln.xn < col.col_split], key=lambda l: l.y1)
+    names = _coalesce_wrapped_names(names)        # une nombres largos partidos a 2 líneas
+    names = _coalesce_rolls_fragments(names)       # une badges "+N" huérfanos
     # Descartar fragmentos sin letras (un valor/badge que cayó en la columna de nombre).
     names = [ln for ln in names if any(c.isalpha() for c in ln.txt)]
     vals = sorted([ln for ln in sub_region if col.col_split <= ln.xn <= col.band_max], key=lambda l: l.y1)
@@ -227,6 +249,12 @@ def _parse_s3_from_lines(lines, W, H, frame=None, ocr=None) -> DiscParsed:
     if main_vals:
         confs.append(main_vals[0].conf)
     main_valor, main_unidad = _parse_valor(main_val_raw)
+    if main_valor is None and main_names:
+        # El full-frame dropea el valor chico del main (p.ej. "79") en algunos fondos →
+        # rescate por re-OCR upscaleado de la columna de valor (mismo patrón que substats).
+        rv = _rescue_missing_value(frame, main_names[0], ocr, W, H, _S3_COL_A)
+        if rv is not None:
+            main_valor, main_unidad = rv
     main_canon = _canon_with_unit(main_raw, main_unidad)
     if main_canon and slot >= 1 and not is_valid_main_for_slot(slot, main_canon):
         notas.append(f"main_invalido_slot_{slot}:{main_canon}")

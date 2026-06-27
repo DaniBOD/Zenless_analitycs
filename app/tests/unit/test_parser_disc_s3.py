@@ -76,3 +76,45 @@ def test_s3_ejemplo_3_floracion_slot4():
     assert d.slot == 4
     assert d.nivel == 0
     assert len(_subs_completos(d)) >= 2
+
+
+@pytest.mark.skipif(not (_S3 / "Ejemplo_6.png").exists(), reason="capturas S3 no presentes")
+def test_s3_ejemplo_6_firmamento_slot2():
+    """Set NUEVO 'Firmamento llameante' (Éter). slot 2, main ATK 79 (rescate de valor full-frame).
+    'Probabilidad de Crítico' se lee envuelto a 2 líneas → debe coalescer a UN substat."""
+    from app.core.parser_disc_s3 import parse_disc_s3_full
+    d = parse_disc_s3_full(_load("Ejemplo_6.png"), _paddle())
+    assert "firmamento" in (d.set_name_raw or "").lower()
+    assert d.slot == 2
+    assert d.main_stat_canon == "ATK"
+    assert d.main_valor == 79                    # rescate del valor chico del main
+    canons = {s.nombre_canon for s in _subs_completos(d)}
+    assert "Prob. Crítica" in canons             # nombre envuelto coalescido
+    assert "Perforación" in canons
+    assert disc_is_mature(d)
+
+
+@pytest.mark.skipif(not (_S3 / "Ejemplo_7.png").exists(), reason="capturas S3 no presentes")
+def test_s3_ejemplo_7_firmamento_slot4():
+    from app.core.parser_disc_s3 import parse_disc_s3_full
+    d = parse_disc_s3_full(_load("Ejemplo_7.png"), _paddle())
+    assert "firmamento" in (d.set_name_raw or "").lower()
+    assert d.slot == 4
+    assert d.main_stat_canon == "HP%"
+    assert "Prob. Crítica" in {s.nombre_canon for s in _subs_completos(d)}
+    assert disc_is_mature(d)
+
+
+@pytest.mark.skipif(not (_S3 / "Ejemplo_5.png").exists(), reason="capturas S3 no presentes")
+def test_s3_ejemplo_5_coalesce_maestria_anomalia():
+    """'Maestría de Anomalía' se lee envuelto a 2 líneas ('Maestría de' / 'Anomalía') → debe
+    coalescer a UN substat, no partirse en dos fantasmas."""
+    from app.core.parser_disc_s3 import parse_disc_s3_full
+    d = parse_disc_s3_full(_load("Ejemplo_5.png"), _paddle())
+    assert "huracanado" in (d.set_name_raw or "").lower()
+    assert d.slot == 1
+    assert d.main_stat_canon == "HP" and d.main_valor == 550
+    raws = {(s.nombre_canon or s.nombre_raw) for s in d.subs}
+    assert "Maestría de Anomalía" in {s.nombre_canon for s in d.subs}
+    # no quedaron las mitades sueltas como substats fantasma
+    assert "Anomalía" not in raws and "Maestría de" not in raws
