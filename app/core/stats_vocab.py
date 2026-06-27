@@ -29,7 +29,7 @@ CANONICAL_MAINS_VARIABLE: dict[int, frozenset[str]] = {
     }),
     5: frozenset({
         "Bono Daño Físico", "Bono Daño Fuego", "Bono Daño Hielo",
-        "Bono Daño Eléctrico", "Bono Daño Éter",
+        "Bono Daño Eléctrico", "Bono Daño Éter", "Bono Daño Viento",
         "HP%", "ATK%", "DEF%", "Tasa de Perforación",
     }),
     6: frozenset({
@@ -133,6 +133,14 @@ ALIASES: dict[str, str] = {
     "Bono Daño Ígneo":      "Bono Daño Fuego",
     "Bono Daño Etéreo":     "Bono Daño Éter",
     "Bono Daño Físico":     "Bono Daño Físico",   # ya canónico, sin alias
+
+    # Bono Daño Viento (Wind DMG) — elemento nuevo del roster (Velina, v2.7+).
+    # El cliente ES rotula el main de Viento como "Bono de daño aéreo"; el
+    # canónico interno sigue la convención "Bono Daño <elemento>". El OCR lo
+    # captura pegado ("Bonode danoaéreo", id=362). Ambas variantes comparten
+    # clave normalizada → un solo destino. Confirmado contra inventory_discs.
+    "Bono de daño aéreo":   "Bono Daño Viento",
+    "Bonode danoaéreo":     "Bono Daño Viento",
 }
 
 

@@ -147,7 +147,9 @@ def test_agent_avatar_invalid_variant():
 # del check de Pj_stats hasta que se complete el onboarding (se captura su screenshot
 # HoYoLAB). Ver audit/onboarding_billy_estelar_20260612.md. Sus splash -extend/-ico SÍ
 # existen y se verifican normalmente.
-_PJ_STATS_DEFERIDO = {"Billy Estelar"}
+# Velina (id 48) y Pyrois (id 49): onboarding parcial vigente — faltan thresholds/splash/IA
+# y su Pj_stats.jpeg HoYoLAB. Ver memoria project_velina_onboarding / project_pyrois_onboarding.
+_PJ_STATS_DEFERIDO = {"Billy Estelar", "Velina", "Pyrois"}
 
 
 def test_full_coverage_against_db():
