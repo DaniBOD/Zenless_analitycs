@@ -352,3 +352,47 @@ def test_ocr_detail_lines_offset_a_frame_completo(paddle_ocr):
     in_band = [l for l in lines if _BAND_X_MIN <= (l[2][0] / W) <= _BAND_X_MAX]
     assert in_band, "las bboxes no están en coords de frame completo (offset roto)"
     assert all(l[2][2] <= W and l[2][3] <= H for l in lines), "bbox fuera del frame"
+
+
+# --- Madurez nivel-consciente: discos Nivel 0-2 tienen 3 substats (4º a +3) ----------
+
+from app.core.parser_disc_s17 import disc_is_mature
+from app.core.parser_disc import DiscParsed, SubstatParsed
+
+
+def _mk_disc(nivel, n_subs):
+    subs = [SubstatParsed(nombre_raw=f"S{i}", nombre_canon=f"S{i}",
+                          valor=float(i + 1), unidad="flat", rolls=0, confianza=1.0)
+            for i in range(n_subs)]
+    return DiscParsed(
+        set_name_raw="Salón huracanado", set_name_canon=None, slot=1,
+        main_stat_raw="PV", main_stat_canon="HP", main_valor=550.0, main_unidad="flat",
+        nivel=nivel, rareza="S", subs=subs,
+    )
+
+
+def test_mature_nivel0_tres_substats():
+    # Caso real Velina/Salón slot 1 Nv0: 3 substats es COMPLETO para su nivel → maduro.
+    assert disc_is_mature(_mk_disc(0, 3)) is True
+
+
+def test_mature_nivel2_tres_substats():
+    assert disc_is_mature(_mk_disc(2, 3)) is True
+
+
+def test_no_mature_nivel0_dos_substats():
+    # Menos de 3 sigue siendo lectura parcial → no maduro.
+    assert disc_is_mature(_mk_disc(0, 2)) is False
+
+
+def test_no_mature_nivel3_tres_substats():
+    # Nivel >= 3 SIEMPRE tiene 4 substats → 3 es lectura parcial → no maduro (protección).
+    assert disc_is_mature(_mk_disc(3, 3)) is False
+
+
+def test_mature_nivel15_cuatro_substats():
+    assert disc_is_mature(_mk_disc(15, 4)) is True
+
+
+def test_no_mature_nivel_alto_tres_substats():
+    assert disc_is_mature(_mk_disc(15, 3)) is False

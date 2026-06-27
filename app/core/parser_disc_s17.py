@@ -883,7 +883,13 @@ def _merge_subs(base: list, new: list) -> list:
 
 def disc_is_mature(d: DiscParsed | None) -> bool:
     """True si el disco fusionado está 'completo' (análogo a missing=[] de S18):
-    set resoluble + slot 1..6 + main con valor + 4 substats con valor y nombre."""
+    set resoluble + slot 1..6 + main con valor + los substats esperados para su nivel.
+
+    Conteo de substats por NIVEL (regla ZZZ): un disco a Nivel 0-2 puede tener solo 3
+    substats (el 4º se desbloquea a +3). Exigir 4 siempre dejaba a esos discos de bajo
+    nivel SIN capturar nunca (no maduran → solo emitían al techo de ciclos, que el usuario
+    no alcanza) — QA 2026-06-27, Salón huracanado slot 1 Nv0 de Velina. Con nivel >= 3 o
+    desconocido se siguen exigiendo 4 (protege contra lecturas OCR parciales)."""
     if d is None:
         return False
     if not (d.set_name_canon or d.set_name_raw):
@@ -892,9 +898,10 @@ def disc_is_mature(d: DiscParsed | None) -> bool:
         return False
     if d.main_valor is None:
         return False
-    if len(d.subs) < 4:
+    expected = 3 if (d.nivel is not None and 0 <= d.nivel < 3) else 4
+    if len(d.subs) < expected:
         return False
-    return all(s.valor is not None and (s.nombre_canon or s.nombre_raw) for s in d.subs[:4])
+    return all(s.valor is not None and (s.nombre_canon or s.nombre_raw) for s in d.subs[:expected])
 
 
 class DiscAggregator:
