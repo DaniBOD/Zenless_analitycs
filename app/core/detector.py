@@ -1027,8 +1027,24 @@ def _deep_detect_s18(frame: np.ndarray, ocr=None) -> "ScreenState | None":
     return None
 
 
+def _verify_s2(frame: np.ndarray) -> tuple[bool, str | None]:
+    """Verifica que S2 sea un FARMEO DE DISCOS real. El template 's2_resultado_desafio' matchea
+    (a ≥0.80) tanto los resultados de farmeo de discos como OTRAS pantallas de "Resultados del
+    desafío" (recompensas no-disco) y varios menús (eventos, banners, pase) por layout general.
+    La firma que distingue el farmeo de discos es la grilla de recompensas con FRANJAS DE RAREZA
+    (gold/purple/blue) de los tiles de disco. Sin ≥`_DISC_STRIP_MIN` franjas ⇒ no es farmeo de
+    discos ⇒ verificación FALLA (el pipeline degrada la confianza y cae a S12). Sin OCR (RNF-06)."""
+    try:
+        from app.core.parser_s2 import count_reward_rarity_strips, _DISC_STRIP_MIN
+        n = count_reward_rarity_strips(frame)
+        return (n >= _DISC_STRIP_MIN, f"disc_strips={n}")
+    except Exception:
+        return (True, None)   # error inesperado: no bloquear (conservador, consistente con _verify)
+
+
 # Registry: {state_code: verify_func}
 _VERIFICATION_REGISTRY: dict[str, callable] = {
+    "S2":  _verify_s2,
     "S3":  _verify_s3,
     "S10": _verify_s10,
     "S17": _verify_s17,
@@ -1285,17 +1301,11 @@ class ScreenDetector:
             hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
             h, w = frame.shape[:2]
 
-            # S10: barra EXP verde en la zona inferior del modal.
-            # FIX 2026-06-03: faltaba `/255` → el ratio venía ×255 inflado y el
-            # umbral "0.03" se cumplía con cualquier verde (FP de S10 sobre S8 y
-            # la pantalla de entrada). Ahora es fracción real; umbral 0.20
-            # (S18 llega a 0.133, S8 a 0.065 en capturas reales → excluidos).
-            exp_roi = hsv[int(0.50*h):int(0.54*h), int(0.35*w):int(0.65*w)]
-            if exp_roi.size > 0:
-                green_mask = cv2.inRange(exp_roi, np.array([35, 50, 50]), np.array([90, 255, 255]))
-                green_ratio = green_mask.sum() / green_mask.size / 255.0
-                if green_ratio > 0.20:
-                    return ScreenState("S10", 0.60, "hsv_green_bar", method="hsv")
+            # (REMOVIDO 2026-07) Rama HSV S10 "hsv_green_bar": barra EXP verde en zona central-
+            # inferior → S10 0.60. El green_ratio NO separa: Menu_Pausa (FP) mide 0.377, dentro
+            # del rango de S10 real (0.0–0.503; varias S10 reales dan 0.0). Heurística FP-prone y
+            # poco confiable → se elimina. S10 real se detecta por template s10_modal_upgrade +
+            # `_verify_s10`. Ver QA negativo masivo.
 
             # S11: header rojo (zona superior central)
             header_roi = hsv[int(0.02*h):int(0.08*h), int(0.10*w):int(0.90*w)]
@@ -1306,23 +1316,11 @@ class ScreenDetector:
                 if red_ratio > 0.10:
                     return ScreenState("S11", 0.55, "hsv_red_header", method="hsv")
 
-            # S18: grilla de stats en panel central con texto claro
-            # (fallback cuando templates S18 no matchean pero layout coincide)
-            try:
-                center_roi = frame[int(0.20*h):int(0.55*h), int(0.15*w):int(0.85*w)]
-                gray = cv2.cvtColor(center_roi, cv2.COLOR_BGR2GRAY)
-                # 4+ líneas horizontales paralelas → probable grilla de stats
-                edges = cv2.Canny(gray, 40, 120)
-                lines = cv2.HoughLinesP(edges, 1, np.pi/180, 40,
-                                        minLineLength=int(0.3*center_roi.shape[1]),
-                                        maxLineGap=8)
-                if lines is not None and len(lines) >= 4:
-                    ys = sorted(set(int(l[0][1]) for l in lines))
-                    # Al menos 4 líneas en filas ≈ uniformes
-                    if len(ys) >= 4:
-                        return ScreenState("S18", 0.55, "hsv_stats_grid", method="hsv")
-            except Exception:
-                pass
+            # (REMOVIDO 2026-07) Rama HSV S18 "hsv_stats_grid": detectaba 4+ líneas
+            # horizontales en el panel central → S18 0.55. Era un fallback demasiado genérico
+            # (cualquier menú con listas/separadores horizontales lo disparaba: Guia_Rapida,
+            # etc. → FP de S18). S18 real ya se cubre por template (s18a/b/c) + tab-override
+            # (detect_active_tab) + `_deep_detect_s18` (OCR, monitor). Ver QA negativo masivo.
 
             return None
         except Exception:

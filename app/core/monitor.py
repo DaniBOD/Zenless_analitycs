@@ -867,6 +867,9 @@ class Monitor:
         except Exception:
             log.exception("Error parseando resultados S2")
             return
+        if self._id_diag_on:
+            log.info("[s2_diag] has_s_discs=%s gold_frac=%.3f n_s=%d",
+                     res.has_s_discs, res.gold_frac, res.n_s_approx)
         if not res.has_s_discs:
             return   # sin discos S visibles → no afirmamos farmeo (B/A: futuro)
         armado = self._farm_session is not None and self._farm_session.is_armed(time.monotonic())
@@ -1470,6 +1473,8 @@ class Monitor:
         no re-OCR."""
         sig = self._s3_disc_signature(frame)
         if sig is None:
+            if self._id_diag_on:
+                log.info("[s3_diag] sig=None (modal no localizado)")
             return
         if self._is_new_s3_disc(sig):
             self._s3_aggregator.reset()
@@ -1485,6 +1490,9 @@ class Monitor:
             log.exception("Error parseando disco S3 (drop)")
             return
         if disc.confianza_global < 0.7:
+            if self._id_diag_on:
+                log.info("[s3_diag] conf=%.2f < 0.70 (frame transición) set=%r slot=%s",
+                         disc.confianza_global, disc.set_name_raw, disc.slot)
             return  # frame de transición → no contaminar el aggregator
         merged = self._s3_aggregator.merge(disc)
         self._s3_agg_cycles += 1
@@ -1492,6 +1500,11 @@ class Monitor:
             return
         mature = disc_is_mature(merged)
         ceiling = self._s3_agg_cycles >= _S17_AGG_MAX_CYCLES
+        if self._id_diag_on:
+            log.info("[s3_diag] conf=%.2f mature=%s cycles=%d set=%r slot=%s main=%s subs=%d",
+                     disc.confianza_global, mature, self._s3_agg_cycles,
+                     merged.set_name_raw, merged.slot,
+                     merged.main_stat_canon or merged.main_stat_raw, len(merged.subs))
         if not (mature or ceiling):
             return
         self._emit_s3_disc(merged, state)

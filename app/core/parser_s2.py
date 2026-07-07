@@ -31,6 +31,18 @@ _GOLD_HI = (36, 255, 255)
 # Gate: fracción mínima de píxeles dorados saturados en la grilla para afirmar "hay disco S".
 _GOLD_FRAC_MIN = 0.02
 
+# Rarezas de disco en HSV OpenCV (gold=S, purple=A, blue=B). La FRANJA de rareza al borde
+# inferior de cada tile de disco es la firma robusta de "esto es un drop de disco". Se usa en
+# `count_reward_rarity_strips` para verificar S2 (farmeo de discos vs otros resultados/menús).
+_RARITY_BANDS = (
+    ((14, 120, 120), (36, 255, 255)),    # dorado (S)
+    ((125, 80, 80), (155, 255, 255)),    # púrpura (A)
+    ((98, 90, 90), (120, 255, 255)),     # azul (B)
+)
+# ≥ este nº de franjas en la grilla ⇒ es un farmeo de discos. Calibrado (2026-07): farmeo real
+# da 3 (todas las capturas); pantallas sin discos (otro contenido, eventos, banners, pase) ≤2.
+_DISC_STRIP_MIN = 3
+
 
 @dataclass
 class S2Summary:
@@ -44,6 +56,33 @@ def _grid_region(frame: np.ndarray) -> np.ndarray:
     x0, x1 = int(_GRID_X[0] * W), int(_GRID_X[1] * W)
     y0, y1 = int(_GRID_Y[0] * H), int(_GRID_Y[1] * H)
     return frame[y0:y1, x0:x1]
+
+
+def count_reward_rarity_strips(frame: np.ndarray) -> int:
+    """Cuenta franjas de rareza (bandas horizontales gold/purple/blue, borde inferior de cada
+    tile de disco) en la grilla de recompensas de la pantalla de resultados. Es la firma robusta
+    de "drop de discos": un farmeo real da ≥`_DISC_STRIP_MIN`; pantallas sin discos (otros
+    resultados, eventos, banners) dan ≤2. Se usa en `detector._verify_s2`. Sin OCR (RNF-06)."""
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return 0
+    grid = _grid_region(frame)
+    if grid.size == 0:
+        return 0
+    gh, gw = grid.shape[:2]
+    hsv = cv2.cvtColor(grid, cv2.COLOR_BGR2HSV)
+    mask = np.zeros((gh, gw), np.uint8)
+    for lo, hi in _RARITY_BANDS:
+        mask |= cv2.inRange(hsv, lo, hi)
+    # Las franjas son barras horizontales anchas; cerrar y contar contornos anchos/con área.
+    k = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 5))
+    closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k)
+    cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    n = 0
+    for c in cnts:
+        x, y, w, h = cv2.boundingRect(c)
+        if w >= 0.18 * gw and (w * h) >= 0.004 * gh * gw:
+            n += 1
+    return n
 
 
 def parse_s2_resultado(frame: np.ndarray) -> S2Summary:
