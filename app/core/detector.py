@@ -1224,22 +1224,23 @@ class ScreenDetector:
 
     # ---- Capa 1: Template matching -----------------------------------------
 
-    def _template_match(self, frame: np.ndarray) -> ScreenState:
-        """
-        Template matching con threshold dinámico por estado.
-        Reporta el mejor match que supera el threshold específico de su estado.
-        Si ningún match supera su threshold, reporta S12 con la confianza
-        del mejor match global (útil para diagnóstico).
+    def _template_candidates(self, frame: np.ndarray) -> tuple[list[ScreenState], ScreenState]:
+        """Template matching con threshold dinámico por estado. Devuelve
+        `(candidatos, s12_diag)`:
+          - `candidatos`: TODOS los estados cuyo match supera su propio umbral, ordenados
+            desc por confianza. Devolver la lista completa (no solo el mejor) permite al
+            pipeline hacer FALLBACK: si el candidato top falla su verificación secundaria,
+            probar el siguiente en vez de caer a S12. Esto evita que un match ESPURIO alto
+            (p.ej. el template de S2 matchea la pantalla S13 a ~0.90 por chrome común)
+            eclipse al match legítimo más bajo (S13) y produzca un parpadeo S13↔S12.
+          - `s12_diag`: estado S12 con la confianza del mejor match global (diagnóstico
+            cuando ningún template supera su umbral).
         """
         gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
 
-        overall_best_code = "S12"
         overall_best_conf = 0.0
         overall_best_name = ""
-
-        passing_best_code = "S12"
-        passing_best_conf = 0.0
-        passing_best_name = ""
+        passing: list[ScreenState] = []
 
         fh, fw = gray_frame.shape[:2]
         for entry in self._templates:
@@ -1254,18 +1255,21 @@ class ScreenDetector:
 
             if max_val > overall_best_conf:
                 overall_best_conf = max_val
-                overall_best_code = entry["code"]
                 overall_best_name = entry["name"]
 
             state_threshold = THRESHOLD_BY_STATE.get(entry["code"], self._default_threshold)
-            if max_val >= state_threshold and max_val > passing_best_conf:
-                passing_best_conf = max_val
-                passing_best_code = entry["code"]
-                passing_best_name = entry["name"]
+            if max_val >= state_threshold:
+                passing.append(ScreenState(entry["code"], round(max_val, 3), entry["name"], method="template"))
 
-        if passing_best_code != "S12":
-            return ScreenState(passing_best_code, round(passing_best_conf, 3), passing_best_name, method="template")
-        return ScreenState("S12", round(overall_best_conf, 3), overall_best_name or "", method="template")
+        passing.sort(key=lambda s: s.confidence, reverse=True)
+        s12_diag = ScreenState("S12", round(overall_best_conf, 3), overall_best_name or "", method="template")
+        return passing, s12_diag
+
+    def _template_match(self, frame: np.ndarray) -> ScreenState:
+        """Compat: el mejor candidato que supera su umbral, o S12 diagnóstico. Sin fallback
+        de verificación (para eso usar `_template_candidates` + `_verify` en el pipeline)."""
+        passing, s12_diag = self._template_candidates(frame)
+        return passing[0] if passing else s12_diag
 
     # ---- Capa 2: Verificación secundaria ------------------------------------
 
@@ -1378,11 +1382,23 @@ class ScreenDetector:
         if frame is None or frame.size == 0:
             return ScreenState("S12", 0.0, "")
 
-        # Capa 1: template matching
-        state = self._template_match(frame)
-
-        # Capa 2: verificación secundaria
-        state = self._verify(state, frame)
+        # Capa 1+2: template matching con verificación secundaria y FALLBACK. Se prueban los
+        # candidatos que superan su umbral, de mayor a menor confianza; el primero que
+        # SOBREVIVE su verificación gana. Si el top falla (p.ej. S2 sobre una S13: matchea
+        # ~0.90 pero `_verify_s2` no halla franjas de disco), se cae al siguiente candidato
+        # (S13) en vez de a S12 — evita el parpadeo S13↔S12 por eclipse de un match espurio.
+        passing, s12_diag = self._template_candidates(frame)
+        state = None
+        first_verified: "ScreenState | None" = None
+        for cand in passing:
+            verified = self._verify(cand, frame)
+            if first_verified is None:
+                first_verified = verified          # preserva el detalle verification_failed
+            if verified.code != "S12":
+                state = verified
+                break
+        if state is None:
+            state = first_verified if first_verified is not None else s12_diag
 
         # Capa 0 (template-aware): filtro de frame oscuro SOLO si ningún template
         # matchó. Un match fuerte (p.ej. S17 a 1.00) evidencia contenido legible y
