@@ -16,7 +16,10 @@ from typing import Callable
 import numpy as np
 
 from app.core import mem_diag
-from app.core.capturer import WindowBounds, capture_window, find_zzz_window
+from app.core.capturer import (
+    WindowBounds, capture_window, find_zzz_window,
+    get_foreground_window, is_zzz_focused,
+)
 from app.core.detector import (
     ScreenDetector, ScreenState, TemporalBuffer, AGENT_STATS_STATES,
     extract_s17_slot, extract_s9_slot, polling_cadence_ms,
@@ -268,6 +271,7 @@ class Monitor:
         on_ram_critical: Callable[[], None] | None = None,
         owner_tiebreaker=None,                                  # OwnerTiebreaker opcional
         farm_session=None,                                      # FarmSession opcional (gate S2)
+        capture_only_focused: bool = True,                      # gate anti-FP por foco de ventana
     ):
         self._ocr = ocr
         self._detector = detector
@@ -422,6 +426,13 @@ class Monitor:
         # PNGs de frame completo a la carpeta indicada, nunca toca la DB.
         self._harvest_counts: dict[tuple[str, str], int] = {}
         self._window: WindowBounds | None = None
+        # Gate anti-FP por foco (RNF-03 friendly): capturar la región de pantalla del
+        # juego SOLO cuando ZenlessZoneZero.exe está en primer plano. Si el usuario pone
+        # otra ventana encima (p.ej. el Explorador), mss capturaría esos píxeles ajenos →
+        # FP en el log. `_focus_paused` es edge-trigger para emitir el diagnóstico 1× por
+        # transición (no spamear) mientras el juego esté en segundo plano.
+        self._capture_only_focused = capture_only_focused
+        self._focus_paused: bool = False
         # TemporalBuffer del loop _run(). Instance var para que force_scan()
         # pueda resetearlo y permitir re-emisión de [reconocido]/[stats].
         self._buffer: TemporalBuffer | None = None
@@ -701,6 +712,22 @@ class Monitor:
                 f"ventana ZZZ encontrada: '{self._window.title}' "
                 f"({self._window.width}x{self._window.height})"
             )
+
+        # Gate por foco (anti-FP): si el juego NO está en primer plano, no capturamos la
+        # región (evita leer píxeles de una ventana ajena superpuesta, p.ej. el Explorador).
+        # Edge-trigger: 1 diagnóstico al pausar y 1 al reanudar; NO anular self._window
+        # (para no forzar re-búsqueda de ventana en cada frame de pausa).
+        if self._capture_only_focused and not is_zzz_focused(
+            get_foreground_window(), self._window.hwnd
+        ):
+            if not self._focus_paused:
+                self._focus_paused = True
+                self._emit_diagnostic("juego en segundo plano — captura en pausa")
+            time.sleep(0.3)
+            return None
+        if self._focus_paused:
+            self._focus_paused = False
+            self._emit_diagnostic("juego enfocado — captura reanudada")
 
         try:
             frame = capture_window(self._window)

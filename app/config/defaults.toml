@@ -20,6 +20,7 @@ backend_numeros = "paddle"
 confianza_minima = 0.7
 
 [monitor]
+solo_capturar_si_enfocado = true
 polling_reposo_ms = 4000
 polling_inventario_ms = 2000
 polling_resultado_ms = 1000

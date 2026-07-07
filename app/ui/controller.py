@@ -36,6 +36,21 @@ def _find_tesseract() -> str | None:
     return None
 
 
+def _capture_only_focused() -> bool:
+    """Lee [monitor].solo_capturar_si_enfocado de defaults.toml (fallback True)."""
+    try:
+        try:
+            import tomllib
+        except ImportError:
+            import tomli as tomllib  # type: ignore[no-redef]
+        cfg_path = Path(__file__).parent.parent / "config" / "defaults.toml"
+        with open(cfg_path, "rb") as f:
+            cfg = tomllib.load(f)
+        return bool(cfg.get("monitor", {}).get("solo_capturar_si_enfocado", True))
+    except Exception:
+        return True
+
+
 class MonitorController(QObject):
     """
     Controlador único de captura. Crea/destruye el Monitor según start/stop,
@@ -124,6 +139,7 @@ class MonitorController(QObject):
             on_ram_critical=self.ram_critical.emit,   # watchdog RNF-06 → main thread
             owner_tiebreaker=self._owner_tiebreaker,  # desempate por contexto (look-alikes)
             farm_session=self._farm_session,          # gate de farmeo (contexto S13→S14→S2)
+            capture_only_focused=_capture_only_focused(),  # gate anti-FP por foco de ventana
         )
         self._monitor.start()
         self.monitor_started.emit()

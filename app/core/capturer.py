@@ -57,6 +57,30 @@ class WindowBounds(NamedTuple):
     width: int
     height: int
     title: str = ""    # título real encontrado (para log/debug)
+    hwnd: int = 0      # handle de la ventana (0 = desconocido). Usado para el gate de foco.
+
+
+def get_foreground_window() -> int:
+    """Handle (hwnd) de la ventana en primer plano, o 0 si no se puede determinar."""
+    if sys.platform != "win32":
+        return 0
+    try:
+        import win32gui
+    except ImportError:
+        return 0
+    try:
+        return int(win32gui.GetForegroundWindow())
+    except Exception:
+        return 0
+
+
+def is_zzz_focused(foreground_hwnd: int, zzz_hwnd: int) -> bool:
+    """True si la ventana del juego (zzz_hwnd) es la que está en primer plano.
+
+    hwnd desconocido (0) → NO enfocado (conservador: ante duda no se captura la
+    región, así evitamos el FP por ventana ajena superpuesta).
+    """
+    return zzz_hwnd != 0 and foreground_hwnd == zzz_hwnd
 
 
 def list_all_visible_windows() -> list[tuple[int, str]]:
@@ -147,7 +171,7 @@ def find_zzz_window(title_substrings: tuple[str, ...] = ZZZ_WINDOW_TITLE_CANDIDA
                 continue
             exe = _get_window_exe_name(hwnd).lower()
             if exe and exe in exe_candidates_lower:
-                return WindowBounds(left, top, right - left, bottom - top, f"{title} [{exe}]")
+                return WindowBounds(left, top, right - left, bottom - top, f"{title} [{exe}]", hwnd)
         except Exception:
             continue
 
@@ -164,7 +188,7 @@ def find_zzz_window(title_substrings: tuple[str, ...] = ZZZ_WINDOW_TITLE_CANDIDA
                     left, top, right, bottom = rect
                     if right - left < 400 or bottom - top < 300:
                         continue
-                    return WindowBounds(left, top, right - left, bottom - top, title)
+                    return WindowBounds(left, top, right - left, bottom - top, title, hwnd)
                 except Exception:
                     continue
 
