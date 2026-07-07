@@ -43,7 +43,12 @@ THRESHOLD_BY_STATE: dict[str, float] = {
     "S6":  0.85,   # Tienda panel — crítico
     "S7":  0.85,   # Tienda fullscreen — crítico
     "S10": 0.85,   # Modal upgrade — crítico
-    "S2":  0.80,   # Resultado desafío — ventana breve
+    "S2":  0.70,   # Resultado desafío — permisivo A PROPÓSITO: `_verify_s2` (franjas de rareza)
+                   #   es el discriminador anti-FP real, no el template. El template baja a
+                   #   0.77 en el evento de doble recompensa (banner "×2" + badges ×2 en tiles);
+                   #   0.80 lo dejaba fuera (FN de farmeo real, Ejemplo_5/6). Calibrado 2026-07:
+                   #   positivos ≥0.773, y los únicos negativos con strips≥3 (Menu_Pausa/Modo_foto)
+                   #   matchean ≤0.525 → gap limpio. Ver QA S2 doble-recompensa.
     "S5":  0.80,   # Resultado afinación — ventana breve
     "S8":  0.80,   # Vista agente — informativo
     "S11": 0.80,   # Desmontaje — anti-FP
@@ -1029,8 +1034,9 @@ def _deep_detect_s18(frame: np.ndarray, ocr=None) -> "ScreenState | None":
 
 def _verify_s2(frame: np.ndarray) -> tuple[bool, str | None]:
     """Verifica que S2 sea un FARMEO DE DISCOS real. El template 's2_resultado_desafio' matchea
-    (a ≥0.80) tanto los resultados de farmeo de discos como OTRAS pantallas de "Resultados del
-    desafío" (recompensas no-disco) y varios menús (eventos, banners, pase) por layout general.
+    (a ≥0.70, umbral permisivo a propósito) tanto los resultados de farmeo de discos como OTRAS
+    pantallas de "Resultados del desafío" (recompensas no-disco) y varios menús (eventos, banners,
+    pase) por layout general.
     La firma que distingue el farmeo de discos es la grilla de recompensas con FRANJAS DE RAREZA
     (gold/purple/blue) de los tiles de disco. Sin ≥`_DISC_STRIP_MIN` franjas ⇒ no es farmeo de
     discos ⇒ verificación FALLA (el pipeline degrada la confianza y cae a S12). Sin OCR (RNF-06)."""
