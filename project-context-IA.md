@@ -134,6 +134,8 @@ RF-14 coordina con RF-06 (build full = arma + 6 discos)
 
 **Siguiente:** QA en juego 2026-05-10 (ver `Documentacion/QA/Guia_QA_Domingo.md`). Pre-requisito: instalar Tesseract con `winget install UB-Mannheim.TesseractOCR`.
 
+**Fase de CONFIABILIDAD del detector (2026-07-07, commit `96b4e13`)** — **pausa la extracción**. El detector disparaba FP constantes de S2/S18 navegando solo menús. QA negativo masivo sobre 33 screenshots (`Documentacion/Screenshots_Triggers/Triggers_Generales/Falsos_positivos/`): baseline 15 FP → **0**. Fixes: `_verify_s2` (verifica farmeo-de-discos por franjas de rareza gold/purple/blue en la grilla de recompensas, umbral `_DISC_STRIP_MIN=3`; alta en `_VERIFICATION_REGISTRY`) + remoción de 2 ramas HSV FP-prone (`hsv_stats_grid` S18, `hsv_green_bar` S10). Harness `test_detector_fp_negative_qa.py` (33/33 + regresión positiva 13/13, PaddleOCR real). Suite completa **599 passed**. Detalle: `Documentacion/Dev_IA/2026-07-07_Confiabilidad_Detector_Anti_FP.md`. **Pendiente:** QA en vivo; reanudar extracción (diagnóstico S2/S3 en vivo, mejora S10).
+
 ---
 
 ## 6. Roster (rápido)
