@@ -118,3 +118,41 @@ def test_s3_ejemplo_5_coalesce_maestria_anomalia():
     assert "Maestría de Anomalía" in {s.nombre_canon for s in d.subs}
     # no quedaron las mitades sueltas como substats fantasma
     assert "Anomalía" not in raws and "Maestría de" not in raws
+
+
+@pytest.mark.skipif(not (_S3 / "Ejemplo_8.png").exists(), reason="capturas S3 no presentes")
+def test_s3_ejemplo_8_huracanado_slot5_main_atkpct():
+    """Salón huracanado (Wuthering Salon, set firma Velina). slot 5, main ATK% (Ataque 7.5%),
+    3 substats flat limpios (Perforación 9, Ataque 19, PV 112)."""
+    from app.core.parser_disc_s3 import parse_disc_s3_full
+    d = parse_disc_s3_full(_load("Ejemplo_8.png"), _paddle())
+    assert "huracanado" in (d.set_name_raw or "").lower()
+    assert d.slot == 5
+    assert d.nivel == 0
+    assert d.main_stat_canon == "ATK%"       # Ataque 7.5% (porcentual → ATK%)
+    completos = _subs_completos(d)
+    assert len(completos) >= 3, [(s.nombre_canon, s.valor, s.unidad) for s in d.subs]
+    canons = {s.nombre_canon for s in completos}
+    assert "Perforación" in canons           # Perforación 9 (flat)
+    assert "ATK" in canons                    # Ataque 19 (flat)
+    assert "HP" in canons                     # PV 112 (flat)
+    assert disc_is_mature(d)
+
+
+@pytest.mark.skipif(not (_S3 / "Ejemplo_9.png").exists(), reason="capturas S3 no presentes")
+def test_s3_ejemplo_9_firmamento_slot2_main_atk_flat():
+    """Firmamento llameante (Éter). slot 2, main ATK 79 (flat), subs PV 112 / Ataque 3% /
+    Daño Crítico 4.8%."""
+    from app.core.parser_disc_s3 import parse_disc_s3_full
+    d = parse_disc_s3_full(_load("Ejemplo_9.png"), _paddle())
+    assert "firmamento" in (d.set_name_raw or "").lower()
+    assert d.slot == 2
+    assert d.nivel == 0
+    assert d.main_stat_canon == "ATK" and d.main_valor == 79
+    completos = _subs_completos(d)
+    assert len(completos) >= 3, [(s.nombre_canon, s.valor, s.unidad) for s in d.subs]
+    canons = {s.nombre_canon for s in completos}
+    assert "HP" in canons                     # PV 112 (flat)
+    assert "ATK%" in canons                   # Ataque 3%
+    assert "Daño Crítico" in canons           # Daño Crítico 4.8%
+    assert disc_is_mature(d)
