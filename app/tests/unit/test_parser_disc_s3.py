@@ -31,6 +31,25 @@ def _paddle():
     return PaddleBackend()
 
 
+# ---- Regresión de CLASIFICACIÓN (el modal S3 debe reconocerse como S3) -----------------
+# Gap descubierto en QA farmeo 2026-07-07: los tests de parser llaman a parse_disc_s3_full
+# directo, saltándose classify(). `_verify_s3` (mean_hue de un ROI mal ubicado) fallaba en
+# 9/10 modales S3 reales → en vivo el disco NO se reconocía (S3→S12). Este test cubre el
+# path classify() sobre TODAS las capturas S3.
+_S3_ALL = sorted(_S3.glob("Ejemplo_*.png"), key=lambda p: int("".join(c for c in p.stem if c.isdigit()))) if _S3.exists() else []
+
+
+@pytest.mark.skipif(not _S3_ALL, reason="capturas S3 no presentes")
+@pytest.mark.parametrize("path", _S3_ALL, ids=lambda p: p.name)
+def test_s3_modal_se_clasifica_como_s3(path):
+    from app.core.detector import ScreenDetector
+    frame = _load(path.name)
+    if frame is None:
+        pytest.skip(f"No se pudo leer: {path.name}")
+    st = ScreenDetector().classify(frame)
+    assert st.code == "S3", f"{path.name} → {st.code} (conf={st.confidence:.2f}, tmpl={st.template_name})"
+
+
 def _load(name):
     return cv2.imdecode(np.fromfile(str(_S3 / name), np.uint8), cv2.IMREAD_COLOR)
 

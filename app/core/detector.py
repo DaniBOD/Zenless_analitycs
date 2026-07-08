@@ -640,26 +640,36 @@ class ScreenState:
 # Funciones de verificación secundaria por estado
 # =========================================================================
 
+# Rarezas de disco (gold S / purple A / blue B) en HSV OpenCV — para verificar que el modal S3
+# muestra un DISCO (su ícono siempre tiene una franja/badge de color de rareza).
+_S3_RARITY_BANDS = (
+    ((14, 120, 120), (36, 255, 255)),    # dorado (S)
+    ((125, 80, 80), (155, 255, 255)),    # púrpura (A)
+    ((98, 90, 90), (120, 255, 255)),     # azul (B)
+)
+
+
 def _verify_s3(frame: np.ndarray) -> tuple[bool, str | None]:
-    """
-    S3: verificar presencia de texto 'DISCO' o icono de disco en el modal.
-    Útil para distinguir S3 de modal de recompensa diaria.
-    """
+    """S3: verificar que el modal muestra un DISCO (ícono con franja/badge de rareza) y no otro
+    modal (recompensa diaria, etc.). Mide la FRACCIÓN de píxeles de color de rareza (gold/purple/
+    blue) en el ROI del ícono del disco (arriba-derecha del modal).
+
+    FIX 2026-07: la versión vieja promediaba el HUE de un ROI mal ubicado (0.60-0.75, 0.45-0.60,
+    DEBAJO del ícono) y exigía mean_hue∈[15,40]∪[130,160]. El promedio del ventilador azul + arte
+    + fondo oscuro caía fuera de rango en 9/10 modales S3 reales → falsos negativos → el disco NO
+    se reconocía en vivo (S3 degradaba a S12). El ROI corregido + fracción de rareza da 0.029-0.066
+    en los 10 fixtures reales; umbral 0.015 (margen holgado). Sin OCR (RNF-06)."""
     try:
         h, w = frame.shape[:2]
-        # Zona del icono del disco (esquina inferior-der del modal)
-        icon_roi = frame[
-            int(0.45 * h):int(0.60 * h),
-            int(0.60 * w):int(0.75 * w)
-        ]
+        icon_roi = frame[int(0.19 * h):int(0.44 * h), int(0.53 * w):int(0.68 * w)]
         if icon_roi.size == 0:
             return True, None
         hsv = cv2.cvtColor(icon_roi, cv2.COLOR_BGR2HSV)
-        # Detectar borde dorado (S-rank) o morado (A-rank) en esa zona
-        mean_hue = int(hsv[:, :, 0].mean())
-        if 15 <= mean_hue <= 40 or 130 <= mean_hue <= 160:
-            return True, "disco_icon"
-        return False, "no_disco_icon"
+        mask = np.zeros(icon_roi.shape[:2], np.uint8)
+        for lo, hi in _S3_RARITY_BANDS:
+            mask |= cv2.inRange(hsv, np.array(lo, np.uint8), np.array(hi, np.uint8))
+        frac = float(mask.mean()) / 255.0
+        return (frac >= 0.015, f"rarity_frac={frac:.3f}")
     except Exception:
         return True, None
 
