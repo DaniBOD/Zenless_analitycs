@@ -102,6 +102,13 @@ class LastDiscCard(QFrame):
         self._main_lbl.setStyleSheet(f"color: {T.TEXT_SECONDARY};")
         center.addWidget(self._main_lbl)
 
+        # Substats (atributos secundarios) — nombre + valor + rolls, uno por línea de texto envuelta.
+        self._subs_lbl = QLabel("")
+        self._subs_lbl.setFont(T.font_mono(9))
+        self._subs_lbl.setStyleSheet(f"color: {T.TEXT_MUTED};")
+        self._subs_lbl.setWordWrap(True)
+        center.addWidget(self._subs_lbl)
+
         # Footer: avatar + target agent + score
         ft = QHBoxLayout()
         ft.setSpacing(8)
@@ -140,7 +147,13 @@ class LastDiscCard(QFrame):
 
         main = payload.get("main", "?")
         main_value = payload.get("main_value", "")
-        self._main_lbl.setText(f"{main}  {main_value}")
+        self._main_lbl.setText(f"Principal:  {main}  {main_value}")
+
+        subs_detail = payload.get("subs_detail") or []
+        if subs_detail:
+            self._subs_lbl.setText("Secundarios:  " + "   ·   ".join(subs_detail))
+        else:
+            self._subs_lbl.setText("")
 
         target = payload.get("target", "—")
         mind = payload.get("mind", 0)
@@ -377,6 +390,12 @@ class LivePanel(QWidget):
             f"→ {variant_info['label']} {payload.get('score', 0):.1f} "
             f"(→ {payload.get('target', '—')})"
         )
+        main = payload.get("main", "?")
+        main_value = payload.get("main_value", "")
+        self.append_log(f"[disco] principal: {main} {main_value}".rstrip())
+        subs_detail = payload.get("subs_detail") or []
+        if subs_detail:
+            self.append_log("[disco] secundarios: " + " · ".join(subs_detail))
 
     @Slot(str)
     def on_error(self, msg: str):

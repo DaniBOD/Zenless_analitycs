@@ -723,6 +723,12 @@ class MonitorController(QObject):
             for s in disc_parsed.subs[:4]
             if s.nombre_canon or s.nombre_raw
         )
+        # Detalle completo de substats (nombre + valor + rolls) para el log y la card en vivo.
+        subs_detail = [
+            self._fmt_sub(s).strip()
+            for s in disc_parsed.subs
+            if s.nombre_canon or s.nombre_raw
+        ]
 
         return {
             "variant":       rec.tipo,
@@ -732,6 +738,7 @@ class MonitorController(QObject):
             "main":          disc_parsed.main_stat_canon or disc_parsed.main_stat_raw or "?",
             "main_value":    main_value,
             "subs":          subs_summary,
+            "subs_detail":   subs_detail,
             "target":        rec.agente_nombre or "—",
             "mind":          target_mind,
             "score":         round(rec.score_norm * 100, 1),
