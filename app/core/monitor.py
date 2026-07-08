@@ -955,19 +955,22 @@ class Monitor:
         node = pred[0] if pred else None
         cand_en = [en for _sid, en in pred[1]] if pred else []
         try:
-            from app.core.parser_s2 import tile_boxes, crop_tile_center, read_tile_slot
+            from app.core.parser_s2 import tile_boxes, crop_tile_center, read_tile_slot, tile_rarity
             boxes = tile_boxes(frame)
         except Exception:
             log.exception("Error localizando tiles S2")
             return
+        # Solo los discos S CONSERVADOS (dorados): los de menor rareza se auto-desmontan y no
+        # tienen slot → no vale reportarlos ni cosecharlos (pedido del usuario 2026-07-08).
+        s_boxes = [b for b in boxes if tile_rarity(frame, b) == "S"]
         # Cosecha opcional de tiles reales (etiquetados por nodo+slot) para construir refs del
         # matcher (el render de catálogo no transfiere — §8.1). Independiente de la predicción.
-        self._maybe_harvest_s2(frame, boxes, node)
+        self._maybe_harvest_s2(frame, s_boxes, node)
         if self._set_badge_matcher is None or not cand_en:
             return
         # Etiqueta de los 2 candidatos (para mostrar cuando el matcher se abstiene).
         cand_txt = " o ".join(cand_en)
-        for box in boxes:
+        for box in s_boxes:
             try:
                 slot = read_tile_slot(frame, box, self._ocr)
                 center = crop_tile_center(frame, box)

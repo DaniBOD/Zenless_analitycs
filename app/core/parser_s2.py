@@ -134,6 +134,28 @@ def tile_boxes(frame: np.ndarray) -> list[TileBox]:
     return out
 
 
+_RARITY_LABELS = ("S", "A", "B")   # mismo orden que _RARITY_BANDS (dorado/púrpura/azul)
+
+
+def tile_rarity(frame: np.ndarray, box: TileBox) -> str | None:
+    """Rareza del disco de un tile ('S'/'A'/'B') por la banda de color dominante en su franja.
+    None si ninguna banda supera el mínimo. Sirve para reportar solo los discos S conservados."""
+    H = frame.shape[0]
+    band = max(2, int(0.02 * H))
+    scy_px = box.y1 - int(_TILE_BELOW * H)   # centro de la franja de rareza
+    y0, y1 = max(0, scy_px - band), min(H, scy_px + band)
+    sub = frame[y0:y1, box.x0:box.x1]
+    if sub.size == 0:
+        return None
+    hsv = cv2.cvtColor(sub, cv2.COLOR_BGR2HSV)
+    best, best_frac = None, 0.0
+    for label, (lo, hi) in zip(_RARITY_LABELS, _RARITY_BANDS):
+        frac = float(cv2.inRange(hsv, lo, hi).mean()) / 255.0
+        if frac > best_frac:
+            best_frac, best = frac, label
+    return best if best_frac >= 0.10 else None
+
+
 def crop_tile_center(frame: np.ndarray, box: TileBox) -> np.ndarray:
     """Recorta el arte del disco (centro del tile) para el matcher de sets. Descarta la banda
     inferior (franja de rareza / badge RARITY) y parte del hexágono de slot arriba-izq."""

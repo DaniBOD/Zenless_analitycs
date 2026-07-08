@@ -60,8 +60,12 @@ def test_s2_emite_linea_por_disco_con_prediccion():
     fr = cv2.imdecode(np.fromfile(str(_S2 / "Ejemplo_1.png"), np.uint8), cv2.IMREAD_COLOR)
     m._dispatch_state(fr, ScreenState("S2", 1.0, "s2_resultado"))
 
+    # Solo se reportan los discos S (dorados) conservados, no los 8 tiles.
+    from app.core.parser_s2 import tile_boxes, tile_rarity
+    s_count = sum(1 for b in tile_boxes(fr) if tile_rarity(fr, b) == "S")
+    assert s_count >= 1
     discos = [d for d in diags if d.startswith("[disco]")]
-    assert len(discos) == 8, f"esperaba 8 líneas de disco, hubo {len(discos)}: {diags}"
+    assert len(discos) == s_count, f"esperaba {s_count} líneas (discos S), hubo {len(discos)}: {diags}"
     # cada línea trae slot y el set candidato.
     assert all("Wuthering Salon" in d for d in discos)
     assert all("slot 1" in d for d in discos)
