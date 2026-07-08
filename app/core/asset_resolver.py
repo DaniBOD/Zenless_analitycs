@@ -24,6 +24,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SET_LOGOS_DIR    = REPO_ROOT / "Documentacion" / "Interfaz" / "Set_Discos_Logo"
+# Renders del disco (arte del tile de S2), 3 tiers S/A/B por set. Distinto de SET_LOGOS_DIR
+# (emblemas redondos): estos alimentan el matcher de badges (SetBadgeMatcher), no el display.
+SET_BADGES_DIR   = REPO_ROOT / "Documentacion" / "Interfaz" / "Set-Discos_Package_Logo"
 SPLASH_ARTS_DIR  = REPO_ROOT / "Documentacion" / "Interfaz" / "splash_arts"
 PJ_STATS_DIR     = REPO_ROOT / "Pj_stats"
 ENGINES_DIR      = REPO_ROOT / "Documentacion" / "Interfaz" / "Engines_icons"
@@ -114,6 +117,33 @@ def _set_filename_from_en(nombre_en: str) -> str:
     for orig, repl in _SET_NAME_REPLACEMENTS:
         s = s.replace(orig, repl)
     return f"Drive_Disc_{s}_Icon.webp"
+
+
+def _set_badge_filename(nombre_en: str, tier: str) -> str:
+    """Convierte ('Dawn's Bloom', 'S') → 'Drive_Disc_Dawn%27s_Bloom_S.webp'.
+
+    Misma convención url-encode que `_set_filename_from_en`, pero con sufijo de tier
+    (S/A/B) en vez de '_Icon' (son los renders del disco, no el emblema)."""
+    s = nombre_en
+    for orig, repl in _SET_NAME_REPLACEMENTS:
+        s = s.replace(orig, repl)
+    return f"Drive_Disc_{s}_{tier}.webp"
+
+
+def set_package_badge_paths(nombre_en: str | None) -> list[Path]:
+    """Rutas de los renders del disco (tiers S/A/B) del set, para el matcher de badges S2.
+
+    Devuelve solo los tiers presentes en disco (lista vacía si ninguno). Ej.: 'Branch & Blade
+    Song' no tiene package badge (endpoint caído al descargar) → []. `nombre_en` = nombre
+    inglés canónico de disc_sets.nombre_en."""
+    if not nombre_en:
+        return []
+    out: list[Path] = []
+    for tier in ("S", "A", "B"):
+        p = SET_BADGES_DIR / _set_badge_filename(nombre_en, tier)
+        if p.exists():
+            out.append(p)
+    return out
 
 
 # ---------------------------------------------------------------------------

@@ -92,6 +92,8 @@ class MonitorController(QObject):
         self._disc_syncer = None
         self._owner_tiebreaker = None
         self._farm_session = None
+        self._farm_node_catalog = None
+        self._set_badge_matcher = None
         # Firma del último log de stats S18 emitido (edge-triggered): re-loguea solo
         # cuando el resultado cambia. Se resetea en _on_state_from_monitor.
         self._last_stats_sig: tuple | None = None
@@ -139,6 +141,8 @@ class MonitorController(QObject):
             on_ram_critical=self.ram_critical.emit,   # watchdog RNF-06 → main thread
             owner_tiebreaker=self._owner_tiebreaker,  # desempate por contexto (look-alikes)
             farm_session=self._farm_session,          # gate de farmeo (contexto S13→S14→S2)
+            farm_node_catalog=self._farm_node_catalog, # predicción de sets en S13
+            set_badge_matcher=self._set_badge_matcher, # set por badge del disco en S2
             capture_only_focused=_capture_only_focused(),  # gate anti-FP por foco de ventana
         )
         self._monitor.start()
@@ -345,6 +349,27 @@ class MonitorController(QObject):
         # de otros "resultados de desafío". Sin DB ni dependencias; solo observa transiciones.
         from app.core.farm_session import FarmSession
         self._farm_session = FarmSession()
+        # Catálogo de nodos de farmeo (S13): título del nodo → 2 sets que dropea. Resuelve
+        # nombre_en → set_id contra la DB (disc_sets). Display-only; una carga fallida NO
+        # debe tumbar el arranque (feature opcional), solo se loguea.
+        try:
+            from app.core.farm_nodes import FarmNodeCatalog
+            set_ids = {e.nombre_en: e.id for e in self._disc_set_repo.get_all() if e.nombre_en}
+            self._farm_node_catalog = FarmNodeCatalog.from_resources(set_ids)
+            if self._farm_node_catalog.unresolved:
+                log.warning("farm_nodes: sets sin resolver → %s",
+                            self._farm_node_catalog.unresolved)
+        except Exception:
+            log.exception("No se pudo cargar el catálogo de nodos de farmeo (S13)")
+            self._farm_node_catalog = None
+        # Matcher de set por badge del disco (S2): refs en memoria desde los package renders.
+        # Display-only y opcional → una falla de carga no debe tumbar el arranque.
+        try:
+            from app.core.set_badge_matcher import SetBadgeMatcher
+            self._set_badge_matcher = SetBadgeMatcher.from_package_badges()
+        except Exception:
+            log.exception("No se pudo cargar el matcher de badges de set (S2)")
+            self._set_badge_matcher = None
 
     # ---- Callbacks desde el Monitor (thread daemon) ----------------------------
 

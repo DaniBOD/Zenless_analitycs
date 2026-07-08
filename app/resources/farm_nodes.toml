@@ -1,0 +1,64 @@
+# Mapa de nodos de farmeo (S13) → los 2 sets de discos que dropea cada nodo.
+#
+# Clave de resolución: `sets_en` (nombre_en, estable frente a re-traducciones ES del juego).
+# `titulo_es` es el texto que aparece en la pantalla S13 (se matchea por OCR, insensible a
+# tildes/ñ/mayúsculas). Feature display-only → archivo de datos, no DB (RNF-01 no aplica).
+#
+# Doc canónico: Documentacion/Dev_IA/2026-07-08_PLAN_Prediccion_Sets_S13_y_Badge_S2.md §4
+# 14 nodos · 28 sets (2 por nodo). Verificado contra db/danibod_zzz_v2.db (28 sets, 2026-07-08).
+
+[[nodes]]
+titulo_es = "El piloto y el meca rebelde"
+sets_en = ["Wuthering Salon", "The Sky Ablaze"]
+
+[[nodes]]
+titulo_es = "Cuadriga sometedragones"
+sets_en = ["Bunny in Wonderland", "Notes From the Chained"]
+
+[[nodes]]
+titulo_es = "Engaños y baluartes"
+sets_en = ["White Water Ballad", "Shining Aria"]
+
+[[nodes]]
+titulo_es = "La ley de hierro y los rebeldes"
+sets_en = ["Dawn's Bloom", "Moonlight Lullaby"]
+
+[[nodes]]
+titulo_es = "De boca y espada"
+sets_en = ["Yunkui Tales", "King of the Summit"]
+
+[[nodes]]
+titulo_es = "Hidalgo y escudero"
+sets_en = ["Shadow Harmony", "Phaethon's Melody"]
+
+[[nodes]]
+titulo_es = "Dueto monstruoso"
+sets_en = ["Branch & Blade Song", "Astral Voice"]
+
+[[nodes]]
+titulo_es = "El cazador y la bestia"
+sets_en = ["Chaos Jazz", "Proto Punk"]
+
+[[nodes]]
+titulo_es = "Colmillo y hacha"
+sets_en = ["Freedom Blues", "Polar Metal"]
+
+[[nodes]]
+titulo_es = "El loco y el adepto"
+sets_en = ["Puffer Electro", "Inferno Metal"]
+
+[[nodes]]
+titulo_es = "La torre y el cañón"
+sets_en = ["Woodpecker Electro", "Soul Rock"]
+
+[[nodes]]
+titulo_es = "Cazador y sabueso"
+sets_en = ["Shockstar Disco", "Thunder Metal"]
+
+[[nodes]]
+titulo_es = "Puños y balas"
+sets_en = ["Hormone Punk", "Fanged Metal"]
+
+[[nodes]]
+titulo_es = "Un monstruo y un visitante"
+sets_en = ["Swing Jazz", "Chaotic Metal"]

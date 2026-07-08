@@ -72,6 +72,10 @@ _DETAIL_RESET_MIN_CONF = 0.50
 _HARVEST_STATES = {"S8", "S17", "S18", "S19"}
 _HARVEST_CAP = 4
 
+# ROI normalizada (x, y, rw, rh) del título del nodo en S13 (selección de set a farmear).
+# A CALIBRAR en vivo contra Documentacion/Screenshots_Triggers/.../13_Seleccion_set_farmeo/.
+_S13_TITLE_ROI = (0.43, 0.18, 0.35, 0.06)
+
 # Guarda de asignación S17 (latch + avatar). El PJ asignado a un disco equipado
 # sale del LATCH (PJ cuya pantalla se ve, ya confiable); el avatar circular S17 se
 # usa solo como chequeo mismo/distinto contra ese latch. Medido 2026-06-06 sobre
@@ -271,6 +275,8 @@ class Monitor:
         on_ram_critical: Callable[[], None] | None = None,
         owner_tiebreaker=None,                                  # OwnerTiebreaker opcional
         farm_session=None,                                      # FarmSession opcional (gate S2)
+        farm_node_catalog=None,                                 # FarmNodeCatalog opcional (predicción S13)
+        set_badge_matcher=None,                                 # SetBadgeMatcher opcional (set por badge S2)
         capture_only_focused: bool = True,                      # gate anti-FP por foco de ventana
     ):
         self._ocr = ocr
@@ -452,8 +458,15 @@ class Monitor:
         # Gate de confianza por flujo de farmeo (S13→S14→S2→S3). Opcional: si es None, el
         # resumen S2 sale siempre como tentativo. Lo inyecta el controller. Ver farm_session.py.
         self._farm_session = farm_session
+        # Catálogo nodo(S13)→2 sets. Si está presente, en S13 se OCRiza el título del
+        # nodo y se predicen los sets que dropea (display-only, ver _process_s13_node_title).
+        self._farm_node_catalog = farm_node_catalog
+        # Matcher de set por badge del disco (S2). Restringido a la predicción de S13.
+        self._set_badge_matcher = set_badge_matcher
         # S2 (resultados de farmeo): resumen display-only 1× por entrada al estado.
         self._s2_reported: bool = False
+        # S13 (selección de set a farmear): predicción display-only 1× por entrada.
+        self._s13_reported: bool = False
 
     # ---- Control ----------------------------------------------------------------
 
@@ -773,6 +786,8 @@ class Monitor:
             self._farm_session.on_state(state.code, time.monotonic())
         if state.code != "S2":
             self._s2_reported = False
+        if state.code != "S13":
+            self._s13_reported = False
         self._handle_upgrade(frame, state)
         # Menú de personajes (Fase M.1): al salir de S15, olvidar la firma del nombre y del
         # log → re-entrar re-identifica y re-loguea. Barato (set a None cada frame no-S15).
@@ -827,6 +842,14 @@ class Monitor:
             # Menú de personajes (Fase M.1): reconocer al PJ SELECCIONADO por el nombre
             # bottom-left → log. Informativo (no escribe DB, no toca el latch de detalle).
             self._process_agent_menu(frame, state)
+            self._processed_disc_state_code = None
+            self._reported_agent_stats_state_code = None
+            self._agent_stats_screen_logged = False
+        elif state.code == "S13":
+            # Selección de set a farmear: OCR del título del nodo → predecir los 2 sets que
+            # dropea (display-only). La predicción se guarda en FarmSession para restringir
+            # el matcher de badges en S2. No persiste ni puntúa.
+            self._process_s13_node_title(frame, state)
             self._processed_disc_state_code = None
             self._reported_agent_stats_state_code = None
             self._agent_stats_screen_logged = False
@@ -897,18 +920,98 @@ class Monitor:
         if self._id_diag_on:
             log.info("[s2_diag] has_s_discs=%s gold_frac=%.3f n_s=%d",
                      res.has_s_discs, res.gold_frac, res.n_s_approx)
-        if not res.has_s_discs:
-            return   # sin discos S visibles → no afirmamos farmeo (B/A: futuro)
         armado = self._farm_session is not None and self._farm_session.is_armed(time.monotonic())
         contexto = "flujo" if armado else "tentativo"
-        msg = (f"[farmeo] resultados: {res.n_s_approx} disco(s) tier S visibles "
-               f"· contexto={contexto}")
-        log.info("Farmeo detectado: %d disco(s) S · contexto=%s", res.n_s_approx, contexto)
+        if res.has_s_discs:
+            msg = (f"[farmeo] resultados: {res.n_s_approx} disco(s) tier S visibles "
+                   f"· contexto={contexto}")
+            log.info("Farmeo detectado: %d disco(s) S · contexto=%s", res.n_s_approx, contexto)
+            if self._on_diagnostic:
+                try:
+                    self._on_diagnostic(msg)
+                except Exception:
+                    log.debug("on_diagnostic S2 falló", exc_info=True)
+        # Fase B: detalle por disco (slot + set por badge), restringido a la predicción de S13.
+        self._process_s2_tiles(frame, contexto)
+
+    def _process_s2_tiles(self, frame, contexto: str) -> None:
+        """Por cada tile de la grilla S2: leer slot (OCR) + reconocer set (badge, restringido a
+        los 2 sets predichos en S13) → línea display-only por disco. Sin predicción de S13 →
+        abstención (open-set best-effort: futuro). No persiste ni puntúa (RNF-06/RNF-02)."""
+        if self._set_badge_matcher is None or self._farm_session is None:
+            return
+        pred = self._farm_session.predicted(time.monotonic())
+        if pred is None:
+            return   # sin S13 previo → no restringimos el matcher
+        _node, sets = pred
+        cand_en = [en for _sid, en in sets]
+        if not cand_en:
+            return
+        try:
+            from app.core.parser_s2 import tile_boxes, crop_tile_center, read_tile_slot
+            boxes = tile_boxes(frame)
+        except Exception:
+            log.exception("Error localizando tiles S2")
+            return
+        for box in boxes:
+            try:
+                slot = read_tile_slot(frame, box, self._ocr)
+                center = crop_tile_center(frame, box)
+                match = self._set_badge_matcher.identify(center, cand_en)
+            except Exception:
+                log.debug("tile S2 falló", exc_info=True)
+                continue
+            slot_txt = str(slot) if slot else "?"
+            set_txt = match.name if match.name else "?"
+            msg = (f"[disco] slot {slot_txt} · {set_txt} (conf {match.conf:.2f}) "
+                   f"· contexto={contexto}")
+            log.info("S2 disco: slot=%s set=%s conf=%.2f", slot_txt, set_txt, match.conf)
+            if self._on_diagnostic:
+                try:
+                    self._on_diagnostic(msg)
+                except Exception:
+                    log.debug("on_diagnostic S2 tile falló", exc_info=True)
+
+    def _process_s13_node_title(self, frame, state: ScreenState) -> None:
+        """Selección de set a farmear (S13): OCR del título del nodo → predecir los 2 sets
+        que dropea (`FarmNodeCatalog`) y guardarlos en `FarmSession` para restringir el
+        matcher de badges en S2. Display-only: emite un diagnóstico, no persiste ni puntúa.
+
+        A diferencia de S2, el latch (`_s13_reported`) se arma SOLO al predecir con éxito: el
+        detector puede confirmar S13 en un frame de transición donde el título aún no está
+        renderizado → conviene reintentar el OCR en el próximo ciclo en vez de perder la
+        predicción de toda la visita. Se resetea al salir de S13 (ver _dispatch_state)."""
+        if self._s13_reported:
+            return
+        if self._farm_node_catalog is None or self._farm_session is None:
+            return
+        try:
+            h, w = frame.shape[:2]
+            x, y, rw, rh = _S13_TITLE_ROI
+            crop = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
+            if crop.size == 0:
+                return
+            text, _conf = self._ocr.text(crop, psm=7, lang="spa")
+        except Exception:
+            log.exception("Error OCR título S13")
+            return
+        node = self._farm_node_catalog.match_title(text or "")
+        if self._id_diag_on:
+            log.info("[s13_diag] ocr_title=%r → node=%s", text,
+                     node.titulo_es if node else None)
+        if node is None:
+            return   # sin match confiable → no latch, reintenta el próximo ciclo
+        self._s13_reported = True
+        sets = [(s.set_id, s.nombre_en) for s in node.sets]
+        self._farm_session.set_prediction(node.titulo_es, sets, time.monotonic())
+        names = " / ".join(s.nombre_en for s in node.sets)
+        msg = f"[farmeo] nodo: {node.titulo_es} → predice {names}"
+        log.info("Farmeo S13: nodo '%s' → sets %s", node.titulo_es, names)
         if self._on_diagnostic:
             try:
                 self._on_diagnostic(msg)
             except Exception:
-                log.debug("on_diagnostic S2 falló", exc_info=True)
+                log.debug("on_diagnostic S13 falló", exc_info=True)
 
     def _handle_upgrade(self, frame, state: ScreenState) -> None:
         if self._upgrade_syncer is None:

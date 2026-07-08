@@ -46,3 +46,37 @@ def test_s14_refresca_la_ventana():
     fs.on_state("S13", ts=100.0)
     fs.on_state("S14", ts=500.0)             # re-arma desde 500
     assert fs.is_armed(ts=1050.0) is True    # 500 + 600 = 1100, sigue vivo
+
+
+# --- predicción de sets S13 → S2 -------------------------------------------
+
+def test_sin_prediccion_de_entrada():
+    fs = FarmSession(window_s=600.0)
+    assert fs.predicted(ts=0.0) is None
+
+
+def test_prediccion_se_lee_dentro_de_la_ventana():
+    fs = FarmSession(window_s=600.0)
+    sets = [(52, "Wuthering Salon"), (53, "The Sky Ablaze")]
+    fs.set_prediction("El piloto y el meca rebelde", sets, ts=100.0)
+    pred = fs.predicted(ts=300.0)
+    assert pred is not None
+    node, got = pred
+    assert node == "El piloto y el meca rebelde"
+    assert got == sets
+
+
+def test_prediccion_expira_con_la_ventana():
+    fs = FarmSession(window_s=600.0)
+    fs.set_prediction("Puños y balas", [(32, "Hormone Punk"), (30, "Fanged Metal")], ts=100.0)
+    assert fs.predicted(ts=699.0) is not None    # dentro de la ventana (100 + 600)
+    assert fs.predicted(ts=701.0) is None        # ventana vencida
+
+
+def test_set_prediction_no_rompe_el_gate_temporal():
+    fs = FarmSession(window_s=600.0)
+    fs.set_prediction("Colmillo y hacha", [(31, "Freedom Blues"), (38, "Polar Metal")], ts=100.0)
+    # La predicción NO arma por sí sola el gate de farmeo (eso lo hace on_state).
+    assert fs.is_armed(ts=100.0) is False
+    fs.on_state("S13", ts=100.0)
+    assert fs.is_armed(ts=100.0) is True

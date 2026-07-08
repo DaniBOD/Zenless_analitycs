@@ -10,10 +10,12 @@ import pytest
 
 from app.core.asset_resolver import (
     SET_LOGOS_DIR,
+    SET_BADGES_DIR,
     SPLASH_ARTS_DIR,
     PJ_STATS_DIR,
     agent_avatar_path,
     set_logo_path,
+    set_package_badge_paths,
     _normalize_for_pj_stats,
     _normalize_for_splash,
     _set_filename_from_en,
@@ -84,6 +86,31 @@ def test_set_logo_path_returns_none_for_unknown():
     assert set_logo_path("Fake Nonexistent Set") is None
     assert set_logo_path(None) is None
     assert set_logo_path("") is None
+
+
+# ---------------------------------------------------------------------------
+# Package badges (render del disco en el tile de S2) — matcher de sets
+# ---------------------------------------------------------------------------
+
+def test_set_package_badge_paths_devuelve_3_tiers():
+    ps = set_package_badge_paths("Dawn's Bloom")
+    assert len(ps) == 3, ps
+    assert all(p.exists() for p in ps)
+    assert all(p.parent == SET_BADGES_DIR for p in ps)
+    assert {p.stem[-1] for p in ps} == {"S", "A", "B"}   # los 3 tiers
+
+
+def test_set_package_badge_paths_apostrofe_y_espacios():
+    # 'The Sky Ablaze' (set nuevo v-actual) y apóstrofe url-encode.
+    assert len(set_package_badge_paths("The Sky Ablaze")) == 3
+    assert len(set_package_badge_paths("Wuthering Salon")) == 3
+
+
+def test_set_package_badge_paths_sin_badge_devuelve_vacio():
+    # Branch & Blade Song: endpoint caído al descargar → sin package badge (§5 del plan).
+    assert set_package_badge_paths("Branch & Blade Song") == []
+    assert set_package_badge_paths(None) == []
+    assert set_package_badge_paths("") == []
 
 
 # Agentes con overrides irregulares (los más sensibles)
