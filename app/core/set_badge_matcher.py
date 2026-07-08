@@ -29,14 +29,26 @@ import cv2
 import numpy as np
 
 from app.core.asset_resolver import SET_BADGES_DIR
-from app.core.avatar_descriptor import AvatarMatcher, MatchResult, build_descriptor
+from app.core.avatar_descriptor import (
+    AvatarMatcher,
+    MatchResult,
+    build_descriptor,
+    descriptor_distance,
+)
 
 log = logging.getLogger(__name__)
 
 # Caja normalizada (x0, y0, x1, y1) del disco dentro del package render 256×256. El disco cae
 # arriba-izquierda; esta caja lo aísla dejando fuera el badge de rareza (abajo-der.) y la marca
-# de agua (borde izq.). A calibrar si cambia el arte de los renders.
-_PKG_DISC_BOX = (0.06, 0.03, 0.66, 0.62)
+# de agua (borde izq.). AJUSTADA en vivo 2026-07-08 (validada con 3 tiles etiquetados): recortar
+# fino es CLAVE — el badge dorado "RARITY S" contaminaba el histograma de color y borraba la
+# diferencia real del disco (azul Wuthering vs dorado Sky Ablaze).
+_PKG_DISC_BOX = (0.06, 0.06, 0.55, 0.55)
+
+# Pesos del descriptor para SETS (hist, ncc, regiones), sesgados al HISTOGRAMA: entre sets el
+# COLOR del disco es el discriminador robusto (el NCC espacial no transfiere package↔tile).
+# Validado 2026-07-08: 3/3 sobre tiles reales (Wuthering azul vs Sky Ablaze dorado).
+_SET_WEIGHTS = (0.75, 0.15, 0.10)
 
 
 def crop_package_disc(bgr: np.ndarray) -> np.ndarray:
@@ -75,14 +87,13 @@ class SetBadgeMatcher:
         """Construye el matcher en memoria desde los package badges (S/A/B por set → multi-ref).
 
         `only_en`: restringe a un subconjunto de sets (por defecto, todos los presentes en
-        disco). Kwargs de abstención/pesos se pasan al `AvatarMatcher` subyacente."""
-        kw: dict = {}
+        disco). Kwargs de abstención se pasan al `AvatarMatcher`; los pesos por defecto son
+        `_SET_WEIGHTS` (sesgo histograma/color)."""
+        kw: dict = {"weights": weights if weights is not None else _SET_WEIGHTS}
         if min_conf is not None:
             kw["min_conf"] = min_conf
         if min_margin is not None:
             kw["min_margin"] = min_margin
-        if weights is not None:
-            kw["weights"] = weights
         m = AvatarMatcher(**kw)
         n_refs = 0
         for p in sorted(glob.glob(str(SET_BADGES_DIR / "*.webp"))):
@@ -112,9 +123,14 @@ class SetBadgeMatcher:
             return MatchResult(None, 0.0, 0.0, False, [])
         scored: list[tuple[str, float]] = []
         for en in candidate_en:
-            sim = self._m.similarity_to(q, en)
-            if sim is not None:
-                scored.append((en, 1.0 - sim))   # distancia
+            refs = self._m._refs.get(en)
+            if not refs:
+                continue
+            # SIEMPRE por color (gray_only=False): el disco tiene mucho metálico gris y el
+            # descriptor lo tomaría como "avatar desaturado" → ruta luminancia que IGNORA el
+            # color, que es justo el discriminador entre sets. (Bug encontrado en QA 2026-07-08.)
+            dist = min(descriptor_distance(q, r, self._m.weights, gray_only=False) for r in refs)
+            scored.append((en, dist))
         if not scored:
             return MatchResult(None, 0.0, 0.0, False, [])
         scored.sort(key=lambda t: t[1])

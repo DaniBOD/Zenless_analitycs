@@ -157,13 +157,15 @@ def tile_rarity(frame: np.ndarray, box: TileBox) -> str | None:
 
 
 def crop_tile_center(frame: np.ndarray, box: TileBox) -> np.ndarray:
-    """Recorta el arte del disco (centro del tile) para el matcher de sets. Descarta la banda
-    inferior (franja de rareza / badge RARITY) y parte del hexágono de slot arriba-izq."""
+    """Recorta el arte del disco (centro del tile) para el matcher de sets. Caja AJUSTADA
+    (validada 2026-07-08 con tiles etiquetados): aísla el disco excluyendo el hexágono de slot
+    (sup-izq.), el badge "RARITY S" dorado (inf-der.) y la marca de agua (borde izq.) — esos
+    overlays contaminaban el color y hacían fallar el match."""
     bw, bh = box.x1 - box.x0, box.y1 - box.y0
-    x0 = box.x0 + int(0.20 * bw)
-    x1 = box.x0 + int(0.95 * bw)
-    y0 = box.y0 + int(0.12 * bh)
-    y1 = box.y0 + int(0.72 * bh)
+    x0 = box.x0 + int(0.26 * bw)
+    x1 = box.x0 + int(0.80 * bw)
+    y0 = box.y0 + int(0.20 * bh)
+    y1 = box.y0 + int(0.66 * bh)
     return frame[y0:y1, x0:x1]
 
 

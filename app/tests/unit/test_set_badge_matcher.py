@@ -101,3 +101,29 @@ def test_identify_abstiene_si_no_hay_candidatos(descs):
     m = SetBadgeMatcher.from_package_badges()
     res = m.identify(descs["Dawn's Bloom"]["S"], [])
     assert res.name is None
+
+
+# Tiles REALES cosechados en vivo (S2, nodo "El piloto y el meca rebelde"), etiquetados por S3.
+# Validan el pipeline package-ref → tile in-game (el caso que importa, no package↔package).
+_FIX = Path(__file__).resolve().parents[1] / "fixtures"
+_TILES_REALES = {
+    "s2_tile_wuthering_salon.png": "Wuthering Salon",
+    "s2_tile_the_sky_ablaze_1.png": "The Sky Ablaze",
+    "s2_tile_the_sky_ablaze_2.png": "The Sky Ablaze",
+}
+
+
+@pytest.mark.skipif(not (_FIX / "s2_tile_wuthering_salon.png").exists(), reason="tiles reales no presentes")
+def test_identify_tiles_reales_del_juego():
+    """Package-ref → tile in-game: cada tile real matchea su set (restringido a los 2 del nodo).
+    Regresión del fix 2026-07-08 (crop ajustado + pesos histograma + ruta color, no gris)."""
+    from app.core.parser_s2 import TileBox, crop_tile_center
+    m = SetBadgeMatcher.from_package_badges()
+    cands = ["Wuthering Salon", "The Sky Ablaze"]
+    for fn, truth in _TILES_REALES.items():
+        tile = cv2.imread(str(_FIX / fn))
+        assert tile is not None, fn
+        h, w = tile.shape[:2]
+        crop = crop_tile_center(tile, TileBox(0, 0, 0, 0, w, h))
+        res = m.identify(crop, cands)
+        assert res.name == truth, f"{fn}: {res.name} (esperaba {truth}) conf={res.conf} margin={res.margin}"
