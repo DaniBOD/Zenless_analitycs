@@ -37,7 +37,14 @@ def _find_tesseract() -> str | None:
 
 
 def _capture_only_focused() -> bool:
-    """Lee [monitor].solo_capturar_si_enfocado de defaults.toml (fallback True)."""
+    """Lee [monitor].solo_capturar_si_enfocado de defaults.toml (fallback True).
+
+    Override de QA: `DANIBOD_NO_FOCUS_GATE=1` desactiva el gate (sigue capturando aunque el
+    juego no esté al frente) — útil para inspeccionar/loguear sin que el alt-tab pause la
+    captura. No cambia el default anti-FP; es solo para la sesión de QA."""
+    import os
+    if os.environ.get("DANIBOD_NO_FOCUS_GATE"):
+        return False
     try:
         try:
             import tomllib

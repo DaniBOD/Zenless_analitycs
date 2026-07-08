@@ -30,9 +30,12 @@ param(
                              # NECESARIO para instrumentación nueva (id_diag) hasta rebuildear el .exe.
     [switch]$Recapture,      # QA: re-emite cualquier disco al VOLVER a verlo (desactiva la
                              # dedup de sesión, DANIBOD_RECAPTURE). Para re-testear/confirmar.
-    [switch]$NoRamGuard      # QA: apaga el watchdog de RAM (DANIBOD_NO_RAM_GUARD) para no
+    [switch]$NoRamGuard,     # QA: apaga el watchdog de RAM (DANIBOD_NO_RAM_GUARD) para no
                              # interrumpir sesiones largas. La RAM crece (fuga residual RNF-06):
                              # usar en QA acotado, cerrar la app al terminar.
+    [switch]$NoFocusGate     # QA: desactiva el gate anti-FP por foco (DANIBOD_NO_FOCUS_GATE) →
+                             # sigue capturando aunque el juego no esté al frente (para poder
+                             # inspeccionar/loguear sin que el alt-tab pause la captura).
 )
 
 $ErrorActionPreference = "Stop"
@@ -119,6 +122,12 @@ if ($NoRamGuard) {
     Write-Host "[qa_launch] DANIBOD_NO_RAM_GUARD = 1 (watchdog RAM OFF - sesion continua)"
 } else {
     Remove-Item Env:\DANIBOD_NO_RAM_GUARD -ErrorAction SilentlyContinue
+}
+if ($NoFocusGate) {
+    $env:DANIBOD_NO_FOCUS_GATE = "1"
+    Write-Host "[qa_launch] DANIBOD_NO_FOCUS_GATE = 1 (captura sigue aunque el juego no esté al frente)"
+} else {
+    Remove-Item Env:\DANIBOD_NO_FOCUS_GATE -ErrorAction SilentlyContinue
 }
 if ($FromSource) {
     $py = Join-Path $repoRoot ".venv\Scripts\python.exe"
