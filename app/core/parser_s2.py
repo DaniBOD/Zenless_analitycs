@@ -21,8 +21,13 @@ import numpy as np
 
 # Región de la grilla de tiles dentro del frame (normalizada). Las 2 primeras filas visibles,
 # por debajo de la barra de EXP y por encima del bloque "Obtenido al desmontar".
+# NARROW: sub-región derecha, usada por `count_reward_rarity_strips` (verificación S2 anti-FP,
+# calibrada). WIDE: las 4 columnas del grid, usada para CONTAR los discos S (que pueden caer en
+# cualquier columna; la narrow perdía los tiles de la izquierda → falso "sin disco visible").
 _GRID_X = (0.785, 0.995)
 _GRID_Y = (0.345, 0.600)
+_GRID_X_WIDE = (0.685, 0.997)
+_GRID_Y_WIDE = (0.400, 0.620)
 
 # Dorado (tier S) en HSV OpenCV (H 0-180): franja de rareza + arte dorado del ícono.
 _GOLD_LO = (14, 120, 120)
@@ -51,11 +56,37 @@ class S2Summary:
     n_s_approx: int         # conteo best-effort de franjas/tiles doradas (aproximado)
 
 
-def _grid_region(frame: np.ndarray) -> np.ndarray:
+def _grid_region(frame: np.ndarray, wide: bool = False) -> np.ndarray:
     H, W = frame.shape[:2]
-    x0, x1 = int(_GRID_X[0] * W), int(_GRID_X[1] * W)
-    y0, y1 = int(_GRID_Y[0] * H), int(_GRID_Y[1] * H)
+    gx, gy = (_GRID_X_WIDE, _GRID_Y_WIDE) if wide else (_GRID_X, _GRID_Y)
+    x0, x1 = int(gx[0] * W), int(gx[1] * W)
+    y0, y1 = int(gy[0] * H), int(gy[1] * H)
     return frame[y0:y1, x0:x1]
+
+
+def count_gold_disc_strips(frame: np.ndarray) -> int:
+    """Cuenta franjas doradas (tier S) en el grid COMPLETO de recompensas → nº de discos S
+    dropeados. Cada tile de disco S tiene una banda dorada al borde inferior; se cuentan como
+    barras horizontales anchas (~1 tile) en la región WIDE (4 columnas). Robusto a la columna
+    donde caiga el disco. Sin OCR (RNF-06). Ver `parse_s2_resultado`."""
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return 0
+    grid = _grid_region(frame, wide=True)
+    if grid.size == 0:
+        return 0
+    gh, gw = grid.shape[:2]
+    hsv = cv2.cvtColor(grid, cv2.COLOR_BGR2HSV)
+    gold = cv2.inRange(hsv, _GOLD_LO, _GOLD_HI)
+    k = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 5))
+    closed = cv2.morphologyEx(gold, cv2.MORPH_CLOSE, k)
+    cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    n = 0
+    for c in cnts:
+        x, y, w, h = cv2.boundingRect(c)
+        # franja de tile: barra horizontal ancha (≥~1/8 del ancho, más ancha que alta, con área).
+        if w >= 0.12 * gw and w > h and (w * h) >= 0.003 * gh * gw:
+            n += 1
+    return n
 
 
 def count_reward_rarity_strips(frame: np.ndarray) -> int:
@@ -86,28 +117,17 @@ def count_reward_rarity_strips(frame: np.ndarray) -> int:
 
 
 def parse_s2_resultado(frame: np.ndarray) -> S2Summary:
-    """Detecta discos tier S (dorados) en la grilla de resultados de farmeo. Display-only."""
+    """Cuenta los discos tier S (dorados) dropeados en la grilla de resultados de farmeo, sobre
+    el grid COMPLETO (los discos S pueden caer en cualquier columna). Display-only, sin OCR.
+    `n_s_approx` = nº de franjas doradas (≈ discos S); `has_s_discs` = hay ≥1."""
     if frame is None or getattr(frame, "size", 0) == 0:
         return S2Summary(has_s_discs=False, gold_frac=0.0, n_s_approx=0)
 
-    grid = _grid_region(frame)
-    if grid.size == 0:
-        return S2Summary(has_s_discs=False, gold_frac=0.0, n_s_approx=0)
+    grid = _grid_region(frame, wide=True)
+    gold_frac = 0.0
+    if grid.size > 0:
+        hsv = cv2.cvtColor(grid, cv2.COLOR_BGR2HSV)
+        gold_frac = float(cv2.inRange(hsv, _GOLD_LO, _GOLD_HI).mean()) / 255.0
 
-    hsv = cv2.cvtColor(grid, cv2.COLOR_BGR2HSV)
-    gold = cv2.inRange(hsv, _GOLD_LO, _GOLD_HI)
-    gold_frac = float(gold.mean()) / 255.0
-
-    # Conteo best-effort: cerrar horizontalmente y contar franjas anchas (cada tile S ≈ 1).
-    gh, gw = grid.shape[:2]
-    k = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 5))
-    closed = cv2.morphologyEx(gold, cv2.MORPH_CLOSE, k)
-    cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    n_s = 0
-    for c in cnts:
-        x, y, w, h = cv2.boundingRect(c)
-        if w >= 0.18 * gw and (w * h) >= 0.004 * gh * gw:
-            n_s += 1
-
-    has = gold_frac >= _GOLD_FRAC_MIN
-    return S2Summary(has_s_discs=has, gold_frac=gold_frac, n_s_approx=n_s if has else 0)
+    n_s = count_gold_disc_strips(frame)
+    return S2Summary(has_s_discs=n_s >= 1, gold_frac=gold_frac, n_s_approx=n_s)

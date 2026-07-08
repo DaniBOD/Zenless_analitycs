@@ -35,3 +35,18 @@ def test_frame_negro_no_detecta():
     res = parse_s2_resultado(frame)
     assert res.has_s_discs is False
     assert res.n_s_approx == 0
+
+
+# Los discos S pueden caer en CUALQUIER columna del grid. Ejemplo_7: 2 discos S (slots 5 y 6)
+# en las columnas izquierdas → la región angosta vieja los perdía ("sin disco visible"). El
+# conteo sobre el grid completo debe dar 2. (Regresión QA farmeo 2026-07-07.)
+_RES = (Path(__file__).parent.parent.parent.parent / "Documentacion" / "Screenshots_Triggers"
+        / "Discos_Triggers" / "01_Pantalla_Resultado_Desafio")
+
+
+@pytest.mark.skipif(not (_RES / "Ejemplo_7.png").exists(), reason="capturas S2 no presentes")
+def test_cuenta_discos_s_columna_izquierda_ejemplo_7():
+    frame = cv2.imdecode(np.fromfile(str(_RES / "Ejemplo_7.png"), np.uint8), cv2.IMREAD_COLOR)
+    res = parse_s2_resultado(frame)
+    assert res.has_s_discs is True
+    assert res.n_s_approx == 2, f"esperaba 2 discos S (slot 5 y 6), got {res.n_s_approx}"
