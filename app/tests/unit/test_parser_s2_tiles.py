@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 import pytest
 
-from app.core.parser_s2 import TileBox, tile_boxes, crop_tile_center, crop_tile_slot
+from app.core.parser_s2 import TileBox, tile_boxes, crop_tile_center, crop_tile_slot, read_tile_slot
 
 REPO = Path(__file__).resolve().parents[3]
 _S2 = REPO / "Documentacion" / "Screenshots_Triggers" / "Discos_Triggers" / "01_Pantalla_Resultado_Desafio"
@@ -51,6 +51,23 @@ def test_crops_no_vacios_y_slot_arriba_izquierda():
     assert slot.shape[0] < (box.y1 - box.y0) and slot.shape[1] < (box.x1 - box.x0)
     # el centro es mayor que el slot (contiene el arte del disco)
     assert center.size > slot.size
+
+
+@pytest.mark.skipif(not _FIXTURES, reason="capturas S2 no presentes")
+def test_read_tile_slot_lee_discos_conservados():
+    """El dígito de slot (hexágono arriba-izq.) solo está en los discos CONSERVADOS (S). Los
+    marcados para auto-desmontaje (ícono reciclar, sin dígito) → None. Verifica que el OCR
+    binarizado lee los conservados (que el crudo devolvía vacío)."""
+    try:
+        from app.core.ocr_paddle import PaddleBackend
+    except Exception:
+        pytest.skip("PaddleOCR no disponible")
+    ocr = PaddleBackend()
+    fr = _load(_S2 / "Ejemplo_1.png")
+    slots = [read_tile_slot(fr, b, ocr) for b in tile_boxes(fr)]
+    # Ejemplo_1: fila 0 conserva discos S en slots 1 y 4; el resto es auto-desmontaje → None.
+    assert slots[0] == 1, slots
+    assert slots[1] == 4, slots
 
 
 def test_tile_boxes_frame_vacio():

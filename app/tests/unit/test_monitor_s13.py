@@ -40,20 +40,36 @@ class _FakeOcr:
         return self.title, 0.99
 
 
-def _monitor(title: str, on_diagnostic):
+class _SeqOcr:
+    """OCR falso que devuelve títulos en secuencia (simula cambiar de nodo en S13)."""
+    def __init__(self, titles):
+        self.titles = list(titles)
+        self.i = 0
+
+    def text(self, img, psm: int = 6, lang: str = "spa"):
+        t = self.titles[min(self.i, len(self.titles) - 1)]
+        self.i += 1
+        return t, 0.99
+
+
+def _monitor_ocr(ocr, on_diagnostic):
     import app.core.monitor as mon
     from app.core.farm_session import FarmSession
     return mon.Monitor(
-        ocr=_FakeOcr(title),
-        detector=None,
+        ocr=ocr, detector=None,
         on_diagnostic=on_diagnostic,
         farm_session=FarmSession(),
         farm_node_catalog=_catalog(),
     )
 
 
-def _frame():
-    return np.zeros((1439, 2559, 3), dtype=np.uint8)
+def _monitor(title: str, on_diagnostic):
+    return _monitor_ocr(_FakeOcr(title), on_diagnostic)
+
+
+def _frame(fill: int = 0):
+    # `fill` distinto → firma del ROI del título distinta (pasa el gate de re-OCR RNF-06).
+    return np.full((1439, 2559, 3), fill, dtype=np.uint8)
 
 
 def test_s13_predice_y_guarda_en_farm_session():
@@ -91,6 +107,82 @@ def test_s13_reporta_una_sola_vez_por_entrada():
     m._dispatch_state(_frame(), st)
     pred_diag = [d for d in diags if "puños" in d.lower() or "punos" in d.lower()]
     assert len(pred_diag) == 1, f"esperaba 1 predicción, hubo {len(pred_diag)}: {pred_diag}"
+
+
+def test_s13_reemite_al_cambiar_de_nodo_sin_salir():
+    """Navegar entre nodos SIN salir de S13 re-emite por cada nodo distinto, incluido volver
+    a uno ya visto (El piloto → Engaños → La ley → El piloto = 4 emisiones)."""
+    diags: list[str] = []
+    titles = [
+        "El piloto y el meca rebelde",
+        "Engaños y baluartes",
+        "La ley de hierro y los rebeldes",
+        "El piloto y el meca rebelde",
+    ]
+    m = _monitor_ocr(_SeqOcr(titles), on_diagnostic=diags.append)
+    st = ScreenState("S13", 1.0, "s13_set")
+    for i in range(len(titles)):
+        m._dispatch_state(_frame(fill=20 + i * 40), st)   # frames distintos → gate pasa
+    nodos = [d for d in diags if d.startswith("[farmeo] nodo:")]
+    assert len(nodos) == 4, f"esperaba 4 emisiones (una por cambio), hubo {len(nodos)}: {nodos}"
+    assert "El piloto y el meca rebelde" in nodos[0]
+    assert "Engaños y baluartes" in nodos[1]
+    assert "La ley de hierro y los rebeldes" in nodos[2]
+    assert "El piloto y el meca rebelde" in nodos[3]   # re-captura el que ya había pasado
+
+
+def test_s13_mismo_nodo_no_reemite_aunque_cambie_el_frame():
+    """Si el frame cambia (animación del cursor) pero el nodo sigue siendo el mismo, no re-emite."""
+    diags: list[str] = []
+    m = _monitor_ocr(_SeqOcr(["Puños y balas", "Puños y balas", "Puños y balas"]),
+                     on_diagnostic=diags.append)
+    st = ScreenState("S13", 1.0, "s13_set")
+    for i in range(3):
+        m._dispatch_state(_frame(fill=30 + i * 50), st)
+    nodos = [d for d in diags if d.startswith("[farmeo] nodo:")]
+    assert len(nodos) == 1, f"esperaba 1 (mismo nodo), hubo {len(nodos)}: {nodos}"
+
+
+def test_s13_flujo_entre_5_screenshots_reales():
+    """Simula navegar entre los 5 nodos de los screenshots reales (OCR real) + volver al 1º:
+    cada nodo distinto debe emitirse, incl. la re-captura del repetido. Un frame repetido
+    consecutivo NO re-emite (gate de firma)."""
+    import cv2
+    _S13 = Path(__file__).resolve().parents[3] / "Documentacion" / "Screenshots_Triggers" / "Discos_Triggers" / "13_Seleccion_set_farmeo"
+    files = sorted(_S13.glob("Ejemplo_*.png"))
+    if len(files) < 5:
+        import pytest
+        pytest.skip("screenshots S13 no presentes")
+    try:
+        from app.core.ocr_paddle import PaddleBackend
+        ocr = PaddleBackend()
+    except Exception:
+        import pytest
+        pytest.skip("PaddleOCR no disponible")
+
+    import app.core.monitor as mon
+    from app.core.farm_session import FarmSession
+    diags: list[str] = []
+    m = mon.Monitor(ocr=ocr, detector=None, on_diagnostic=diags.append,
+                    farm_session=FarmSession(), farm_node_catalog=_catalog())
+    frs = [cv2.imdecode(np.fromfile(str(f), np.uint8), cv2.IMREAD_COLOR) for f in files]
+    st = ScreenState("S13", 1.0, "s13_set")
+
+    # Flujo: 1,2,3,4,5, luego repetir el 1 (vuelvo a un nodo ya visto).
+    orden = [0, 1, 2, 3, 4, 0]
+    for i in orden:
+        m._dispatch_state(frs[i], st)
+    # Un frame repetido consecutivo (mismo que el último) → gate de firma lo suprime.
+    m._dispatch_state(frs[0], st)
+
+    nodos = [d for d in diags if d.startswith("[farmeo] nodo:")]
+    esperados = [
+        "La ley de hierro y los rebeldes", "Colmillo y hacha", "El loco y el adepto",
+        "El cazador y la bestia", "Engaños y baluartes", "La ley de hierro y los rebeldes",
+    ]
+    assert len(nodos) == len(esperados), f"esperaba {len(esperados)}, hubo {len(nodos)}: {nodos}"
+    for got, exp in zip(nodos, esperados):
+        assert exp in got, f"esperaba '{exp}' en '{got}'"
 
 
 def test_s13_reset_al_salir_permite_reemitir():

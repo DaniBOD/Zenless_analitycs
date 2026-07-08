@@ -73,8 +73,11 @@ _HARVEST_STATES = {"S8", "S17", "S18", "S19"}
 _HARVEST_CAP = 4
 
 # ROI normalizada (x, y, rw, rh) del título del nodo en S13 (selección de set a farmear).
-# A CALIBRAR en vivo contra Documentacion/Screenshots_Triggers/.../13_Seleccion_set_farmeo/.
+# Calibrada en vivo 2026-07-08 (OCR leyó el título exacto).
 _S13_TITLE_ROI = (0.43, 0.18, 0.35, 0.06)
+# Gate RNF-06: diff medio de la firma 32×32 del ROI del título por debajo del cual se
+# considera el MISMO nodo en pantalla → no re-OCR. Espejo de _MENU_SIG_MAX (barra de nombre).
+_S13_SIG_MAX = 5.0
 
 # Guarda de asignación S17 (latch + avatar). El PJ asignado a un disco equipado
 # sale del LATCH (PJ cuya pantalla se ve, ya confiable); el avatar circular S17 se
@@ -465,8 +468,11 @@ class Monitor:
         self._set_badge_matcher = set_badge_matcher
         # S2 (resultados de farmeo): resumen display-only 1× por entrada al estado.
         self._s2_reported: bool = False
-        # S13 (selección de set a farmear): predicción display-only 1× por entrada.
-        self._s13_reported: bool = False
+        # S13 (selección de set a farmear): predicción display-only EDGE-triggered por nodo.
+        # Se re-emite al CAMBIAR de nodo (aunque se siga en S13), incl. volver a uno ya visto.
+        # `_s13_last_sig` gatea el re-OCR (RNF-06); `_s13_last_node` deduplica la emisión.
+        self._s13_last_sig = None
+        self._s13_last_node: str | None = None
 
     # ---- Control ----------------------------------------------------------------
 
@@ -664,7 +670,11 @@ class Monitor:
                 # S15 (menú de personajes, M.1) también: al cambiar de PJ SIN cambiar de
                 # pantalla no hay transición → sin re-procesar quedaba pegado en el 1er PJ
                 # (QA 2026-06-21). El gate de firma del nombre evita el re-OCR si no cambió.
-                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9")
+                # S13 (selección de nodo a farmear): al cambiar de nodo SIN cambiar de pantalla
+                # no hay transición → sin re-procesar quedaba pegado en el 1er nodo (QA
+                # 2026-07-08, mismo caso que S15). El gate de firma del título evita el re-OCR
+                # si el nodo no cambió.
+                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9", "S13")
                 should_dispatch = forced or (
                     elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
                 )
@@ -787,7 +797,8 @@ class Monitor:
         if state.code != "S2":
             self._s2_reported = False
         if state.code != "S13":
-            self._s13_reported = False
+            self._s13_last_sig = None
+            self._s13_last_node = None
         self._handle_upgrade(frame, state)
         # Menú de personajes (Fase M.1): al salir de S15, olvidar la firma del nombre y del
         # log → re-entrar re-identifica y re-loguea. Barato (set a None cada frame no-S15).
@@ -938,21 +949,24 @@ class Monitor:
         """Por cada tile de la grilla S2: leer slot (OCR) + reconocer set (badge, restringido a
         los 2 sets predichos en S13) → línea display-only por disco. Sin predicción de S13 →
         abstención (open-set best-effort: futuro). No persiste ni puntúa (RNF-06/RNF-02)."""
-        if self._set_badge_matcher is None or self._farm_session is None:
+        if self._farm_session is None:
             return
         pred = self._farm_session.predicted(time.monotonic())
-        if pred is None:
-            return   # sin S13 previo → no restringimos el matcher
-        _node, sets = pred
-        cand_en = [en for _sid, en in sets]
-        if not cand_en:
-            return
+        node = pred[0] if pred else None
+        cand_en = [en for _sid, en in pred[1]] if pred else []
         try:
             from app.core.parser_s2 import tile_boxes, crop_tile_center, read_tile_slot
             boxes = tile_boxes(frame)
         except Exception:
             log.exception("Error localizando tiles S2")
             return
+        # Cosecha opcional de tiles reales (etiquetados por nodo+slot) para construir refs del
+        # matcher (el render de catálogo no transfiere — §8.1). Independiente de la predicción.
+        self._maybe_harvest_s2(frame, boxes, node)
+        if self._set_badge_matcher is None or not cand_en:
+            return
+        # Etiqueta de los 2 candidatos (para mostrar cuando el matcher se abstiene).
+        cand_txt = " o ".join(cand_en)
         for box in boxes:
             try:
                 slot = read_tile_slot(frame, box, self._ocr)
@@ -962,7 +976,7 @@ class Monitor:
                 log.debug("tile S2 falló", exc_info=True)
                 continue
             slot_txt = str(slot) if slot else "?"
-            set_txt = match.name if match.name else "?"
+            set_txt = match.name if match.name else f"? ({cand_txt})"
             msg = (f"[disco] slot {slot_txt} · {set_txt} (conf {match.conf:.2f}) "
                    f"· contexto={contexto}")
             log.info("S2 disco: slot=%s set=%s conf=%.2f", slot_txt, set_txt, match.conf)
@@ -972,19 +986,74 @@ class Monitor:
                 except Exception:
                     log.debug("on_diagnostic S2 tile falló", exc_info=True)
 
+    def _maybe_harvest_s2(self, frame, boxes, node: str | None) -> None:
+        """Si DANIBOD_S2_HARVEST está seteado, vuelca por cada tile su recorte de centro (arte
+        del disco, entrada del matcher) + el tile completo, etiquetados por nodo + slot leído.
+        Sirve para construir refs REALES del matcher (etiqueta final = set que confirma S3).
+        Solo escribe PNGs; nunca toca la DB. Una pasada por entrada a S2 (guardado por _s2_reported)."""
+        import os
+        d = os.environ.get("DANIBOD_S2_HARVEST")
+        if not d or not boxes:
+            return
+        try:
+            import cv2
+            from pathlib import Path
+            from app.core.parser_s2 import crop_tile_center, read_tile_slot
+            from app.core.stats_vocab import _norm_key
+            out = Path(d)
+            out.mkdir(parents=True, exist_ok=True)
+            node_k = (_norm_key(node) or "sinnodo") if node else "sinnodo"
+            ts = int(time.time())
+            n = 0
+            for box in boxes:
+                slot = read_tile_slot(frame, box, self._ocr)
+                base = f"{node_k}__slot{slot if slot else 'x'}__r{box.row}c{box.col}__{ts}"
+                cv2.imwrite(str(out / f"{base}__center.png"), crop_tile_center(frame, box))
+                cv2.imwrite(str(out / f"{base}__tile.png"), frame[box.y0:box.y1, box.x0:box.x1])
+                n += 1
+            log.info("[s2_harvest] %d tiles volcados a %s (nodo=%s)", n, d, node or "-")
+            if self._on_diagnostic:
+                self._on_diagnostic(f"[s2_harvest] {n} tiles → {d}")
+        except Exception:
+            log.debug("s2 harvest falló", exc_info=True)
+
+    @staticmethod
+    def _s13_title_signature(frame):
+        """Firma 32×32 gris del ROI del título del nodo (S13), sin OCR (RNF-06). Gatea el
+        re-OCR: si no cambió el título en pantalla, no vale re-leer. None si no se puede."""
+        if frame is None or getattr(frame, "size", 0) == 0:
+            return None
+        try:
+            import cv2
+            h, w = frame.shape[:2]
+            x, y, rw, rh = _S13_TITLE_ROI
+            sub = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
+            if sub.size == 0:
+                return None
+            return cv2.cvtColor(
+                cv2.resize(sub, (32, 32), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
+            ).astype(np.float32)
+        except Exception:
+            return None
+
     def _process_s13_node_title(self, frame, state: ScreenState) -> None:
         """Selección de set a farmear (S13): OCR del título del nodo → predecir los 2 sets
         que dropea (`FarmNodeCatalog`) y guardarlos en `FarmSession` para restringir el
         matcher de badges en S2. Display-only: emite un diagnóstico, no persiste ni puntúa.
 
-        A diferencia de S2, el latch (`_s13_reported`) se arma SOLO al predecir con éxito: el
-        detector puede confirmar S13 en un frame de transición donde el título aún no está
-        renderizado → conviene reintentar el OCR en el próximo ciclo en vez de perder la
-        predicción de toda la visita. Se resetea al salir de S13 (ver _dispatch_state)."""
-        if self._s13_reported:
-            return
+        EDGE-triggered por nodo (NO 1× por entrada a S13): mientras se navega entre nodos el
+        estado sigue siendo S13, así que se re-emite cada vez que CAMBIA el título — incluido
+        volver a un nodo ya visto. Gate RNF-06: solo re-OCR si la firma del ROI del título
+        cambió (misma selección en pantalla → no re-leer). Sin acumular memoria (solo la última
+        firma + el último nodo). Se resetea al salir de S13 (ver _dispatch_state)."""
         if self._farm_node_catalog is None or self._farm_session is None:
             return
+        # Gate de re-OCR: si el título en pantalla no cambió, no re-leer (RNF-06).
+        sig = self._s13_title_signature(frame)
+        if (sig is not None and self._s13_last_sig is not None
+                and self._sig_component_diff(sig, self._s13_last_sig) <= _S13_SIG_MAX):
+            return
+        self._s13_last_sig = sig
         try:
             h, w = frame.shape[:2]
             x, y, rw, rh = _S13_TITLE_ROI
@@ -1000,8 +1069,10 @@ class Monitor:
             log.info("[s13_diag] ocr_title=%r → node=%s", text,
                      node.titulo_es if node else None)
         if node is None:
-            return   # sin match confiable → no latch, reintenta el próximo ciclo
-        self._s13_reported = True
+            return   # sin match confiable (p.ej. frame de transición) → reintenta al cambiar
+        if node.titulo_es == self._s13_last_node:
+            return   # mismo nodo ya emitido → no re-loguear
+        self._s13_last_node = node.titulo_es
         sets = [(s.set_id, s.nombre_en) for s in node.sets]
         self._farm_session.set_prediction(node.titulo_es, sets, time.monotonic())
         names = " / ".join(s.nombre_en for s in node.sets)

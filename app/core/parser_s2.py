@@ -132,24 +132,44 @@ def crop_tile_slot(frame: np.ndarray, box: TileBox) -> np.ndarray:
     return frame[box.y0:y1, box.x0:x1]
 
 
-def read_tile_slot(frame: np.ndarray, box: TileBox, ocr) -> int | None:
-    """OCR del dígito de slot (1-6) de un tile. Upscale ×3 (patrón `_rescue_slot_s3`) para el
-    dígito chico. Devuelve el slot o None si no se reconoce. Se calibra en la QA en vivo."""
-    if ocr is None:
-        return None
-    crop = crop_tile_slot(frame, box)
-    if crop.size == 0:
-        return None
-    up = cv2.resize(crop, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-    try:
-        text, _ = ocr.text(up, psm=7, lang="spa")
-    except Exception:
-        return None
+def _slot_digit_from_text(text: str | None) -> int | None:
     for ch in (text or ""):
         if ch.isdigit():
             d = int(ch)
             if 1 <= d <= 6:
                 return d
+    return None
+
+
+def read_tile_slot(frame: np.ndarray, box: TileBox, ocr) -> int | None:
+    """OCR del dígito de slot (1-6) del hexágono arriba-izq. de un tile.
+
+    El dígito es metálico (gradiente claro) sobre hexágono oscuro → Paddle no lo engancha crudo.
+    Se binariza (threshold fijo alto → dígito claro a negro sobre blanco), upscale ×5 y borde
+    blanco (calibrado en vivo 2026-07-08: lee 1/4/… que el crudo devolvía vacío). Fallback a
+    Otsu. lang='eng' (solo dígitos). Devuelve slot 1-6 o None."""
+    if ocr is None:
+        return None
+    crop = crop_tile_slot(frame, box)
+    if crop.size == 0:
+        return None
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    up = cv2.resize(gray, None, fx=5, fy=5, interpolation=cv2.INTER_CUBIC)
+    # Primario: dígito claro (>150) → negro sobre blanco + borde.
+    _, thr = cv2.threshold(up, 150, 255, cv2.THRESH_BINARY_INV)
+    prepped = [thr]
+    # Fallback: Otsu (por si la iluminación baja el brillo del dígito).
+    _, otsu = cv2.threshold(up, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    prepped.append(cv2.bitwise_not(otsu))
+    for img in prepped:
+        bordered = cv2.copyMakeBorder(img, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=255)
+        try:
+            text, _ = ocr.text(bordered, psm=10, lang="eng")
+        except Exception:
+            continue
+        slot = _slot_digit_from_text(text)
+        if slot is not None:
+            return slot
     return None
 
 

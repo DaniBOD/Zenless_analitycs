@@ -15,6 +15,9 @@
 param(
     [switch]$ReadOnly,
     [string]$Harvest,        # carpeta destino: cosecha frames etiquetados por latch (5R.3)
+    [string]$S2Harvest,      # carpeta destino: cosecha tiles de S2 (center+tile) etiquetados
+                             # por nodo+slot, para construir refs reales del matcher de sets.
+                             # NO toca DB (solo PNGs).
     [switch]$BadgeHarvest,   # crece la librería de badges (avatar_badge_v2.npz) en vivo,
                              # gateada por flujo-ancla (solo disco equipado). NO toca DB.
     [string]$GridDiag,       # carpeta destino: vuelca recortes de badge S17 + verdicto por
@@ -65,6 +68,14 @@ if ($Harvest) {
     Write-Host "[qa_launch] DANIBOD_HARVEST = $harvestDir (cosecha frames etiquetados por latch)"
 } else {
     Remove-Item Env:\DANIBOD_HARVEST -ErrorAction SilentlyContinue
+}
+if ($S2Harvest) {
+    $s2Dir = if ([System.IO.Path]::IsPathRooted($S2Harvest)) { $S2Harvest } else { Join-Path $repoRoot $S2Harvest }
+    New-Item -ItemType Directory -Force -Path $s2Dir | Out-Null
+    $env:DANIBOD_S2_HARVEST = $s2Dir
+    Write-Host "[qa_launch] DANIBOD_S2_HARVEST = $s2Dir (cosecha tiles S2 etiquetados nodo+slot)"
+} else {
+    Remove-Item Env:\DANIBOD_S2_HARVEST -ErrorAction SilentlyContinue
 }
 if ($BadgeHarvest) {
     $env:DANIBOD_BADGE_HARVEST = "1"

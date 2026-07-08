@@ -51,6 +51,35 @@ Se cerró el loop **predecir → confirmar** del farmeo, en dos fases, ambas con
 - **DB viva**: los 28 `nombre_en` resuelven a `set_id` (0 unresolved). La copia de `build/dist`
   estaba vieja (26 sets) — se ignoró.
 
+## QA en vivo 2026-07-08 (hallazgos + fixes)
+
+- **Fase A (S13) — ✅ validada en vivo.** OCR del título exacto (ROI quedó bien a la primera),
+  predicción correcta, normalización tildes/ñ confirmada (`'Enganos y baluartes'`→Engaños,
+  `'La leyde hierro ylosrebeldes'`→La ley). **Bug encontrado + arreglado:** al cambiar de nodo
+  SIN salir de S13 no re-emitía (quedaba pegado en el 1er nodo). Causa: el loop del monitor
+  solo re-despacha en transición de estado o si el estado es "continuo" — S13 no lo estaba
+  (mismo caso que S15, ver comentario en `_run` l.673). Fix: **S13 → estado continuo** +
+  handler EDGE-triggered por título (`_process_s13_node_title` reescrito: gate de re-OCR por
+  firma 32×32 del ROI `_s13_title_signature` + dedup por `_s13_last_node`). Re-emite al cambiar
+  de nodo, incl. volver a uno ya visto. Sin acumular memoria. Test con los 5 screenshots reales
+  (`test_s13_flujo_entre_5_screenshots_reales`).
+- **Slot-OCR (S2) — ✅ arreglado.** El dígito metálico crudo daba vacío en Paddle. `read_tile_slot`
+  ahora binariza (threshold 150 → invertir → borde blanco, fallback Otsu), upscale ×5, psm=10,
+  lang='eng'. En vivo leyó slots 3/6 OK; **un "4" se leyó como "2"** (flakiness crónica del dígito
+  — el slot definitivo igual sale en S3). **Nota del juego:** el nº de slot SOLO aparece en los
+  discos S conservados; los marcados para auto-desmontaje (ícono reciclar) no lo muestran →
+  `slot=None` ahí es correcto.
+- **Matcher de set (S2) — ⚠️ abierto.** Se abstiene por margen (los 2 candidatos casi equidistantes
+  sobre el tile real). Los package renders SÍ difieren (Wuthering Salon azul/simétrico vs The Sky
+  Ablaze con llamas doradas) pero al tamaño del tile + overlays (hexágono de slot, badge RARITY,
+  marca de agua) no transfiere. **Decisión del usuario: cosechar tiles reales + etiquetar por S3.**
+  Infra agregada: `Monitor._maybe_harvest_s2` + flag `qa_launch.ps1 -S2Harvest <dir>` → vuelca
+  center-crop + tile de cada disco etiquetado por nodo+slot. Línea por-disco mejorada: muestra los
+  2 candidatos cuando se abstiene (`slot N · ? (Wuthering Salon o The Sky Ablaze)`).
+  **PENDIENTE:** juntar ejemplos de AMBOS sets (falta un Sky Ablaze real — los 3 cosechados de
+  "El piloto" parecen todos Wuthering Salon) + labels de S3 → reconstruir refs → reintentar.
+  Posible mejora previa: center-crop más ajustado (hoy se cuela el hexágono de slot + marca de agua).
+
 ## Pendiente / riesgos (a validar en vivo)
 
 1. **QA EN VIVO** (`tools/qa_launch.ps1 -FromSource -IdDiag -ReadOnly`): S13 → log
