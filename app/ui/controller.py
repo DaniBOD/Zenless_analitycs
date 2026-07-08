@@ -294,7 +294,11 @@ class MonitorController(QObject):
         from app.db.connection import get_connection, get_db_path
         from app.db.repositories import AgentRepo, ArchetypeRepo, DiscSetRepo
         from app.core.score_normalizer import ScoringContext
-        self._con = get_connection(self._db_path)
+        # SOLO LECTURA (agents/archetypes/sets, datos de referencia): la UI (thread principal)
+        # y el thread del monitor (recomendación al parsear un disco S3) comparten esta conexión.
+        # check_same_thread=False la habilita cross-thread; SQLite serializa. Sin escrituras aquí
+        # (las escrituras van por DiscSyncer, su propia conexión) → sin riesgo de corrupción.
+        self._con = get_connection(self._db_path, check_same_thread=False)
         self._agent_repo = AgentRepo(self._con)
         self._archetype_repo = ArchetypeRepo(self._con)
         self._disc_set_repo = DiscSetRepo(self._con)

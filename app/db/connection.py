@@ -86,14 +86,21 @@ def get_db_path() -> Path:
     return _resolve_db_path()
 
 
-def get_connection(db_path: Path | str | None = None) -> sqlite3.Connection:
+def get_connection(db_path: Path | str | None = None, *, check_same_thread: bool = True) -> sqlite3.Connection:
+    """Abre una conexión SQLite.
+
+    `check_same_thread=False` permite compartir la conexión entre threads (p.ej. una conexión
+    de SOLO LECTURA de datos de referencia usada por la UI y por el thread del monitor para
+    puntuar/recomendar). SQLite (modo serializado) serializa el acceso; es seguro mientras esa
+    conexión no escriba (las escrituras usan su propia conexión, en su propio thread). NO usar
+    para conexiones de escritura compartidas (riesgo de corrupción, RNF-01)."""
     path = Path(db_path) if db_path else _resolve_db_path()
     if not path.exists():
         raise FileNotFoundError(
             f"DB no encontrada en {path}. "
             f"Si corres desde source, asegurate de estar en la raíz del repo."
         )
-    con = sqlite3.connect(str(path))
+    con = sqlite3.connect(str(path), check_same_thread=check_same_thread)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")
     return con
