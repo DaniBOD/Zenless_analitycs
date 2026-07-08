@@ -66,6 +66,12 @@ _TILE_ABOVE = 0.095    # alto del tile por encima del cy de la franja (arte + sl
 _TILE_BELOW = 0.012    # margen por debajo del cy de la franja
 # Fracción mínima de píxeles de rareza en la banda de la franja para considerar el tile presente.
 _TILE_STRIP_FRAC_MIN = 0.15
+# Los MATERIALES (canister rosa de "obtenido al desmontar") mimetizan un tile de disco: su franja
+# cae en el rango púrpura. Se distinguen por su cola MAGENTA (H 156-175), ausente en los discos.
+# Calibrado 2026-07-08: materiales ~0.157 magenta, discos ~0.00 → umbral 0.05 los separa limpio.
+_TILE_MAGENTA_LO = (156, 80, 80)
+_TILE_MAGENTA_HI = (175, 255, 255)
+_TILE_MATERIAL_MAGENTA_MAX = 0.05
 
 
 @dataclass
@@ -94,9 +100,22 @@ def _tile_strip_frac(frame: np.ndarray, cx: float, scy: float) -> float:
     return float(mask.mean()) / 255.0
 
 
+def _tile_strip_magenta_frac(frame: np.ndarray, cx: float, scy: float) -> float:
+    """Fracción magenta (H 156-175) en la banda de la franja → firma de un MATERIAL (no disco)."""
+    H, W = frame.shape[:2]
+    x0, x1 = int((cx - _TILE_W / 2) * W), int((cx + _TILE_W / 2) * W)
+    y0, y1 = int((scy - 0.02) * H), int((scy + 0.02) * H)
+    sub = frame[y0:y1, x0:x1]
+    if sub.size == 0:
+        return 0.0
+    hsv = cv2.cvtColor(sub, cv2.COLOR_BGR2HSV)
+    return float(cv2.inRange(hsv, _TILE_MAGENTA_LO, _TILE_MAGENTA_HI).mean()) / 255.0
+
+
 def tile_boxes(frame: np.ndarray) -> list[TileBox]:
-    """Localiza los tiles de disco de la grilla S2 (4×2). Devuelve solo los tiles presentes
-    (con franja de rareza), en orden row-major. Sin OCR (RNF-06)."""
+    """Localiza los tiles de DISCO de la grilla S2 (4×2). Devuelve solo los tiles presentes
+    (con franja de rareza), excluyendo los MATERIALES (franja magenta), en orden row-major.
+    Sin OCR (RNF-06)."""
     if frame is None or getattr(frame, "size", 0) == 0:
         return []
     H, W = frame.shape[:2]
@@ -105,6 +124,8 @@ def tile_boxes(frame: np.ndarray) -> list[TileBox]:
         for c, cx in enumerate(_TILE_COLS_CX):
             if _tile_strip_frac(frame, cx, scy) < _TILE_STRIP_FRAC_MIN:
                 continue
+            if _tile_strip_magenta_frac(frame, cx, scy) > _TILE_MATERIAL_MAGENTA_MAX:
+                continue   # material (canister rosa), no un disco
             x0 = int((cx - _TILE_W / 2) * W)
             x1 = int((cx + _TILE_W / 2) * W)
             y0 = int((scy - _TILE_ABOVE) * H)
@@ -132,12 +153,20 @@ def crop_tile_slot(frame: np.ndarray, box: TileBox) -> np.ndarray:
     return frame[box.y0:y1, box.x0:x1]
 
 
+# Confusiones OCR del dígito de slot estilizado de ZZZ (glifos 1-6). El "5" tiene forma de 'S'
+# y el OCR lo lee así; el slot solo puede ser 1-6, así que el mapeo es seguro. Verificado en
+# vivo 2026-07-08 (Ejemplo_8 r0c1). El slot definitivo igual se confirma en S3.
+_SLOT_CONFUSION: dict[str, int] = {"S": 5, "s": 5}
+
+
 def _slot_digit_from_text(text: str | None) -> int | None:
     for ch in (text or ""):
         if ch.isdigit():
             d = int(ch)
             if 1 <= d <= 6:
                 return d
+        elif ch in _SLOT_CONFUSION:
+            return _SLOT_CONFUSION[ch]
     return None
 
 

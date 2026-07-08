@@ -29,15 +29,26 @@ def _load(p: Path) -> np.ndarray:
 
 @pytest.mark.skipif(not _FIXTURES, reason="capturas S2 no presentes")
 @pytest.mark.parametrize("fx", _FIXTURES, ids=lambda p: p.name)
-def test_tile_boxes_encuentra_los_8_tiles(fx):
+def test_tile_boxes_localiza_discos(fx):
     fr = _load(fx)
     boxes = tile_boxes(fr)
-    assert len(boxes) == 8, f"{fx.name}: {len(boxes)} tiles"
-    # 2 filas × 4 columnas, orden row-major.
-    assert [(b.row, b.col) for b in boxes] == [(r, c) for r in range(2) for c in range(4)]
+    # 7 u 8 tiles de DISCO: la grilla es 4×2, pero la última celda puede ser un MATERIAL
+    # (canister rosa) que se excluye. Orden row-major, cajas dentro del frame.
+    assert 7 <= len(boxes) <= 8, f"{fx.name}: {len(boxes)} tiles"
+    celdas = [(b.row, b.col) for b in boxes]
+    assert celdas == sorted(celdas), f"{fx.name}: fuera de orden row-major"
+    assert len(set(celdas)) == len(celdas), f"{fx.name}: celdas duplicadas"
     H, W = fr.shape[:2]
     for b in boxes:
         assert 0 <= b.x0 < b.x1 <= W and 0 <= b.y0 < b.y1 <= H
+
+
+@pytest.mark.skipif(not (_S2 / "Ejemplo_8.png").exists(), reason="Ejemplo_8 no presente")
+def test_tile_boxes_excluye_material():
+    """Ejemplo_8 tiene un material (canister rosa) en r1c3 → 7 discos, sin esa celda."""
+    boxes = tile_boxes(_load(_S2 / "Ejemplo_8.png"))
+    assert len(boxes) == 7, [(b.row, b.col) for b in boxes]
+    assert (1, 3) not in [(b.row, b.col) for b in boxes]   # el material queda fuera
 
 
 @pytest.mark.skipif(not _FIXTURES, reason="capturas S2 no presentes")
@@ -68,6 +79,20 @@ def test_read_tile_slot_lee_discos_conservados():
     # Ejemplo_1: fila 0 conserva discos S en slots 1 y 4; el resto es auto-desmontaje → None.
     assert slots[0] == 1, slots
     assert slots[1] == 4, slots
+
+
+@pytest.mark.skipif(not (_S2 / "Ejemplo_8.png").exists(), reason="Ejemplo_8 no presente")
+def test_read_tile_slot_5_estilizado_como_S():
+    """El '5' estilizado de ZZZ (forma de 'S') se mapea a slot 5 (Ejemplo_8 r0c1)."""
+    try:
+        from app.core.ocr_paddle import PaddleBackend
+    except Exception:
+        pytest.skip("PaddleOCR no disponible")
+    fr = _load(_S2 / "Ejemplo_8.png")
+    boxes = tile_boxes(fr)
+    slots = [read_tile_slot(fr, b, PaddleBackend()) for b in boxes]
+    assert slots[0] == 1, slots
+    assert slots[1] == 5, slots   # el 'S' → slot 5
 
 
 def test_tile_boxes_frame_vacio():
