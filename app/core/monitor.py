@@ -799,6 +799,15 @@ class Monitor:
         if state.code != "S13":
             self._s13_last_sig = None
             self._s13_last_node = None
+        # Al RE-ENTRAR a S3 (abrir otro disco desde S2), empezar captura fresca: dos discos del
+        # mismo set tienen firma parecida y el dedup por firma no siempre los separa. El dedup por
+        # IDENTIDAD (_disc_emitted_ids: set+slot+stats) evita emitir dos veces el mismo disco →
+        # cada disco abierto se captura, sin duplicar (checklist de farmeo, QA 2026-07-08).
+        if state.code == "S3" and prev_code != "S3":
+            self._s3_aggregator.reset()
+            self._s3_agg_sig = None
+            self._s3_emitted = False
+            self._s3_agg_cycles = 0
         self._handle_upgrade(frame, state)
         # Menú de personajes (Fase M.1): al salir de S15, olvidar la firma del nombre y del
         # log → re-entrar re-identifica y re-loguea. Barato (set a None cada frame no-S15).

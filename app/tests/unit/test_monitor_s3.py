@@ -34,6 +34,26 @@ def _load(name):
     return cv2.imdecode(np.fromfile(str(_S3 / name), np.uint8), cv2.IMREAD_COLOR)
 
 
+class _NullOcr:
+    def text(self, img, psm: int = 6, lang: str = "spa"):
+        return "", 0.0
+
+
+def test_s3_reentrada_resetea_captura():
+    """Abrir otro disco desde S2 (re-entrar a S3) reinicia la captura AUNQUE la firma sea similar
+    (dos discos del mismo set) → cada disco abierto se puede capturar. El dedup por identidad
+    evita duplicar. Regresión del checklist de farmeo (QA 2026-07-08)."""
+    import app.core.monitor as mon
+    from app.core.detector import ScreenState
+    m = mon.Monitor(ocr=_NullOcr(), detector=None)
+    blank = np.zeros((1439, 2559, 3), np.uint8)
+    m._s3_emitted = True                             # simular disco anterior ya emitido
+    m._s3_agg_sig = m._s3_disc_signature(blank)      # ancla = misma firma → NO "nuevo" por firma
+    m._prev_state_code = "S2"                        # venimos de S2 (abrir otro disco)
+    m._dispatch_state(blank, ScreenState("S3", 1.0, "s3_drop"))
+    assert m._s3_emitted is False                    # el reset por RE-ENTRADA lo reinició
+
+
 @pytest.mark.skipif(not (_S3 / "Ejemplo_1.png").exists(), reason="capturas S3 no presentes")
 def test_s3_emite_disco_del_drop():
     from app.core.detector import ScreenState
