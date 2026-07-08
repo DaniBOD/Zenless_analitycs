@@ -80,6 +80,40 @@ Se cerró el loop **predecir → confirmar** del farmeo, en dos fases, ambas con
   "El piloto" parecen todos Wuthering Salon) + labels de S3 → reconstruir refs → reintentar.
   Posible mejora previa: center-crop más ajustado (hoy se cuela el hexágono de slot + marca de agua).
 
+## QA en vivo 2026-07-08 (2ª tanda) — matcher, S3, UI
+
+- **Matcher de set S2 — ✅ RESUELTO en vivo (3/3).** Con 3 tiles reales etiquetados por S3
+  (El piloto: Wuthering Salon azul, The Sky Ablaze dorado). Tres fixes: crop del disco AJUSTADO
+  (el badge dorado "RARITY S" contaminaba el histograma), pesos sesgados a histograma/color
+  (`_SET_WEIGHTS`), y `identify` SIEMPRE por color (`gray_only=False` — el metálico gris hacía
+  que lo tratara como avatar desaturado, ruta luminancia que ignora el color). **No hizo falta
+  cosechar refs**: los package renders transfieren con el disco aislado. 3 tiles → fixtures de
+  regresión.
+- **Slot-OCR S2** — lee bien (fila 0 conservados); flakiness residual: el "5" estilizado (forma
+  de S) se mapea S→5; el "4" a veces se lee "2". El slot DEFINITIVO sale en S3.
+- **Materiales** (canister rosa) se excluyen de la grilla por su cola magenta (H 156-175).
+- **S2 reporta/cosecha SOLO discos S** (`tile_rarity`); los de auto-desmontaje no.
+- **Captura S3 (stats) — ✅ funciona** con `-NoFocusGate` (el gate anti-FP por foco pausaba la
+  captura al alt-tab e impedía madurar). Emite principal + secundarios + score + recomendación.
+- **Checklist multi-disco** — cada disco abierto se captura (reset de S3 al re-entrar) + "disco
+  ya capturado" al re-abrir uno emitido (`_s3_emitted_ids` propio de S3, persiste entre visitas
+  a S2, se limpia con F8).
+- **UI toast** — se dispara 1 por disco (fix del `finished→hide` colgado que ocultaba el 2º+).
+  Nombre/logo del set: `_lookup_set_id` ahora resuelve mojibake OCR ('Salön'→'Salón', `_norm_key`)
+  y el display usa el nombre canónico de la DB (antes mostraba 'Salön' y perdía el logo).
+
+## Follow-ups (pendientes, fuera de esta feature)
+
+1. **Probar otros nodos de farmeo** (pendiente de pilas del usuario) — validar el matcher/predicción
+   con sets de otros nodos.
+2. **Toast sobre el juego** — si ZZZ corre en pantalla completa exclusiva el toast Qt no se dibuja
+   encima (RF-11 / decisión UX).
+3. **Resumen de farmeo / discos sin detallar** — checklist persistente: S2 lista N discos
+   (slot+set), marcar cuáles se detallaron en S3 y cuáles quedan pendientes; considerar los no
+   vistos. Requiere persistencia (diferida en el estado del proyecto).
+4. **Slot-OCR S2** 4→2 ocasional — mejorar el reconocimiento del dígito (o dejarlo como preview;
+   el definitivo es S3).
+
 ## Pendiente / riesgos (a validar en vivo)
 
 1. **QA EN VIVO** (`tools/qa_launch.ps1 -FromSource -IdDiag -ReadOnly`): S13 → log

@@ -54,6 +54,34 @@ def test_s3_reentrada_resetea_captura():
     assert m._s3_emitted is False                    # el reset por RE-ENTRADA lo reinició
 
 
+def _fake_disc(set_name="Salón huracanado", slot=2, main="ATK"):
+    import types
+    sub = types.SimpleNamespace(nombre_canon="DEF%", nombre_raw="DEF%", rolls=1, valor=4.8)
+    return types.SimpleNamespace(
+        set_name_canon=set_name, set_name_raw=set_name, slot=slot,
+        main_stat_canon=main, main_stat_raw=main, main_valor=79.0, nivel=0,
+        confianza_global=0.9, subs=[sub],
+    )
+
+
+def test_s3_no_re_emite_disco_ya_capturado():
+    """Re-abrir un disco ya capturado avisa 'ya capturado' y NO re-emite (sin toast). El set de
+    emitidos de S3 persiste entre visitas a S2 (a diferencia del _disc_emitted_ids compartido)."""
+    import app.core.monitor as mon
+    from app.core.detector import ScreenState
+    emitted, diags = [], []
+    m = mon.Monitor(ocr=_NullOcr(), detector=None,
+                    on_disc=lambda d, st: emitted.append(d),
+                    on_diagnostic=diags.append)
+    st = ScreenState("S3", 1.0, "s3_drop")
+    d = _fake_disc()
+    m._emit_s3_disc(d, st)          # 1ª captura → emite
+    m._s3_emitted = False           # simular re-apertura (reset del checklist)
+    m._emit_s3_disc(d, st)          # mismo disco → ya capturado
+    assert len(emitted) == 1, f"esperaba 1 emisión, hubo {len(emitted)}"
+    assert any("ya capturado" in x for x in diags), diags
+
+
 @pytest.mark.skipif(not (_S3 / "Ejemplo_1.png").exists(), reason="capturas S3 no presentes")
 def test_s3_emite_disco_del_drop():
     from app.core.detector import ScreenState

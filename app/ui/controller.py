@@ -739,6 +739,7 @@ class MonitorController(QObject):
                     if s.id == set_id:
                         p = set_logo_path(s.nombre_en)
                         set_logo = str(p) if p else None
+                        set_name_es = s.nombre   # canónico de la DB (evita mostrar 'Salön' del OCR)
                         break
             except Exception:
                 pass
@@ -799,11 +800,18 @@ class MonitorController(QObject):
         }
 
     def _lookup_set_id(self, name: str | None) -> int | None:
+        """Resuelve nombre de set (OCR) → set_id, insensible a tildes/mojibake: el OCR del
+        crop lee la tilde inestable ('Salón'/'Salön') → normalizar con `_norm_key` (sin
+        diacríticos) para que igual resuelva (si no, se perdía el logo y el nombre canónico)."""
         if not name or self._disc_set_repo is None:
+            return None
+        from app.core.stats_vocab import _norm_key
+        key = _norm_key(name)
+        if not key:
             return None
         try:
             for s in self._disc_set_repo.get_all():
-                if s.nombre.lower().strip() == name.lower().strip():
+                if _norm_key(s.nombre) == key:
                     return s.id
         except Exception:
             pass

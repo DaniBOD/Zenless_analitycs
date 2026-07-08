@@ -337,6 +337,12 @@ class Monitor:
         self._s3_agg_sig = None            # firma-ancla del modal de drop que se fusiona
         self._s3_emitted: bool = False
         self._s3_agg_cycles: int = 0
+        # Identidades de discos de drop YA emitidos en la sesión de farmeo. Propio de S3 (NO el
+        # compartido _disc_emitted_ids, que _reset_detail_identity borra al volver a S2) → así
+        # re-abrir un disco ya capturado avisa "ya capturado" y no re-dispara el toast. Se limpia
+        # con F8 (o al reiniciar). Limitación: dos farmeos con un disco IDÉNTICO (mismo
+        # set+slot+stats) dedupean el 2º — caso raro, aceptado.
+        self._s3_emitted_ids: set = set()
         # Última firma del log "[S17] asignado" (edge-trigger: 1× por cambio).
         self._s17_assign_sig = None
         # Gate de OCR S18 (RNF-06): última firma del panel de stats. Si no cambió, se
@@ -524,6 +530,7 @@ class Monitor:
             # (sin tirar lo fusionado — F8 fuerza el re-log/persist del best-known).
             self._disc_emitted = False
             self._disc_emitted_ids.clear()
+            self._s3_emitted_ids.clear()   # F8 re-captura también los drops S3 ya vistos
             self._s17_assign_sig = None
             # Resetear también el TemporalBuffer del loop. Sin esto, F8
             # quedaba sin emitir [reconocido]/[stats] porque `buffer.add`
@@ -1728,12 +1735,20 @@ class Monitor:
         (score + toast); no persiste en esta fase (display-first)."""
         self._s3_emitted = True
         identity = self._disc_identity(merged)
+        set_disp = merged.set_name_canon or merged.set_name_raw
         if self._recapture_on:
             if identity == self._last_emitted_identity:
                 return
-        elif identity in self._disc_emitted_ids:
+        elif identity in self._s3_emitted_ids:
+            # Re-abriste un disco ya capturado → feedback + NO re-emitir (sin toast).
+            log.info("Disco S3 ya capturado: set=%s slot=%d", set_disp, merged.slot)
+            if self._on_diagnostic:
+                try:
+                    self._on_diagnostic(f"[disco] ya capturado: {set_disp} slot {merged.slot}")
+                except Exception:
+                    log.debug("on_diagnostic S3 ya-capturado falló", exc_info=True)
             return
-        self._disc_emitted_ids.add(identity)
+        self._s3_emitted_ids.add(identity)
         self._last_emitted_identity = identity
         log.info(
             "Disco S3 (drop) detectado: set=%s slot=%d main=%s nivel=%d conf=%.2f",

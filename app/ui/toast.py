@@ -216,6 +216,13 @@ class DiscToast(QWidget):
         self.setWindowOpacity(0.0)
         self.show()
         self._fade_anim.stop()
+        # Desconectar el `finished → hide` que dejó un `hide_with_fade` previo: si no, al
+        # terminar ESTE fade-in la señal dispara hide() y el toast (2º disco en adelante)
+        # aparece y desaparece al instante. Bug QA 2026-07-08 (solo se veía el 1er toast).
+        try:
+            self._fade_anim.finished.disconnect(self.hide)
+        except (TypeError, RuntimeError):
+            pass
         self._fade_anim.setStartValue(0.0)
         self._fade_anim.setEndValue(0.96)
         self._fade_anim.start()
