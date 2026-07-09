@@ -42,7 +42,7 @@ log = logging.getLogger(__name__)
 
 # Estados donde hay un disco visible para parsear.
 # S17 = vista detalle disco en Personalización de pistas (equipamiento PJ).
-_NEW_DISC_STATES = {"S3", "S6", "S7"}       # discos nuevos (drop/tienda)
+_NEW_DISC_STATES = {"S3", "S5", "S6", "S7"}   # discos nuevos (drop / afinación / tienda)
 _EQUIPPED_DISC_STATES = {"S17"}              # discos equipados (vista PJ)
 _DISC_DETAIL_STATES = _NEW_DISC_STATES | _EQUIPPED_DISC_STATES
 
@@ -343,6 +343,13 @@ class Monitor:
         # con F8 (o al reiniciar). Limitación: dos farmeos con un disco IDÉNTICO (mismo
         # set+slot+stats) dedupean el 2º — caso raro, aceptado.
         self._s3_emitted_ids: set = set()
+        # S5 (resultado de afinación tienda música): mismo patrón continuo que S3 (ficha izquierda,
+        # el usuario clickea cada disco de la grilla → se re-extrae). Dedup por identidad propio.
+        self._s5_aggregator = DiscAggregator()
+        self._s5_agg_sig = None
+        self._s5_emitted: bool = False
+        self._s5_agg_cycles: int = 0
+        self._s5_emitted_ids: set = set()
         # Última firma del log "[S17] asignado" (edge-trigger: 1× por cambio).
         self._s17_assign_sig = None
         # Gate de OCR S18 (RNF-06): última firma del panel de stats. Si no cambió, se
@@ -693,7 +700,7 @@ class Monitor:
                 # un disco que no madura en el 1er frame (p.ej. slot-OCR falla → slot=0) quedaba
                 # estancado sin emitir (QA 2026-07-09). El gate _s3_emitted corta el re-OCR al
                 # emitir; re-extraer da más chances de leer bien el slot.
-                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9", "S13", "S3", "S4")
+                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9", "S13", "S3", "S4", "S5")
                 should_dispatch = forced or (
                     elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
                 )
@@ -831,6 +838,13 @@ class Monitor:
             self._s3_agg_sig = None
             self._s3_emitted = False
             self._s3_agg_cycles = 0
+        # S5 (resultado de afinación): al RE-ENTRAR, captura fresca. El dedup por identidad
+        # (_s5_emitted_ids) evita re-emitir el mismo disco al clickear entre tiles de la grilla.
+        if state.code == "S5" and prev_code != "S5":
+            self._s5_aggregator.reset()
+            self._s5_agg_sig = None
+            self._s5_emitted = False
+            self._s5_agg_cycles = 0
         self._handle_upgrade(frame, state)
         # Menú de personajes (Fase M.1): al salir de S15, olvidar la firma del nombre y del
         # log → re-entrar re-identifica y re-loguea. Barato (set a None cada frame no-S15).
@@ -1303,6 +1317,37 @@ class Monitor:
                 or self._sig_component_diff(sig[1], self._s3_agg_sig[1]) > _S9_SIG_MAX)
 
     @staticmethod
+    def _s5_disc_signature(frame):
+        """Firma de la ficha izquierda S5 (resultado de afinación), sin OCR (RNF-06). Título
+        (distingue sets) + bloque main/substats (distingue discos del mismo set en distinto slot).
+        Detecta el cambio de disco al clickear entre tiles de la grilla. None si no se puede."""
+        if frame is None or getattr(frame, "size", 0) == 0:
+            return None
+        try:
+            import cv2
+            H, W = frame.shape[:2]
+            title = frame[int(0.18 * H):int(0.24 * H), int(0.31 * W):int(0.46 * W)]
+            body = frame[int(0.31 * H):int(0.56 * H), int(0.31 * W):int(0.47 * W)]
+            if title.size == 0 or body.size == 0:
+                return None
+            sig_t = cv2.cvtColor(
+                cv2.resize(title, (48, 24), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
+            ).astype(np.float32)
+            sig_b = cv2.cvtColor(
+                cv2.resize(body, (48, 48), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
+            ).astype(np.float32)
+            return (sig_t, sig_b)
+        except Exception:
+            return None
+
+    def _is_new_s5_disc(self, sig) -> bool:
+        """True si la ficha S5 cambió (se clickeó otro disco) o no había ancla."""
+        if self._s5_agg_sig is None or sig is None:
+            return True
+        return (self._sig_component_diff(sig[0], self._s5_agg_sig[0]) > _S9_SIG_MAX
+                or self._sig_component_diff(sig[1], self._s5_agg_sig[1]) > _S9_SIG_MAX)
+
+    @staticmethod
     def _frame_lo_sig(frame):
         """Firma whole-frame 32×32 gris, sin OCR (RNF-06). Para gatear deep_detect en S12:
         si el frame no cambió, no vale re-intentar el OCR. None si no se puede leer."""
@@ -1605,6 +1650,11 @@ class Monitor:
             # Drop farmeado: handler CONTINUO con aggregator (parser espacial S3 de 2 columnas).
             self._process_disc_s3_continuous(frame, state)
             return
+        if state.code == "S5":
+            # Resultado de afinación (tienda música): ficha izquierda del disco SELECCIONADO,
+            # handler CONTINUO como S3 (el usuario clickea cada disco de la grilla).
+            self._process_disc_s5_continuous(frame, state)
+            return
         key = state.code
         if self._processed_disc_state_code == key:
             return
@@ -1849,6 +1899,80 @@ class Monitor:
                 self._on_disc(merged, state)
             except Exception:
                 log.exception("Error en on_disc S3")
+
+    def _process_disc_s5_continuous(self, frame, state: ScreenState) -> None:
+        """S5 CONTINUO: re-extrae la ficha del disco SELECCIONADO del resultado de afinación
+        (parser S5 = motor de S3 a 1 columna) y fusiona parciales en el aggregator S5, igual que
+        S3 pero sobre la ficha izquierda. La firma detecta el cambio de disco (clickeás otro tile)
+        y resetea. Emite vía on_disc al madurar o al techo de ciclos. Gate RNF-06: emitido + firma
+        estable → no re-OCR."""
+        sig = self._s5_disc_signature(frame)
+        if sig is None:
+            return
+        if self._is_new_s5_disc(sig):
+            self._s5_aggregator.reset()
+            self._s5_agg_sig = sig
+            self._s5_emitted = False
+            self._s5_agg_cycles = 0
+        if self._s5_emitted:
+            return
+        try:
+            from app.core.parser_disc_s3 import parse_disc_s5
+            disc = parse_disc_s5(frame, self._ocr)
+        except Exception:
+            log.exception("Error parseando disco S5 (afinación)")
+            return
+        if disc.confianza_global < 0.7:
+            if self._id_diag_on:
+                log.info("[s5_diag] conf=%.2f < 0.70 (frame transición) set=%r slot=%s",
+                         disc.confianza_global, disc.set_name_raw, disc.slot)
+            return  # frame de transición → no contaminar el aggregator
+        merged = self._s5_aggregator.merge(disc)
+        self._s5_agg_cycles += 1
+        if self._s5_emitted or merged is None:
+            return
+        mature = disc_is_mature(merged)
+        ceiling = self._s5_agg_cycles >= _S17_AGG_MAX_CYCLES
+        if self._id_diag_on:
+            log.info("[s5_diag] conf=%.2f mature=%s cycles=%d set=%r slot=%s main=%s subs=%d",
+                     disc.confianza_global, mature, self._s5_agg_cycles,
+                     merged.set_name_raw, merged.slot,
+                     merged.main_stat_canon or merged.main_stat_raw, len(merged.subs))
+        if not (mature or ceiling):
+            return
+        self._emit_s5_disc(merged, state)
+
+    def _emit_s5_disc(self, merged, state: ScreenState) -> None:
+        """Emite (dedup por identidad + log + on_disc) un disco de afinación S5. Mismo dedup de
+        identidad y feedback 'ya capturado' que S3 (un disco es un disco). Display-only en esta
+        fase (el controller lo enruta a score + toast); no persiste."""
+        self._s5_emitted = True
+        identity = self._disc_identity(merged)
+        set_disp = merged.set_name_canon or merged.set_name_raw
+        if self._recapture_on:
+            if identity == self._last_emitted_identity:
+                return
+        elif identity in self._s5_emitted_ids:
+            log.info("Disco S5 ya capturado: set=%s slot=%d", set_disp, merged.slot)
+            if self._on_diagnostic:
+                try:
+                    self._on_diagnostic(f"[disco] ya capturado: {set_disp} slot {merged.slot}")
+                except Exception:
+                    log.debug("on_diagnostic S5 ya-capturado falló", exc_info=True)
+            return
+        self._s5_emitted_ids.add(identity)
+        self._last_emitted_identity = identity
+        log.info(
+            "Disco S5 (afinación) detectado: set=%s slot=%d main=%s nivel=%d conf=%.2f",
+            merged.set_name_canon or merged.set_name_raw, merged.slot,
+            merged.main_stat_canon or merged.main_stat_raw, merged.nivel,
+            merged.confianza_global,
+        )
+        if self._on_disc:
+            try:
+                self._on_disc(merged, state)
+            except Exception:
+                log.exception("Error en on_disc S5")
 
     def _reset_s3_disc_tracking(self) -> None:
         """Olvida el tracking del modal de drop S3 (al salir de S3)."""

@@ -113,12 +113,12 @@ STATE_DESCRIPTIONS: dict[str, str] = {
 }
 
 # Estados que SÍ tienen un disco visible para parsear
-CAPTURE_DISC_STATES: set[str] = {"S3", "S6", "S7", "S17"}
+CAPTURE_DISC_STATES: set[str] = {"S3", "S5", "S6", "S7", "S17"}
 # Estados de upgrade (PRE/POST sync)
 UPGRADE_STATES: set[str] = {"S10"}
 # Estados sin disco (solo logging informativo)
 NON_CAPTURE_STATES: set[str] = {
-    "S1", "S2", "S4", "S5", "S8", "S9",
+    "S1", "S2", "S4", "S8", "S9",
     "S11", "S12", "S13", "S14", "S15", "S16", "S19",
 }
 
@@ -1185,6 +1185,7 @@ _STATE_TEMPLATES: list[dict] = [
     {"code": "S2",  "template": "s2_resultado_desafio.png",        "desc": "Resultado del Desafio"},
     {"code": "S2",  "template": "s2_resultado_desafio_evento.png", "desc": "Resultado del Desafio (evento doble recompensa x2)"},
     {"code": "S5",  "template": "s5_resultado_afinacion.png",       "desc": "Resultado de afinacion"},
+    {"code": "S5",  "template": "s5_resultado_afinacion_header.png", "desc": "Resultado de afinacion (header, robusto a selección de disco)"},
     {"code": "S9",  "template": "s9_inventario_general.png",        "desc": "Inventario general de discos"},
     {"code": "S11", "template": "s11_desmontaje.png",               "desc": "Pantalla desmontaje"},
     {"code": "S10", "template": "s10_modal_upgrade.png",            "desc": "Modal upgrade"},

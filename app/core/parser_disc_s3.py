@@ -184,13 +184,17 @@ def _column_substats(sub_region, col: PanelLayout, frame, ocr, W, H, notas, conf
     return out
 
 
-def _parse_s3_from_lines(lines, W, H, frame=None, ocr=None) -> DiscParsed:
-    """Core: parsea el modal S3 (2 columnas) a partir de las líneas OCR con bbox. Reusa la
-    estructura de `_parse_s17_from_lines` (headers como delimitadores Y) pero con pairing de
-    substats en dos columnas."""
+def _parse_s3_from_lines(lines, W, H, frame=None, ocr=None,
+                         band=_S3_BAND, cols=(_S3_COL_A, _S3_COL_B)) -> DiscParsed:
+    """Core: parsea una ficha de disco a partir de las líneas OCR con bbox. Reusa la estructura de
+    `_parse_s17_from_lines` (headers como delimitadores Y) con pairing de substats por columna(s).
+    Parametrizado por `band` (banda horizontal de la ficha) + `cols` (una o más `PanelLayout`): S3
+    usa 2 columnas (grilla 2×2); S5 (resultado de afinación) usa 1 (ficha izquierda vertical). El
+    main va siempre en `cols[0]`."""
     notas: list[str] = []
+    col_a = cols[0]
     L = [_Line(t, c, bb, W) for (t, c, bb) in lines]
-    detail = [ln for ln in L if _S3_BAND[0] <= ln.xn <= _S3_BAND[1]]
+    detail = [ln for ln in L if band[0] <= ln.xn <= band[1]]
     detail.sort(key=lambda ln: (ln.y1, ln.x1))
 
     # --- Headers de sección (delimitadores Y) ---
@@ -257,12 +261,12 @@ def _parse_s3_from_lines(lines, W, H, frame=None, ocr=None) -> DiscParsed:
 
     # --- Main: única fila nombre/valor entre los headers (siempre en la columna A) ---
     main_region = [ln for ln in detail if _ymain < ln.y1 < _ysubs and ln.y1 not in header_ys]
-    main_names = [ln for ln in main_region if ln.xn < _S3_COL_A.col_split]
+    main_names = [ln for ln in main_region if ln.xn < col_a.col_split]
     # El nombre del main también puede ENVOLVERSE a 2 líneas si es largo ('Tasa de' /
     # 'Perforación'): coalescer igual que los substats, o main_names[0] captura solo 'Tasa de'
     # → main_stat_canon=None (QA farmeo 2026-07-09, Ejemplo_14 'Tasa de Perforación').
     main_names = _coalesce_wrapped_names(main_names)
-    main_vals = [ln for ln in main_region if _S3_COL_A.col_split <= ln.xn <= _S3_COL_A.band_max]
+    main_vals = [ln for ln in main_region if col_a.col_split <= ln.xn <= col_a.band_max]
     main_raw = main_names[0].txt.strip() if main_names else ""
     main_val_raw = main_vals[0].txt if main_vals else ""
     if main_names:
@@ -273,7 +277,7 @@ def _parse_s3_from_lines(lines, W, H, frame=None, ocr=None) -> DiscParsed:
     if main_valor is None and main_names:
         # El full-frame dropea el valor chico del main (p.ej. "79") en algunos fondos →
         # rescate por re-OCR upscaleado de la columna de valor (mismo patrón que substats).
-        rv = _rescue_missing_value(frame, main_names[0], ocr, W, H, _S3_COL_A)
+        rv = _rescue_missing_value(frame, main_names[0], ocr, W, H, col_a)
         if rv is not None:
             main_valor, main_unidad = rv
     main_canon = _canon_with_unit(main_raw, main_unidad)
@@ -282,8 +286,9 @@ def _parse_s3_from_lines(lines, W, H, frame=None, ocr=None) -> DiscParsed:
 
     # --- Substats: grilla 2×2 → extraer cada columna y mezclar en orden de lectura ---
     sub_region = [ln for ln in detail if _ysubs < ln.y1 < _yeffect and ln.y1 not in header_ys]
-    pares = (_column_substats(sub_region, _S3_COL_A, frame, ocr, W, H, notas, confs)
-             + _column_substats(sub_region, _S3_COL_B, frame, ocr, W, H, notas, confs))
+    pares = []
+    for c in cols:
+        pares += _column_substats(sub_region, c, frame, ocr, W, H, notas, confs)
     pares.sort(key=lambda t: (t[0], t[1]))   # fila (y), luego columna (x): orden de lectura
     subs = [p[2] for p in pares][:4]          # un disco tiene MÁX 4 substats
 
@@ -338,4 +343,25 @@ def parse_disc_s3_full(frame: np.ndarray, ocr) -> DiscParsed:
             parsed.rareza = rar
     except Exception:
         pass
+    return parsed
+
+
+# --- S5: resultado de afinación de la tienda de música (ficha izquierda) ------
+# Estructuralmente idéntica a S3/S17 (título "<set> (N)", headers, main, substats, efecto) pero
+# la ficha es VERTICAL (1 columna) y ANGOSTA → título y substats largos se ENVUELVEN a 2 líneas,
+# igual que en la grilla 2×2 de S3. Por eso reusa el motor de S3 (con su coalescing de nombres
+# envueltos + rescate de valor), no el de S17. Una sola columna. Calibrado 2026-07-09 contra las
+# 2 capturas de 11_Tienda_Musica_Afinacion.
+_S5_BAND = (0.30, 0.50)
+_S5_COL = PanelLayout(0.30, 0.50, 0.42)   # band_min, band_max, col_split (nombre <0.42 | valor)
+
+
+def parse_disc_s5(frame: np.ndarray, ocr) -> DiscParsed:
+    """Parsea la ficha del disco SELECCIONADO del resultado de afinación (S5). Reusa el motor de
+    S3 con UNA columna. La tienda solo entrega discos de grado S (texto del juego) → rareza='S'.
+    Slot del "(N)" del título. Sin dueño (disco recién generado). Display-only."""
+    lines = _ocr_s3_lines(frame, ocr)
+    H, W = frame.shape[:2]
+    parsed = _parse_s3_from_lines(lines, W, H, frame=frame, ocr=ocr, band=_S5_BAND, cols=(_S5_COL,))
+    parsed.rareza = "S"
     return parsed

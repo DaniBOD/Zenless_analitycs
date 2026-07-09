@@ -49,9 +49,9 @@ def test_menu_personajes_sigue_s15(fx):
     assert ScreenDetector().classify(_load(fx)).code == "S15"
 
 
-@pytest.mark.xfail(reason="S5 frágil (una captura cae a S12) — se endurece en Fase B", strict=False)
 @pytest.mark.skipif(not _S5_FX, reason="capturas S5 no presentes")
 @pytest.mark.parametrize("fx", _S5_FX, ids=lambda p: p.name)
 def test_resultado_afinacion_es_s5(fx):
-    """Ambas capturas del resultado de afinación (folder 11) → S5 (Fase B: endurecido)."""
+    """Ambas capturas del resultado de afinación (folder 11) → S5. La 2ª (disco (4) seleccionado)
+    se escapaba a S12 con el template ancho del top; el template TIGHT del header lo fija."""
     assert ScreenDetector().classify(_load(fx)).code == "S5"

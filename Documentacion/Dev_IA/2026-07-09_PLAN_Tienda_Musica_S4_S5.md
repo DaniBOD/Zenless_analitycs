@@ -51,14 +51,25 @@ Todo **display-only** (RNF-01 no aplica; feature iterable).
 ## Fase B — S5 (afinación, folder 11): robustez + extracción
 
 **B1. Endurecer detección S5** (que agarre las 2 capturas, hoy 1/2):
-- Añadir 2ª ref de template desde `Tienda_musica_afinacion_2.png`, o un **verify por ROI** del header "Resultado de afinación:" (`x≈[0.48,0.62] y≈[0.10,0.14]`) que promueva S5 desde S12.
+- El template ancho del top (`s5_resultado_afinacion.png`) cambiaba con el disco seleccionado
+  (`_2` con disco (4) → 0.648 < umbral 0.80 → S12). Fix aplicado: 2º template **TIGHT del header
+  "Resultado de afinación:"** (`s5_resultado_afinacion_header.png`, 58×447), idéntico ante la
+  selección → matchea ambas capturas a 1.000; negativos (S2/S3/S4/S15) ≤0.623.
 - Test: ambas capturas → S5.
 
 **B2. Extracción del disco enfocado (S3-style continuo):**
-- Definir `_S5_CARD_ROI` (calibrar: la ficha izquierda de S5 está en `x≈[0.30,0.46] y≈[0.13,0.90]`, distinta del `_S3_MODAL_ROI`).
-- Reusar `parse_disc_s3_full(crop, ocr)` (la card tiene título `<set> (slot)`, Atributo principal, Atributos secundarios, Efecto de conjunto — misma estructura). Slot del título; set por `_lookup_set_id`.
-- **Continuo** (como S3): añadir `S5` a la lista de dispatch continuo y un `_process_disc_s5_continuous` (espejo de `_process_disc_s3_continuous`), con dedup por id de disco (`_s5_emitted_ids`) para que al clickear cada disco de la grilla se re-extraiga sin duplicar. `DiscAggregator` + `disc_is_mature` igual que S3.
-- Emisión: `[disco] <set> · slot N · main … · subs …` display-only + checklist "ya capturado".
+- **CORRECCIÓN de implementación (2026-07-09):** el plan preveía reusar la *familia S17* (por ser
+  single-column). En la práctica la ficha de S5 es **angosta** y los nombres largos (título,
+  "Probabilidad de Crítico", "Maestría de Anomalía") se **envuelven a 2 líneas** — exactamente el
+  problema que resuelve el motor de **S3** (`_coalesce_wrapped_names` + rescate de valor), NO S17
+  (que no coalesce nombres). ⇒ S5 reusa el motor de **S3 a 1 columna**.
+- Se parametrizó `_parse_s3_from_lines(..., band, cols)` (default = 2 columnas de S3, sin cambio);
+  `parse_disc_s5` (en `parser_disc_s3.py`) llama con `band=_S5_BAND`, `cols=(_S5_COL,)`. OCR
+  full-frame + filtro de banda (como S3). Slot del "(N)"; rareza='S' (la tienda solo da grado S).
+- **Continuo** (como S3): `S5` en la lista de dispatch continuo + `_process_disc_s5_continuous`
+  (espejo de `_process_disc_s3_continuous`) con `_s5_aggregator`/`_s5_emitted_ids`/`_s5_disc_signature`.
+  Ruteo vía `_NEW_DISC_STATES` → `_maybe_process_disc`. `DiscAggregator` + `disc_is_mature` igual que S3.
+- Emisión: `[disco] <set> · slot N · main …` display-only + checklist "ya capturado" por identidad.
 
 **Tests B:**
 - `test_detector_music_shop.py`: ambas capturas de `11_` → S5.
