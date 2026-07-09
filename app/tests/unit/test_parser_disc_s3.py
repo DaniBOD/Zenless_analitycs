@@ -189,6 +189,18 @@ def test_s3_ejemplo_13_conejo_slot6_nombre_largo():
     assert d.slot == 6
 
 
+@pytest.mark.skipif(not (_S3 / "Ejemplo_14.png").exists(), reason="capturas S3 no presentes")
+def test_s3_ejemplo_14_main_nombre_largo_envuelto():
+    """Atributo PRINCIPAL de nombre largo ('Tasa de Perforación') que se ENVUELVE a 2 líneas
+    ('Tasa de' / 'Perforación'). Sin coalescer, main_names[0]='Tasa de' → main_stat_canon=None.
+    Regresión QA farmeo 2026-07-09."""
+    from app.core.parser_disc_s3 import parse_disc_s3_full
+    d = parse_disc_s3_full(_load("Ejemplo_14.png"), _paddle())
+    assert "yunkui" in (d.set_name_raw or "").lower()
+    assert d.slot == 5
+    assert d.main_stat_canon == "Tasa de Perforación", (d.main_stat_raw, d.main_stat_canon)
+
+
 @pytest.mark.skipif(not (_S3 / "Ejemplo_9.png").exists(), reason="capturas S3 no presentes")
 def test_s3_ejemplo_9_firmamento_slot2_main_atk_flat():
     """Firmamento llameante (Éter). slot 2, main ATK 79 (flat), subs PV 112 / Ataque 3% /

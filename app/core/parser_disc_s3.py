@@ -254,6 +254,10 @@ def _parse_s3_from_lines(lines, W, H, frame=None, ocr=None) -> DiscParsed:
     # --- Main: única fila nombre/valor entre los headers (siempre en la columna A) ---
     main_region = [ln for ln in detail if _ymain < ln.y1 < _ysubs and ln.y1 not in header_ys]
     main_names = [ln for ln in main_region if ln.xn < _S3_COL_A.col_split]
+    # El nombre del main también puede ENVOLVERSE a 2 líneas si es largo ('Tasa de' /
+    # 'Perforación'): coalescer igual que los substats, o main_names[0] captura solo 'Tasa de'
+    # → main_stat_canon=None (QA farmeo 2026-07-09, Ejemplo_14 'Tasa de Perforación').
+    main_names = _coalesce_wrapped_names(main_names)
     main_vals = [ln for ln in main_region if _S3_COL_A.col_split <= ln.xn <= _S3_COL_A.band_max]
     main_raw = main_names[0].txt.strip() if main_names else ""
     main_val_raw = main_vals[0].txt if main_vals else ""
