@@ -1427,6 +1427,12 @@ class ScreenDetector:
         # por encima de template/HSV/deep-detect. Mata el FP histórico S18-sobre-S8
         # y el FP S10-sobre-S8 (cf. Dev_IA 2026-06-03). No corre OCR (~1 ms).
         tab_state = detect_active_tab(frame)
+        # Corroboración anti-FP: el tab-bar solo es autoritativo si TAMBIÉN hay fila de avatares
+        # resaltada (ambos coexisten en la familia detalle-agente). Sin ella, un pill amarillo
+        # suelto en la franja inferior — p.ej. un tile de tienda amarillo del mapa de viaje
+        # rápido — NO es la pantalla de agente (QA 2026-07-09: Viaje_rapido_1 → S18 falso 0.90).
+        if tab_state is not None and selected_avatar_x(frame) is None:
+            tab_state = None
         if tab_state is not None and tab_state != state.code:
             state = ScreenState(tab_state, 0.90, f"tab:{tab_state}", method="tab")
         elif tab_state is not None:
