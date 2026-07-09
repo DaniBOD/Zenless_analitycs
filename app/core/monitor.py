@@ -480,6 +480,13 @@ class Monitor:
         self._s13_last_sig = None
         self._s13_last_node: str | None = None
 
+        # S4 (selector tienda música): predicción display-only edge-triggered por (set, slot).
+        # `_s4_last_sig` gatea el re-OCR del género (RNF-06); `_s4_last_key` deduplica la emisión;
+        # `_s4_last_set` cachea el último (set_id, género) para no re-resolver si el género no cambió.
+        self._s4_last_sig = None
+        self._s4_last_key: tuple[int, int | None] | None = None
+        self._s4_last_set: tuple[int | None, str | None] | None = None
+
     # ---- Control ----------------------------------------------------------------
 
     def start(self) -> None:
@@ -686,7 +693,7 @@ class Monitor:
                 # un disco que no madura en el 1er frame (p.ej. slot-OCR falla → slot=0) quedaba
                 # estancado sin emitir (QA 2026-07-09). El gate _s3_emitted corta el re-OCR al
                 # emitir; re-extraer da más chances de leer bien el slot.
-                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9", "S13", "S3")
+                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9", "S13", "S3", "S4")
                 should_dispatch = forced or (
                     elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
                 )
@@ -811,6 +818,10 @@ class Monitor:
         if state.code != "S13":
             self._s13_last_sig = None
             self._s13_last_node = None
+        if state.code != "S4":
+            self._s4_last_sig = None
+            self._s4_last_key = None
+            self._s4_last_set = None
         # Al RE-ENTRAR a S3 (abrir otro disco desde S2), empezar captura fresca: dos discos del
         # mismo set tienen firma parecida y el dedup por firma no siempre los separa. El dedup por
         # IDENTIDAD (_disc_emitted_ids: set+slot+stats) evita emitir dos veces el mismo disco →
@@ -882,6 +893,13 @@ class Monitor:
             # dropea (display-only). La predicción se guarda en FarmSession para restringir
             # el matcher de badges en S2. No persiste ni puntúa.
             self._process_s13_node_title(frame, state)
+            self._processed_disc_state_code = None
+            self._reported_agent_stats_state_code = None
+            self._agent_stats_screen_logged = False
+        elif state.code == "S4":
+            # Selector de tienda de música (Orphie): OCR del género (=set) + slot preseleccionado
+            # del hexágono → predecir el farmeo (display-only, alimenta FarmSession como S13).
+            self._process_s4_music_selector(frame, state)
             self._processed_disc_state_code = None
             self._reported_agent_stats_state_code = None
             self._agent_stats_screen_logged = False
@@ -1059,6 +1077,71 @@ class Monitor:
             ).astype(np.float32)
         except Exception:
             return None
+
+    @staticmethod
+    def _s4_genre_signature(frame):
+        """Firma 32×32 gris del ROI del nombre del género (S4), sin OCR (RNF-06). Gatea el
+        re-OCR: si el género en pantalla no cambió, no vale re-leer. None si no se puede."""
+        if frame is None or getattr(frame, "size", 0) == 0:
+            return None
+        try:
+            import cv2
+            from app.core.parser_s4 import _S4_GENRE_ROI
+            h, w = frame.shape[:2]
+            x0, y0, x1, y1 = _S4_GENRE_ROI
+            sub = frame[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)]
+            if sub.size == 0:
+                return None
+            return cv2.cvtColor(
+                cv2.resize(sub, (32, 32), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
+            ).astype(np.float32)
+        except Exception:
+            return None
+
+    def _process_s4_music_selector(self, frame, state: ScreenState) -> None:
+        """Selector de tienda de música (S4): OCR del género (= un set de la DB) + slot
+        preseleccionado del hexágono → predecir el farmeo. Guarda la predicción en `FarmSession`
+        (como S13). Display-only: emite un diagnóstico, no persiste ni puntúa.
+
+        Edge-triggered por (set_id, slot): mientras se cambia de género/slot el estado sigue
+        siendo S4, así que se re-emite al cambiar cualquiera. Gate RNF-06: el género (OCR) solo
+        se re-lee si su firma de ROI cambió; el slot (sin OCR) se lee cada frame. Se resetea al
+        salir de S4 (ver _dispatch_state)."""
+        if self._farm_session is None or self._set_repo is None:
+            return
+        from app.core.parser_s4 import read_music_genre, read_preselected_slot
+        slot = read_preselected_slot(frame)   # barato, sin OCR
+        # Gate de re-OCR del género por firma de ROI.
+        sig = self._s4_genre_signature(frame)
+        unchanged = (sig is not None and self._s4_last_sig is not None
+                     and self._sig_component_diff(sig, self._s4_last_sig) <= _S13_SIG_MAX)
+        if unchanged and self._s4_last_set is not None:
+            set_id, genre = self._s4_last_set
+        else:
+            self._s4_last_sig = sig
+            genre = read_music_genre(frame, self._ocr)
+            set_id = self._set_repo.resolve_id(genre) if genre else None
+            self._s4_last_set = (set_id, genre)
+        if self._id_diag_on:
+            log.info("[s4_diag] genre=%r → set_id=%s slot=%s", genre, set_id, slot)
+        if set_id is None:
+            return   # sin match confiable (frame de transición / género no resuelto) → reintenta
+        key = (set_id, slot)
+        if key == self._s4_last_key:
+            return   # misma (set, slot) ya emitida → no re-loguear
+        self._s4_last_key = key
+        entry = next((e for e in self._set_repo.get_all() if e.id == set_id), None)
+        nombre = entry.nombre if entry else (genre or "")
+        nombre_en = entry.nombre_en if entry else ""
+        self._farm_session.set_prediction(nombre, [(set_id, nombre_en)], time.monotonic())
+        slot_str = str(slot) if slot else "aleatorio"
+        msg = f"[tienda] evoca: {nombre} · slot {slot_str}"
+        log.info("Farmeo S4 (tienda música): set '%s' (id=%d) · slot %s", nombre, set_id, slot_str)
+        if self._on_diagnostic:
+            try:
+                self._on_diagnostic(msg)
+            except Exception:
+                log.debug("on_diagnostic S4 falló", exc_info=True)
 
     def _process_s13_node_title(self, frame, state: ScreenState) -> None:
         """Selección de set a farmear (S13): OCR del título del nodo → predecir los 2 sets

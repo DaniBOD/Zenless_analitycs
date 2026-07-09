@@ -1057,6 +1057,32 @@ def _verify_s2(frame: np.ndarray) -> tuple[bool, str | None]:
         return (True, None)   # error inesperado: no bloquear (conservador, consistente con _verify)
 
 
+# ROI del gramófono/hexágono "DRIVER" del selector de tienda de música (S4). Ahí S4 muestra el
+# control metálico OSCURO (baja saturación) mientras S15 (menú de personajes, mismo chrome "Plan
+# de entrenamiento") muestra la grilla de retratos COLORIDOS de agentes. La fracción de píxeles
+# coloridos separa limpio: S4 ≤0.014 vs S15 ≥0.184 (17 fixtures, QA 2026-07-09). Sin OCR (RNF-06).
+_S4_GRAMOFONO_ROI = (0.63, 0.25, 0.88, 0.72)   # x0, y0, x1, y1
+_S4_COLORFUL_MAX = 0.10                          # margen holgado (13× de separación)
+
+
+def _is_music_selector(frame: np.ndarray) -> bool:
+    """True si el panel derecho es el gramófono oscuro del selector de tienda de música (S4),
+    NO la grilla de retratos coloridos del menú de personajes (S15). Ambos comparten el chrome
+    "Plan de entrenamiento" (el template de S15 eclipsa a S4, que no tiene template propio), así
+    que se desambigua por AUSENCIA de color en el ROI del gramófono. Cheap, sin OCR (RNF-06)."""
+    try:
+        h, w = frame.shape[:2]
+        x0, y0, x1, y1 = _S4_GRAMOFONO_ROI
+        crop = frame[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)]
+        if crop.size == 0:
+            return False
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        colorful = float(((hsv[:, :, 1] > 60) & (hsv[:, :, 2] > 60)).mean())
+        return colorful < _S4_COLORFUL_MAX
+    except Exception:
+        return False
+
+
 # Registry: {state_code: verify_func}
 _VERIFICATION_REGISTRY: dict[str, callable] = {
     "S2":  _verify_s2,
@@ -1437,6 +1463,14 @@ class ScreenDetector:
             state = ScreenState(tab_state, 0.90, f"tab:{tab_state}", method="tab")
         elif tab_state is not None:
             state.method = "template+tab"  # template y tab coinciden → confianza extra
+
+        # Capa 2.6: promoción S4 (selector tienda música). S4 comparte el chrome "Plan de
+        # entrenamiento" con S15 (menú PJ) y NO tiene template propio → el template de S15 lo
+        # eclipsa (0.96). Se confirma por AUSENCIA de la grilla de retratos coloridos en el ROI
+        # del gramófono (QA 2026-07-09: S4 colorful≤0.014 vs S15≥0.184). Gate estricto a S15 para
+        # no misfire sobre otras pantallas oscuras (solo S15 matchea el chrome compartido).
+        if state.code == "S15" and _is_music_selector(frame):
+            state = ScreenState("S4", 0.90, "music_selector_override", method="override")
 
         # Capa 3: HSV fallback si template no matchó (y el tab tampoco resolvió)
         if state.code == "S12":

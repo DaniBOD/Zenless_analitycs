@@ -149,6 +149,45 @@ class DiscSetRepo:
             for r in self._con.execute("SELECT id, nombre FROM disc_sets")
         }
 
+    def resolve_id(self, name: str, cutoff: float = 0.86, margin: float = 0.06) -> int | None:
+        """Resuelve un nombre de set (posible ruido OCR) → set_id: exact → fuzzy sin acentos
+        (substring sobre `_norm_key`: NFD + quita Mn + minúscula + sin espacios) → difflib con
+        guarda de ambigüedad (abstiene si dos sets DISTINTOS empatan dentro del margen; RNF-02:
+        no adivinar). Fuente única para el resolvedor de sets (S4 tienda música + sync_equip)."""
+        if not name:
+            return None
+        # 1. Exact case-insensitive.
+        sid = self.get_id_by_name(name)
+        if sid:
+            return sid
+        # 2/3. Fuzzy insensible a acentos.
+        import difflib
+        from app.core.stats_vocab import _norm_key
+        name_n = _norm_key(name)
+        if not name_n:
+            return None
+        norm_to: dict[str, tuple[str, int]] = {}
+        for sname, s_id in self.get_all_names().items():
+            sname_n = _norm_key(sname)
+            if not sname_n:
+                continue
+            norm_to.setdefault(sname_n, (sname, s_id))
+            if sname_n == name_n or sname_n in name_n or name_n in sname_n:
+                return s_id
+        keys = list(norm_to)
+        matches = difflib.get_close_matches(name_n, keys, n=3, cutoff=cutoff)
+        if not matches:
+            return None
+        best_sname, best_sid = norm_to[matches[0]]
+        r_best = difflib.SequenceMatcher(None, name_n, matches[0]).ratio()
+        for m in matches[1:]:
+            if norm_to[m][1] != best_sid:
+                r_m = difflib.SequenceMatcher(None, name_n, m).ratio()
+                if (r_best - r_m) < margin:
+                    return None   # ambiguo → abstenerse
+                break
+        return best_sid
+
     def get_bonus(self, set_id: int) -> tuple[str | None, str | None, str | None]:
         """
         Bono de conjunto curado del set: (bonus_2p_stat, bonus_2p_valor,

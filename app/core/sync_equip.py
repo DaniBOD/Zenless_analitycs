@@ -507,52 +507,8 @@ class DiscSyncer:
         return a.id
 
     def _resolve_set_id(self, parsed: DiscParsed) -> int | None:
-        """Intenta resolver set_id desde set_name_raw usando exact + fuzzy matching."""
+        """Resuelve set_id desde el nombre del set (posible ruido OCR): exact → fuzzy sin
+        acentos → difflib con guarda de ambigüedad. Delega en `DiscSetRepo.resolve_id`
+        (fuente única, compartida con el selector de tienda de música S4)."""
         name = parsed.set_name_canon or parsed.set_name_raw
-        if not name:
-            return None
-
-        # 1. Exact match (case-insensitive)
-        sid = self._set_repo.get_id_by_name(name)
-        if sid:
-            return sid
-
-        # 2. Fuzzy INSENSIBLE A ACENTOS: el OCR pierde tildes de forma inconsistente
-        #    ('Melodía'→'Melodia'), igual que la ñ de los substats. Se normaliza ambos
-        #    lados con _norm_key (NFD + quita Mn + minúscula + sin espacios) y se matchea
-        #    por igualdad o substring (el OCR puede capturar texto extra alrededor del
-        #    título). Subsume el viejo substring lowercase (que era acento-sensible).
-        name_n = _norm_key(name)
-        norm_to: dict[str, tuple[str, int]] = {}
-        if name_n:
-            for sname, sid in self._set_repo.get_all_names().items():  # {nombre_lower: id}
-                sname_n = _norm_key(sname)
-                if not sname_n:
-                    continue
-                norm_to.setdefault(sname_n, (sname, sid))
-                if sname_n == name_n or sname_n in name_n or name_n in sname_n:
-                    log.debug("Set fuzzy match (sin acentos): '%s' → '%s' (id=%d)", name, sname, sid)
-                    return sid
-
-        # 3. Fuzzy DIFUSO (difflib): el OCR dropea/cambia 1-2 chars del nombre del set
-        #    ('Fábula'→'Fäbua'), que el substring no captura. Umbral alto + guarda de
-        #    ambigüedad (abstiene si dos sets DISTINTOS quedan empatados dentro del
-        #    margen) — RNF-02: no adivinar. Mismo patrón que la 'ñ' en stats_vocab.
-        if name_n and norm_to:
-            keys = list(norm_to)
-            matches = difflib.get_close_matches(name_n, keys, n=3, cutoff=_SET_FUZZY_CUTOFF)
-            if matches:
-                best_sname, best_sid = norm_to[matches[0]]
-                r_best = difflib.SequenceMatcher(None, name_n, matches[0]).ratio()
-                ambiguous = False
-                for m in matches[1:]:
-                    if norm_to[m][1] != best_sid:
-                        r_m = difflib.SequenceMatcher(None, name_n, m).ratio()
-                        ambiguous = (r_best - r_m) < _SET_FUZZY_MARGIN
-                        break
-                if not ambiguous:
-                    log.debug("Set fuzzy difflib: '%s' → '%s' (id=%d, r=%.2f)",
-                              name, best_sname, best_sid, r_best)
-                    return best_sid
-
-        return None
+        return self._set_repo.resolve_id(name, cutoff=_SET_FUZZY_CUTOFF, margin=_SET_FUZZY_MARGIN)
