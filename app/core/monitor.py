@@ -681,7 +681,12 @@ class Monitor:
                 # no hay transición → sin re-procesar quedaba pegado en el 1er nodo (QA
                 # 2026-07-08, mismo caso que S15). El gate de firma del título evita el re-OCR
                 # si el nodo no cambió.
-                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9", "S13")
+                # S3 (detalle del drop farmeado): handler CONTINUO con aggregator y techo de
+                # ciclos, como S17/S9. Sin re-procesar, el techo (best-effort) nunca se alcanza y
+                # un disco que no madura en el 1er frame (p.ej. slot-OCR falla → slot=0) quedaba
+                # estancado sin emitir (QA 2026-07-09). El gate _s3_emitted corta el re-OCR al
+                # emitir; re-extraer da más chances de leer bien el slot.
+                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9", "S13", "S3")
                 should_dispatch = forced or (
                     elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
                 )
