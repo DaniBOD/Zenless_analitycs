@@ -355,7 +355,22 @@ class MonitorController(QObject):
         # Gate de confianza por flujo de farmeo (S13→S14→S2→S3): distingue un farmeo de discos
         # de otros "resultados de desafío". Sin DB ni dependencias; solo observa transiciones.
         from app.core.farm_session import FarmSession
-        self._farm_session = FarmSession()
+        # DANIBOD_FARM_STATE (solo QA, lo setea qa_launch.ps1): ruta del breadcrumb de la última
+        # predicción S13. Persistir permite que un REINICIO de la app (tras aplicar un fix)
+        # recargue el contexto de farmeo sin revisitar S13 (la predicción vive en memoria y se
+        # perdía en cada relance). Sin la env-var (producción) → FarmSession sin persistencia.
+        import os as _os
+        _farm_state = _os.environ.get("DANIBOD_FARM_STATE") or None
+        self._farm_session = FarmSession(state_path=_farm_state)
+        if _farm_state and _os.environ.get("DANIBOD_RESTORE_FARM"):
+            import time as _time
+            _restored = self._farm_session.restore(_time.monotonic())
+            if _restored:
+                _node, _sets = _restored
+                _names = " / ".join(en for _sid, en in _sets)
+                log.info("[farmeo] contexto QA restaurado: nodo '%s' → %s", _node, _names)
+            else:
+                log.info("[farmeo] restore QA solicitado pero sin contexto previo que cargar")
         # Catálogo de nodos de farmeo (S13): título del nodo → 2 sets que dropea. Resuelve
         # nombre_en → set_id contra la DB (disc_sets). Display-only; una carga fallida NO
         # debe tumbar el arranque (feature opcional), solo se loguea.

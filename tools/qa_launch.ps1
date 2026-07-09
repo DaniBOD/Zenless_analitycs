@@ -33,9 +33,13 @@ param(
     [switch]$NoRamGuard,     # QA: apaga el watchdog de RAM (DANIBOD_NO_RAM_GUARD) para no
                              # interrumpir sesiones largas. La RAM crece (fuga residual RNF-06):
                              # usar en QA acotado, cerrar la app al terminar.
-    [switch]$NoFocusGate     # QA: desactiva el gate anti-FP por foco (DANIBOD_NO_FOCUS_GATE) →
+    [switch]$NoFocusGate,    # QA: desactiva el gate anti-FP por foco (DANIBOD_NO_FOCUS_GATE) →
                              # sigue capturando aunque el juego no esté al frente (para poder
                              # inspeccionar/loguear sin que el alt-tab pause la captura).
+    [switch]$RestoreFarm     # QA: al arrancar, recarga el contexto de farmeo (última predicción
+                             # S13) desde el breadcrumb en disco (DANIBOD_RESTORE_FARM). Sirve
+                             # cuando se reinicia la app para aplicar un fix estando en pleno
+                             # farmeo: S2 vuelve a tener los 2 candidatos sin revisitar S13.
 )
 
 $ErrorActionPreference = "Stop"
@@ -128,6 +132,18 @@ if ($NoFocusGate) {
     Write-Host "[qa_launch] DANIBOD_NO_FOCUS_GATE = 1 (captura sigue aunque el juego no esté al frente)"
 } else {
     Remove-Item Env:\DANIBOD_NO_FOCUS_GATE -ErrorAction SilentlyContinue
+}
+# Breadcrumb del contexto de farmeo: SIEMPRE se deja en QA (barato, un JSON chico) para que un
+# relance posterior con -RestoreFarm pueda recargar la última predicción S13. Ruta estable en el
+# dir de datos de la app (gitignoreada, no versionada; junto a app.log).
+$farmState = Join-Path $env:LOCALAPPDATA "DaniBOD_ZZZ_Analytics\farm_state_qa.json"
+$env:DANIBOD_FARM_STATE = $farmState
+Write-Host "[qa_launch] DANIBOD_FARM_STATE = $farmState (breadcrumb de predicción S13)"
+if ($RestoreFarm) {
+    $env:DANIBOD_RESTORE_FARM = "1"
+    Write-Host "[qa_launch] DANIBOD_RESTORE_FARM = 1 (recarga el contexto de farmeo previo al arrancar)"
+} else {
+    Remove-Item Env:\DANIBOD_RESTORE_FARM -ErrorAction SilentlyContinue
 }
 if ($FromSource) {
     $py = Join-Path $repoRoot ".venv\Scripts\python.exe"
