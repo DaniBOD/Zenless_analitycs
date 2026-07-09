@@ -69,27 +69,29 @@ _RE_SLOT_PAREN = re.compile(r"\(\s*([1-6])\s*\)")
 
 
 def _rescue_slot_s3(frame, ocr, titulo_lines, W, H) -> int:
-    """Recupera el slot re-OCRizando una franja del título upscaleada cuando el crop dropea
-    el '(N)' fino (el dígito entre paréntesis se cae a veces a resolución nativa). Crop generoso
-    a la derecha (el '(N)' está al final del título) + upscale ×3. Devuelve 0 si no se localiza."""
+    """Recupera el slot re-OCRizando franjas del título upscaleadas cuando el crop dropea el '(N)'
+    fino (el dígito entre paréntesis se cae a veces a resolución nativa). Escanea CADA línea del
+    título (no solo la superior): con nombres largos el título se envuelve y el '(N)' queda en la
+    línea de abajo. Crop generoso a la derecha (hasta el borde del modal) + upscale ×3. Devuelve
+    el primer '(N)' encontrado o 0."""
     if frame is None or ocr is None or not titulo_lines:
         return 0
     try:
         import cv2
-        ln = min(titulo_lines, key=lambda l: l.y1)   # la línea superior (el nombre + '(N)')
-        hp = max(1, ln.y2 - ln.y1)
-        y0 = max(0, ln.y1 - int(0.3 * hp))
-        y1 = min(H, ln.y2 + int(0.3 * hp))
-        x0 = ln.x1
-        x1 = min(W, int(0.63 * W))                    # extender más allá del bbox (el '(N)' pudo caerse)
-        strip = frame[y0:y1, x0:x1]
-        if strip.size == 0:
-            return 0
-        up = cv2.resize(strip, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-        for t, _c, _bb in ocr.text_with_bboxes(up):
-            m = _RE_SLOT_PAREN.search(t)
-            if m:
-                return int(m.group(1))
+        for ln in sorted(titulo_lines, key=lambda l: l.y1):
+            hp = max(1, ln.y2 - ln.y1)
+            y0 = max(0, ln.y1 - int(0.3 * hp))
+            y1 = min(H, ln.y2 + int(0.3 * hp))
+            x0 = ln.x1
+            x1 = min(W, int(0.68 * W))                # borde derecho del modal (el '(N)' pudo caerse)
+            strip = frame[y0:y1, x0:x1]
+            if strip.size == 0:
+                continue
+            up = cv2.resize(strip, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+            for t, _c, _bb in ocr.text_with_bboxes(up):
+                m = _RE_SLOT_PAREN.search(t)
+                if m:
+                    return int(m.group(1))
     except Exception:
         return 0
     return 0
@@ -231,7 +233,18 @@ def _parse_s3_from_lines(lines, W, H, frame=None, ocr=None) -> DiscParsed:
         set_name_titulo = re.sub(r"\(\s*\d?\s*\)\s*$", "", titulo_raw).strip()
         slot = 0
     if slot == 0:
-        # El crop nativo dropeó el '(N)' fino → re-OCR upscaleado de la franja del título.
+        # `_RE_TITULO_SLOT` está anclada al final (`\)\s*$`), así que se cae cuando el "(N)" NO
+        # queda al final del título unido: con nombres largos el título se ENVUELVE a 2 líneas
+        # (el "(N)" va en la de abajo) y/o la insignia de rareza se cuela como token suelto tras
+        # el "(N)". Buscar "(N)" SIN ancla en cada línea del título es robusto a ambos casos y no
+        # cuesta re-OCR (QA farmeo 2026-07-09, 'Conejo en el país de las maravillas' → slot=0).
+        for ln in sorted(titulo_lines, key=lambda l: l.y1):
+            ms = _RE_SLOT_PAREN.search(ln.txt)
+            if ms:
+                slot = int(ms.group(1))
+                break
+    if slot == 0:
+        # Aún nada → el crop nativo dropeó el '(N)' fino: re-OCR upscaleado de la franja del título.
         rs = _rescue_slot_s3(frame, ocr, titulo_lines, W, H)
         if rs:
             slot = rs

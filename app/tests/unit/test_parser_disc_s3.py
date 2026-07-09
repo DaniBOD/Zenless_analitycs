@@ -158,6 +158,37 @@ def test_s3_ejemplo_8_huracanado_slot5_main_atkpct():
     assert disc_is_mature(d)
 
 
+@pytest.mark.skipif(not (_S3 / "Ejemplo_11.png").exists(), reason="capturas S3 no presentes")
+def test_s3_ejemplo_11_conejo_slot5_nombre_largo():
+    """'Conejo en el país de las maravillas' (Bunny in Wonderland). Nombre LARGO → el título se
+    ENVUELVE a 2 líneas y el '(5)' queda en la de abajo; además la insignia de rareza 'S' se
+    cuela como token suelto tras el '(N)', rompiendo el ancla de fin de _RE_TITULO_SLOT. El slot
+    debe leerse igual (regresión QA farmeo 2026-07-09: caía a slot=0)."""
+    from app.core.parser_disc_s3 import parse_disc_s3_full
+    d = parse_disc_s3_full(_load("Ejemplo_11.png"), _paddle())
+    assert "maravillas" in (d.set_name_raw or "").lower()
+    assert d.slot == 5
+    assert d.main_stat_canon == "ATK%"       # Ataque 7.5% (porcentual)
+
+
+@pytest.mark.skipif(not (_S3 / "Ejemplo_12.png").exists(), reason="capturas S3 no presentes")
+def test_s3_ejemplo_12_conejo_slot6_nombre_largo():
+    """Mismo set de nombre largo, slot 6 (regresión del wrap + token de rareza suelto)."""
+    from app.core.parser_disc_s3 import parse_disc_s3_full
+    d = parse_disc_s3_full(_load("Ejemplo_12.png"), _paddle())
+    assert "maravillas" in (d.set_name_raw or "").lower()
+    assert d.slot == 6
+
+
+@pytest.mark.skipif(not (_S3 / "Ejemplo_13.png").exists(), reason="capturas S3 no presentes")
+def test_s3_ejemplo_13_conejo_slot6_nombre_largo():
+    """Mismo set de nombre largo, slot 6 (regresión del wrap + token de rareza suelto)."""
+    from app.core.parser_disc_s3 import parse_disc_s3_full
+    d = parse_disc_s3_full(_load("Ejemplo_13.png"), _paddle())
+    assert "maravillas" in (d.set_name_raw or "").lower()
+    assert d.slot == 6
+
+
 @pytest.mark.skipif(not (_S3 / "Ejemplo_9.png").exists(), reason="capturas S3 no presentes")
 def test_s3_ejemplo_9_firmamento_slot2_main_atk_flat():
     """Firmamento llameante (Éter). slot 2, main ATK 79 (flat), subs PV 112 / Ataque 3% /
