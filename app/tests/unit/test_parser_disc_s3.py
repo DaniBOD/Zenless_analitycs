@@ -199,6 +199,10 @@ def test_s3_ejemplo_14_main_nombre_largo_envuelto():
     assert "yunkui" in (d.set_name_raw or "").lower()
     assert d.slot == 5
     assert d.main_stat_canon == "Tasa de Perforación", (d.main_stat_raw, d.main_stat_canon)
+    # El valor del main ('6 %') se alinea con la 2ª línea del nombre envuelto; el rescate debe
+    # cubrirla (antes recortaba a la 1ª → leía '6.9' flat). QA farmeo 2026-07-09.
+    assert d.main_valor == 6.0, (d.main_valor, d.main_unidad)
+    assert d.main_unidad == "%", (d.main_valor, d.main_unidad)
 
 
 @pytest.mark.skipif(not (_S3 / "Ejemplo_9.png").exists(), reason="capturas S3 no presentes")

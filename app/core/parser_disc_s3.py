@@ -126,6 +126,10 @@ def _coalesce_wrapped_names(name_lines):
             combo = (ln.txt.strip() + " " + nxt.txt.strip()).strip()
             if 0 < (nxt.y1 - ln.y1) <= 2.2 * hp and _known(combo):
                 ln.txt = combo
+                ln.y2 = max(ln.y2, nxt.y2)   # el bbox del nombre mergeado cubre AMBAS líneas → el
+                                             # rescate de valor (crop alineado al nombre) alcanza el
+                                             # valor, que se alinea con la 2ª línea (QA 2026-07-09:
+                                             # 'Tasa de Perforación' → valor '6 %' se cortaba a 6.9)
                 out.append(ln)
                 i += 2
                 continue
