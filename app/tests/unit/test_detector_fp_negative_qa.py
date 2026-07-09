@@ -29,6 +29,14 @@ FP_DIR = REPO / "Documentacion" / "Screenshots_Triggers" / "Triggers_Generales" 
 GROUPS: dict[str, set[str]] = {
     "Detalle_set_disco": {"S16", "S12"},        # modal Info de conjunto (no captura)
     "Dispara_disco_descarte": {"S11", "S12"},   # desmontaje (no captura)
+    # LIMITACIÓN CONOCIDA (QA 2026-07-09): la pantalla de tienda/promo de compra ('Suministro de
+    # exploración aérea') es visualmente casi idéntica a 'Resultados del desafío' (S2): matchea el
+    # mismo template (~0.88) y su grilla de 3 tiles naranjas produce 4 franjas de rareza (los S2
+    # reales dan 3) → _verify_s2 pasa. No es separable sin OCR sin arriesgar la detección de
+    # farmeo real (load-bearing): geometría/magenta/dorado-estricto probados, todos fallan. El FP
+    # es cosmético (display-only, contexto=tentativo, no captura ni persiste) y la pantalla es
+    # temporal. Decisión del usuario: aceptar S2 aquí (no tocar el detector). Ver Dev_IA.
+    "Tienda": {"S2", "S12"},
     # Todo lo demás debe ser NO reconocido (S12), incl. Resultado_desafio_otro_farmeo
     # (es un resultado real pero SIN discos → no es farmeo de discos → forzar S12).
     "Resultado_desafio_otro_farmeo": {"S12"},
