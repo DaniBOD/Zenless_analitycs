@@ -68,7 +68,11 @@ def test_s2_emite_linea_por_disco_con_prediccion():
     assert len(discos) == s_count, f"esperaba {s_count} líneas (discos S), hubo {len(discos)}: {diags}"
     # cada línea trae slot y el set candidato.
     assert all("Wuthering Salon" in d for d in discos)
-    assert all("slot 1" in d for d in discos)
+    # slots REALES de Ejemplo_1 vía el template matcher (independiente del OCR fake): tile 0 =
+    # slot 1, tile 1 = slot 4. (Antes el _FakeOcr devolvía '1' para todos; ahora el matcher lee
+    # el dígito real — QA farmeo 2026-07-09.)
+    assert any("slot 1" in d for d in discos), discos
+    assert any("slot 4" in d for d in discos), discos
 
 
 @pytest.mark.skipif(not (_S2 / "Ejemplo_1.png").exists(), reason="capturas S2 no presentes")

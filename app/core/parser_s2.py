@@ -194,17 +194,40 @@ def _slot_digit_from_text(text: str | None) -> int | None:
     return None
 
 
-def read_tile_slot(frame: np.ndarray, box: TileBox, ocr) -> int | None:
-    """OCR del dígito de slot (1-6) del hexágono arriba-izq. de un tile.
+_slot_matcher_singleton = None
 
-    El dígito es metálico (gradiente claro) sobre hexágono oscuro → Paddle no lo engancha crudo.
-    Se binariza (threshold fijo alto → dígito claro a negro sobre blanco), upscale ×5 y borde
-    blanco (calibrado en vivo 2026-07-08: lee 1/4/… que el crudo devolvía vacío). Fallback a
-    Otsu. lang='eng' (solo dígitos). Devuelve slot 1-6 o None."""
-    if ocr is None:
-        return None
+
+def _get_slot_matcher():
+    """Singleton lazy del matcher de dígitos de slot (template/NCC). Se carga 1 vez de recursos;
+    si falla, queda None (el OCR es el fallback). Evita cablear el matcher por monitor/controller
+    para un helper display-only."""
+    global _slot_matcher_singleton
+    if _slot_matcher_singleton is None:
+        try:
+            from app.core.slot_digit_matcher import SlotDigitMatcher
+            _slot_matcher_singleton = SlotDigitMatcher.from_resources()
+        except Exception:
+            _slot_matcher_singleton = False   # sentinela: intentado y falló → no reintentar
+    return _slot_matcher_singleton or None
+
+
+def read_tile_slot(frame: np.ndarray, box: TileBox, ocr, slot_matcher=None) -> int | None:
+    """Dígito de slot (1-6) del hexágono arriba-izq. de un tile.
+
+    PRIMARIO: matcher por template (NCC del residuo, `SlotDigitMatcher`) — robusto donde el OCR
+    del glifo estilizado falla ('6'→'5', '5'↔'S', '4'→'2'). Si el matcher abstiene, FALLBACK al
+    OCR: se binariza (threshold alto → dígito claro a negro sobre blanco), upscale ×5 y borde
+    blanco (calibrado 2026-07-08), fallback Otsu, lang='eng'. Devuelve slot 1-6 o None."""
     crop = crop_tile_slot(frame, box)
     if crop.size == 0:
+        return None
+    # Primario: template matcher (no depende de OCR).
+    m = slot_matcher if slot_matcher is not None else _get_slot_matcher()
+    if m is not None and m.n_refs > 0:
+        slot, _score = m.identify(crop)
+        if slot is not None:
+            return slot
+    if ocr is None:
         return None
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     up = cv2.resize(gray, None, fx=5, fy=5, interpolation=cv2.INTER_CUBIC)

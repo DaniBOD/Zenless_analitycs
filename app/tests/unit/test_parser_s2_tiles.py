@@ -95,6 +95,18 @@ def test_read_tile_slot_5_estilizado_como_S():
     assert slots[1] == 5, slots   # el 'S' → slot 5
 
 
+@pytest.mark.skipif(not (_S2 / "Ejemplo_10.png").exists(), reason="Ejemplo_10 no presente")
+def test_read_tile_slot_6_por_template_no_ocr():
+    """El '6' estilizado (Woodpecker Electro) que el OCR leía como '5' ahora se lee 6 por el
+    template matcher, SIN OCR (ocr=None) → el matcher es el camino primario. Ejemplo_10: slots
+    6 (Woodpecker) y 4 (Soul Rock). Regresión QA farmeo 2026-07-09."""
+    fr = _load(_S2 / "Ejemplo_10.png")
+    from app.core.parser_s2 import tile_rarity
+    s_boxes = [b for b in tile_boxes(fr) if tile_rarity(fr, b) == "S"]
+    slots = [read_tile_slot(fr, b, None) for b in s_boxes]   # ocr=None → solo template
+    assert slots == [6, 4], slots
+
+
 def test_tile_boxes_frame_vacio():
     assert tile_boxes(np.zeros((1439, 2559, 3), dtype=np.uint8)) == []
     assert tile_boxes(None) == []
