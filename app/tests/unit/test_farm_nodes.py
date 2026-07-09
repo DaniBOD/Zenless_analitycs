@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from app.core.farm_nodes import FarmNode, FarmNodeCatalog
+from app.core.farm_nodes import FarmNode, FarmNodeCatalog, best_predicted_set_id
 
 _TOML = Path(__file__).resolve().parents[2] / "resources" / "farm_nodes.toml"
 
@@ -86,3 +86,39 @@ def test_warn_si_un_en_no_resuelve():
     assert piloto is not None
     faltante = [s for s in piloto.sets if s.nombre_en == "The Sky Ablaze"][0]
     assert faltante.set_id is None
+
+
+# --- best_predicted_set_id: fallback de set por predicción cuando el OCR cambia una palabra ---
+
+# Los 2 sets del nodo 'Engaños y baluartes' (ES): id 42 Aria brillante, id 50 Balada de aguas blancas.
+_ENGANOS = [(42, "Aria brillante"), (50, "Balada de aguas blancas")]
+
+
+def test_pred_set_resuelve_palabra_mal_leida():
+    """OCR leyó 'Aria radiante' (brillante→radiante, que _norm_key no arregla). Con los 2 sets
+    predichos, el correcto gana por lejos → resuelve al id 42 (regresión QA farmeo 2026-07-09)."""
+    assert best_predicted_set_id("Aria radiante", _ENGANOS) == 42
+
+
+def test_pred_set_match_exacto_ish():
+    assert best_predicted_set_id("Balada de aguas blancas", _ENGANOS) == 50
+
+
+def test_pred_set_insensible_a_tildes():
+    assert best_predicted_set_id("aria brillante", _ENGANOS) == 42
+
+
+def test_pred_set_abstiene_si_ninguno_llega_al_piso():
+    """Nombre que no se parece a ninguno de los 2 candidatos → None (no adivina)."""
+    assert best_predicted_set_id("Fabula Yunkui", _ENGANOS) is None
+
+
+def test_pred_set_abstiene_si_empatan():
+    """Dos candidatos casi equidistantes del OCR (dentro del margen) → None."""
+    cands = [(1, "Aria brillante"), (2, "Aria brillante")]  # mismo nombre, distinto id → empate real
+    assert best_predicted_set_id("Aria brillante", cands) is None
+
+
+def test_pred_set_vacio_o_none():
+    assert best_predicted_set_id(None, _ENGANOS) is None
+    assert best_predicted_set_id("Aria brillante", []) is None

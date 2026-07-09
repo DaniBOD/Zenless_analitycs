@@ -817,7 +817,12 @@ class MonitorController(QObject):
     def _lookup_set_id(self, name: str | None) -> int | None:
         """Resuelve nombre de set (OCR) → set_id, insensible a tildes/mojibake: el OCR del
         crop lee la tilde inestable ('Salón'/'Salön') → normalizar con `_norm_key` (sin
-        diacríticos) para que igual resuelva (si no, se perdía el logo y el nombre canónico)."""
+        diacríticos) para que igual resuelva (si no, se perdía el logo y el nombre canónico).
+
+        Fallback en flujo de farmeo: si el match exacto falla porque el OCR cambió una PALABRA
+        entera del nombre ('Aria brillante'→'Aria radiante', que `_norm_key` no arregla), elegir
+        entre los 2 sets PREDICHOS en S13 el de nombre más parecido (seguro con pocos candidatos;
+        el resolver global de sync abstiene acá por su cutoff alto). QA farmeo 2026-07-09."""
         if not name or self._disc_set_repo is None:
             return None
         from app.core.stats_vocab import _norm_key
@@ -825,9 +830,22 @@ class MonitorController(QObject):
         if not key:
             return None
         try:
-            for s in self._disc_set_repo.get_all():
-                if _norm_key(s.nombre) == key:
-                    return s.id
+            sets = list(self._disc_set_repo.get_all())
         except Exception:
-            pass
+            return None
+        for s in sets:
+            if _norm_key(s.nombre) == key:
+                return s.id
+        # Sin match exacto → probar contra los sets predichos del nodo (si hay farmeo activo).
+        if self._farm_session is not None:
+            try:
+                import time
+                from app.core.farm_nodes import best_predicted_set_id
+                pred = self._farm_session.predicted(time.monotonic())
+                if pred:
+                    by_id = {s.id: s.nombre for s in sets}
+                    cands = [(sid, by_id[sid]) for sid, _en in pred[1] if sid in by_id]
+                    return best_predicted_set_id(name, cands)
+            except Exception:
+                log.debug("fallback de set por predicción falló", exc_info=True)
         return None

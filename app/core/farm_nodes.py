@@ -30,6 +30,45 @@ _DEFAULT_TOML = Path(__file__).resolve().parent.parent / "resources" / "farm_nod
 _TITLE_FUZZY_CUTOFF = 0.82
 _TITLE_FUZZY_MARGIN = 0.06
 
+# Fuzzy del NOMBRE del set restringido a los 2 candidatos predichos (S13). El umbral es más
+# permisivo que el resolver global de sync (_SET_FUZZY_CUTOFF=0.86) porque con solo 2 candidatos
+# la ambigüedad es casi nula: el OCR puede cambiar una PALABRA entera del nombre ('brillante'→
+# 'radiante') y aun así el set correcto gana por lejos. La guarda de margen abstiene si empatan.
+_PRED_SET_MIN_RATIO = 0.60
+_PRED_SET_MIN_MARGIN = 0.15
+
+
+def best_predicted_set_id(
+    ocr_name: str | None,
+    candidates: list[tuple[int, str]],
+    min_ratio: float = _PRED_SET_MIN_RATIO,
+    min_margin: float = _PRED_SET_MIN_MARGIN,
+) -> int | None:
+    """Elige, entre los sets PREDICHOS en S13, el de nombre (ES) más parecido al leído por OCR.
+
+    `candidates` = [(set_id, nombre_es), ...] (típicamente los 2 sets del nodo). Sirve de fallback
+    cuando el match exacto/norm falla porque el OCR cambió una palabra del nombre del set (p.ej.
+    'Aria brillante'→'Aria radiante', que `_norm_key` no arregla). Con pocos candidatos es seguro
+    aunque el umbral sea modesto; abstiene (None) si el mejor no llega al piso o dos candidatos
+    quedan dentro del margen. Comparación insensible a tildes/mayúsculas vía `_norm_key`."""
+    key = _norm_key(ocr_name or "")
+    if not key:
+        return None
+    scored = sorted(
+        (
+            (difflib.SequenceMatcher(None, key, _norm_key(nombre)).ratio(), sid)
+            for sid, nombre in candidates
+            if nombre
+        ),
+        key=lambda t: t[0],
+        reverse=True,
+    )
+    if not scored or scored[0][0] < min_ratio:
+        return None
+    if len(scored) >= 2 and (scored[0][0] - scored[1][0]) < min_margin:
+        return None
+    return scored[0][1]
+
 
 @dataclass(frozen=True)
 class NodeSet:
