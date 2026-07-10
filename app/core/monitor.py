@@ -350,6 +350,11 @@ class Monitor:
         self._s5_emitted: bool = False
         self._s5_agg_cycles: int = 0
         self._s5_emitted_ids: set = set()
+        # Preview de la grilla de resultado (slots+set de TODOS los discos evocados, antes de ver
+        # detalles). `_s5_grid_slots` = secuencia de slots de la última tanda previsualizada; si
+        # cambia (re-afinación desde la misma pantalla) → nueva tanda → re-preview. Como el
+        # resumen por-disco de S2, pero re-emite por tanda, no solo al entrar.
+        self._s5_grid_slots: tuple = ()
         # Última firma del log "[S17] asignado" (edge-trigger: 1× por cambio).
         self._s17_assign_sig = None
         # Gate de OCR S18 (RNF-06): última firma del panel de stats. Si no cambió, se
@@ -845,6 +850,7 @@ class Monitor:
             self._s5_agg_sig = None
             self._s5_emitted = False
             self._s5_agg_cycles = 0
+            self._s5_grid_slots = ()   # re-entrar → re-emitir el preview de la grilla
         self._handle_upgrade(frame, state)
         # Menú de personajes (Fase M.1): al salir de S15, olvidar la firma del nombre y del
         # log → re-entrar re-identifica y re-loguea. Barato (set a None cada frame no-S15).
@@ -1910,6 +1916,10 @@ class Monitor:
         if sig is None:
             return
         if self._is_new_s5_disc(sig):
+            # El disco enfocado cambió: clickeaste otro disco O re-afinaste (nueva tanda desde la
+            # MISMA pantalla de resultados, botón "Afinar ×N"). Distinguir por la GRILLA: si la
+            # secuencia de slots cambió, es una tanda nueva → re-preview + re-permitir captura.
+            self._maybe_new_s5_batch(frame)
             self._s5_aggregator.reset()
             self._s5_agg_sig = sig
             self._s5_emitted = False
@@ -1941,6 +1951,60 @@ class Monitor:
         if not (mature or ceiling):
             return
         self._emit_s5_disc(merged, state)
+
+    def _maybe_new_s5_batch(self, frame) -> None:
+        """Chequea si la GRILLA de resultado cambió (re-afinación desde la misma pantalla). Se
+        llama cuando el disco enfocado cambió (clickeás o re-afinás). Si la secuencia de slots de
+        la grilla difiere de la última → NUEVA tanda: re-emite el preview y limpia el dedup del
+        batch (discos nuevos, re-capturables). Si es la misma grilla (solo clickeaste otro disco)
+        → no hace nada. También cubre la 1ª emisión al entrar (slots previos vacíos)."""
+        try:
+            from app.core.parser_disc_s3 import parse_s5_grid
+            tiles = parse_s5_grid(frame, self._ocr)
+        except Exception:
+            log.exception("Error en preview de grilla S5")
+            return
+        if not tiles:
+            return   # frame de transición / grilla aún no visible → reintenta al próximo cambio
+        slots = tuple(s for s, _ in tiles)
+        if slots == self._s5_grid_slots:
+            return   # misma tanda (solo cambió el disco enfocado) → no re-emitir
+        self._s5_grid_slots = slots
+        self._s5_emitted_ids.clear()     # nueva tanda → discos nuevos, re-capturables
+        self._emit_s5_grid_preview(tiles)
+
+    def _emit_s5_grid_preview(self, tiles) -> None:
+        """Emite un resumen display-only de la grilla de resultado: por cada disco evocado,
+        `[disco] slot N · <set>` (sin abrir detalle). El slot/set/stats definitivos salen de la
+        ficha al clickear cada disco. Resuelve el set al nombre canónico de la DB."""
+        if not tiles:
+            return
+        # Todos los discos de UNA afinación son del mismo set (el género evocado) → resolver el set
+        # por CONSENSO: el set_id más votado entre los tiles que resuelven, aplicado a todos. Robusto
+        # al ruido OCR de un label suelto ('llameante'→'Ilameante' no resolvía). El slot es por-tile.
+        batch_set = None
+        if self._set_repo is not None:
+            from collections import Counter
+            votes: Counter = Counter()
+            for _slot, raw in tiles:
+                sid = self._set_repo.resolve_id(raw)
+                if sid is not None:
+                    votes[sid] += 1
+            if votes:
+                best_sid = votes.most_common(1)[0][0]
+                entry = next((e for e in self._set_repo.get_all() if e.id == best_sid), None)
+                if entry:
+                    batch_set = entry.nombre
+        for slot, set_raw in tiles:
+            set_disp = batch_set or set_raw
+            slot_str = str(slot) if slot else "?"
+            msg = f"[disco] slot {slot_str} · {set_disp}"
+            log.info("Afinación S5 (preview grilla): slot %s · set %s", slot_str, set_disp)
+            if self._on_diagnostic:
+                try:
+                    self._on_diagnostic(msg)
+                except Exception:
+                    log.debug("on_diagnostic S5 grid falló", exc_info=True)
 
     def _emit_s5_disc(self, merged, state: ScreenState) -> None:
         """Emite (dedup por identidad + log + on_disc) un disco de afinación S5. Mismo dedup de

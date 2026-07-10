@@ -825,25 +825,26 @@ class MonitorController(QObject):
         el resolver global de sync abstiene acá por su cutoff alto). QA farmeo 2026-07-09."""
         if not name or self._disc_set_repo is None:
             return None
-        from app.core.stats_vocab import _norm_key
-        key = _norm_key(name)
-        if not key:
-            return None
+        # Resolvedor robusto (exact → fuzzy sin acentos → difflib con guarda de ambigüedad),
+        # el MISMO que usan S4/S5/sync. Antes era match EXACTO por _norm_key → frágil al ruido
+        # OCR del título de disco ('Firmamento llameante'→'Firmamento Ilameante', ll→I) → no
+        # resolvía → se perdía el logo/ICO y el nombre canónico (QA tienda música 2026-07-09).
         try:
-            sets = list(self._disc_set_repo.get_all())
+            sid = self._disc_set_repo.resolve_id(name)
         except Exception:
-            return None
-        for s in sets:
-            if _norm_key(s.nombre) == key:
-                return s.id
-        # Sin match exacto → probar contra los sets predichos del nodo (si hay farmeo activo).
+            sid = None
+        if sid is not None:
+            return sid
+        # Sin match confiable → probar contra los sets predichos del nodo (si hay farmeo activo).
+        # Cubre el caso de PALABRA entera cambiada ('Aria brillante'→'Aria radiante'), que el
+        # resolver global abstiene por su cutoff alto.
         if self._farm_session is not None:
             try:
                 import time
                 from app.core.farm_nodes import best_predicted_set_id
                 pred = self._farm_session.predicted(time.monotonic())
                 if pred:
-                    by_id = {s.id: s.nombre for s in sets}
+                    by_id = {s.id: s.nombre for s in self._disc_set_repo.get_all()}
                     cands = [(sid, by_id[sid]) for sid, _en in pred[1] if sid in by_id]
                     return best_predicted_set_id(name, cands)
             except Exception:

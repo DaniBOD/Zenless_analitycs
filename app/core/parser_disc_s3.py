@@ -303,10 +303,16 @@ def _parse_s3_from_lines(lines, W, H, frame=None, ocr=None,
             [ln for ln in detail if ln.y1 > _yeffect and ln.y1 not in header_ys],
             key=lambda l: l.y1,
         )
+        # El nombre del set en el efecto puede ENVOLVERSE a 2 líneas en fichas angostas (S5:
+        # 'Firmamento'/'llameante'). Juntar TODAS las líneas antes del primer 'N pistas:' → nombre
+        # completo (S3 ancho da 1 sola línea → sin cambio). Sin esto, set_name_efecto tomaba solo
+        # 'Firmamento' y pisaba al título completo (QA tienda música 2026-07-09).
+        name_parts: list[str] = []
         for ln in effect_lines:
-            if not _RE_PISTAS.match(ln.txt.strip()):
-                set_name_efecto = ln.txt.strip()
+            if _RE_PISTAS.match(ln.txt.strip()):
                 break
+            name_parts.append(ln.txt.strip())
+        set_name_efecto = " ".join(name_parts).strip()
     set_name_raw = set_name_efecto or set_name_titulo
 
     confianza_global = (sum(confs) / len(confs)) if confs else 0.0
@@ -364,4 +370,102 @@ def parse_disc_s5(frame: np.ndarray, ocr) -> DiscParsed:
     H, W = frame.shape[:2]
     parsed = _parse_s3_from_lines(lines, W, H, frame=frame, ocr=ocr, band=_S5_BAND, cols=(_S5_COL,))
     parsed.rareza = "S"
+    # Slot 1/2/3 por MAIN plano si el "(N)" fino se cayó (el "1" delgado se dropea → slot=0). Regla
+    # fija ZZZ: slots 1/2/3 tienen SIEMPRE main plano HP/ATK/DEF; 4/5/6 nunca (siempre %/especial).
+    if not (1 <= parsed.slot <= 6):
+        _by_main = {"HP": 1, "ATK": 2, "DEF": 3}.get(parsed.main_stat_canon or "")
+        if _by_main is not None and parsed.main_unidad == "flat":
+            parsed.slot = _by_main
     return parsed
+
+
+# Grilla de resultado (2 filas × 5 columnas = hasta 10 discos; la cantidad depende de la moneda:
+# Afinar ×1/×4/×6/×10…). Cada tile tiene debajo un label "<set> (N)" (envuelto a 2 líneas). Se lee
+# el SET y el SLOT del texto del label (el slot "(N)" es más fiable que el badge estilizado del tile,
+# que usa "S" para el 5). Columnas/filas calibradas contra el fixture de 10 discos (2026-07-09).
+_S5_GRID_COLS = (0.547, 0.635, 0.722, 0.811, 0.899)   # centros x de las 5 columnas
+_S5_GRID_ROWS = (0.49, 0.70)                          # centros y de las 2 filas de labels
+_S5_GRID_COL_TOL = 0.035
+_S5_GRID_ROW_TOL = 0.05
+# Badge de slot (hexágono arriba-izq del tile) — fallback cuando el "(N)" del label se cae (el "1"
+# fino se dropea en el OCR → slot=0). Se lee con un SlotDigitMatcher propio de S5 (refs cosechadas
+# de los tiles de afinación, distintos framing/fondo que los de S2). Geometría calibrada 2026-07-09.
+_S5_BADGE_ROWS = (0.345, 0.552)   # centros y del badge por fila (más arriba que el label)
+_S5_BADGE_DX = 0.032              # offset del badge a la IZQUIERDA del centro de columna
+_S5_BADGE_W = 0.028
+_S5_BADGE_H = 0.045
+
+_s5_slot_matcher = None
+_s5_slot_matcher_loaded = False
+
+
+def _get_s5_slot_matcher():
+    """SlotDigitMatcher de S5 (singleton lazy), refs en `app/resources/slot_digits_s5/`."""
+    global _s5_slot_matcher, _s5_slot_matcher_loaded
+    if not _s5_slot_matcher_loaded:
+        _s5_slot_matcher_loaded = True
+        try:
+            from pathlib import Path
+            from app.core.slot_digit_matcher import SlotDigitMatcher
+            d = Path(__file__).resolve().parent.parent / "resources" / "slot_digits_s5"
+            _s5_slot_matcher = SlotDigitMatcher.from_resources(refs_dir=d)
+        except Exception:
+            _s5_slot_matcher = None
+    return _s5_slot_matcher
+
+
+def _s5_badge_slot(frame: np.ndarray, ri: int, ci: int) -> int | None:
+    """Lee el slot del BADGE del tile (fila ri, col ci) con el matcher de S5. None si abstiene."""
+    try:
+        H, W = frame.shape[:2]
+        cx = _S5_GRID_COLS[ci]
+        ry = _S5_BADGE_ROWS[ri]
+        crop = frame[int((ry - _S5_BADGE_H / 2) * H):int((ry + _S5_BADGE_H / 2) * H),
+                     int((cx - _S5_BADGE_DX - _S5_BADGE_W / 2) * W):int((cx - _S5_BADGE_DX + _S5_BADGE_W / 2) * W)]
+        m = _get_s5_slot_matcher()
+        if m is None or m.n_refs == 0 or crop.size == 0:
+            return None
+        slot, _score = m.identify(crop)
+        return slot
+    except Exception:
+        return None
+
+
+def parse_s5_grid(frame: np.ndarray, ocr) -> list[tuple[int, str]]:
+    """Preview de la grilla de resultado de afinación (S5): lee el label "<set> (N)" de cada tile
+    ocupado → lista de (slot, set_name_raw) en orden de lectura (row-major), saltando los EMPTY.
+    Cantidad variable (4/6/10…). Display-only; el slot/set/stats definitivos salen de la ficha
+    (`parse_disc_s5`) al clickear cada disco."""
+    if frame is None or ocr is None:
+        return []
+    H, W = frame.shape[:2]
+    try:
+        raw = ocr.text_with_bboxes(frame)
+    except Exception:
+        return []
+    cells: dict[tuple[int, int], list[tuple[float, str]]] = {}
+    for t, _c, b in raw:
+        xc = (b[0] + b[2]) / 2 / W
+        yc = (b[1] + b[3]) / 2 / H
+        ri = next((i for i, ry in enumerate(_S5_GRID_ROWS) if abs(yc - ry) <= _S5_GRID_ROW_TOL), None)
+        if ri is None:
+            continue
+        ci = min(range(len(_S5_GRID_COLS)), key=lambda i: abs(xc - _S5_GRID_COLS[i]))
+        if abs(xc - _S5_GRID_COLS[ci]) > _S5_GRID_COL_TOL:
+            continue
+        cells.setdefault((ri, ci), []).append((yc, t))
+    out: list[tuple[int, str]] = []
+    for key in sorted(cells):                     # (ri, ci) → orden de lectura row-major
+        ri, ci = key
+        toks = [t for _y, t in sorted(cells[key])]
+        text = " ".join(toks).strip()
+        if not text or _norm_key(text) == "empty":
+            continue
+        m = _RE_SLOT_PAREN.search(text)
+        slot = int(m.group(1)) if m else 0
+        if slot == 0:
+            slot = _s5_badge_slot(frame, ri, ci) or 0   # el "(1)" fino se cae → leer el badge
+        name = re.sub(r"\(\s*\d?\s*\)", "", text).strip()
+        if name:
+            out.append((slot, name))
+    return out

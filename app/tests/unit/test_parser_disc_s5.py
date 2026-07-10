@@ -58,3 +58,43 @@ def test_s5_disco_4_substats_envueltos():
     canons = {(s.nombre_canon or s.nombre_raw) for s in d.subs}
     assert any("Anomal" in c for c in canons), canons     # Maestría de Anomalía, no partido
     assert not any(c.strip() in ("Maestría de", "Maestria de") for c in canons), canons
+
+
+@pytest.mark.skipif(not (_S5 / "Tienda_musica_afinacion_3.png").exists(), reason="fixture 10 discos no presente")
+def test_s5_grid_preview_10_discos():
+    """El preview de la grilla lee slot+set de TODOS los discos evocados (2 filas × 5 cols) sin
+    abrir detalles. Fixture de 10 discos (Firmamento llameante), slots row-major 2,2,2,2,3/4,4,5,5,6."""
+    from app.core.parser_disc_s3 import parse_s5_grid
+    from app.db.repositories import DiscSetRepo
+    tiles = parse_s5_grid(_load("Tienda_musica_afinacion_3.png"), _paddle())
+    assert [s for s, _ in tiles] == [2, 2, 2, 2, 3, 4, 4, 5, 5, 6]
+    con = sqlite3.connect(str(_DB)); con.row_factory = sqlite3.Row
+    repo = DiscSetRepo(con)
+    assert {repo.resolve_id(n) for _, n in tiles} == {53}   # todos Firmamento llameante
+
+
+@pytest.mark.skipif(not (_S5 / "Tienda_musica_afinacion.png").exists(), reason="capturas S5 no presentes")
+def test_s5_grid_preview_cantidad_variable():
+    """La grilla soporta cantidad variable (aquí 2 discos, el resto EMPTY se saltea)."""
+    from app.core.parser_disc_s3 import parse_s5_grid
+    tiles = parse_s5_grid(_load("Tienda_musica_afinacion.png"), _paddle())
+    assert [s for s, _ in tiles] == [3, 4]
+
+
+@pytest.mark.skipif(not (_S5 / "Tienda_musica_afinacion_4.png").exists(), reason="fixture slot 1 no presente")
+def test_s5_grid_slot_1_por_badge():
+    """El '(1)' fino del label se cae en el OCR (slot=0) → se recupera del BADGE del tile con el
+    SlotDigitMatcher de S5. Fixture con 4 discos slot 1 (Firmamento llameante 1,1,1,1,4,4,5,6,6,6)."""
+    from app.core.parser_disc_s3 import parse_s5_grid
+    slots = [s for s, _ in parse_s5_grid(_load("Tienda_musica_afinacion_4.png"), _paddle())]
+    assert slots == [1, 1, 1, 1, 4, 4, 5, 6, 6, 6], slots
+
+
+@pytest.mark.skipif(not (_S5 / "Tienda_musica_afinacion_4.png").exists(), reason="fixture slot 1 no presente")
+def test_s5_focado_slot_1_por_main():
+    """La ficha enfocada de slot 1 con el '(1)' caído se recupera por el MAIN plano (HP → slot 1,
+    regla ZZZ). Fixture _4: ficha 'Firmamento llameante (1)', main PV 550."""
+    from app.core.parser_disc_s3 import parse_disc_s5
+    d = parse_disc_s5(_load("Tienda_musica_afinacion_4.png"), _paddle())
+    assert d.slot == 1
+    assert d.main_stat_canon == "HP" and d.main_unidad == "flat"

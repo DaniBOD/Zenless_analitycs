@@ -77,6 +77,18 @@ Todo **display-only** (RNF-01 no aplica; feature iterable).
 
 **Cierre B (QA en vivo):** afinar → clickear cada disco del resultado → log por disco con set/slot/main/substats.
 
+## QA en vivo 2026-07-09 (fixes durables sobre S4/S5)
+
+Sesión de QA en vivo tras implementar A+B. **S4 ✅ validado** (género→set incl. Firmamento llameante→53, Tecno tetraodóntido→40; slot del hexágono 1/2/5/6/aleatorio OK). **S5 ✅ validado** con estos fixes:
+
+1. **Preview de grilla (pedido del usuario):** al entrar a "Resultado de afinación", emitir `[disco] slot N · <set>` por CADA disco evocado (antes de abrir detalles), como el resumen por-disco de S2. `parse_s5_grid` lee el label `<set> (N)` de cada tile (grilla 2 filas × 5 cols; cantidad variable 4/6/10 según la moneda). Handler `_emit_s5_grid_preview`.
+2. **Set por consenso:** todos los discos de UNA afinación son del mismo género evocado → resolver el set por el más votado entre los tiles que resuelven, aplicado a todos (robusto al ruido OCR de un label suelto, p.ej. `llameante`→`Ilameante`).
+3. **Nombre de set completo + ICO:** el título/efecto de S5 se envuelve a 2 líneas → `set_name_efecto` tomaba solo `Firmamento` y pisaba al título completo → el logo/ICO no salía. Fix: coalescer TODAS las líneas del efecto antes del 1er `N pistas:` → `Firmamento llameante`. **Además** `_lookup_set_id` (controller, resolvía el logo) hacía match EXACTO → frágil al ruido OCR (`Firmamento Ilameante`) → sin ICO en la mayoría. Ahora delega en `DiscSetRepo.resolve_id` (exact→substring→difflib) → ICO consistente.
+4. **Re-afinación desde la misma pantalla:** el botón "Afinar ×N" está en la propia pantalla de resultados → se re-afina sin salir de S5, con grilla nueva. El preview one-shot no re-disparaba. Fix: usar la **secuencia de slots** de la grilla como identidad de tanda (una firma de imagen NO sirve: el highlight de selección la arruina — within-batch 2.78 > between-batch 0.49). Al cambiar el disco enfocado se re-chequea la grilla; si los slots cambiaron → nueva tanda → re-preview + limpiar dedup. `_maybe_new_s5_batch` + `_s5_grid_slots`.
+5. **Slot 1 (cosecha de badges):** el `(1)` fino del label/título se cae en el OCR → `?` en la grilla y `slot=0` en el focado. Fix doble: (a) **grilla** → leer el BADGE del tile con un `SlotDigitMatcher` propio de S5 (24 refs cosechadas de los 4 screenshots → `app/resources/slot_digits_s5/`; el matcher de S2 abstenía 0/10 por framing/fondo distinto; el de S5 lee 10/10). (b) **focado** → slot 1/2/3 por MAIN plano (HP/ATK/DEF flat, regla fija ZZZ). Geometría de badges 2×5 calibrada contra el fixture de 10 discos.
+
+Fixtures agregados: `11_Tienda_Musica_Afinacion/Tienda_musica_afinacion_{3,4}.png` (10 discos, slots 1-6).
+
 ## Riesgos
 
 1. **S4↔S15** por chrome compartido → mitiga discriminador por hexágono/"Afinar"; validar que S15 real no se degrada.

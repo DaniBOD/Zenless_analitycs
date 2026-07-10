@@ -53,6 +53,48 @@ def test_s5_emite_disco_afinacion():
     assert d.main_stat_canon == "DEF"
 
 
+@pytest.mark.skipif(not (_S5 / "Tienda_musica_afinacion_3.png").exists(), reason="fixture 10 discos no presente")
+def test_s5_preview_grilla_al_entrar():
+    """Al entrar a S5, el monitor emite 1× un preview `[disco] slot N · <set>` por cada disco de
+    la grilla (antes de ver detalles), como el resumen por-disco de S2. Fixture de 10 discos."""
+    import sqlite3
+    from app.core.detector import ScreenState
+    from app.db.repositories import DiscSetRepo
+    import app.core.monitor as mon
+    diags = []
+    con = sqlite3.connect(str(REPO / "db" / "danibod_zzz_v2.db")); con.row_factory = sqlite3.Row
+    m = mon.Monitor(ocr=_paddle(), detector=None, on_diagnostic=diags.append, set_repo=DiscSetRepo(con))
+    m._dispatch_state(_load("Tienda_musica_afinacion_3.png"), ScreenState("S5", 1.0, "s5_afinacion"))
+    preview = [d for d in diags if d.startswith("[disco]")]
+    assert len(preview) == 10, f"esperaba 10 líneas de preview, hubo {len(preview)}: {preview}"
+    assert all("Firmamento llameante" in d for d in preview), preview
+    assert any("slot 6" in d for d in preview) and any("slot 2" in d for d in preview), preview
+
+
+@pytest.mark.skipif(not (_S5 / "Tienda_musica_afinacion_4.png").exists(), reason="fixtures re-afinación no presentes")
+def test_s5_reafinacion_reemite_preview_desde_misma_pantalla():
+    """Re-afinar desde la MISMA pantalla de resultados (botón 'Afinar ×N', sin salir de S5) genera
+    una tanda nueva (slots distintos) → el preview se re-emite. La secuencia de slots de la grilla
+    (no la firma de imagen, que el highlight de selección arruina) detecta la nueva tanda."""
+    import sqlite3
+    from app.core.detector import ScreenState
+    from app.db.repositories import DiscSetRepo
+    import app.core.monitor as mon
+    diags = []
+    con = sqlite3.connect(str(REPO / "db" / "danibod_zzz_v2.db")); con.row_factory = sqlite3.Row
+    m = mon.Monitor(ocr=_paddle(), detector=None, on_diagnostic=diags.append, set_repo=DiscSetRepo(con))
+    st = ScreenState("S5", 1.0, "s5_afinacion")
+    # Tanda A (slots 2,2,2,2,3,4,4,5,5,6) y luego re-afinar → Tanda B (1,1,1,1,4,4,5,6,6,6),
+    # ambas dispatchadas como S5 consecutivas (prev=S5 en la 2ª → NO hay reset por entrada).
+    m._dispatch_state(_load("Tienda_musica_afinacion_3.png"), st)
+    n_after_A = len([d for d in diags if d.startswith("[disco]")])
+    m._dispatch_state(_load("Tienda_musica_afinacion_4.png"), st)
+    preview = [d for d in diags if d.startswith("[disco]")]
+    assert n_after_A == 10, f"tanda A: esperaba 10 preview, hubo {n_after_A}"
+    assert len(preview) == 20, f"tras re-afinar: esperaba 20 (10+10), hubo {len(preview)}: {preview[-12:]}"
+    assert any("slot 1" in d for d in preview), "la tanda B (slots 1) no se previsualizó"
+
+
 @pytest.mark.skipif(not (_S5 / "Tienda_musica_afinacion.png").exists(), reason="capturas S5 no presentes")
 def test_s5_dedup_una_emision():
     """El mismo disco (firma estable) emite 1× aunque la cadencia repita el frame."""
