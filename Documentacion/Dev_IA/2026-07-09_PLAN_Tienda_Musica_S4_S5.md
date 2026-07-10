@@ -89,6 +89,22 @@ Sesión de QA en vivo tras implementar A+B. **S4 ✅ validado** (género→set i
 
 Fixtures agregados: `11_Tienda_Musica_Afinacion/Tienda_musica_afinacion_{3,4}.png` (10 discos, slots 1-6).
 
+## QA en vivo 2026-07-10 — endurecimiento del preview de grilla
+
+2ª sesión de QA (sets nuevos: Salón huracanado id=52, Balada de la rama y la espada id=25). El preview funcionaba pero se descubrieron 5 problemas, todos resueltos y con test de regresión:
+
+1. **Debounce de grilla (animación de revelado):** la grilla se revela con animación (los tiles entran escalonados) y el OCR de grilla tarda ~2.7s → un frame temprano leía las filas inferiores en blanco → `?`. El preview era one-shot atado al cambio de foco → nunca se re-evaluaba al asentarse (`?` pegado). Fix: **esperar 2 lecturas iguales** antes de emitir + re-chequear cada ciclo hasta estabilizar (patrón condition-based-waiting). Tope `_S5_GRID_MAX_TRIES=6` anti-cuelgue. `_maybe_new_s5_batch` + `_s5_grid_pending/_settled/_tries`.
+
+2. **Tolerancia de offset del badge (geometría mss vivo vs refs):** los refs del `SlotDigitMatcher` de S5 se cosecharon de screenshots del juego (**2559×1439**) pero en vivo la app captura por **mss (2560×1440)**. El crop fijo del badge caía ~3px al lado del glifo fino → NCC se desplomaba (fila 2 a 0.62 → `?`; el fixture guardado daba 1.000, por eso pasaba estático y fallaba en vivo). **Diagnóstico:** captura mss en vivo + comparación badge-a-badge contra el fixture (NCC 0.81-0.93, brillos iguales → desalineación espacial; el barrido de offset recuperaba a 0.91). Fix: `_s5_badge_slot`/`_s5_badge_scores` **barren una ventanita ±4px** y toman la mejor identificación. Fixture de regresión: `app/tests/fixtures/s5_live_mss_salon_huracanado.png` (captura mss real).
+
+3. **Anti-spam del preview:** clickear un disco para ver su detalle (uso normal) es un "cambio de foco" → se re-parseaba la grilla; el tile seleccionado queda resaltado + ruido de badge → tupla apenas distinta cada vez → se creía tanda nueva → re-emitía 10 líneas por clic. Fix: re-emitir sólo ante cambio **sustancial** — el multiset de slots debe diferir en ≥`_S5_BATCH_MIN_DIFF=3` (el flicker de 1-2 badges por clic no cuenta; re-afinar reparte al azar y sí). `_s5_batch_is_new`. Además se descartan lecturas con `?`.
+
+4. **Monotonía de slots con confianza (idea del usuario):** la grilla viene ordenada por slot ascendente → un `2` tras un `6` es imposible. El matcher ya da un score por dígito → se elige la secuencia **no-decreciente que maximiza la suma de scores** por programación dinámica (`_monotone_slots` + `SlotDigitMatcher.score_vector`). Corrige badges imposibles (`…5,3,5` → `…5,5,5`; `…6,2` → `…6,6`) y rellena `?` por vecinos, sin tocar lecturas limpias.
+
+5. **Nombre limpio del set evocado (nombres largos):** el label del tile se trunca en la celda angosta → los nombres largos (`Balada de la rama y la espada`) no resuelven desde ahí (`Baladadela ramayla…`). El **selector S4 lo lee completo** → el monitor lo guarda en `_s4_evoked_set` (id, nombre, ts) y el preview lo usa como nombre del set (antelación), con fallback al consenso por tile. TTL `_S5_EVOKED_TTL_S=600s`. Limitación conocida: si se entra directo a S5 sin pasar por S4, no hay set evocado → cae al consenso (nombre truncado); en el flujo normal S4→S5 sale limpio.
+
+Fixtures agregados: `Tienda_musica_afinacion_5.png` (Salón huracanado, 10 discos) + `app/tests/fixtures/s5_live_mss_salon_huracanado.png` (captura mss viva, regresión de offset).
+
 ## Riesgos
 
 1. **S4↔S15** por chrome compartido → mitiga discriminador por hexágono/"Afinar"; validar que S15 real no se degrada.

@@ -102,6 +102,18 @@ _S9_TIEBREAK_CONF_MIN = 0.80
 # de emitir BEST-EFFORT si el disco no maduró (red de seguridad). Si madura antes
 # (todos los campos), se emite en ese ciclo. ~5 ciclos cubre OCR no-determinista.
 _S17_AGG_MAX_CYCLES = 5
+# Tope de re-lecturas de la grilla S5 antes de emitir el preview aunque no haya convergido (badge
+# genuinamente ilegible). Cubre de sobra la animación de revelado; evita re-OCR indefinido.
+_S5_GRID_MAX_TRIES = 6
+# Mínimo de tiles (por multiset de slots) que deben cambiar para considerar la grilla una tanda
+# NUEVA y re-emitir el preview. Clickear un disco resalta su tile y mete jitter de 1-2 badges → NO
+# es una tanda nueva; re-afinar (botón "Afinar ×N") reparte slots al azar → cambia ~todos. Un piso
+# en 3 separa el flicker por-clic de la re-afinación real (QA 2026-07-10: el preview spameaba 10
+# líneas por cada clic porque el re-parseo leía la tupla apenas distinta cada vez).
+_S5_BATCH_MIN_DIFF = 3
+# Vigencia (s) del set evocado en S4 para nombrar el preview S5. Una afinación sigue inmediata al
+# selector; la ventana generosa cubre re-afinaciones desde la misma pantalla sin volver a S4.
+_S5_EVOKED_TTL_S = 600.0
 
 # 5R.L.6 — Refuerzo del reconocimiento del dueño (multi-frame warmup). El disco se EMITE
 # apenas el OCR madura, lo que a veces pasa en el 1er frame del disco (al navegar desde un
@@ -355,6 +367,18 @@ class Monitor:
         # cambia (re-afinación desde la misma pantalla) → nueva tanda → re-preview. Como el
         # resumen por-disco de S2, pero re-emite por tanda, no solo al entrar.
         self._s5_grid_slots: tuple = ()
+        # Set evocado en el selector S4 (id, nombre_canon, ts). El S4 lee el género COMPLETO y limpio;
+        # el preview S5 lo usa como nombre del set porque el label del tile se trunca en la celda
+        # angosta y los nombres largos no resuelven desde ahí. Válido dentro de la ventana de farmeo.
+        self._s4_evoked_set: tuple[int, str, float] | None = None
+        # DEBOUNCE de la grilla: la grilla se revela con ANIMACIÓN (los tiles entran escalonados) y
+        # el OCR de grilla tarda ~2.7s → un frame temprano lee las filas inferiores en blanco →
+        # badge '?'. Confirmamos la lectura con 2 pasadas iguales antes de emitir, y re-chequeamos
+        # cada ciclo hasta estabilizar. `_pending` = última secuencia leída sin confirmar;
+        # `_settled` = preview de la tanda actual ya finalizado; `_tries` = tope anti-cuelgue.
+        self._s5_grid_pending: tuple | None = None
+        self._s5_grid_settled: bool = False
+        self._s5_grid_tries: int = 0
         # Última firma del log "[S17] asignado" (edge-trigger: 1× por cambio).
         self._s17_assign_sig = None
         # Gate de OCR S18 (RNF-06): última firma del panel de stats. Si no cambió, se
@@ -851,6 +875,9 @@ class Monitor:
             self._s5_emitted = False
             self._s5_agg_cycles = 0
             self._s5_grid_slots = ()   # re-entrar → re-emitir el preview de la grilla
+            self._s5_grid_pending = None
+            self._s5_grid_settled = False
+            self._s5_grid_tries = 0
         self._handle_upgrade(frame, state)
         # Menú de personajes (Fase M.1): al salir de S15, olvidar la firma del nombre y del
         # log → re-entrar re-identifica y re-loguea. Barato (set a None cada frame no-S15).
@@ -1153,6 +1180,7 @@ class Monitor:
         entry = next((e for e in self._set_repo.get_all() if e.id == set_id), None)
         nombre = entry.nombre if entry else (genre or "")
         nombre_en = entry.nombre_en if entry else ""
+        self._s4_evoked_set = (set_id, nombre, time.monotonic())   # nombre limpio para el preview S5
         self._farm_session.set_prediction(nombre, [(set_id, nombre_en)], time.monotonic())
         slot_str = str(slot) if slot else "aleatorio"
         msg = f"[tienda] evoca: {nombre} · slot {slot_str}"
@@ -1917,13 +1945,19 @@ class Monitor:
             return
         if self._is_new_s5_disc(sig):
             # El disco enfocado cambió: clickeaste otro disco O re-afinaste (nueva tanda desde la
-            # MISMA pantalla de resultados, botón "Afinar ×N"). Distinguir por la GRILLA: si la
-            # secuencia de slots cambió, es una tanda nueva → re-preview + re-permitir captura.
-            self._maybe_new_s5_batch(frame)
+            # MISMA pantalla de resultados, botón "Afinar ×N"). Re-abrir la evaluación de la grilla
+            # (con debounce): si la secuencia de slots cambió, es una tanda nueva → re-preview.
+            self._s5_grid_settled = False
+            self._s5_grid_pending = None
+            self._s5_grid_tries = 0
             self._s5_aggregator.reset()
             self._s5_agg_sig = sig
             self._s5_emitted = False
             self._s5_agg_cycles = 0
+        # Re-chequear la grilla CADA ciclo hasta estabilizar (la animación de revelado hace que las
+        # filas inferiores lean '?' unos frames). El debounce interno espera 2 lecturas iguales.
+        if not self._s5_grid_settled:
+            self._maybe_new_s5_batch(frame)
         if self._s5_emitted:
             return
         try:
@@ -1965,13 +1999,38 @@ class Monitor:
             log.exception("Error en preview de grilla S5")
             return
         if not tiles:
-            return   # frame de transición / grilla aún no visible → reintenta al próximo cambio
+            return   # frame de transición / grilla aún no visible → reintenta al próximo ciclo
         slots = tuple(s for s, _ in tiles)
-        if slots == self._s5_grid_slots:
-            return   # misma tanda (solo cambió el disco enfocado) → no re-emitir
+        # Debounce: la grilla se revela con animación → una lectura temprana trae '?' (slot 0) en
+        # las filas que aún no rindieron. Confirmamos con 2 lecturas consecutivas iguales; mientras
+        # difieran (tiles apareciendo) esperamos. Tope anti-cuelgue si nunca converge (badge
+        # genuinamente ilegible): a las N pasadas emitimos lo que haya.
+        self._s5_grid_tries += 1
+        stable = slots == self._s5_grid_pending
+        self._s5_grid_pending = slots
+        if not (stable or self._s5_grid_tries >= _S5_GRID_MAX_TRIES):
+            return
+        self._s5_grid_settled = True     # tanda evaluada: dejamos de re-OCR la grilla (RNF-06)
+        if 0 in slots:
+            return   # lectura con '?' (badge ruidoso, típico del tile seleccionado) → no previsualizar
+        if not self._s5_batch_is_new(slots):
+            return   # misma tanda (clic entre tiles / jitter de 1-2 badges) → no re-emitir
         self._s5_grid_slots = slots
         self._s5_emitted_ids.clear()     # nueva tanda → discos nuevos, re-capturables
         self._emit_s5_grid_preview(tiles)
+
+    def _s5_batch_is_new(self, slots: tuple) -> bool:
+        """True si `slots` es una tanda de afinación NUEVA respecto de la última previsualizada.
+        Compara por MULTISET (el orden/tile seleccionado no importa) y exige que difieran ≥
+        `_S5_BATCH_MIN_DIFF` posiciones: así el flicker de 1-2 badges al clickear un disco NO
+        cuenta como tanda nueva, pero re-afinar (slots al azar) sí. Longitud distinta = nueva."""
+        prev = self._s5_grid_slots
+        if not prev:
+            return True
+        if len(slots) != len(prev):
+            return True
+        diff = sum(1 for a, b in zip(sorted(slots), sorted(prev)) if a != b)
+        return diff >= _S5_BATCH_MIN_DIFF
 
     def _emit_s5_grid_preview(self, tiles) -> None:
         """Emite un resumen display-only de la grilla de resultado: por cada disco evocado,
@@ -1979,11 +2038,18 @@ class Monitor:
         ficha al clickear cada disco. Resuelve el set al nombre canónico de la DB."""
         if not tiles:
             return
-        # Todos los discos de UNA afinación son del mismo set (el género evocado) → resolver el set
-        # por CONSENSO: el set_id más votado entre los tiles que resuelven, aplicado a todos. Robusto
-        # al ruido OCR de un label suelto ('llameante'→'Ilameante' no resolvía). El slot es por-tile.
+        # Todos los discos de UNA afinación son del mismo set (el género evocado). Nombre del set,
+        # por orden de preferencia:
+        #  1) el set EVOCADO en el selector S4 (antelación): lo leyó COMPLETO y limpio. El label del
+        #     tile se trunca en la celda angosta → los nombres largos ('Balada de la rama y la
+        #     espada') no resuelven desde ahí. Válido dentro de la ventana de farmeo.
+        #  2) CONSENSO por tile: el set_id más votado entre los tiles que resuelven (robusto al ruido
+        #     OCR de un label suelto). Fallback si no venimos del selector S4.
         batch_set = None
-        if self._set_repo is not None:
+        ev = self._s4_evoked_set
+        if ev is not None and (time.monotonic() - ev[2]) < _S5_EVOKED_TTL_S:
+            batch_set = ev[1]
+        if batch_set is None and self._set_repo is not None:
             from collections import Counter
             votes: Counter = Counter()
             for _slot, raw in tiles:

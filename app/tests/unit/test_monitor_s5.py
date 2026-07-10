@@ -56,7 +56,8 @@ def test_s5_emite_disco_afinacion():
 @pytest.mark.skipif(not (_S5 / "Tienda_musica_afinacion_3.png").exists(), reason="fixture 10 discos no presente")
 def test_s5_preview_grilla_al_entrar():
     """Al entrar a S5, el monitor emite 1× un preview `[disco] slot N · <set>` por cada disco de
-    la grilla (antes de ver detalles), como el resumen por-disco de S2. Fixture de 10 discos."""
+    la grilla (antes de ver detalles), como el resumen por-disco de S2. Fixture de 10 discos.
+    El preview se DEBOUNCE-a (2 lecturas iguales) → despachamos 2× la grilla estable."""
     import sqlite3
     from app.core.detector import ScreenState
     from app.db.repositories import DiscSetRepo
@@ -64,7 +65,9 @@ def test_s5_preview_grilla_al_entrar():
     diags = []
     con = sqlite3.connect(str(REPO / "db" / "danibod_zzz_v2.db")); con.row_factory = sqlite3.Row
     m = mon.Monitor(ocr=_paddle(), detector=None, on_diagnostic=diags.append, set_repo=DiscSetRepo(con))
-    m._dispatch_state(_load("Tienda_musica_afinacion_3.png"), ScreenState("S5", 1.0, "s5_afinacion"))
+    st = ScreenState("S5", 1.0, "s5_afinacion")
+    m._dispatch_state(_load("Tienda_musica_afinacion_3.png"), st)
+    m._dispatch_state(_load("Tienda_musica_afinacion_3.png"), st)
     preview = [d for d in diags if d.startswith("[disco]")]
     assert len(preview) == 10, f"esperaba 10 líneas de preview, hubo {len(preview)}: {preview}"
     assert all("Firmamento llameante" in d for d in preview), preview
@@ -86,13 +89,100 @@ def test_s5_reafinacion_reemite_preview_desde_misma_pantalla():
     st = ScreenState("S5", 1.0, "s5_afinacion")
     # Tanda A (slots 2,2,2,2,3,4,4,5,5,6) y luego re-afinar → Tanda B (1,1,1,1,4,4,5,6,6,6),
     # ambas dispatchadas como S5 consecutivas (prev=S5 en la 2ª → NO hay reset por entrada).
+    # Cada tanda se despacha 2× (debounce de grilla: 2 lecturas iguales confirman antes de emitir).
+    m._dispatch_state(_load("Tienda_musica_afinacion_3.png"), st)
     m._dispatch_state(_load("Tienda_musica_afinacion_3.png"), st)
     n_after_A = len([d for d in diags if d.startswith("[disco]")])
+    m._dispatch_state(_load("Tienda_musica_afinacion_4.png"), st)
     m._dispatch_state(_load("Tienda_musica_afinacion_4.png"), st)
     preview = [d for d in diags if d.startswith("[disco]")]
     assert n_after_A == 10, f"tanda A: esperaba 10 preview, hubo {n_after_A}"
     assert len(preview) == 20, f"tras re-afinar: esperaba 20 (10+10), hubo {len(preview)}: {preview[-12:]}"
     assert any("slot 1" in d for d in preview), "la tanda B (slots 1) no se previsualizó"
+
+
+def test_s5_preview_debounce_espera_animacion(monkeypatch):
+    """REGRESIÓN (QA 2026-07-10, set Salón huracanado): la grilla se revela con ANIMACIÓN (los
+    tiles entran escalonados) y el OCR de grilla tarda ~2.7s → un frame temprano lee las filas
+    inferiores en blanco → badge '?' (slot 0). El bug: el preview se emitía de esa 1ª lectura
+    animada y NO se re-evaluaba al asentarse → '?' pegado. El fix debounce-a: espera 2 lecturas
+    iguales antes de emitir. Simulamos 3 lecturas animadas distintas + 1 estable repetida."""
+    import app.core.monitor as mon
+    import app.core.parser_disc_s3 as P
+    diags = []
+    m = mon.Monitor(ocr=_NullOcr(), detector=None, on_diagnostic=diags.append)
+    # Secuencia de lecturas de grilla que devolvería el OCR mientras la animación corre y se asienta.
+    reads = [
+        [(1, "Salón"), (1, "Salón"), (1, "Salón"), (2, "Salón"), (3, "Salón"),
+         (0, "Salón"), (0, "Salón"), (0, "Salón"), (0, "Salón"), (6, "Salón")],   # fila 2 en blanco
+        [(1, "Salón"), (1, "Salón"), (1, "Salón"), (2, "Salón"), (3, "Salón"),
+         (5, "Salón"), (0, "Salón"), (0, "Salón"), (6, "Salón"), (6, "Salón")],   # entrando
+        [(1, "Salón"), (1, "Salón"), (1, "Salón"), (2, "Salón"), (3, "Salón"),
+         (5, "Salón"), (5, "Salón"), (5, "Salón"), (6, "Salón"), (6, "Salón")],   # asentada
+        [(1, "Salón"), (1, "Salón"), (1, "Salón"), (2, "Salón"), (3, "Salón"),
+         (5, "Salón"), (5, "Salón"), (5, "Salón"), (6, "Salón"), (6, "Salón")],   # estable (=3ª)
+    ]
+    it = iter(reads)
+    monkeypatch.setattr(P, "parse_s5_grid", lambda frame, ocr: next(it))
+    frame = np.zeros((10, 10, 3), np.uint8)
+    for i in range(3):
+        m._maybe_new_s5_batch(frame)
+        assert not [d for d in diags if d.startswith("[disco]")], (
+            f"NO debe emitir mientras la grilla no se estabiliza (lectura {i+1}): {diags}")
+    m._maybe_new_s5_batch(frame)   # 4ª lectura == 3ª → estable → emite
+    preview = [d for d in diags if d.startswith("[disco]")]
+    assert len(preview) == 10, f"esperaba 10 tras estabilizar, hubo {len(preview)}: {preview}"
+    assert not any("slot ?" in d for d in preview), f"no debe quedar ningún '?': {preview}"
+
+
+def test_s5_preview_no_reemite_por_clic_jitter(monkeypatch):
+    """REGRESIÓN (QA 2026-07-10): clickear un disco para ver su detalle resalta su tile y mete
+    jitter de 1-2 badges al re-leer la grilla → NO es una tanda nueva y NO debe re-emitir las 10
+    líneas. Sólo re-afinar (≥`_S5_BATCH_MIN_DIFF` slots distintos por multiset) re-emite. Antes,
+    cada clic spameaba el preview completo."""
+    import app.core.monitor as mon
+    import app.core.parser_disc_s3 as P
+    diags = []
+    m = mon.Monitor(ocr=_NullOcr(), detector=None, on_diagnostic=diags.append)
+    A = [(s, "Salón") for s in (1, 1, 1, 2, 3, 5, 5, 5, 6, 6)]
+    A_jit = [(s, "Salón") for s in (1, 1, 1, 2, 3, 3, 5, 5, 6, 6)]   # 1 badge 5→3 (tile seleccionado)
+    B = [(s, "Salón") for s in (1, 1, 1, 1, 4, 4, 5, 6, 6, 6)]       # re-afinación real (multiset ≠)
+    seq = iter([A, A, A_jit, A_jit, B, B])
+    monkeypatch.setattr(P, "parse_s5_grid", lambda f, o: next(seq))
+    fr = np.zeros((10, 10, 3), np.uint8)
+
+    def _click_reset():   # un cambio de foco (clic/re-afinación) re-abre la evaluación de grilla
+        m._s5_grid_settled = False; m._s5_grid_pending = None; m._s5_grid_tries = 0
+
+    m._maybe_new_s5_batch(fr); m._maybe_new_s5_batch(fr)          # estabiliza batch A → emite
+    n_A = len([d for d in diags if d.startswith("[disco]")])
+    _click_reset(); m._maybe_new_s5_batch(fr); m._maybe_new_s5_batch(fr)   # clic (jitter) → NO re-emite
+    n_click = len([d for d in diags if d.startswith("[disco]")])
+    _click_reset(); m._maybe_new_s5_batch(fr); m._maybe_new_s5_batch(fr)   # re-afinación → re-emite
+    n_reaf = len([d for d in diags if d.startswith("[disco]")])
+    assert n_A == 10, n_A
+    assert n_click == 10, f"el jitter de 1 badge por clic NO debe re-emitir (hubo {n_click - n_A} de más)"
+    assert n_reaf == 20, f"la re-afinación real (multiset ≠) SÍ re-emite: {n_reaf}"
+
+
+def test_s5_preview_usa_nombre_limpio_del_set_evocado_s4(monkeypatch):
+    """El label del tile se trunca en la celda angosta → los nombres largos no resuelven desde ahí
+    (QA 2026-07-10: 'Baladadela ramayla...'). El preview usa el set EVOCADO en el selector S4, que lo
+    leyó completo y limpio. Simulamos labels truncados + `_s4_evoked_set` seteado por S4."""
+    import time
+    import app.core.monitor as mon
+    import app.core.parser_disc_s3 as P
+    diags = []
+    m = mon.Monitor(ocr=_NullOcr(), detector=None, on_diagnostic=diags.append)
+    m._s4_evoked_set = (25, "Balada de la rama y la espada", time.monotonic())   # lo que setea S4
+    trunc = [(1, "Baladadela ramayla"), (3, "Balada dela ramayla"), (4, "Baladadela ramayla"), (6, "Balada de la ramayla")]
+    monkeypatch.setattr(P, "parse_s5_grid", lambda f, o: trunc)
+    fr = np.zeros((10, 10, 3), np.uint8)
+    m._maybe_new_s5_batch(fr); m._maybe_new_s5_batch(fr)   # 2 lecturas iguales → estabiliza → emite
+    preview = [d for d in diags if d.startswith("[disco]")]
+    assert len(preview) == 4, preview
+    assert all("Balada de la rama y la espada" in d for d in preview), preview   # nombre canónico limpio
+    assert not any("Baladadela" in d for d in preview), preview                  # nada del label roto
 
 
 @pytest.mark.skipif(not (_S5 / "Tienda_musica_afinacion.png").exists(), reason="capturas S5 no presentes")

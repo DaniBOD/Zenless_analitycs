@@ -98,3 +98,47 @@ def test_s5_focado_slot_1_por_main():
     d = parse_disc_s5(_load("Tienda_musica_afinacion_4.png"), _paddle())
     assert d.slot == 1
     assert d.main_stat_canon == "HP" and d.main_unidad == "flat"
+
+
+def test_s5_monotone_slots_corrige_ruido():
+    """La grilla viene ordenada por slot ascendente → la DP monótona corrige badges imposibles
+    (QA 2026-07-10: '2' al final tras un '6', '3' tras un '5') y rellena '?' por vecinos, sin
+    romper lecturas limpias. Idea del usuario: si el anterior es 6, el siguiente es sí o sí 6."""
+    from app.core.parser_disc_s3 import _monotone_slots
+
+    def vecs(peaks, truth):
+        out = []
+        for p, t in zip(peaks, truth):
+            v = {p: 0.95}
+            if t != p:
+                v[t] = 0.85   # el slot correcto queda como 2ª opción plausible
+            out.append(v)
+        return out
+
+    truth = [1, 1, 1, 2, 3, 5, 5, 5, 6, 6]
+    assert _monotone_slots(vecs([1, 1, 1, 2, 3, 5, 3, 5, 6, 6], truth)) == truth   # 3 tras 5
+    assert _monotone_slots(vecs([1, 1, 1, 2, 3, 5, 5, 5, 2, 6], truth)) == truth   # 2 en medio
+    assert _monotone_slots(vecs([1, 1, 1, 2, 3, 5, 5, 5, 6, 2], truth)) == truth   # 2 al final tras 6
+    # badge ilegible (vector vacío) se rellena por monotonía, no queda en 0/'?'
+    assert _monotone_slots([{6: 0.9}, {}, {6: 0.9}]) == [6, 6, 6]
+    assert 0 not in _monotone_slots([{1: .9}, {2: .9}, {}, {6: .9}])
+    # lectura limpia no se altera
+    assert _monotone_slots(vecs(truth, truth)) == truth
+
+
+_LIVE_MSS = REPO / "app" / "tests" / "fixtures" / "s5_live_mss_salon_huracanado.png"
+
+
+@pytest.mark.skipif(not _LIVE_MSS.exists(), reason="captura viva mss no presente")
+def test_s5_grid_badge_tolerante_a_desplazamiento_captura_viva():
+    """REGRESIÓN (QA 2026-07-10, Salón huracanado): captura REAL por mss (2560×1440) — la app en
+    vivo. Los refs del matcher se cosecharon de screenshots del juego (2559×1439) → el crop fijo del
+    badge cae ~3px al lado del glifo y la fila 2 leía '?' (NCC 0.62). Con el barrido de offset del
+    badge se recupera a 0.91 y lee los 10 slots. Grilla esperada: 1,1,1,2,3,5,5,5,6,6."""
+    import cv2
+    import numpy as np
+    from app.core.parser_disc_s3 import parse_s5_grid
+    fr = cv2.imdecode(np.fromfile(str(_LIVE_MSS), np.uint8), cv2.IMREAD_COLOR)
+    slots = [s for s, _ in parse_s5_grid(fr, _paddle())]
+    assert slots == [1, 1, 1, 2, 3, 5, 5, 5, 6, 6], slots
+    assert 0 not in slots, f"quedó algún '?' (slot 0): {slots}"

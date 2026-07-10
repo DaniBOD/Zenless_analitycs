@@ -109,6 +109,14 @@ class SlotDigitMatcher:
         score/margen. Score = mejor NCC del residuo (∈ [-1, 1])."""
         return self.identify_raw(_raw_vec(crop_bgr))
 
+    def score_vector(self, crop_bgr: np.ndarray) -> dict[int, float]:
+        """Score NCC del residuo por cada dígito 1-6 (sin abstención), para decisiones con contexto
+        (p.ej. corrección monótona de la grilla S5). {} si el crop no produce residuo."""
+        q = self._residual(_raw_vec(crop_bgr))
+        if q is None or not self._refs:
+            return {}
+        return {d: max(float(q @ r) for r in vs) for d, vs in self._refs.items()}
+
     def identify_raw(self, raw: np.ndarray | None) -> tuple[int | None, float]:
         """Como `identify` pero desde un vector crudo (`_raw_vec`). Núcleo del scoring; separa la
         extracción del crop del matching (útil para el test leave-one-out)."""

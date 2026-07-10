@@ -394,6 +394,12 @@ _S5_BADGE_ROWS = (0.345, 0.552)   # centros y del badge por fila (más arriba qu
 _S5_BADGE_DX = 0.032              # offset del badge a la IZQUIERDA del centro de columna
 _S5_BADGE_W = 0.028
 _S5_BADGE_H = 0.045
+# Búsqueda de desplazamiento (± px) al leer el badge: los refs se cosecharon de screenshots del
+# juego (2559×1439) pero en vivo la app captura por mss (2560×1440) → el crop fijo cae ~3px al lado
+# del glifo fino y el NCC se desploma (QA 2026-07-10: fila 2 leía '?' a 0.62; con offset dx≈-3
+# recupera a 0.91). Barremos una ventanita y tomamos la mejor identificación. Robusto a la
+# diferencia de geometría fixture↔vivo y al jitter por-tile, sin re-cosechar refs.
+_S5_BADGE_SEARCH = 4
 
 _s5_slot_matcher = None
 _s5_slot_matcher_loaded = False
@@ -415,20 +421,106 @@ def _get_s5_slot_matcher():
 
 
 def _s5_badge_slot(frame: np.ndarray, ri: int, ci: int) -> int | None:
-    """Lee el slot del BADGE del tile (fila ri, col ci) con el matcher de S5. None si abstiene."""
+    """Lee el slot del BADGE del tile (fila ri, col ci) con el matcher de S5. None si abstiene.
+    Tolerante a desplazamiento: barre una ventanita de offsets (`_S5_BADGE_SEARCH`) y devuelve la
+    identificación de mejor score. El óptimo (badge bien encuadrado) da el NCC más alto → los
+    offsets espurios no ganan; a la vez recupera el corrimiento de geometría mss vivo vs refs."""
     try:
+        m = _get_s5_slot_matcher()
+        if m is None or m.n_refs == 0:
+            return None
         H, W = frame.shape[:2]
         cx = _S5_GRID_COLS[ci]
         ry = _S5_BADGE_ROWS[ri]
-        crop = frame[int((ry - _S5_BADGE_H / 2) * H):int((ry + _S5_BADGE_H / 2) * H),
-                     int((cx - _S5_BADGE_DX - _S5_BADGE_W / 2) * W):int((cx - _S5_BADGE_DX + _S5_BADGE_W / 2) * W)]
-        m = _get_s5_slot_matcher()
-        if m is None or m.n_refs == 0 or crop.size == 0:
-            return None
-        slot, _score = m.identify(crop)
-        return slot
+        bw = max(1, int(_S5_BADGE_W * W))
+        bh = max(1, int(_S5_BADGE_H * H))
+        cyc = int(ry * H)
+        cxc = int((cx - _S5_BADGE_DX) * W)
+        best_slot, best_score = None, -1.0
+        for dy in range(-_S5_BADGE_SEARCH, _S5_BADGE_SEARCH + 1):
+            for dx in range(-_S5_BADGE_SEARCH, _S5_BADGE_SEARCH + 1):
+                y0 = cyc - bh // 2 + dy
+                x0 = cxc - bw // 2 + dx
+                crop = frame[y0:y0 + bh, x0:x0 + bw]
+                if crop.size == 0:
+                    continue
+                slot, score = m.identify(crop)
+                if slot is not None and score > best_score:
+                    best_slot, best_score = slot, score
+        return best_slot
     except Exception:
         return None
+
+
+def _s5_badge_scores(frame: np.ndarray, ri: int, ci: int) -> dict[int, float]:
+    """Vector de scores NCC por dígito (1-6) del badge del tile (fila ri, col ci), al offset MEJOR
+    alineado (mismo barrido que `_s5_badge_slot`). {} si el matcher no está o el crop falla. Se usa
+    para la corrección monótona con confianza (no sólo el mejor dígito suelto)."""
+    try:
+        m = _get_s5_slot_matcher()
+        if m is None or m.n_refs == 0:
+            return {}
+        H, W = frame.shape[:2]
+        cx = _S5_GRID_COLS[ci]
+        ry = _S5_BADGE_ROWS[ri]
+        bw = max(1, int(_S5_BADGE_W * W))
+        bh = max(1, int(_S5_BADGE_H * H))
+        cyc = int(ry * H)
+        cxc = int((cx - _S5_BADGE_DX) * W)
+        best_sv: dict[int, float] = {}
+        best_peak = -1.0
+        for dy in range(-_S5_BADGE_SEARCH, _S5_BADGE_SEARCH + 1):
+            for dx in range(-_S5_BADGE_SEARCH, _S5_BADGE_SEARCH + 1):
+                y0 = cyc - bh // 2 + dy
+                x0 = cxc - bw // 2 + dx
+                crop = frame[y0:y0 + bh, x0:x0 + bw]
+                if crop.size == 0:
+                    continue
+                sv = m.score_vector(crop)
+                if not sv:
+                    continue
+                peak = max(sv.values())
+                if peak > best_peak:
+                    best_peak, best_sv = peak, sv
+        return best_sv
+    except Exception:
+        return {}
+
+
+def _monotone_slots(score_vectors: list[dict[int, float]], floor: float = -1.0) -> list[int]:
+    """Asigna a cada tile (en orden de lectura row-major) un slot 1-6 NO DECRECIENTE que maximiza la
+    suma de scores, por programación dinámica. La grilla de resultado de afinación viene ORDENADA
+    por slot ascendente → un badge ruidoso (p.ej. '2' tras un '6') es imposible y se corrige hacia
+    la mejor opción compatible con sus vecinos. Tiles sin score (badge ilegible) se rellenan por
+    monotonía desde los vecinos en vez de quedar en '?'. Idea del usuario (QA 2026-07-10)."""
+    n = len(score_vectors)
+    if n == 0:
+        return []
+    slots = (1, 2, 3, 4, 5, 6)
+    NEG = -1e9
+
+    def sc(i: int, k: int) -> float:
+        return score_vectors[i].get(k, floor)
+
+    dp = {k: sc(0, k) for k in slots}
+    back: list[dict[int, int | None]] = [{k: None for k in slots}]
+    for i in range(1, n):
+        cur: dict[int, float] = {}
+        bk: dict[int, int | None] = {}
+        best_val, best_j = NEG, slots[0]
+        for k in slots:                     # slots asc → prefijo óptimo j≤k acumulado incrementalmente
+            if dp[k] > best_val:
+                best_val, best_j = dp[k], k
+            cur[k] = sc(i, k) + best_val
+            bk[k] = best_j
+        dp = cur
+        back.append(bk)
+    k = max(slots, key=lambda s: dp[s])
+    seq = [0] * n
+    for i in range(n - 1, -1, -1):
+        seq[i] = k
+        k = back[i][k]
+    return seq
 
 
 def parse_s5_grid(frame: np.ndarray, ocr) -> list[tuple[int, str]]:
@@ -454,18 +546,24 @@ def parse_s5_grid(frame: np.ndarray, ocr) -> list[tuple[int, str]]:
         if abs(xc - _S5_GRID_COLS[ci]) > _S5_GRID_COL_TOL:
             continue
         cells.setdefault((ri, ci), []).append((yc, t))
-    out: list[tuple[int, str]] = []
+    # 1ª pasada: por cada tile ocupado, un vector de scores de slot. Del label "(N)" si el OCR lo
+    # trajo (anclaje fuerte); si no (el "(N)" fino se cae), del badge por NCC. 2ª pasada: la DP
+    # monótona resuelve la secuencia (grilla ordenada por slot asc) corrigiendo badges ruidosos.
+    entries: list[tuple[dict[int, float], str]] = []
     for key in sorted(cells):                     # (ri, ci) → orden de lectura row-major
         ri, ci = key
         toks = [t for _y, t in sorted(cells[key])]
         text = " ".join(toks).strip()
         if not text or _norm_key(text) == "empty":
             continue
-        m = _RE_SLOT_PAREN.search(text)
-        slot = int(m.group(1)) if m else 0
-        if slot == 0:
-            slot = _s5_badge_slot(frame, ri, ci) or 0   # el "(1)" fino se cae → leer el badge
         name = re.sub(r"\(\s*\d?\s*\)", "", text).strip()
-        if name:
-            out.append((slot, name))
-    return out
+        if not name:
+            continue
+        m = _RE_SLOT_PAREN.search(text)
+        if m and 1 <= int(m.group(1)) <= 6:
+            sv = {int(m.group(1)): 1.0}           # slot del label → anclaje de confianza máxima
+        else:
+            sv = _s5_badge_scores(frame, ri, ci)  # "(N)" caído → vector de scores del badge
+        entries.append((sv, name))
+    slots = _monotone_slots([sv for sv, _ in entries])
+    return [(slots[i], name) for i, (_sv, name) in enumerate(entries)]
