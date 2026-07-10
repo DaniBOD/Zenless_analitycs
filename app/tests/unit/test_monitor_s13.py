@@ -143,22 +143,26 @@ def test_s13_mismo_nodo_no_reemite_aunque_cambie_el_frame():
     assert len(nodos) == 1, f"esperaba 1 (mismo nodo), hubo {len(nodos)}: {nodos}"
 
 
-def test_s13_flujo_entre_5_screenshots_reales():
-    """Simula navegar entre los 5 nodos de los screenshots reales (OCR real) + volver al 1º:
+def _real_ocr_or_skip():
+    try:
+        from app.core.ocr_paddle import PaddleBackend
+        return PaddleBackend()
+    except Exception:
+        import pytest
+        pytest.skip("PaddleOCR no disponible")
+
+
+def test_s13_flujo_entre_screenshots_reales():
+    """Simula navegar entre los 6 nodos de los screenshots reales (OCR real) + volver al 1º:
     cada nodo distinto debe emitirse, incl. la re-captura del repetido. Un frame repetido
     consecutivo NO re-emite (gate de firma)."""
     import cv2
     _S13 = Path(__file__).resolve().parents[3] / "Documentacion" / "Screenshots_Triggers" / "Discos_Triggers" / "13_Seleccion_set_farmeo"
     files = sorted(_S13.glob("Ejemplo_*.png"))
-    if len(files) < 5:
+    if len(files) < 6:
         import pytest
         pytest.skip("screenshots S13 no presentes")
-    try:
-        from app.core.ocr_paddle import PaddleBackend
-        ocr = PaddleBackend()
-    except Exception:
-        import pytest
-        pytest.skip("PaddleOCR no disponible")
+    ocr = _real_ocr_or_skip()
 
     import app.core.monitor as mon
     from app.core.farm_session import FarmSession
@@ -168,8 +172,8 @@ def test_s13_flujo_entre_5_screenshots_reales():
     frs = [cv2.imdecode(np.fromfile(str(f), np.uint8), cv2.IMREAD_COLOR) for f in files]
     st = ScreenState("S13", 1.0, "s13_set")
 
-    # Flujo: 1,2,3,4,5, luego repetir el 1 (vuelvo a un nodo ya visto).
-    orden = [0, 1, 2, 3, 4, 0]
+    # Flujo: 1,2,3,4,5,6, luego repetir el 1 (vuelvo a un nodo ya visto).
+    orden = [0, 1, 2, 3, 4, 5, 0]
     for i in orden:
         m._dispatch_state(frs[i], st)
     # Un frame repetido consecutivo (mismo que el último) → gate de firma lo suprime.
@@ -178,11 +182,40 @@ def test_s13_flujo_entre_5_screenshots_reales():
     nodos = [d for d in diags if d.startswith("[farmeo] nodo:")]
     esperados = [
         "La ley de hierro y los rebeldes", "Colmillo y hacha", "El loco y el adepto",
-        "El cazador y la bestia", "Engaños y baluartes", "La ley de hierro y los rebeldes",
+        "El cazador y la bestia", "Engaños y baluartes", "Un monstruo y un visitante extraños",
+        "La ley de hierro y los rebeldes",
     ]
     assert len(nodos) == len(esperados), f"esperaba {len(esperados)}, hubo {len(nodos)}: {nodos}"
     for got, exp in zip(nodos, esperados):
         assert exp in got, f"esperaba '{exp}' en '{got}'"
+
+
+def test_s13_titulo_largo_de_dos_lineas_se_lee_completo():
+    """Regresión (bug QA 2026-07-10): los títulos largos envuelven a DOS líneas en S13
+    ("Un monstruo y un visitante extraños"). El ROI de 1 línea solo leía la 2ª ("extraños")
+    → no matcheaba. Con el ROI ampliado, el OCR real lee ambas líneas y el nodo se predice."""
+    import cv2
+    _S13 = Path(__file__).resolve().parents[3] / "Documentacion" / "Screenshots_Triggers" / "Discos_Triggers" / "13_Seleccion_set_farmeo"
+    ej6 = _S13 / "Ejemplo_6.png"
+    if not ej6.exists():
+        import pytest
+        pytest.skip("Ejemplo_6.png no presente")
+    ocr = _real_ocr_or_skip()
+
+    import app.core.monitor as mon
+    from app.core.farm_session import FarmSession
+    diags: list[str] = []
+    m = mon.Monitor(ocr=ocr, detector=None, on_diagnostic=diags.append,
+                    farm_session=FarmSession(), farm_node_catalog=_catalog())
+    frame = cv2.imdecode(np.fromfile(str(ej6), np.uint8), cv2.IMREAD_COLOR)
+    m._dispatch_state(frame, ScreenState("S13", 1.0, "s13_set"))
+
+    nodos = [d for d in diags if d.startswith("[farmeo] nodo:")]
+    assert len(nodos) == 1, f"esperaba predecir el nodo de 2 líneas, diags={diags}"
+    assert "Un monstruo y un visitante extraños" in nodos[0]
+    # Y quedó guardado en FarmSession con sus 2 sets.
+    pred = m._farm_session.predicted(time.monotonic())
+    assert pred is not None and "Swing Jazz" in {en for _sid, en in pred[1]}
 
 
 def test_s13_reset_al_salir_permite_reemitir():

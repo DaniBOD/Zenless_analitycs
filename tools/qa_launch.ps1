@@ -36,6 +36,9 @@ param(
     [switch]$NoFocusGate,    # QA: desactiva el gate anti-FP por foco (DANIBOD_NO_FOCUS_GATE) →
                              # sigue capturando aunque el juego no esté al frente (para poder
                              # inspeccionar/loguear sin que el alt-tab pause la captura).
+    [switch]$NoAutoStart,    # QA: arranca la app en REPOSO (DANIBOD_NO_AUTOSTART) → el watcher
+                             # de ZZZ queda OFF y la captura NO empieza sola aunque el juego esté
+                             # abierto. El usuario la activa a mano con "Iniciar captura".
     [switch]$RestoreFarm     # QA: al arrancar, recarga el contexto de farmeo (última predicción
                              # S13) desde el breadcrumb en disco (DANIBOD_RESTORE_FARM). Sirve
                              # cuando se reinicia la app para aplicar un fix estando en pleno
@@ -139,6 +142,12 @@ if ($NoFocusGate) {
 $farmState = Join-Path $env:LOCALAPPDATA "DaniBOD_ZZZ_Analytics\farm_state_qa.json"
 $env:DANIBOD_FARM_STATE = $farmState
 Write-Host "[qa_launch] DANIBOD_FARM_STATE = $farmState (breadcrumb de predicción S13)"
+if ($NoAutoStart) {
+    $env:DANIBOD_NO_AUTOSTART = "1"
+    Write-Host "[qa_launch] DANIBOD_NO_AUTOSTART = 1 (arranca en reposo: la captura NO empieza sola)"
+} else {
+    Remove-Item Env:\DANIBOD_NO_AUTOSTART -ErrorAction SilentlyContinue
+}
 if ($RestoreFarm) {
     $env:DANIBOD_RESTORE_FARM = "1"
     Write-Host "[qa_launch] DANIBOD_RESTORE_FARM = 1 (recarga el contexto de farmeo previo al arrancar)"

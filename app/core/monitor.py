@@ -73,8 +73,12 @@ _HARVEST_STATES = {"S8", "S17", "S18", "S19"}
 _HARVEST_CAP = 4
 
 # ROI normalizada (x, y, rw, rh) del título del nodo en S13 (selección de set a farmear).
-# Calibrada en vivo 2026-07-08 (OCR leyó el título exacto).
-_S13_TITLE_ROI = (0.43, 0.18, 0.35, 0.06)
+# Calibrada en vivo 2026-07-08; re-ampliada 2026-07-10: los títulos LARGOS envuelven a DOS
+# líneas (p.ej. "Un monstruo y un visitante extraños") y el ROI de 1 línea solo agarraba la
+# 2ª → OCR leía "extraños" y no matcheaba. El techo sube a 0.165 y el alto crece a 0.08 para
+# cubrir ambas líneas [0.165–0.245]; el subtítulo "Atributos potenciados" (y≥0.258) queda
+# excluido. PaddleOCR une las 2 líneas → título completo. Ver Ejemplo_6.png (folder 13).
+_S13_TITLE_ROI = (0.43, 0.165, 0.35, 0.08)
 # Gate RNF-06: diff medio de la firma 32×32 del ROI del título por debajo del cual se
 # considera el MISMO nodo en pantalla → no re-OCR. Espejo de _MENU_SIG_MAX (barra de nombre).
 _S13_SIG_MAX = 5.0

@@ -492,8 +492,16 @@ class MainWindow(QMainWindow):
                 if enabled else "[auto] Watcher de ZZZ desactivado."
             )
         )
-        # Habilitar auto-detect por default
-        self._controller.set_auto_detect(True)
+        # Habilitar auto-detect por default. Override de QA: `DANIBOD_NO_AUTOSTART=1`
+        # arranca la app en reposo (watcher OFF) → la captura NO empieza sola aunque ZZZ
+        # esté abierto; el usuario la activa a mano cuando quiere (botón "Iniciar captura").
+        if os.environ.get("DANIBOD_NO_AUTOSTART"):
+            self._live_panel.append_log(
+                "[auto] Arranque en REPOSO (DANIBOD_NO_AUTOSTART=1) — la captura NO arranca sola. "
+                "Usá 'Iniciar captura' cuando quieras empezar."
+            )
+        else:
+            self._controller.set_auto_detect(True)
 
         # Cableado controller → header indicator
         self._controller.monitor_started.connect(lambda: self._set_header_monitor("ON",  COLORS["ok"]))
