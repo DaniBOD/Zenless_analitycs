@@ -134,6 +134,15 @@ class MonitorController(QObject):
             self.error_occurred.emit(f"Error inesperado: {exc}")
             return
 
+        # Tracking PRE→POST del modal de mejora (S10). Display-only (no escribe DB);
+        # emite diagnósticos por el mismo sink que el resto del monitor.
+        from app.core.sync_upgrade import UpgradeSyncer
+        self._upgrade_syncer = UpgradeSyncer(
+            ocr=self._ocr,
+            on_diagnostic=self._on_diagnostic_from_monitor,
+            set_repo=self._disc_set_repo,
+        )
+
         from app.core.monitor import Monitor
         self._monitor = Monitor(
             ocr=self._ocr,
@@ -151,6 +160,7 @@ class MonitorController(QObject):
             farm_node_catalog=self._farm_node_catalog, # predicción de sets en S13
             set_badge_matcher=self._set_badge_matcher, # set por badge del disco en S2
             capture_only_focused=_capture_only_focused(),  # gate anti-FP por foco de ventana
+            upgrade_syncer=self._upgrade_syncer,      # tracking PRE→POST modal upgrade (S10)
         )
         self._monitor.start()
         self.monitor_started.emit()
@@ -432,6 +442,14 @@ class MonitorController(QObject):
         identificado por herencia de Atributos base (anchor) o por el matcher de
         avatar (switch directo). Si no logra identificarlo, lo avisa sin mentir.
         """
+        # El menú de personajes (S15) reusa este callback solo para mostrar el PJ, pero NO es
+        # la pantalla de Equipamiento: el monitor ya loguea "[S15] Menú de personajes reconocido".
+        # Emitimos una única línea con etiqueta correcta y salimos (evita el confuso
+        # "S15 — Equipamiento reconocida" y el origen mal atribuido "heredado de Atributos base").
+        if source == "menu":
+            if identified and agent_name:
+                self.log_message.emit(f"[reconocido] {agent_name} (del menú de personajes)")
+            return
         label = "Habilidades" if state.code == "S19" else "Equipamiento"
         if identified and agent_name:
             if source == "avatar":

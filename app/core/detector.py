@@ -42,7 +42,9 @@ THRESHOLD_BY_STATE: dict[str, float] = {
     "S3":  0.85,   # Modal detalle drop — crítico, evitar FPs
     "S6":  0.85,   # Tienda panel — crítico
     "S7":  0.85,   # Tienda fullscreen — crítico
-    "S10": 0.85,   # Modal upgrade — crítico
+    "S10": 0.80,   # Modal upgrade — template = barra botones "Añadir/Mejorar" (estable entre
+                   #   niveles, única de S10). Los S10 reales matchean ≥0.85, los NON-S10 ≤0.50 →
+                   #   0.80 da margen para la deriva de captura viva (mss 2560×1440) sin FP.
     "S2":  0.80,   # Resultado desafío — anti-FP. El template s2 es una banda superior dominada
                    #   por fondo oscuro → sobre-matchea bandas oscuras (S13 ~0.90, ciertas guías
                    #   ~0.72). Umbral 0.80 las excluye. El evento doble-recompensa (que baja el
@@ -62,6 +64,9 @@ THRESHOLD_BY_STATE: dict[str, float] = {
     "S16": 0.80,   # Detalle set disco — anti-FP
     "S1":  0.70,   # Patrulla — apenas para saber que no es capturable
     "S4":  0.70,   # Tienda selector — transición
+    "S20": 0.78,   # Popup "Materiales recuperados" (vuelto post-mejora) — título centrado único.
+                   #   Target matchea 1.00, los NON-S20 (S10/S17/pre-max) ≤0.63 → 0.78 con margen.
+                   #   NON_CAPTURE + acción inocua (refresca el pendiente) → un FP no hace daño.
     "S12": 0.0,    # Sin coincidencia — no aplica
 }
 
@@ -78,9 +83,9 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     "S7":  {"S12", "S4", "S6"},
     "S8":  {"S17", "S18", "S19", "S12", "S15", "S9"},
     "S9":  {"S8", "S12", "S17", "S16"},
-    "S10": {"S12", "S9", "S3"},
+    "S10": {"S12", "S9", "S3", "S20"},
     "S11": {"S12", "S9", "S3"},
-    "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18", "S19"},
+    "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18", "S19", "S20"},
     "S13": {"S12", "S14", "S1", "S18"},
     "S14": {"S12", "S1", "S13", "S15", "S18"},
     "S15": {"S8", "S18", "S19", "S12", "S14"},
@@ -88,6 +93,7 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     "S17": {"S8", "S18", "S19", "S12", "S15", "S9"},
     "S18": {"S8", "S19", "S12", "S15", "S17"},
     "S19": {"S8", "S18", "S12", "S15", "S17"},
+    "S20": {"S12", "S17", "S9", "S8", "S15", "S10"},   # tras confirmar el vuelto → inventario
 }
 
 STATE_DESCRIPTIONS: dict[str, str] = {
@@ -110,6 +116,7 @@ STATE_DESCRIPTIONS: dict[str, str] = {
     "S17": "Equipamiento PJ — vista detalle disco (Personalización pistas)",
     "S18": "Perfil agente — pestaña Atributos base",
     "S19": "Perfil agente — pestaña Habilidades (sin extracción)",
+    "S20": "Materiales recuperados (vuelto tras mejorar disco)",
 }
 
 # Estados que SÍ tienen un disco visible para parsear
@@ -119,7 +126,7 @@ UPGRADE_STATES: set[str] = {"S10"}
 # Estados sin disco (solo logging informativo)
 NON_CAPTURE_STATES: set[str] = {
     "S1", "S2", "S4", "S8", "S9",
-    "S11", "S12", "S13", "S14", "S15", "S16", "S19",
+    "S11", "S12", "S13", "S14", "S15", "S16", "S19", "S20",
 }
 
 # Estados donde hay stats de agente visibles (Atributos base)
@@ -675,23 +682,27 @@ def _verify_s3(frame: np.ndarray) -> tuple[bool, str | None]:
 
 
 def _verify_s10(frame: np.ndarray) -> tuple[bool, str | None]:
-    """S10: verificar presencia de barra EXP verde + botón 'Mejorar'."""
+    """S10: confirmar el modal de upgrade de forma NIVEL-INDEPENDIENTE.
+
+    El check viejo exigía una barra EXP VERDE (H~45-85) en el centro, pero a nivel 0 el
+    pill de nivel es GRIS (no verde) → rechazaba S10 reales recién abiertos. Además apuntaba
+    a una zona que no corresponde al layout actual (panel corrido a la derecha). El template
+    nuevo (barra de botones "Añadir todo | Mejorar") ya separa S10 de todo lo demás con margen
+    enorme (S10 ≥0.85 vs NON ≤0.50), así que acá basta una confirmación estructural barata que
+    valga en CUALQUIER nivel: la barra de nivel chevron ocupa una franja clara y saturada en
+    y≈0.51 del panel derecho (gris a nivel 0, verde si >0). Se acepta si hay suficiente
+    contenido brillante (no-fondo) ahí; nunca bloquea por color."""
     try:
         h, w = frame.shape[:2]
-        # Zona de la barra EXP
-        exp_roi = frame[
-            int(0.50 * h):int(0.54 * h),
-            int(0.35 * w):int(0.65 * w)
-        ]
-        if exp_roi.size == 0:
+        bar = frame[int(0.495 * h):int(0.535 * h), int(0.49 * w):int(0.84 * w)]
+        if bar.size == 0:
             return True, None
-        hsv = cv2.cvtColor(exp_roi, cv2.COLOR_BGR2HSV)
-        # Verde: H ~45-85
-        green_mask = cv2.inRange(hsv, np.array([35, 40, 40]), np.array([90, 255, 255]))
-        green_ratio = green_mask.sum() / green_mask.size
-        if green_ratio > 0.05:
-            return True, "exp_bar_verde"
-        return False, "sin_barra_exp"
+        gray = cv2.cvtColor(bar, cv2.COLOR_BGR2GRAY)
+        # La barra chevron (pills + texto) es notablemente más clara que el fondo del modal.
+        bright_ratio = float((gray > 90).mean())
+        if bright_ratio > 0.12:
+            return True, "barra_nivel"
+        return True, "s10_template"   # el template ya es autoritativo; no bloquear
     except Exception:
         return True, None
 
@@ -1189,6 +1200,7 @@ _STATE_TEMPLATES: list[dict] = [
     {"code": "S9",  "template": "s9_inventario_general.png",        "desc": "Inventario general de discos"},
     {"code": "S11", "template": "s11_desmontaje.png",               "desc": "Pantalla desmontaje"},
     {"code": "S10", "template": "s10_modal_upgrade.png",            "desc": "Modal upgrade"},
+    {"code": "S20", "template": "s20_materiales_recuperados.png",   "desc": "Materiales recuperados (vuelto post-mejora)"},
     {"code": "S8",  "template": "s8_agente_driver.png",             "desc": "Equipamiento disco personaje (vista previa)"},
     {"code": "S3",  "template": "s3_modal_detalle_drop.png",        "desc": "Modal detalle drop (post-farmeo)"},
     {"code": "S6",  "template": "s6_tienda_detalle_panel.png",      "desc": "Tienda musica panel"},

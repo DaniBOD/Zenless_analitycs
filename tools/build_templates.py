@@ -89,10 +89,13 @@ TEMPLATES = [
     },
     {
         "name": "s10_modal_upgrade.png",
-        "source": "05_Upgrade_PRE_nivel0/Ejemplo_1.png",
-        # Barra EXP verde + zona del nivel (parte inferior del modal)
-        "roi": [0.30, 0.38, 0.40, 0.08],
-        "description": "S10 — barra EXP modal upgrade",
+        "source": "07_Upgrade_POST_animacion_confirmacion/Ejemplo_1(detallado).png",
+        # Barra de botones "Añadir todo | Mejorar" (parte inferior del modal). Es la región
+        # ESTABLE entre estados (nivel 0/3/6/9/12/MAX) y ÚNICA de S10 (no aparece en S17/S7):
+        # matchea todos los S10 ≥0.85 y los NON-S10 ≤0.50 (recalibrado 2026-07-10; el ROI viejo
+        # apuntaba a una barra EXP verde inexistente en este layout → caía a S12).
+        "roi": [0.60, 0.82, 0.32, 0.09],
+        "description": "S10 — barra botones Añadir/Mejorar modal upgrade",
     },
     {
         "name": "s11_desmontaje.png",
@@ -100,6 +103,15 @@ TEMPLATES = [
         # Header con título "Desmontaje" o botón principal — franja superior
         "roi": [0.02, 0.04, 0.35, 0.06],
         "description": "S11 — header desmontaje",
+    },
+    {
+        "name": "s20_materiales_recuperados.png",
+        "source": "07_Upgrade_POST_animacion_confirmacion/Ejemplo_1(vuelto_materiales).png",
+        # Popup "Materiales recuperados" (vuelto de sobrantes al MAXEAR): título centrado
+        # sobre la banda oscura del modal. Único de este popup post-upgrade; sirve de ancla
+        # "mejora completada" para refrescar el pendiente PRE→POST mientras se muestra.
+        "roi": [0.39, 0.37, 0.22, 0.055],
+        "description": "S20 — título 'Materiales recuperados' (vuelto post-mejora)",
     },
     {
         "name": "s7_tienda_detalle_full.png",

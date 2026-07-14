@@ -733,7 +733,13 @@ class Monitor:
                 # un disco que no madura en el 1er frame (p.ej. slot-OCR falla → slot=0) quedaba
                 # estancado sin emitir (QA 2026-07-09). El gate _s3_emitted corta el re-OCR al
                 # emitir; re-extraer da más chances de leer bien el slot.
-                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9", "S13", "S3", "S4", "S5")
+                # S10 (modal de mejora): CONTINUO para trackear la subida de nivel PRE→POST. Al
+                # entrar dispara el PRE por transición, pero el "Mejorar" NO cambia de pantalla →
+                # sin re-despacho, `on_s10_update` nunca vería el nuevo nivel (QA 2026-07-10). El
+                # gate por firma de la barra de nivel evita re-OCR mientras no cambie.
+                # S20 (popup vuelto de materiales): CONTINUO para refrescar el timer del pendiente
+                # cada ciclo mientras el popup se muestra (evita que expire por la espera del click).
+                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9", "S13", "S3", "S4", "S5", "S10", "S20")
                 should_dispatch = forced or (
                     elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
                 )
@@ -882,7 +888,7 @@ class Monitor:
             self._s5_grid_pending = None
             self._s5_grid_settled = False
             self._s5_grid_tries = 0
-        self._handle_upgrade(frame, state)
+        self._handle_upgrade(frame, state, prev_code)
         # Menú de personajes (Fase M.1): al salir de S15, olvidar la firma del nombre y del
         # log → re-entrar re-identifica y re-loguea. Barato (set a None cada frame no-S15).
         if state.code != "S15":
@@ -1243,10 +1249,12 @@ class Monitor:
             except Exception:
                 log.debug("on_diagnostic S13 falló", exc_info=True)
 
-    def _handle_upgrade(self, frame, state: ScreenState) -> None:
+    def _handle_upgrade(self, frame, state: ScreenState, prev_code: str | None) -> None:
+        """Enruta el frame S10 al UpgradeSyncer (PRE al entrar, diff al subir nivel, resumen al
+        salir). `prev_code` DEBE ser el estado del ciclo anterior real (viene de `_dispatch_state`,
+        NO de `self._last_state`, que ya fue pisado por `_notify_state_change` antes del dispatch)."""
         if self._upgrade_syncer is None:
             return
-        prev_code = self._last_state.code if self._last_state else ""
         if state.code == "S10":
             if prev_code != "S10":
                 self._upgrade_syncer.on_s10_enter(frame)
@@ -1254,6 +1262,11 @@ class Monitor:
                 self._upgrade_syncer.on_s10_update(frame)
         elif prev_code == "S10":
             self._upgrade_syncer.on_s10_exit()
+        # Popup "Materiales recuperados" (vuelto post-mejora): mantiene vivo el pendiente
+        # mientras se muestra (exige click manual → demora la S17). S20 es continuo → refresca
+        # el timer cada ciclo; el log sale una sola vez (edge en el syncer).
+        if state.code == "S20":
+            self._upgrade_syncer.on_material_refund()
 
     @staticmethod
     def _s17_disc_signature(frame):
@@ -1624,6 +1637,17 @@ class Monitor:
         ceiling = self._disc_agg_cycles >= _S17_AGG_MAX_CYCLES
         if not (mature or ceiling):
             return
+        # Confirmación de UPGRADE — DESACOPLADA de la resolución del DUEÑO. El resumen PRE→POST
+        # compara stats; no necesita saber quién equipa el disco. Antes colgaba de `_emit_s17_disc`,
+        # que está gateado por el warming del dueño: al volver del popup S20 el disco viene SIN latch
+        # y con badge INCIERTO → warming eterno → el resumen NUNCA salía (QA 2026-07-14). En cuanto
+        # el disco MADURA (rolls asentados), confirmamos el pendiente que matchee (set+slot). No-op
+        # sin pendiente. La emisión normal (log/on_disc/dueño) sigue su curso abajo.
+        if self._upgrade_syncer is not None:
+            try:
+                self._upgrade_syncer.on_post_upgrade_disc(merged)
+            except Exception:
+                log.debug("on_post_upgrade_disc (s17) falló", exc_info=True)
         # 5R.L.6: maduró pero el dueño quedó INCIERTO y aún no juntamos muestras → DIFERIR la
         # emisión y dejar que el loop rápido caliente el voto (re-chequeo a _S17_WARM_CADENCE_MS,
         # ver run()). Los equipados (latch) y los ya-votados pasan derecho (resolved=True).

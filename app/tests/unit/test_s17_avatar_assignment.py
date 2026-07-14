@@ -797,7 +797,7 @@ def test_retroceso_s17_a_s8_hereda_pj(monkeypatch):
     # si NO se heredara, el matcher cambiaría el latch a 'OtroPJ'
     monkeypatch.setattr(m._identifier, "identify", lambda f: ("OtroPJ", 0.99))
     monkeypatch.setattr(m, "_process_agent_detail_continuous", lambda f, s: None)
-    monkeypatch.setattr(m, "_handle_upgrade", lambda f, s: None)
+    monkeypatch.setattr(m, "_handle_upgrade", lambda f, s, p=None: None)
     m._last_detail_sig = ("S8", "Burnice", True, "avatar")  # firma previa (no cambiaría)
     m._dispatch_state(np.zeros((1440, 2560, 3), np.uint8), ScreenState("S8", 0.9, "tmpl"))
     assert m._agent_anchor_x == 0.123      # re-anclado a la posición actual
@@ -1184,6 +1184,39 @@ def test_s17_warmup_difiere_emision_si_dueno_incierto(monkeypatch):
     m._s17_owner_passes = mon._S17_OWNER_MIN_SAMPLES
     m._process_disc_s17_continuous(None, st)
     assert len(emitted) == 1 and m._s17_warming is False
+
+
+def test_s17_confirma_upgrade_aunque_dueno_incierto(monkeypatch):
+    """REGRESIÓN (QA 2026-07-14): al volver del popup S20 (vuelto de materiales), el disco maxeado
+    viene SIN latch y con badge INCIERTO → la EMISIÓN queda en warming del dueño. La confirmación
+    del UPGRADE (resumen PRE→POST) NO debe depender de eso: compara stats, no dueño. Debe disparar
+    al MADURAR el disco, aunque `_on_disc` (emisión) se difiera. Antes NO salía nunca el resumen."""
+    from app.core.detector import ScreenState
+    import numpy as np
+
+    class _SpySyncer:
+        def __init__(self):
+            self.confirmed = []
+        def on_post_upgrade_disc(self, disc):
+            self.confirmed.append(disc)
+
+    emitted = []
+    m = _monitor()
+    m._on_disc = lambda disc, st: emitted.append(disc)
+    spy = _SpySyncer()
+    m._upgrade_syncer = spy
+    sig = (np.zeros((48, 24), np.float32), np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
+    monkeypatch.setattr(m, "_s17_disc_signature", lambda frame: sig)
+    monkeypatch.setattr(m, "_assign_s17_pj", lambda disc, face: None)   # dueño INCIERTO (no resuelve)
+    monkeypatch.setattr("app.core.monitor.parse_disc_s17_full",
+                        lambda frame, ocr: (_disc_full(), None))
+    st = ScreenState("S17", 1.0, "tmpl")
+    m._process_disc_s17_continuous(None, st)
+    # La EMISIÓN se difiere (warming por dueño incierto)…
+    assert emitted == [] and m._s17_warming is True
+    # …pero la CONFIRMACIÓN del upgrade ya disparó al madurar (desacoplada del dueño).
+    assert len(spy.confirmed) == 1
+    assert (spy.confirmed[0].set_name_canon or spy.confirmed[0].set_name_raw) == "Jazz caótico"
 
 
 def test_s17_warmup_no_difiere_equipado(monkeypatch):
