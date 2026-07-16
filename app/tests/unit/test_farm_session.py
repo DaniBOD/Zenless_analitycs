@@ -138,3 +138,41 @@ def test_set_prediction_sin_state_path_no_escribe(tmp_path):
     fs = FarmSession(window_s=600.0)   # sin state_path
     fs.set_prediction("X", [(1, "A"), (2, "B")], ts=100.0)
     assert list(tmp_path.iterdir()) == []
+
+
+# --- usos de batería (S21) -----------------------------------------------
+
+
+def test_usos_round_trip():
+    """S21 lee 'Cantidad consumida × N' → B lo consulta para el denominador de 'uso 2/4'."""
+    fs = FarmSession(window_s=600.0)
+    fs.set_usos(4, ts=100.0)
+    assert fs.usos(ts=100.0) == 4
+
+
+def test_usos_expira_con_la_ventana():
+    fs = FarmSession(window_s=600.0)
+    fs.set_usos(4, ts=100.0)
+    assert fs.usos(ts=700.1) is None
+
+
+def test_usos_sin_leer_es_none():
+    assert FarmSession(window_s=600.0).usos(ts=0.0) is None
+
+
+def test_s21_arma_el_gate():
+    """Con baterías NO hay S14: si S21 no armara, la ventana podría expirar durante el
+    auto-combate (varios minutos ×4) y el 'Obtenido' llegaría sin predicción de sets."""
+    fs = FarmSession(window_s=600.0)
+    fs.on_state("S21", ts=100.0)
+    assert fs.is_armed(ts=100.0)
+
+
+def test_usos_no_se_persiste(tmp_path):
+    """El breadcrumb de QA solo guarda nodo+sets; los usos son del momento."""
+    p = tmp_path / "farm_state.json"
+    fs = FarmSession(window_s=600.0, state_path=p)
+    fs.set_prediction("X", [(1, "A")], ts=100.0)
+    fs.set_usos(3, ts=100.0)
+    import json
+    assert "usos" not in json.loads(p.read_text(encoding="utf-8"))

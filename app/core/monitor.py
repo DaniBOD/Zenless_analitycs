@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -87,6 +88,18 @@ _S13_TITLE_ROI = (0.43, 0.165, 0.35, 0.08)
 # Gate RNF-06: diff medio de la firma 32×32 del ROI del título por debajo del cual se
 # considera el MISMO nodo en pantalla → no re-OCR. Espejo de _MENU_SIG_MAX (barra de nombre).
 _S13_SIG_MAX = 5.0
+
+# ROIs normalizadas (x, y, rw, rh) del modal de USOS de batería (S21), calibradas 2026-07-16
+# contra los 4 fixtures (OCR limpio en los 4).
+_S21_USOS_ROI = (0.320, 0.548, 0.360, 0.042)    # barra "Cantidad consumida × N"
+_S21_STOCK_ROI = (0.400, 0.395, 0.190, 0.045)   # "Batería etérea × 8" (stock disponible)
+_S21_SIG_MAX = 5.0
+# El regex ANCLA en "consumida" a propósito: el modal tiene otro "× 8" (el stock) en el mismo
+# eje vertical y un "1 … 4" de slider debajo. Un `×\s*(\d)` suelto leería el número equivocado
+# si el ROI se corre — un error silencioso, que es justo lo que RNF-02 prohíbe.
+# El "×" (U+00D7) sale del OCR como 'x' o '*' → la clase de caracteres es obligatoria.
+_RE_S21_USOS = re.compile(r"consumida\s*[x×*]\s*(\d+)", re.I)
+_RE_S21_STOCK = re.compile(r"[x×*]\s*(\d+)\s*$")
 
 # Guarda de asignación S17 (latch + avatar). El PJ asignado a un disco equipado
 # sale del LATCH (PJ cuya pantalla se ve, ya confiable); el avatar circular S17 se
@@ -537,6 +550,11 @@ class Monitor:
         # `_s13_last_sig` gatea el re-OCR (RNF-06); `_s13_last_node` deduplica la emisión.
         self._s13_last_sig = None
         self._s13_last_node: str | None = None
+        # S21 (modal de usos de batería): previa display-only EDGE-triggered por valor de N.
+        # Se re-emite al mover el slider (sigue siendo S21). `_s21_last_sig` gatea el re-OCR
+        # (RNF-06); `_s21_last_usos` deduplica la emisión.
+        self._s21_last_sig = None
+        self._s21_last_usos: int | None = None
 
         # S4 (selector tienda música): predicción display-only edge-triggered por (set, slot).
         # `_s4_last_sig` gatea el re-OCR del género (RNF-06); `_s4_last_key` deduplica la emisión;
@@ -882,6 +900,9 @@ class Monitor:
         if state.code != "S13":
             self._s13_last_sig = None
             self._s13_last_node = None
+        if state.code != "S21":
+            self._s21_last_sig = None
+            self._s21_last_usos = None
         if state.code != "S4":
             self._s4_last_sig = None
             self._s4_last_key = None
@@ -973,6 +994,14 @@ class Monitor:
             # dropea (display-only). La predicción se guarda en FarmSession para restringir
             # el matcher de badges en S2. No persiste ni puntúa.
             self._process_s13_node_title(frame, state)
+            self._processed_disc_state_code = None
+            self._reported_agent_stats_state_code = None
+            self._agent_stats_screen_logged = False
+        elif state.code == "S21":
+            # Modal de usos de batería: OCR del nº de corridas a lanzar con el auto-combate
+            # (display-only). Se guarda en FarmSession para que el "Obtenido" posterior sepa
+            # cuántos usos esperar. No persiste ni puntúa.
+            self._process_s21_usos(frame, state)
             self._processed_disc_state_code = None
             self._reported_agent_stats_state_code = None
             self._agent_stats_screen_logged = False
@@ -1271,6 +1300,92 @@ class Monitor:
                 self._on_diagnostic(msg)
             except Exception:
                 log.debug("on_diagnostic S13 falló", exc_info=True)
+
+    @staticmethod
+    def _s21_usos_signature(frame):
+        """Firma 32×32 gris del ROI de la barra de usos (S21), sin OCR (RNF-06). Gatea el
+        re-OCR: mover el slider cambia el dígito Y la perilla, así que la firma se mueve
+        cuando hay algo nuevo que leer. None si no se puede."""
+        if frame is None or getattr(frame, "size", 0) == 0:
+            return None
+        try:
+            import cv2
+            h, w = frame.shape[:2]
+            x, y, rw, rh = _S21_USOS_ROI
+            sub = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
+            if sub.size == 0:
+                return None
+            return cv2.cvtColor(
+                cv2.resize(sub, (32, 32), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
+            ).astype(np.float32)
+        except Exception:
+            return None
+
+    def _ocr_s21_roi(self, frame, roi, rx) -> int | None:
+        """OCR de una ROI del modal S21 → el entero que capture `rx`, o None si no matchea."""
+        try:
+            h, w = frame.shape[:2]
+            x, y, rw, rh = roi
+            crop = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
+            if crop.size == 0:
+                return None
+            text, _conf = self._ocr.text(crop, psm=7, lang="spa")
+        except Exception:
+            log.exception("Error OCR ROI S21")
+            return None
+        m = rx.search(text or "")
+        return int(m.group(1)) if m else None
+
+    def _process_s21_usos(self, frame, state: ScreenState) -> None:
+        """Modal de usos de batería (S21): OCR de "Cantidad consumida × N" → cuántas corridas
+        va a lanzar el auto-combate. Se guarda en `FarmSession` (el "Obtenido" posterior lo usa
+        como denominador de "uso 2/4") y se emite la previa cruzándolo con el nodo predicho en
+        S13. Display-only: no persiste ni puntúa.
+
+        EDGE-triggered por VALOR (NO 1× por entrada a S21): mover el slider cambia N sin salir
+        del modal, así que se re-emite cada vez que N cambia. Gate RNF-06: solo re-OCR si la
+        firma del ROI cambió. Se resetea al salir de S21 (ver _dispatch_state)."""
+        if self._farm_session is None:
+            return
+        # Gate de re-OCR: si la barra en pantalla no cambió, no re-leer (RNF-06).
+        sig = self._s21_usos_signature(frame)
+        if (sig is not None and self._s21_last_sig is not None
+                and self._sig_component_diff(sig, self._s21_last_sig) <= _S21_SIG_MAX):
+            return
+        self._s21_last_sig = sig
+
+        n_usos = self._ocr_s21_roi(frame, _S21_USOS_ROI, _RE_S21_USOS)
+        if self._id_diag_on:
+            log.info("[s21_diag] usos=%s", n_usos)
+        if n_usos is None or not (1 <= n_usos <= 9):
+            return   # ilegible o fuera de rango → no inventar (RNF-02); reintenta al cambiar
+        if n_usos == self._s21_last_usos:
+            return   # mismo valor ya emitido → no re-loguear
+        self._s21_last_usos = n_usos
+
+        ts = time.monotonic()
+        self._farm_session.set_usos(n_usos, ts)
+
+        # Stock: dato secundario. Si no se lee, se OMITE del mensaje (nunca se inventa).
+        stock = self._ocr_s21_roi(frame, _S21_STOCK_ROI, _RE_S21_STOCK)
+
+        pred = self._farm_session.predicted(ts)
+        if pred is not None:
+            node, sets = pred
+            names = " / ".join(en for _sid, en in sets)
+            ctx = f"nodo: {node} → predice {names}"
+        else:
+            # N es un dato LEÍDO de la pantalla, no inferido → se reporta igual, degradado.
+            ctx = "sin nodo predicho"
+        msg = f"[extracción] {n_usos} uso(s) de batería · {ctx}"
+        if stock is not None:
+            msg += f" · stock {stock}"
+        log.info("Extracción S21: %d uso(s) · %s · stock=%s", n_usos, ctx, stock)
+        if self._on_diagnostic:
+            try:
+                self._on_diagnostic(msg)
+            except Exception:
+                log.debug("on_diagnostic S21 falló", exc_info=True)
 
     def _handle_upgrade(self, frame, state: ScreenState, prev_code: str | None) -> None:
         """Enruta el frame S10 al UpgradeSyncer (PRE al entrar, diff al subir nivel, resumen al

@@ -67,6 +67,8 @@ THRESHOLD_BY_STATE: dict[str, float] = {
     "S20": 0.78,   # Popup "Materiales recuperados" (vuelto post-mejora) — título centrado único.
                    #   Target matchea 1.00, los NON-S20 (S10/S17/pre-max) ≤0.63 → 0.78 con margen.
                    #   NON_CAPTURE + acción inocua (refresca el pendiente) → un FP no hace daño.
+    "S21": 0.85,   # Modal "Selecciona el número de usos" (baterías) — título largo y único sobre
+                   #   modal opaco. Arma la previa del farmeo (nº de corridas) → convención ≥0.85.
     "S12": 0.0,    # Sin coincidencia — no aplica
 }
 
@@ -85,8 +87,8 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     "S9":  {"S8", "S12", "S17", "S16"},
     "S10": {"S12", "S9", "S3", "S20"},
     "S11": {"S12", "S9", "S3"},
-    "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18", "S19", "S20"},
-    "S13": {"S12", "S14", "S1", "S18"},
+    "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18", "S19", "S20", "S21"},
+    "S13": {"S12", "S14", "S1", "S18", "S21"},
     "S14": {"S12", "S1", "S13", "S15", "S18"},
     "S15": {"S8", "S18", "S19", "S12", "S14"},
     "S16": {"S12", "S9", "S8", "S18"},
@@ -94,6 +96,9 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     "S18": {"S8", "S19", "S12", "S15", "S17"},
     "S19": {"S8", "S18", "S12", "S15", "S17"},
     "S20": {"S12", "S17", "S9", "S8", "S15", "S10"},   # tras confirmar el vuelto → inventario
+    # S21 (modal de usos de batería): se abre sobre S13 y se cierra a S13. El auto-combate que
+    # dispara pasa por S12 antes del "Obtenido", así que no hace falta un destino directo.
+    "S21": {"S12", "S13", "S1"},
 }
 
 STATE_DESCRIPTIONS: dict[str, str] = {
@@ -117,6 +122,7 @@ STATE_DESCRIPTIONS: dict[str, str] = {
     "S18": "Perfil agente — pestaña Atributos base",
     "S19": "Perfil agente — pestaña Habilidades (sin extracción)",
     "S20": "Materiales recuperados (vuelto tras mejorar disco)",
+    "S21": "Modal selección de usos (baterías) — ANTELACIÓN A CAPTURA",
 }
 
 # Estados que SÍ tienen un disco visible para parsear
@@ -126,7 +132,7 @@ UPGRADE_STATES: set[str] = {"S10"}
 # Estados sin disco (solo logging informativo)
 NON_CAPTURE_STATES: set[str] = {
     "S1", "S2", "S4", "S8", "S9",
-    "S11", "S12", "S13", "S14", "S15", "S16", "S19", "S20",
+    "S11", "S12", "S13", "S14", "S15", "S16", "S19", "S20", "S21",
 }
 
 # Estados donde hay stats de agente visibles (Atributos base)
@@ -1208,6 +1214,7 @@ _STATE_TEMPLATES: list[dict] = [
     {"code": "S13", "template": "s13_seleccion_set_farmeo.png",     "desc": "Selección set de discos a farmear"},
     {"code": "S14", "template": "s14_seleccion_equipo_combate.png", "desc": "Selección de equipo pre-combate"},
     {"code": "S15", "template": "s15_menu_personajes.png",          "desc": "Menú de personajes (plan entrenamiento)"},
+    {"code": "S21", "template": "s21_seleccion_usos.png",           "desc": "Modal selección número de usos (baterías)"},
 ]
 
 
@@ -1519,6 +1526,6 @@ def polling_cadence_ms(state: ScreenState) -> int:
         "S5":  1000, "S6":   500, "S7":   500, "S8":  1500,
         "S9":  1500, "S10":  500, "S11": 5000, "S12": 2000,
         "S13": 1000, "S14": 1000, "S15": 1000, "S16": 1500,
-        "S17": 1000, "S18": 1500, "S19": 1500,
+        "S17": 1000, "S18": 1500, "S19": 1500, "S21": 1000,
     }
     return cadence.get(state.code, 2000)

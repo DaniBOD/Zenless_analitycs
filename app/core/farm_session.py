@@ -22,8 +22,10 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-# Estados que arman la sesión de farmeo (antelación a captura, ver detector.py).
-_FARM_ARMING_STATES: frozenset[str] = frozenset({"S13", "S14"})
+# Estados que arman la sesión de farmeo (antelación a captura, ver detector.py). S21 (modal de
+# usos de batería) arma porque el farmeo por baterías NO pasa por S14: es S13 → S21 → [auto-
+# combate] → "Obtenido". Sin re-armar en S21 la ventana podría vencer durante un auto-combate ×4.
+_FARM_ARMING_STATES: frozenset[str] = frozenset({"S13", "S14", "S21"})
 
 # Ventana por defecto (s). Un farmeo puede llevar minutos entre el set-select y los resultados.
 _FARM_WINDOW_S = 600.0
@@ -40,6 +42,10 @@ class FarmSession:
         self._pred_node: str | None = None
         self._pred_sets: list[tuple[int | None, str]] = []
         self._pred_until: float = -1.0
+        # Nº de corridas leído en S21 ("Cantidad consumida × N"). Lo consulta el "Obtenido" para
+        # el denominador de "uso 2/4". NO se persiste en el breadcrumb: es del momento.
+        self._usos: int | None = None
+        self._usos_until: float = -1.0
         # Breadcrumb opcional en disco (solo QA): al predecir en S13 deja la última predicción
         # para que un REINICIO de la app (tras aplicar un fix) pueda recargar el contexto sin
         # revisitar S13. `time.monotonic()` no sobrevive el reinicio, así que el restore rearma
@@ -72,6 +78,17 @@ class FarmSession:
         if self._pred_node is None or ts >= self._pred_until:
             return None
         return self._pred_node, list(self._pred_sets)
+
+    def set_usos(self, n: int, ts: float) -> None:
+        """Guardar el nº de corridas leído en S21 (modal de usos de batería)."""
+        self._usos = n
+        self._usos_until = ts + self._window_s
+
+    def usos(self, ts: float) -> int | None:
+        """Nº de corridas vigente si estamos dentro de la ventana; si no, None."""
+        if self._usos is None or ts >= self._usos_until:
+            return None
+        return self._usos
 
     # --- persistencia / restore (contexto de QA entre reinicios) ------------
 
