@@ -463,7 +463,7 @@ class MonitorController(QObject):
         else:
             self.log_message.emit(
                 f"[pantalla] {state.code} — {label} reconocida · "
-                f"PJ sin identificar (entrá a Atributos base para registrarlo)"
+                f"PJ sin identificar (esperá a que la barra de personajes esté visible)"
             )
 
     def _on_disc_rejected_from_monitor(self, disc, state, reason: str):

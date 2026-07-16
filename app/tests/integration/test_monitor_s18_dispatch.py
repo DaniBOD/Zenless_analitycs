@@ -424,7 +424,9 @@ def test_agent_detail_sostiene_latch_si_cambio_avatar_y_matcher_falla(code):
     """Latch por contexto (2026-06-06): si el avatar cambió de posición y el
     matcher NO lo reconoce (librería vacía / crop de esquina degradado), NO se
     cae a 'sin identificar' — se SOSTIENE el último PJ con source='sostenido'.
-    Esto cierra el bug del PJ de esquina y la contaminación de otros PJs."""
+    Esto cierra el bug del PJ de esquina y la contaminación de otros PJs.
+    Sigue valiendo con el descriptor primario (2026-07-16): el auto-hide de la barra
+    devuelve posiciones espurias, y perder al PJ reconocido por eso es peor que sostenerlo."""
     from app.core.detector import ScreenState
     from app.core.monitor import Monitor
 
@@ -603,7 +605,9 @@ def test_agent_detail_nombra_pj_via_matcher_de_avatar(tmp_path):
     """
     Switch directo: el anchor NO coincide (otro PJ), pero el matcher de avatar
     reconoce a Nangong Yu (aprendida antes desde S18) en su S8 real → la nombra
-    con source='avatar'.
+    con source='avatar'. Diseño B: la identidad se fija por VOTACIÓN multi-frame
+    (_DETAIL_MIN_SAMPLES); el loop rápido (10 fps) provee las muestras — acá se simula
+    con una pasada de `_update_detail_identity` antes del dispatch de cadencia.
     """
     from app.core.detector import ScreenState
     from app.core.monitor import Monitor
@@ -630,6 +634,7 @@ def test_agent_detail_nombra_pj_via_matcher_de_avatar(tmp_path):
     monitor._last_agent_name = "Otro PJ"
     monitor._agent_anchor_x = 0.10
 
+    monitor._update_detail_identity(f8)   # 1ª muestra del loop rápido (aún sin fijar)
     monitor._dispatch_state(f8, ScreenState("S8", 0.90, "tab:S8", method="tab"))
 
     assert len(received) == 1

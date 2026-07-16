@@ -61,6 +61,11 @@ _S9_SIG_MAX = 3.0
 # Tolerancia de posición x del avatar para considerar "mismo PJ" (avatares
 # adyacentes distan ~0.04-0.05 norm; media-ranura como margen anti-jitter).
 _AVATAR_X_TOL = 0.025
+# Identidad de detalle (S8/S19) por DESCRIPTOR PRIMARIO: nº mínimo de frames CONFIABLES
+# (matches no-abstenidos) del avatar de la barra superior antes de fijar la identidad. La
+# votación multi-frame evita clavarse en un frame malo (esquina del slider/animación); 2 es
+# ~0.2 s al loop rápido (10 fps) → robusto y responsivo. Espejo de _S17_OWNER_MIN_SAMPLES.
+_DETAIL_MIN_SAMPLES = 2
 
 # Confianza mínima de un estado NO-detalle para resetear el latch de identidad.
 # Un fundido de transición entre pestañas (S12/dark_frame_filter, conf~0) NO debe
@@ -418,6 +423,19 @@ class Monitor:
         # mientras el avatar esté oculto (interfaz deslizante) — solo cambia al ver
         # positivamente otro avatar. Da robustez frente al auto-hide del row.
         self._detail_source: str | None = None
+        # Votación multi-frame del descriptor de fila (S8/S19): confianza acumulada por PJ
+        # + nº de muestras confiables, para la ranura de avatar actual. Se reinicia al mover
+        # el avatar (otro PJ) o al salir de la familia detalle. Ver _DETAIL_MIN_SAMPLES.
+        self._detail_votes: dict[str, float] = {}
+        self._detail_samples: int = 0
+        # Ancla de la VOTACIÓN en curso, separada de `_agent_anchor_x` (ancla de la identidad
+        # ya CONFIRMADA). Dos anclas porque el auto-hide de la barra devuelve posiciones
+        # espurias del highlight desvaneciéndose: sin separarlas, un parpadeo se confunde con
+        # un cambio de PJ y se descartaba al ya reconocido.
+        self._detail_vote_x: float | None = None
+        # Origen con el que se CONFIRMÓ la ranura ("avatar" | "heredado"). Permite volver a
+        # la etiqueta real al re-confirmar, tras haber pasado por "sostenido".
+        self._detail_confirmed_source: str | None = None
         # Firma del último log de detalle S8/S19 emitido (edge-triggered): solo se
         # re-loguea cuando (code, name, identified, source) cambia.
         self._last_detail_sig: tuple | None = None
@@ -2221,73 +2239,86 @@ class Monitor:
 
     def _update_detail_identity(self, frame) -> None:
         """
-        Latchea la identidad del PJ en S8/S19 muestreando el avatar resaltado.
-        Se invoca en el loop rápido (10 fps) y también desde el handler de cadencia.
+        Identifica el PJ en S8/S19 por el DESCRIPTOR de la barra superior (fuente
+        PRIMARIA — ya no requiere el latch de S18). Se invoca en el loop rápido
+        (10 fps) y desde el handler de cadencia.
 
-        **Latch POR CONTEXTO (2026-06-06).** La identidad se SOSTIENE; un fallo de
-        lectura/match NUNCA la borra. Solo cambia ante EVIDENCIA POSITIVA (un match
-        de avatar, que puede ser un PJ distinto). Cierra de raíz los 4 hallazgos del
-        primer parseo S8/S19 (ver Dev_IA 2026-06-06 §8):
-          - avatar OCULTO (cur_x None) → sostener (brecha B5: ocultar la fila no es
-            evidencia de cambio de PJ).
-          - PJ en ESQUINA del slider cuyo crop sale degradado → el matcher falla,
-            pero sostenemos el último PJ en vez de caer a "sin identificar".
-          - el fallo de identificar un PJ NO contamina al ya reconocido (no se borra
-            el latch global) → no hace falta re-parsear.
+        El matcher de fila cubre el roster completo y es fiable, pero un frame suelto
+        puede salir mal (PJ en la esquina del slider, animación idle). Por eso se
+        ACUMULAN VOTOS por PJ sobre la ranura de avatar actual y se fija la identidad
+        recién al juntar `_DETAIL_MIN_SAMPLES` matches confiables → el ganador (argmax
+        de confianza) manda, un frame malo aislado no queda clavado.
 
-        Reglas:
-          - cur_x None (row oculto) → sostener, no tocar nada.
-          - cur_x ≈ anchor y la identidad ya está CONFIRMADA (heredado/avatar) →
-            estable, nada que hacer.
-          - en otro caso correr el matcher:
-              match → confirmar (nombre, "avatar"), anclar la posición.
-              sin match + hay latch previo → SOSTENER (source "sostenido"), sin
-                  anclar la posición (deja re-confirmar en un frame más nítido).
-              sin match + sin latch → genuinamente "sin identificar".
+        Dos anclas separadas (clave): `_agent_anchor_x` = dónde se CONFIRMÓ la identidad;
+        `_detail_vote_x` = dónde se está votando. El auto-hide de la barra devuelve
+        posiciones ESPURIAS del highlight desvaneciéndose; con una sola ancla eso se
+        confundía con un cambio de PJ y descartaba al ya reconocido (QA 2026-07-16).
+
+        Reglas (RNF-02, conservador — preferir sostener a mentir):
+          - avatar OCULTO (cur_x None) → sostener, sin tocar nada.
+          - identidad ya CONFIRMADA en esta ranura → estable, con su etiqueta real.
+          - ranura sin confirmar → votar; al llegar a MIN_SAMPLES fijar el argmax ("avatar").
+          - sin match + hay identidad previa → SOSTENER ("sostenido"): nunca se borra al
+            último reconocido por no poder confirmar (parpadeo/esquina/auto-hide).
+          - sin match + sin identidad → "sin identificar" (reintenta en el próximo frame).
         """
         try:
             cur_x = selected_avatar_x(frame)
         except Exception:
             return
         if cur_x is None:
-            return  # avatar oculto → sostener latch (sin evidencia de cambio)
-        same_pos = (self._agent_anchor_x is not None
-                    and abs(cur_x - self._agent_anchor_x) < _AVATAR_X_TOL)
-        if same_pos and self._last_agent_name is not None:
-            # Misma posición que el anchor con un nombre ya latcheado → es el PJ
-            # anclado (heredado). No degradar un match 'avatar' ya confirmado.
-            if self._detail_source != "avatar":
-                self._detail_source = "heredado"
+            return  # avatar oculto → sostener (la barra deslizante no da evidencia)
+        confirmed_here = (self._agent_anchor_x is not None
+                          and abs(cur_x - self._agent_anchor_x) < _AVATAR_X_TOL
+                          and self._last_agent_name is not None)
+        if confirmed_here:
+            # Ranura ya resuelta (match de avatar previo o latch de S18) → estable, sin
+            # re-votar. Restaura la etiqueta real si veníamos de un "sostenido".
+            if self._detail_confirmed_source is None:
+                self._detail_confirmed_source = "heredado"   # latch de S18 (bootstrap)
+            self._detail_source = self._detail_confirmed_source
+            self._detail_vote_x = cur_x
             return
-        # Posición nueva (o sin nombre aún) → matcher de avatar.
+        # Ranura sin identidad confirmada → votar. Reiniciar solo si la votación es de OTRA
+        # posición (deslizó de veras), no por el jitter del mismo highlight.
+        if (self._detail_vote_x is None
+                or abs(cur_x - self._detail_vote_x) >= _AVATAR_X_TOL):
+            self._detail_votes = {}
+            self._detail_samples = 0
+            self._detail_vote_x = cur_x
         try:
             match = self._identifier.identify(frame)
         except Exception:
             log.exception("Error en identifier.identify")
             match = None
         if match is not None:
-            # Evidencia positiva → confirmar (puede ser un cambio real de PJ).
-            self._last_agent_name = match[0]
-            self._detail_source = "avatar"
-            self._agent_anchor_x = cur_x
+            name, conf = match[0], float(match[1])
+            self._detail_votes[name] = self._detail_votes.get(name, 0.0) + conf
+            self._detail_samples += 1
+            if self._detail_samples >= _DETAIL_MIN_SAMPLES:
+                self._last_agent_name = max(self._detail_votes, key=self._detail_votes.get)
+                self._detail_source = "avatar"
+                self._detail_confirmed_source = "avatar"
+                self._agent_anchor_x = cur_x      # identidad confirmada en esta ranura
             return
-        # Matcher sin match. Carry-forward: NUNCA borrar un latch ya logrado.
+        # El matcher no confirma esta ranura. Carry-forward: NUNCA borrar al último PJ
+        # reconocido — se muestra como "sostenido" hasta poder confirmar de nuevo.
         if self._last_agent_name is not None:
-            if self._detail_source != "avatar":
-                self._detail_source = "sostenido"
-            # NO anclar cur_x: dejar reintentar el matcher en frames más nítidos
-            # (clave para el PJ de esquina cuyo crop oscila).
+            self._detail_source = "sostenido"
             return
-        # Sin latch previo y sin match → genuinamente sin identificar.
+        # Sin identidad previa y sin match → sin identificar (se reintenta por frame).
         self._last_agent_name = None
         self._detail_source = None
-        self._agent_anchor_x = cur_x
 
     def _reset_detail_identity(self) -> None:
         """Limpia el latch de identidad (al salir de la familia detalle de agente)."""
         self._last_agent_name = None
         self._agent_anchor_x = None
         self._detail_source = None
+        self._detail_votes = {}
+        self._detail_samples = 0
+        self._detail_vote_x = None
+        self._detail_confirmed_source = None
         # Reset de la firma del log de detalle → re-entrar a S8/S19 loguea 1 vez.
         self._last_detail_sig = None
 
