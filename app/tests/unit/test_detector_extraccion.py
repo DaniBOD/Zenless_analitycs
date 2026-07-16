@@ -1,11 +1,12 @@
-"""Detección del flujo de extracción por baterías (S21).
+"""Detección del flujo de extracción por baterías (S21 = modal de usos, S22 = "Obtenido").
 
-El farmeo por baterías es `S13 → S21 (modal de usos) → auto-combate → "Obtenido"`. Antes de
-este estado, los 4 frames del modal caían a S12/dark_frame_filter (ningún template matcheaba:
-el desenfoque del fondo tumba el match de S13, cuyo umbral es 0.70).
+El farmeo por baterías es `S13 → S21 → auto-combate → S22 → S13`. Antes de estos estados, los
+8 frames caían a S12/dark_frame_filter (ningún template matcheaba: el desenfoque del fondo
+tumba el match de S13, cuyo umbral es 0.70).
 
-Los negativos importan tanto como los positivos: S21 se superpone SOBRE S13, así que hay que
-verificar que la S13 plana sigue siendo S13 y que el modal no la eclipsa (ni al revés).
+Los negativos importan tanto como los positivos: los dos modales se superponen SOBRE S13, así
+que hay que verificar que la S13 plana sigue siendo S13, que los modales no la eclipsan, y que
+no se confunden entre sí.
 """
 from __future__ import annotations
 
@@ -46,6 +47,28 @@ def test_la_s13_plana_no_se_confunde_con_s21():
 
 @pytest.mark.skipif(not _OBTENIDO_FX, reason="capturas 'Obtenido' no presentes")
 @pytest.mark.parametrize("fx", _OBTENIDO_FX, ids=lambda p: p.name)
-def test_el_modal_obtenido_no_es_s21(fx):
-    """El otro modal del mismo flujo ("Obtenido") no debe disparar S21."""
-    assert ScreenDetector().classify(_load(fx)).code != "S21"
+def test_el_modal_obtenido_es_s22(fx):
+    st = ScreenDetector().classify(_load(fx))
+    assert st.code == "S22", f"salió {st.code} conf={st.confidence:.3f} tpl={st.template_name}"
+
+
+@pytest.mark.skipif(not _OBTENIDO_FX, reason="capturas 'Obtenido' no presentes")
+@pytest.mark.parametrize("fx", _OBTENIDO_FX, ids=lambda p: p.name)
+def test_la_verificacion_de_s22_cuenta_las_franjas(fx):
+    """El template de S22 es la palabra "Obtenido" — genérica en ZZZ (correo, login, pase).
+    Lo que lo blinda es `_verify_s22`: la grilla de recompensas con sus franjas de rareza."""
+    assert ScreenDetector().classify(_load(fx)).verification.startswith("strips=")
+
+
+@pytest.mark.skipif(not all(p.exists() for p in _S21_FX), reason="capturas S21 no presentes")
+@pytest.mark.parametrize("fx", _S21_FX, ids=lambda p: p.name)
+def test_el_modal_de_usos_no_es_s22(fx):
+    """Los dos modales del flujo no deben confundirse entre sí."""
+    assert ScreenDetector().classify(_load(fx)).code != "S22"
+
+
+def test_la_verificacion_de_s22_rechaza_una_pantalla_sin_grilla():
+    """Un "Obtenido" sin grilla de recompensas (p.ej. un popup de correo) no es S22."""
+    from app.core.detector import _verify_s22
+    ok, detalle = _verify_s22(np.zeros((1439, 2559, 3), np.uint8))
+    assert ok is False, f"un frame sin franjas no debería verificar ({detalle})"

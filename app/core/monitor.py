@@ -101,6 +101,13 @@ _S21_SIG_MAX = 5.0
 _RE_S21_USOS = re.compile(r"consumida\s*[x×*]\s*(\d+)", re.I)
 _RE_S21_STOCK = re.compile(r"[x×*]\s*(\d+)\s*$")
 
+# ROI (x, y, rw, rh) del viewport scrolleable del modal "Obtenido" (S22), para la firma que
+# gatea el re-parseo. Espeja _VIEWPORT_X/_Y de parser_extraccion.
+_S22_VIEWPORT_ROI = (0.200, 0.280, 0.360, 0.530)
+_S22_SIG_MAX = 5.0
+# Marca de "sección ya cerrada" en `_s22_seen` (no vuelve a emitirse nunca).
+_S22_SEC_CERRADA = -1
+
 # Guarda de asignación S17 (latch + avatar). El PJ asignado a un disco equipado
 # sale del LATCH (PJ cuya pantalla se ve, ya confiable); el avatar circular S17 se
 # usa solo como chequeo mismo/distinto contra ese latch. Medido 2026-06-06 sobre
@@ -555,6 +562,11 @@ class Monitor:
         # (RNF-06); `_s21_last_usos` deduplica la emisión.
         self._s21_last_sig = None
         self._s21_last_usos: int | None = None
+        # S22 (modal "Obtenido"): dedup CONVERGENTE por corrida. {n_uso: nº de discos ya
+        # emitidos} o _S22_SEC_CERRADA si ya se emitió completa. `_s22_last_sig` gatea el
+        # re-parseo (RNF-06): con el scroll quieto no hay nada nuevo que leer.
+        self._s22_last_sig = None
+        self._s22_seen: dict[int, int] = {}
 
         # S4 (selector tienda música): predicción display-only edge-triggered por (set, slot).
         # `_s4_last_sig` gatea el re-OCR del género (RNF-06); `_s4_last_key` deduplica la emisión;
@@ -775,7 +787,10 @@ class Monitor:
                 # gate por firma de la barra de nivel evita re-OCR mientras no cambie.
                 # S20 (popup vuelto de materiales): CONTINUO para refrescar el timer del pendiente
                 # cada ciclo mientras el popup se muestra (evita que expire por la espera del click).
-                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9", "S13", "S3", "S4", "S5", "S10", "S20")
+                # S21/S22 (farmeo por baterías): CONTINUOS porque su contenido cambia SIN cambiar
+                # de pantalla — mover el slider en S21, scrollear la lista en S22. Sin re-despacho
+                # solo se vería el primer frame de cada uno. El gate por firma evita el re-trabajo.
+                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9", "S13", "S3", "S4", "S5", "S10", "S20", "S21", "S22")
                 should_dispatch = forced or (
                     elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
                 )
@@ -903,6 +918,9 @@ class Monitor:
         if state.code != "S21":
             self._s21_last_sig = None
             self._s21_last_usos = None
+        if state.code != "S22":
+            self._s22_last_sig = None
+            self._s22_seen = {}
         if state.code != "S4":
             self._s4_last_sig = None
             self._s4_last_key = None
@@ -1002,6 +1020,13 @@ class Monitor:
             # (display-only). Se guarda en FarmSession para que el "Obtenido" posterior sepa
             # cuántos usos esperar. No persiste ni puntúa.
             self._process_s21_usos(frame, state)
+            self._processed_disc_state_code = None
+            self._reported_agent_stats_state_code = None
+            self._agent_stats_screen_logged = False
+        elif state.code == "S22":
+            # Modal "Obtenido": los drops del farmeo por baterías. Única ventana donde existen
+            # (con auto-combate no hay S2 ni S3). Display-only: no persiste ni puntúa.
+            self._process_s22_obtenido(frame, state)
             self._processed_disc_state_code = None
             self._reported_agent_stats_state_code = None
             self._agent_stats_screen_logged = False
@@ -1386,6 +1411,112 @@ class Monitor:
                 self._on_diagnostic(msg)
             except Exception:
                 log.debug("on_diagnostic S21 falló", exc_info=True)
+
+    @staticmethod
+    def _s22_viewport_signature(frame):
+        """Firma 32×32 gris del viewport scrolleable (S22), sin OCR (RNF-06). Gatea el
+        re-parseo: con el scroll quieto no hay nada nuevo que leer. Es lo que hace viable la
+        cadencia de 700 ms (el trabajo pesado corre solo mientras se scrollea)."""
+        if frame is None or getattr(frame, "size", 0) == 0:
+            return None
+        try:
+            import cv2
+            h, w = frame.shape[:2]
+            x, y, rw, rh = _S22_VIEWPORT_ROI
+            sub = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
+            if sub.size == 0:
+                return None
+            return cv2.cvtColor(
+                cv2.resize(sub, (32, 32), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
+            ).astype(np.float32)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _fmt_seccion(sec, n_total: int | None, cand_en: list[str]) -> str:
+        """Una corrida → una línea display-only.
+
+        Cada disco muestra LO QUE SE SABE de él y nada más (RNF-02): "slot 2 Wuthering Salon"
+        si se leyeron los dos, "slot 2" o "Wuthering Salon" si solo uno. Nunca un "slot ?" ni
+        un set adivinado. El conteo siempre se afirma —la franja dorada es evidencia directa—
+        y el "≥" marca que puede haber más discos sin scrollear.
+        """
+        uso = f"uso {sec.n_uso}" + (f"/{n_total}" if n_total else "")
+        n = len(sec.discos)
+        conteo = f"{n} discos S" if sec.completa else f"≥{n} discos S"
+
+        items, sin_datos = [], 0
+        for d in sec.discos:
+            if d.slot is not None and d.set_name:
+                items.append(f"slot {d.slot} {d.set_name}")
+            elif d.slot is not None:
+                items.append(f"slot {d.slot}")
+            elif d.set_name:
+                items.append(d.set_name)
+            else:
+                sin_datos += 1
+
+        if items:
+            cuerpo = f"{conteo}: " + ", ".join(items)
+            if sin_datos:
+                cuerpo += f" (+{sin_datos} sin identificar)"
+        else:
+            cuerpo = conteo
+        partes = [f"[extracción] {uso}", cuerpo]
+
+        # Si NINGÚN set se confirmó, enumerar el universo que predijo el nodo es honesto y
+        # útil (mismo formato que `_process_s2_tiles`); elegir uno sin evidencia, no.
+        if not any(d.set_name for d in sec.discos) and cand_en:
+            partes.append("set: " + " o ".join(cand_en))
+        return " · ".join(partes)
+
+    def _process_s22_obtenido(self, frame, state: ScreenState) -> None:
+        """Modal "Obtenido" (S22): los drops del farmeo por baterías, desglosados por corrida.
+
+        Emite UNA LÍNEA POR CORRIDA al verla mientras se scrollea (decisión del usuario: un
+        total al cerrar mentiría si no se scrollea hasta el fondo). El dedup es CONVERGENTE:
+        una sección que todavía no se probó completa sale con "≥" y se re-emite —una sola vez
+        más, ya sin "≥"— cuando el scroll trae la evidencia de cierre. Una vez cerrada, nunca
+        más. Display-only: no persiste ni puntúa."""
+        if self._farm_session is None:
+            return   # sin contexto de farmeo no hay par de sets útil; y un FP no debe hablar
+        # Gate de re-parseo: si el viewport no cambió, no hay nada nuevo (RNF-06).
+        sig = self._s22_viewport_signature(frame)
+        if (sig is not None and self._s22_last_sig is not None
+                and self._sig_component_diff(sig, self._s22_last_sig) <= _S22_SIG_MAX):
+            return
+        self._s22_last_sig = sig
+
+        ts = time.monotonic()
+        pred = self._farm_session.predicted(ts)
+        cand_en = [en for _sid, en in pred[1]] if pred else []
+        n_total = self._farm_session.usos(ts)
+
+        try:
+            from app.core.parser_extraccion import parse_obtenido
+            secs = parse_obtenido(frame, self._ocr, self._set_badge_matcher, cand_en)
+        except Exception:
+            log.exception("Error parseando el modal 'Obtenido' (S22)")
+            return
+
+        for sec in secs:
+            prev = self._s22_seen.get(sec.n_uso)
+            if prev == _S22_SEC_CERRADA:
+                continue                      # ya se emitió completa
+            if prev is not None and len(sec.discos) <= prev and not sec.completa:
+                continue                      # no creció ni cerró → no re-loguear
+            self._s22_seen[sec.n_uso] = _S22_SEC_CERRADA if sec.completa else len(sec.discos)
+            msg = self._fmt_seccion(sec, n_total, cand_en)
+            log.info("Extracción S22: uso %s · %d disco(s) S · completa=%s",
+                     sec.n_uso, len(sec.discos), sec.completa)
+            if self._id_diag_on:
+                log.info("[s22_diag] uso=%s discos=%s", sec.n_uso,
+                         [(d.slot, d.set_name, d.conf) for d in sec.discos])
+            if self._on_diagnostic:
+                try:
+                    self._on_diagnostic(msg)
+                except Exception:
+                    log.debug("on_diagnostic S22 falló", exc_info=True)
 
     def _handle_upgrade(self, frame, state: ScreenState, prev_code: str | None) -> None:
         """Enruta el frame S10 al UpgradeSyncer (PRE al entrar, diff al subir nivel, resumen al

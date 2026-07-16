@@ -69,6 +69,10 @@ THRESHOLD_BY_STATE: dict[str, float] = {
                    #   NON_CAPTURE + acción inocua (refresca el pendiente) → un FP no hace daño.
     "S21": 0.85,   # Modal "Selecciona el número de usos" (baterías) — título largo y único sobre
                    #   modal opaco. Arma la previa del farmeo (nº de corridas) → convención ≥0.85.
+    "S22": 0.85,   # Modal "Obtenido" (drops del farmeo por baterías) — captura crítica: con
+                   #   auto-combate NO hay S2 ni S3 después, es la ÚNICA ventana donde existen
+                   #   estos drops. "Obtenido" es un título genérico (correo/login/pase) → el
+                   #   umbral alto va acompañado de _verify_s22 (franjas de rareza en la grilla).
     "S12": 0.0,    # Sin coincidencia — no aplica
 }
 
@@ -87,8 +91,8 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     "S9":  {"S8", "S12", "S17", "S16"},
     "S10": {"S12", "S9", "S3", "S20"},
     "S11": {"S12", "S9", "S3"},
-    "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18", "S19", "S20", "S21"},
-    "S13": {"S12", "S14", "S1", "S18", "S21"},
+    "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18", "S19", "S20", "S21", "S22"},
+    "S13": {"S12", "S14", "S1", "S18", "S21", "S22"},
     "S14": {"S12", "S1", "S13", "S15", "S18"},
     "S15": {"S8", "S18", "S19", "S12", "S14"},
     "S16": {"S12", "S9", "S8", "S18"},
@@ -97,8 +101,9 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     "S19": {"S8", "S18", "S12", "S15", "S17"},
     "S20": {"S12", "S17", "S9", "S8", "S15", "S10"},   # tras confirmar el vuelto → inventario
     # S21 (modal de usos de batería): se abre sobre S13 y se cierra a S13. El auto-combate que
-    # dispara pasa por S12 antes del "Obtenido", así que no hace falta un destino directo.
-    "S21": {"S12", "S13", "S1"},
+    # dispara pasa por S12 antes del "Obtenido" (S22), que se cierra de vuelta a S13.
+    "S21": {"S12", "S13", "S1", "S22"},
+    "S22": {"S12", "S13", "S1", "S21"},
 }
 
 STATE_DESCRIPTIONS: dict[str, str] = {
@@ -123,6 +128,7 @@ STATE_DESCRIPTIONS: dict[str, str] = {
     "S19": "Perfil agente — pestaña Habilidades (sin extracción)",
     "S20": "Materiales recuperados (vuelto tras mejorar disco)",
     "S21": "Modal selección de usos (baterías) — ANTELACIÓN A CAPTURA",
+    "S22": "Modal 'Obtenido' (drops del farmeo por baterías)",
 }
 
 # Estados que SÍ tienen un disco visible para parsear
@@ -132,7 +138,7 @@ UPGRADE_STATES: set[str] = {"S10"}
 # Estados sin disco (solo logging informativo)
 NON_CAPTURE_STATES: set[str] = {
     "S1", "S2", "S4", "S8", "S9",
-    "S11", "S12", "S13", "S14", "S15", "S16", "S19", "S20", "S21",
+    "S11", "S12", "S13", "S14", "S15", "S16", "S19", "S20", "S21", "S22",
 }
 
 # Estados donde hay stats de agente visibles (Atributos base)
@@ -1059,6 +1065,24 @@ def _deep_detect_s18(frame: np.ndarray, ocr=None) -> "ScreenState | None":
     return None
 
 
+def _verify_s22(frame: np.ndarray) -> tuple[bool, str | None]:
+    """Verifica que S22 sea el modal de recompensas del farmeo por baterías.
+
+    "Obtenido" es un título GENÉRICO en ZZZ (correo, login, pase de batalla…), así que el
+    template solo sería un FP a la espera. La firma real del modal es su grilla de recompensas:
+    las FRANJAS DE RAREZA de los tiles. Los 4 fixtures dan 12-13; una pantalla sin grilla no
+    llega a `_EXTRACCION_STRIP_MIN`. Mismo criterio que `_verify_s2`. Sin OCR (RNF-06)."""
+    try:
+        from app.core.parser_extraccion import (
+            _EXTRACCION_STRIP_MIN,
+            count_rarity_strips_viewport,
+        )
+        n = count_rarity_strips_viewport(frame)
+        return (n >= _EXTRACCION_STRIP_MIN, f"strips={n}")
+    except Exception:
+        return (True, None)   # convención del repo: ante excepción, no bloquear
+
+
 def _verify_s2(frame: np.ndarray) -> tuple[bool, str | None]:
     """Verifica que S2 sea un FARMEO DE DISCOS real. El template 's2_resultado_desafio' matchea
     (a ≥0.80) tanto los resultados de farmeo de discos como OTRAS pantallas de "Resultados del
@@ -1103,6 +1127,7 @@ def _is_music_selector(frame: np.ndarray) -> bool:
 # Registry: {state_code: verify_func}
 _VERIFICATION_REGISTRY: dict[str, callable] = {
     "S2":  _verify_s2,
+    "S22": _verify_s22,
     "S3":  _verify_s3,
     "S10": _verify_s10,
     "S17": _verify_s17,
@@ -1215,6 +1240,7 @@ _STATE_TEMPLATES: list[dict] = [
     {"code": "S14", "template": "s14_seleccion_equipo_combate.png", "desc": "Selección de equipo pre-combate"},
     {"code": "S15", "template": "s15_menu_personajes.png",          "desc": "Menú de personajes (plan entrenamiento)"},
     {"code": "S21", "template": "s21_seleccion_usos.png",           "desc": "Modal selección número de usos (baterías)"},
+    {"code": "S22", "template": "s22_obtenido.png",                 "desc": "Modal 'Obtenido' (drops del farmeo por baterías)"},
 ]
 
 
@@ -1526,6 +1552,6 @@ def polling_cadence_ms(state: ScreenState) -> int:
         "S5":  1000, "S6":   500, "S7":   500, "S8":  1500,
         "S9":  1500, "S10":  500, "S11": 5000, "S12": 2000,
         "S13": 1000, "S14": 1000, "S15": 1000, "S16": 1500,
-        "S17": 1000, "S18": 1500, "S19": 1500, "S21": 1000,
+        "S17": 1000, "S18": 1500, "S19": 1500, "S21": 1000, "S22": 700,
     }
     return cadence.get(state.code, 2000)
