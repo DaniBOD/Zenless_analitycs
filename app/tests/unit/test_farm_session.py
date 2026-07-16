@@ -176,3 +176,42 @@ def test_usos_no_se_persiste(tmp_path):
     fs.set_usos(3, ts=100.0)
     import json
     assert "usos" not in json.loads(p.read_text(encoding="utf-8"))
+
+
+# --- vigencia de la predicción dentro del flujo --------------------------
+
+
+def test_la_prediccion_sigue_viva_mientras_se_mira_el_obtenido():
+    """Regresión (QA en vivo 2026-07-16): estar en S22 no refrescaba la predicción, solo el
+    gate. El flujo real es S13 → S21 → auto-combate ×4 (minutos) → S22, y ahí el usuario mira
+    los drops con calma: a los 600s del S13 los sets desaparecían de los logs a mitad de sesión.
+    Seguir viendo S22 ES evidencia de que el farmeo sigue siendo el mismo."""
+    fs = FarmSession(window_s=600.0)
+    fs.set_prediction("El piloto y el meca rebelde", [(52, "Wuthering Salon")], ts=0.0)
+    for ts in (300.0, 800.0, 1400.0):          # scrolleando el Obtenido un buen rato
+        fs.on_state("S22", ts)
+        assert fs.predicted(ts) is not None, f"la predicción se cayó en ts={ts}"
+
+
+def test_los_usos_siguen_vivos_mientras_se_mira_el_obtenido():
+    """Mismo caso para el denominador de 'uso 2/4' (se lee en S21, se usa en S22)."""
+    fs = FarmSession(window_s=600.0)
+    fs.set_usos(4, ts=0.0)
+    for ts in (300.0, 800.0, 1400.0):
+        fs.on_state("S22", ts)
+        assert fs.usos(ts) == 4, f"los usos se cayeron en ts={ts}"
+
+
+def test_una_pantalla_fuera_del_flujo_no_revive_la_prediccion():
+    """El keepalive es por SEGUIR en el flujo, no un 'nunca expira': si el usuario se va a
+    otra pantalla, la predicción vence como siempre (RNF-02: no arrastrar contexto viejo)."""
+    fs = FarmSession(window_s=600.0)
+    fs.set_prediction("X", [(1, "A")], ts=0.0)
+    fs.on_state("S8", 300.0)          # se fue al equipamiento
+    assert fs.predicted(700.0) is None
+
+
+def test_sin_prediccion_el_keepalive_no_inventa():
+    fs = FarmSession(window_s=600.0)
+    fs.on_state("S22", 100.0)
+    assert fs.predicted(100.0) is None

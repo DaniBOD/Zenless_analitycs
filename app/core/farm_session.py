@@ -27,6 +27,16 @@ log = logging.getLogger(__name__)
 # combate] → "Obtenido". Sin re-armar en S21 la ventana podría vencer durante un auto-combate ×4.
 _FARM_ARMING_STATES: frozenset[str] = frozenset({"S13", "S14", "S21"})
 
+# Estados que MANTIENEN VIVO el contexto ya leído (predicción de sets + nº de usos) mientras
+# se siga dentro del flujo. Incluye S22 ("Obtenido"), que NO arma el gate —no es antelación,
+# es el resultado— pero sí prueba que el farmeo en curso sigue siendo el mismo.
+#
+# Sin esto la predicción vencía a los `window_s` del S13 aunque el usuario siguiera mirando
+# los drops: el flujo real es S13 → S21 → auto-combate ×4 (minutos) → S22, y ahí se scrollea
+# con calma. Bug real de QA en vivo (2026-07-16): los sets salían en la 1ª corrida y se caían
+# en las siguientes, 24 min después del S13.
+_FARM_KEEPALIVE_STATES: frozenset[str] = _FARM_ARMING_STATES | frozenset({"S22"})
+
 # Ventana por defecto (s). Un farmeo puede llevar minutos entre el set-select y los resultados.
 _FARM_WINDOW_S = 600.0
 
@@ -53,9 +63,18 @@ class FarmSession:
         self._state_path: Path | None = Path(state_path) if state_path else None
 
     def on_state(self, code: str, ts: float) -> None:
-        """Alimentar en cada ciclo con el estado activo. Re-arma si es un estado de farmeo."""
+        """Alimentar en cada ciclo con el estado activo. Re-arma el gate si es un estado de
+        antelación, y mantiene vivo el contexto ya leído mientras se siga en el flujo.
+
+        El keepalive es por SEGUIR dentro del farmeo, no un "nunca expira": irse a otra
+        pantalla deja que todo venza normalmente (RNF-02, no arrastrar contexto viejo)."""
         if code in _FARM_ARMING_STATES:
             self._armed_until = ts + self._window_s
+        if code in _FARM_KEEPALIVE_STATES:
+            if self._pred_node is not None:
+                self._pred_until = ts + self._window_s
+            if self._usos is not None:
+                self._usos_until = ts + self._window_s
 
     def is_armed(self, ts: float) -> bool:
         """True si hubo un S13/S14 dentro de la ventana → contexto de farmeo de discos."""
