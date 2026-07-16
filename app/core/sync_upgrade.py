@@ -211,11 +211,26 @@ class UpgradeSyncer:
             self._refund_seen = True
             self._emit("[mejora] vuelto de materiales confirmado · esperando inventario para el resumen")
 
+    def _same_disc_canon(self, a: DiscParsed, b: DiscParsed) -> bool:
+        """`_same_disc` pero resolviendo ambos sets al canónico (difuso, `DiscSetRepo.resolve_id`)
+        antes de comparar. El OCR del nombre del set es inestable ('Firmamento llameante' /
+        'Ilameante' / 'Illameante': I mayúscula vs l minúscula) y en S5 hay UNA sola pasada de
+        confirmación → comparar crudo perdía el resumen. Sin `set_repo` cae al comportamiento
+        de `_same_disc` (nombre crudo normalizado)."""
+        if a.slot != b.slot or not a.slot:
+            return False
+        ka = _norm_key(self._set_name(a))
+        kb = _norm_key(self._set_name(b))
+        return bool(ka) and ka == kb
+
     def on_post_upgrade_disc(self, disc: DiscParsed, now: float | None = None) -> None:
-        """Confirma el estado FINAL de un upgrade desde la pantalla de inventario del PJ (S17)
-        que sigue al modal. La S17 es autoritativa: muestra el disco con TODOS los rolls
-        asentados (incl. el último que S10 pierde por el auto-cierre al maxear). Llamar por cada
-        disco S17 emitido; solo actúa si hay un upgrade pendiente que matchea (set+slot)."""
+        """Confirma el estado FINAL de un upgrade desde la pantalla que SIGUE al modal y muestra
+        el disco con TODOS los rolls asentados (incl. el último que S10 pierde por el auto-cierre
+        al maxear). Dos flujos, misma función:
+          - inventario del PJ (S17) — mejora desde el equipamiento;
+          - resultado de afinación (S5) — mejora desde la tienda de música, que NUNCA pasa por
+            S17 (QA 2026-07-16). La S5 posterior también trae nivel real y rolls asentados.
+        Llamar por cada disco emitido; solo actúa si hay un pendiente que matchea (set+slot)."""
         if self._pending is None:
             return
         now = now if now is not None else time.monotonic()
@@ -223,7 +238,7 @@ class UpgradeSyncer:
         if now - ts > _PENDING_TTL_S:
             self._pending = None
             return
-        if not _same_disc(pre.parsed, disc):
+        if not self._same_disc_canon(pre.parsed, disc):
             return
         self._pending = None
         # POST autoritativo = el de mayor nivel (S17 asentado gana si S10 se quedó atrás).

@@ -902,7 +902,12 @@ class Monitor:
             self._s5_agg_sig = None
             self._s5_emitted = False
             self._s5_agg_cycles = 0
-            self._s5_grid_slots = ()   # re-entrar → re-emitir el preview de la grilla
+            # Volver del modal de mejora (S10) o del vuelto de materiales (S20) NO es una tanda
+            # nueva: es la MISMA grilla de afinación, solo que el disco quedó mejorado → conservar
+            # los slots para no re-emitir el preview (10 líneas redundantes por cada mejora,
+            # QA 2026-07-16). Re-entrar desde cualquier otro lado sí re-previsualiza.
+            if prev_code not in ("S10", "S20"):
+                self._s5_grid_slots = ()   # re-entrar → re-emitir el preview de la grilla
             self._s5_grid_pending = None
             self._s5_grid_settled = False
             self._s5_grid_tries = 0
@@ -2030,6 +2035,16 @@ class Monitor:
                      merged.main_stat_canon or merged.main_stat_raw, len(merged.subs))
         if not (mature or ceiling):
             return
+        # Confirmación de UPGRADE desde la TIENDA DE MÚSICA: ese flujo es S5→S10→S5 y NUNCA pasa
+        # por el inventario (S17), así que la S5 posterior ES la pantalla autoritativa del estado
+        # final (trae el nivel real —15 al maxear— y los rolls asentados). Igual que en S17, va
+        # DESACOPLADA de `_emit_s5_disc`: el dedup por identidad puede bloquear la emisión (un
+        # upgrade sin cambio de roll conserva la identidad) pero el resumen debe salir igual.
+        if self._upgrade_syncer is not None:
+            try:
+                self._upgrade_syncer.on_post_upgrade_disc(merged)
+            except Exception:
+                log.debug("on_post_upgrade_disc (s5) falló", exc_info=True)
         self._emit_s5_disc(merged, state)
 
     def _maybe_new_s5_batch(self, frame) -> None:

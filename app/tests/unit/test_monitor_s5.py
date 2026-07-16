@@ -165,6 +165,51 @@ def test_s5_preview_no_reemite_por_clic_jitter(monkeypatch):
     assert n_reaf == 20, f"la re-afinación real (multiset ≠) SÍ re-emite: {n_reaf}"
 
 
+def test_s5_confirma_upgrade_de_la_tienda_de_musica():
+    """QA 2026-07-16: mejorar desde la afinación es S5→S10→S5 y NUNCA pasa por el inventario
+    (S17) → la S5 posterior es la que debe CONFIRMAR el upgrade (trae el nivel real y los rolls
+    asentados). Antes solo el path de S17 llamaba `on_post_upgrade_disc` → el resumen no salía y
+    caía al fallback sólo-S10 ('sin confirmar en inventario'). Va DESACOPLADO del dedup."""
+    from app.core.detector import ScreenState
+    got = []
+
+    class _StubSyncer:
+        def on_post_upgrade_disc(self, disc):
+            got.append(disc)
+
+    m = _monitor(lambda d, s: None)
+    m._upgrade_syncer = _StubSyncer()
+    m._dispatch_state(_load("Tienda_musica_afinacion.png"), ScreenState("S5", 1.0, "s5_afinacion"))
+    assert got, "la S5 posterior debe confirmar el upgrade pendiente"
+    assert got[0].slot and (got[0].set_name_canon or got[0].set_name_raw)
+
+
+def test_s5_vuelta_del_modal_de_mejora_no_reemite_preview(monkeypatch):
+    """QA 2026-07-16 (tienda de música): mejorar un disco desde la afinación es S5→S10→S5 (o
+    S5→S10→S20→S5 al maxear). Volver del modal NO es una tanda nueva — es la MISMA grilla, solo
+    que el disco quedó mejorado → conservar los slots para no re-emitir las 10 líneas del preview
+    por CADA mejora. Re-entrar desde cualquier otra pantalla sí re-previsualiza."""
+    import app.core.monitor as mon
+    from app.core.detector import ScreenState
+    m = mon.Monitor(ocr=_NullOcr(), detector=None)
+    monkeypatch.setattr(m, "_maybe_process_disc", lambda f, s: None)
+    monkeypatch.setattr(m, "_handle_upgrade", lambda f, s, p=None: None)
+    fr = np.zeros((10, 10, 3), np.uint8)
+    st = ScreenState("S5", 1.0, "s5_afinacion")
+    slots = (1, 1, 2, 3, 4, 5, 5, 6, 6, 6)
+
+    for prev in ("S10", "S20"):
+        m._s5_grid_slots = slots
+        m._prev_state_code = prev
+        m._dispatch_state(fr, st)
+        assert m._s5_grid_slots == slots, f"volver de {prev} a S5 NO debe re-previsualizar"
+
+    m._s5_grid_slots = slots
+    m._prev_state_code = "S12"          # re-entrar de veras, desde otra pantalla
+    m._dispatch_state(fr, st)
+    assert m._s5_grid_slots == (), "re-entrar desde otra pantalla SÍ re-previsualiza"
+
+
 def test_s5_preview_usa_nombre_limpio_del_set_evocado_s4(monkeypatch):
     """El label del tile se trunca en la celda angosta → los nombres largos no resuelven desde ahí
     (QA 2026-07-10: 'Baladadela ramayla...'). El preview usa el set EVOCADO en el selector S4, que lo

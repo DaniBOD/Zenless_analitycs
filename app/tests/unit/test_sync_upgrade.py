@@ -46,6 +46,55 @@ def _disc(nivel, subs, set_name="X", slot=1, notas=None):
                       notas=notas or [])
 
 
+class _StubSetRepo:
+    """`set_repo` mínimo con resolución DIFUSA (como `DiscSetRepo.resolve_id`): mapea las
+    variantes ruidosas del OCR ('Ilameante' / 'Illameante') al set canónico."""
+
+    _CANON = "Firmamento llameante"
+
+    class _E:
+        def __init__(self, id, nombre):
+            self.id, self.nombre = id, nombre
+
+    def get_all(self):
+        return [self._E(1, self._CANON)]
+
+    def resolve_id(self, name, cutoff: float = 0.86, margin: float = 0.06):
+        import difflib
+
+        from app.core.stats_vocab import _norm_key
+        r = difflib.SequenceMatcher(None, _norm_key(name), _norm_key(self._CANON)).ratio()
+        return 1 if r >= cutoff else None
+
+
+def test_confirmacion_tolera_ruido_ocr_del_nombre_del_set():
+    """Tienda de música (S5→S10→S5): la confirmación resuelve AMBOS sets al canónico antes de
+    comparar. El OCR lee 'Firmamento Ilameante' (I mayúscula vs l minúscula) donde el PRE leyó
+    'llameante'; comparando crudo no matcheaba y el resumen se perdía — y en S5 hay UNA sola
+    pasada de confirmación (el dedup corta el re-procesamiento), así que no hay segunda chance."""
+    diags: list[str] = []
+    s = UpgradeSyncer(ocr=None, on_diagnostic=diags.append, set_repo=_StubSetRepo())
+    pre = _disc(0, [_sub("Ataque", "ATK", 79, 0)], set_name="Firmamento llameante", slot=2)
+    s._pending = (_Snap(0, pre), _Snap(0, pre), 15, 0.0)
+    post = _disc(15, [_sub("Ataque", "ATK", 316, 3)], set_name="Firmamento Ilameante", slot=2)
+    s.on_post_upgrade_disc(post, now=10.0)
+    assert any("resumen" in d and "0→15" in d for d in diags), diags
+
+
+def test_confirmacion_sin_set_repo_cae_a_comparacion_cruda():
+    """Sin `set_repo` el comportamiento cae al de `_same_disc` (nombre crudo normalizado):
+    mismo nombre confirma, y un set distinto no."""
+    diags: list[str] = []
+    s = UpgradeSyncer(ocr=None, on_diagnostic=diags.append)
+    pre = _disc(0, [_sub("Ataque", "ATK", 79, 0)], set_name="Firmamento llameante", slot=2)
+    s._pending = (_Snap(0, pre), _Snap(0, pre), 15, 0.0)
+    s.on_post_upgrade_disc(
+        _disc(15, [_sub("Ataque", "ATK", 316, 3)], set_name="Firmamento llameante", slot=2),
+        now=10.0,
+    )
+    assert any("resumen" in d for d in diags), diags
+
+
 # --- lógica pura --------------------------------------------------------------
 
 def test_roll_diff_detecta_incremento_y_substat_nuevo():
