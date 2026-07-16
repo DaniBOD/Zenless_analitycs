@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import re
 
+import cv2
 import numpy as np
 
 from app.core.parser_disc import DiscParsed, SubstatParsed
@@ -64,6 +65,10 @@ _LEVEL_Y_MAX = 0.56
 _LEVEL_LEFT_X = (0.48, 0.60)    # pill izquierdo = nivel ACTUAL
 _LEVEL_CENTER_X = (0.60, 0.76)  # centro = "N/M" (exp) o "MAX"
 _LEVEL_RIGHT_X = (0.76, 0.90)   # pill derecho = nivel PROYECTADO (tras "Mejorar")
+# Banda X del recorte de rescate de la pill proyectada (fracciones del ancho). La detección
+# de PaddleOCR sobre el frame completo pierde este dígito cuando el target es bajo (barra poco
+# llena → pill sobre olivo oscuro); su reconocimiento SÍ lo lee sobre un recorte ajustado.
+_LEVEL_RIGHT_CROP_X = (0.775, 0.86)
 
 _RE_NIVEL_NUM = re.compile(r"(\d{1,2})")
 
@@ -132,7 +137,7 @@ def _parse_s10_from_lines(
     _ysubs = y_subs if y_subs is not None else 10 ** 9
 
     # --- Barra de nivel (delimita el final de los substats por arriba) ---
-    nivel, maxed, y_level, proyectado = _read_level_bar(panel, W, H)
+    nivel, maxed, y_level, proyectado = _read_level_bar(panel, W, H, frame=frame, ocr=ocr)
     if maxed:
         notas.append("s10_max")
     else:
@@ -237,11 +242,40 @@ def _parse_sub_column(sub_region, col: PanelLayout, frame, ocr, W, H, notas) -> 
     return out
 
 
-def _read_level_bar(panel, W, H) -> tuple[int | None, bool, int | None, int | None]:
+def _rescue_projected_level(frame, ocr, W, H, y_top, y_bot) -> int | None:
+    """Re-OCR de la ROI de la pill derecha (nivel proyectado) cuando la pasada full-frame
+    no la detecta. `y_top`/`y_bot` = extensión vertical de la pill IZQUIERDA (misma fila,
+    siempre detectada) → recorte tight del tamaño correcto.
+
+    La detección de PaddleOCR sobre el frame completo pierde el dígito de bajo contraste
+    cuando la barra está poco rellena (target bajo, p.ej. 0→5: la pill cae sobre olivo
+    oscuro). Su reconocimiento SÍ lo lee sobre un recorte tight + upscaleado: el crop debe
+    ser AJUSTADO (uno grande con mucho fondo oscuro no dispara la detección) y el ×3 hace
+    el dígito grande para el modelo. Verificado sobre targets 5/8/11 (conf 1.00).
+    """
+    if frame is None or ocr is None:
+        return None
+    x0, x1 = int(_LEVEL_RIGHT_CROP_X[0] * W), int(_LEVEL_RIGHT_CROP_X[1] * W)
+    pad = 6
+    y0, y1 = max(0, y_top - pad), min(H, y_bot + pad)
+    crop = frame[y0:y1, x0:x1]
+    if crop.size == 0:
+        return None
+    crop = cv2.resize(crop, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+    for (t, _c, _bb) in ocr.text_with_bboxes(crop):
+        m = _RE_NIVEL_NUM.search(t)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def _read_level_bar(panel, W, H, frame=None, ocr=None) -> tuple[int | None, bool, int | None, int | None]:
     """Lee la barra de nivel chevron. Devuelve (nivel, maxed, y_barra, proyectado).
 
     pill izquierdo = nivel ACTUAL (dígito); centro = 'N/M' (PRE) o 'MAX' (maxeado);
     pill derecho = nivel PROYECTADO tras "Mejorar" (== actual si no hay materiales cargados).
+    Si la pasada full-frame no ve la pill derecha (target bajo, bajo contraste), se rescata
+    re-OCReando su recorte.
     """
     band = [ln for ln in panel if _LEVEL_Y_MIN <= (ln.y1 / H) <= _LEVEL_Y_MAX]
     if not band:
@@ -263,4 +297,12 @@ def _read_level_bar(panel, W, H) -> tuple[int | None, bool, int | None, int | No
         m = _RE_NIVEL_NUM.search(right[0].txt)
         if m:
             proyectado = int(m.group(1))
+    if proyectado is None and not maxed:
+        # Ancla vertical: la pill izquierda (misma fila, siempre detectada). Sin ella,
+        # ventana fija tight alrededor de y_bar (~alto de un dígito).
+        if left:
+            y_top, y_bot = left[0].y1, left[0].y2
+        else:
+            y_top, y_bot = y_bar, y_bar + int(0.028 * H)
+        proyectado = _rescue_projected_level(frame, ocr, W, H, y_top, y_bot)
     return nivel, maxed, y_bar, proyectado

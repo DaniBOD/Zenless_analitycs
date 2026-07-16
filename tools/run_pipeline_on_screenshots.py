@@ -44,6 +44,7 @@ FOLDER_TO_STATE: dict[str, str] = {
     "05_Upgrade_PRE_nivel0":                  "S10",
     "06_Upgrade_PRE_nivel3_6_9_12":           "S10",
     "07_Upgrade_POST_animacion_confirmacion": "S10",
+    "19_Upgrade_PRE_materiales_cargados":     "S10",
 }
 
 INSTALL_HINT = """

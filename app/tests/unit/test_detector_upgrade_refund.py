@@ -16,15 +16,18 @@ import pytest
 from app.core.detector import ScreenDetector
 
 REPO = Path(__file__).resolve().parents[3]
-_UP = REPO / "Documentacion" / "Screenshots_Triggers" / "Discos_Triggers" / "07_Upgrade_POST_animacion_confirmacion"
+_TRG = REPO / "Documentacion" / "Screenshots_Triggers" / "Discos_Triggers"
+_UP = _TRG / "07_Upgrade_POST_animacion_confirmacion"
+# Previews con materiales cargados (nivel proyectado) viven en su propio folder.
+_PREVIEW = _TRG / "19_Upgrade_PRE_materiales_cargados"
 
 _REFUND = _UP / "Ejemplo_1(vuelto_materiales).png"
-# NON-S20 del mismo folder: no deben clasificar como S20 (evita FP en el flujo de upgrade).
+# NON-S20 del flujo de upgrade: no deben clasificar como S20 (evita FP).
 _NON_S20 = [
     _UP / "Ejemplo_1(detallado).png",
-    _UP / "Ejemplo_1(pre-15-max).png",
-    _UP / "Ejemplo_2(pre-15-max).png",
-    _UP / "Ejemplo_3(pre-15-max).png",
+    _PREVIEW / "Ejemplo_1(pre-15-max).png",
+    _PREVIEW / "Ejemplo_2(pre-15-max).png",
+    _PREVIEW / "Ejemplo_3(pre-15-max).png",
 ]
 
 

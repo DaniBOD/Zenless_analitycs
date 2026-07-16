@@ -220,7 +220,7 @@ def test_pre_max_preview_real_emite_proyectado_al_entrar():
     """Al ENTRAR a S10 con materiales ya cargados (pill_der=15), el log muestra el
     'antes→proyectado' de una — es el 'antes y después' que pide el flujo de leveleo."""
     ocr = _ocr_or_skip()
-    p = _BASE / "07_Upgrade_POST_animacion_confirmacion" / "Ejemplo_1(pre-15-max).png"
+    p = _BASE / "19_Upgrade_PRE_materiales_cargados" / "Ejemplo_1(pre-15-max).png"
     if not p.exists():
         pytest.skip("screenshot pre-15-max no presente")
     frame = cv2.imdecode(np.fromfile(str(p), np.uint8), cv2.IMREAD_COLOR)

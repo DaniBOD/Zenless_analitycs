@@ -24,9 +24,14 @@ _SHOTS = {
 # "Mejorar" → la barra muestra pill_izq=nivel actual, pill_der=nivel PROYECTADO (15).
 # Frame estable (a diferencia del MAX real que auto-cierra) → fuente del "antes→después".
 _PREMAX = {
-    "Ejemplo_1(pre-15-max).png": {"slot": 2, "target": 15},
-    "Ejemplo_2(pre-15-max).png": {"slot": 6, "target": 15},
-    "Ejemplo_3(pre-15-max).png": {"slot": 4, "target": 15},
+    "Ejemplo_1(pre-15-max).png": {"slot": 2, "nivel": 0, "target": 15},
+    "Ejemplo_2(pre-15-max).png": {"slot": 6, "nivel": 0, "target": 15},
+    "Ejemplo_3(pre-15-max).png": {"slot": 4, "nivel": 0, "target": 15},
+    # Targets BAJOS: la pill proyectada cae sobre el olivo oscuro (barra poco llena) y la
+    # detección de PaddleOCR sobre el frame COMPLETO la pierde → exige rescate por recorte.
+    "Ejemplo_4(pre-0a5).png":  {"slot": 1, "nivel": 0, "target": 5},   # regresión del bug (leía nada/3)
+    "Ejemplo_5(pre-0a8).png":  {"slot": 1, "nivel": 0, "target": 8},
+    "Ejemplo_6(pre-8a11).png": {"slot": 1, "nivel": 8, "target": 11},  # nivel ACTUAL != 0
 }
 
 
@@ -108,16 +113,17 @@ def test_s10_fixtures_existentes_sin_target():
 
 @pytest.mark.parametrize("fname,exp", _PREMAX.items())
 def test_s10_pre_max_preview_lee_nivel_proyectado(fname, exp):
-    """Materiales cargados: pill_izq=0 (PRE real) y pill_der=15 (proyectado) → nota s10_target:15.
-    El nivel del disco sigue siendo el ACTUAL (0), no el proyectado."""
+    """Materiales cargados: pill_izq=nivel actual, pill_der=proyectado → nota s10_target:N.
+    El nivel del disco sigue siendo el ACTUAL, no el proyectado. Targets bajos (p.ej. 5)
+    exigen el rescate por recorte de la pill (la detección full-frame los pierde)."""
     from app.core.parser_disc_s10 import parse_disc_s10
-    p = _BASE / "07_Upgrade_POST_animacion_confirmacion" / fname
+    p = _BASE / "19_Upgrade_PRE_materiales_cargados" / fname
     if not p.exists():
         pytest.skip(f"screenshot no presente: {fname}")
     ocr = _ocr_or_skip()
     frame = cv2.imdecode(np.fromfile(str(p), np.uint8), cv2.IMREAD_COLOR)
     d = parse_disc_s10(frame, ocr)
     assert d.slot == exp["slot"]
-    assert d.nivel == 0                     # nivel ACTUAL, no el proyectado
+    assert d.nivel == exp["nivel"]          # nivel ACTUAL, no el proyectado
     assert "s10_pre" in d.notas and "s10_max" not in d.notas
     assert f"s10_target:{exp['target']}" in d.notas, d.notas
