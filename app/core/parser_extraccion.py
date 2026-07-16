@@ -20,6 +20,7 @@ independiente de su geometría (que es la de S2, no la de acá).
 """
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 
@@ -32,6 +33,8 @@ from app.core.parser_s2 import (
     read_tile_slot,
     tile_rarity,
 )
+
+log = logging.getLogger(__name__)
 
 # --- Geometría del viewport y de la grilla -------------------------------------------------
 # Lista scrolleable izquierda (excluye el panel "DETAIL" de la derecha, que muestra el ítem
@@ -60,16 +63,22 @@ _ROW_EPS = 0.05          # separación mínima entre filas distintas (paso real:
 _HEADER_DY = 0.092       # distancia del header al cy de la franja de su primera fila
 _HEADER_HALF_H = 0.016
 _HEADER_X = (0.205, 0.400)
+_HEADER_UPSCALE = 2      # ver `_read_header_at` (detección de PaddleOCR en bandas chicas)
 # Distancia del header de la sección SIGUIENTE al cy de la ÚLTIMA fila de la actual (medido:
 # +0.077; el gap entre filas de secciones distintas es 0.171 vs 0.123 intra-sección).
 _NEXT_HEADER_DY = 0.077
 
-# El OCR mutila el "º" de formas variadas ('n.*', 'n.°'→'n.�', 'n.9', 'n '). El truco es
-# exigir ESPACIO antes del dígito: la basura del "º" queda pegada a "n." sin espacio, mientras
-# que el número de la corrida siempre viene separado. Un `\D{0,4}` (primera versión) leía
-# 'Con el uso n.9 3 se obtiene:' como corrida **9** en vez de 3 — un error silencioso, justo
-# lo que RNF-02 prohíbe. Con `\S{0,3}\s+` el '.9' se consume como basura y gana el '3'.
-_RE_HEADER = re.compile(r"uso\s*n\S{0,3}\s+(\d)", re.I)
+# El nº de corrida se ancla ENTRE "uso n<basura>" y "se obtiene". Los dos anclajes son
+# necesarios, y cada uno lo puso una falla concreta:
+#   - Sin la cola: el OCR puede mutilar el "º" en un DÍGITO ('n.9 3') y un patrón laxo
+#     (`n\D{0,4}(\d)`) devolvía la corrida **9** en vez de 3. Error silencioso ⇒ RNF-02.
+#   - Sin tolerar la falta de espacio: PaddleOCR —el backend PRIMARIO de la app— pega el
+#     número al texto ('Con el uso n.*1se obtiene:'), así que exigir `\s+` antes del dígito
+#     hacía que NADA se emitiera en producción (Tesseract sí deja el espacio; por eso el bug
+#     no aparecía en los tests hasta parametrizarlos por backend).
+# Con la cola, el `\S{0,3}` se come la basura del "º" y solo gana el dígito seguido de
+# "se obtiene". Si el OCR también rompe la cola → no matchea → abstención (RNF-02).
+_RE_HEADER = re.compile(r"uso\s*n\S{0,3}\s*(\d)\s*se\s*obtiene", re.I)
 
 # Flechas de scroll. La AUSENCIA de la de abajo = se llegó al fondo de la lista → la última
 # sección visible está completa. Medido: presente ≈0.34 de píxeles claros, ausente = 0.000.
@@ -224,10 +233,45 @@ class _AlwaysAbstain:
 
 _NO_SLOT_MATCHER = _AlwaysAbstain()
 
+_slot_ocr_singleton = None
 
-def read_slot(frame: np.ndarray, box: TileBox, ocr) -> int | None:
-    """Dígito de slot del tile, o None si no se puede afirmar. Ver `_AlwaysAbstain`."""
-    return read_tile_slot(frame, box, ocr, slot_matcher=_NO_SLOT_MATCHER)
+
+def _get_slot_ocr():
+    """Backend de OCR para el DÍGITO DE SLOT: Tesseract, siempre — aunque el primario de la
+    app sea PaddleOCR.
+
+    No es una preferencia, es una restricción de RNF-02 medida sobre los 11 tiles dorados de
+    los fixtures:
+
+        Tesseract → 8/11 aciertos, **0 errores**, 3 abstenciones (solo el '4')
+        PaddleOCR → 7/11 aciertos, **4 ERRORES**, 0 abstenciones
+
+    El camino OCR de `read_tile_slot` está afinado para Tesseract (`psm=10` = un solo carácter,
+    binarizado + upscale ×5 + borde). Paddle ignora `psm`, no tiene noción de "un glifo" y
+    **nunca abstiene**: ante un dígito difícil devuelve igual su mejor conjetura → cada fallo
+    se vuelve un slot equivocado en silencio. En S2 esto nunca se notó porque allá el camino
+    primario es `SlotDigitMatcher` y el OCR casi no se usa; acá el matcher está descartado
+    (ver `_AlwaysAbstain`), así que el OCR es el único camino y su comportamiento manda.
+
+    Sin Tesseract disponible → None → se abstiene el slot (el disco igual cuenta).
+    """
+    global _slot_ocr_singleton
+    if _slot_ocr_singleton is None:
+        try:
+            from app.core.ocr_tesseract import TesseractBackend
+            _slot_ocr_singleton = TesseractBackend()
+        except Exception:
+            log.debug("Tesseract no disponible: el slot de S22 se abstiene", exc_info=True)
+            _slot_ocr_singleton = False   # sentinela: no reintentar
+    return _slot_ocr_singleton or None
+
+
+def read_slot(frame: np.ndarray, box: TileBox) -> int | None:
+    """Dígito de slot del tile, o None si no se puede afirmar.
+
+    NO toma el `ocr` del monitor a propósito: usa Tesseract sí o sí (ver `_get_slot_ocr`).
+    """
+    return read_tile_slot(frame, box, _get_slot_ocr(), slot_matcher=_NO_SLOT_MATCHER)
 
 
 def _read_header_at(frame: np.ndarray, cy_header: float, ocr) -> int | None:
@@ -242,6 +286,13 @@ def _read_header_at(frame: np.ndarray, cy_header: float, ocr) -> int | None:
     crop = frame[y0:y1, int(_HEADER_X[0] * W):int(_HEADER_X[1] * W)]
     if crop.size == 0:
         return None
+    # Upscale ×2 antes del OCR: la etapa de DETECCIÓN de PaddleOCR (el backend primario de la
+    # app) es marginal en esta banda de 46px y a veces devuelve '' o un fragmento ('odtiene'),
+    # sobre todo en el header del borde inferior. Su RECONOCIMIENTO lee bien si el texto es
+    # más grande — misma lección que el rescate del nivel proyectado en S10. Tesseract no se
+    # ve afectado. Barato: 46×499 → 92×998.
+    crop = cv2.resize(crop, None, fx=_HEADER_UPSCALE, fy=_HEADER_UPSCALE,
+                      interpolation=cv2.INTER_CUBIC)
     try:
         text, _conf = ocr.text(crop, psm=7, lang="spa")
     except Exception:
@@ -328,7 +379,7 @@ def parse_obtenido(frame, ocr, matcher=None, cand_en: list[str] | None = None) -
         discos: list[DiscoS] = []
         for r, cy in enumerate(cys):
             for box in gold_boxes(frame, cy, row=r):
-                slot = read_slot(frame, box, ocr)
+                slot = read_slot(frame, box)
                 nombre, conf = None, 0.0
                 if matcher is not None and cand_en:
                     try:

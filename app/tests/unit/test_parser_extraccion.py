@@ -33,12 +33,34 @@ def _load(p: Path) -> np.ndarray:
     return cv2.imdecode(np.fromfile(str(p), np.uint8), cv2.IMREAD_COLOR)
 
 
-def _ocr():
-    try:
-        from app.core.ocr_tesseract import TesseractBackend
-        return TesseractBackend()
-    except Exception:
-        pytest.skip("Tesseract no disponible")
+# Cache por proceso: instanciar un backend (sobre todo PaddleOCR) cuesta segundos, y estos
+# tests lo piden una vez por caso parametrizado.
+_BACKENDS: dict[str, object] = {}
+
+
+def _backend(name: str):
+    if name not in _BACKENDS:
+        try:
+            if name == "tesseract":
+                from app.core.ocr_tesseract import TesseractBackend
+                _BACKENDS[name] = TesseractBackend()
+            else:
+                from app.core.ocr_paddle import PaddleBackend
+                _BACKENDS[name] = PaddleBackend()
+        except Exception:
+            _BACKENDS[name] = None
+    if _BACKENDS[name] is None:
+        pytest.skip(f"{name} no disponible")
+    return _BACKENDS[name]
+
+
+@pytest.fixture(params=["tesseract", "paddle"], scope="session")
+def ocr(request):
+    """Los DOS backends. La app usa PaddleOCR de primario; testear solo con Tesseract dejó
+    pasar DOS bugs que rompían el feature en producción (QA en vivo 2026-07-16): Paddle pega el
+    número al texto ('n.*1se obtiene') donde Tesseract deja espacio, y su detección es marginal
+    en la banda del header. Todo lo que dependa del OCR se testea contra los dos."""
+    return _backend(request.param)
 
 
 class _FakeMatcher:
@@ -90,38 +112,41 @@ def test_localiza_los_discos_dorados():
 
 
 def test_regex_del_header_tolera_lo_que_el_ocr_hace_con_n_grado():
-    """El OCR devuelve 'n.º' de mil formas; el nº de corrida tiene que sobrevivir a todas."""
+    """El OCR devuelve 'n.º' de mil formas; el nº de corrida tiene que sobrevivir a todas.
+    Los marcados como REAL son salidas literales de los backends sobre los fixtures."""
     for txt, exp in [("Con el uso n.º 2 se obtiene:", 2),
                      ("Con el uso n.° 2 se obtiene:", 2),
-                     ("Con el uso n.* 1 se obtiene:", 1),
-                     ("Con el uso n.� 3 se obtiene:", 3),   # lo que devuelve Tesseract real
+                     ("Con el uso n.* 1 se obtiene:", 1),      # REAL — Tesseract
+                     ("Con el uso n.� 3 se obtiene:", 3),      # REAL — Tesseract
+                     ("Con el uso n.” 3 se obtiene:", 3),      # REAL — Tesseract
+                     ("Con el uso n.*1se obtiene:", 1),        # REAL — PaddleOCR (sin espacios)
+                     ("Con eluso n.° 3 se obtiene:", 3),       # REAL — PaddleOCR (se come el 'el')
                      ("Con eluso n 4 se obtiene", 4)]:
         m = pe._RE_HEADER.search(txt)
         assert m and int(m.group(1)) == exp, f"{txt!r} → {m}"
 
     # Regresión: el OCR puede mutilar el "º" en un DÍGITO. Un patrón laxo (`n\D{0,4}(\d)`)
-    # leía esto como corrida 9 en vez de 3 — un error silencioso, no una abstención.
+    # leía esto como corrida 9 en vez de 3 — un error silencioso, no una abstención. Lo que lo
+    # desambigua es el ancla de cola: solo el dígito seguido de "se obtiene" cuenta.
     m = pe._RE_HEADER.search("Con el uso n.9 3 se obtiene:")
     assert m and int(m.group(1)) == 3, "el '9' del 'º' mutilado no debe ganarle al nº real"
 
-    for txt in ["600 1 1", "", "basura sin nada", "Obtenido"]:
+    for txt in ["600 1 1", "", "basura sin nada", "Obtenido", "Con el uso n.º 2"]:
         assert pe._RE_HEADER.search(txt) is None, f"{txt!r} no debería matchear"
 
 
-def test_lee_el_numero_de_corrida_de_cada_fixture():
+def test_lee_el_numero_de_corrida_de_cada_fixture(ocr):
     esperado = {"Resultados_discos.png": 1, "Resultados_discos_2.png": 2,
                 "Resultados_discos_3.png": 3, "Resultados_discos_4.png": 4}
-    ocr = _ocr()
     for name, n_uso in esperado.items():
         frame = _load(_FX / name)
         leidos = [pe.read_section_header(frame, cy, ocr) for cy in pe.strip_rows(frame)]
         assert n_uso in leidos, f"{name}: esperaba leer el uso {n_uso}, leyó {leidos}"
 
 
-def test_una_fila_que_no_encabeza_seccion_no_inventa_header():
+def test_una_fila_que_no_encabeza_seccion_no_inventa_header(ocr):
     """Sobre una fila interior, el ROI del header cae en los labels de cantidad de la fila de
     arriba ('600 1 1') → el regex los rechaza. Es lo que permite agrupar sin heurística de gap."""
-    ocr = _ocr()
     frame = _load(_FX / "Resultados_discos.png")
     rows = pe.strip_rows(frame)
     assert pe.read_section_header(frame, rows[0], ocr) == 1     # 1ª fila: sí encabeza
@@ -146,9 +171,8 @@ def test_la_flecha_de_arriba_marca_el_tope():
 # --- parse completo ------------------------------------------------------------------------
 
 
-def test_parse_agrupa_por_corrida_y_lee_los_slots():
+def test_parse_agrupa_por_corrida_y_lee_los_slots(ocr):
     """El caso feliz: uso 1 con sus 2 discos S (slots 2 y 6) y su set."""
-    ocr = _ocr()
     secs = pe.parse_obtenido(_load(_FX / "Resultados_discos.png"), ocr,
                              _FakeMatcher(), ["Wuthering Salon", "The Sky Ablaze"])
     assert [s.n_uso for s in secs] == [1]
@@ -156,11 +180,13 @@ def test_parse_agrupa_por_corrida_y_lee_los_slots():
     assert all(d.set_name == "Wuthering Salon" for d in secs[0].discos)
 
 
-def test_parse_lee_los_slots_de_cada_corrida():
+def test_parse_lee_los_slots_de_cada_corrida(ocr):
     """Slots por fixture. El uso 3 (tres '4') abstiene: el OCR del glifo estilizado falla
     crónicamente en el '4' y el matcher NCC está descartado acá (ver `_AlwaysAbstain`).
-    Lo que NO puede pasar nunca es un slot EQUIVOCADO."""
-    ocr = _ocr()
+    Lo que NO puede pasar nunca es un slot EQUIVOCADO.
+
+    Parametrizado por backend a propósito: el resultado debe ser IDÉNTICO con los dos, porque
+    el slot NO usa el `ocr` que se pasa — usa Tesseract siempre (ver `_get_slot_ocr`)."""
     esperado = {"Resultados_discos.png": [2, 6],
                 "Resultados_discos_2.png": [2, 3, 6],
                 "Resultados_discos_3.png": [None, None, None],   # '4' → abstiene, no yerra
@@ -171,9 +197,12 @@ def test_parse_lee_los_slots_de_cada_corrida():
         assert got == slots, f"{name}: esperaba {slots}, salió {got}"
 
 
-def test_el_slot_nunca_sale_equivocado():
-    """La garantía RNF-02: 8/11 exactos y 3 abstenciones, CERO errores."""
-    ocr = _ocr()
+def test_el_slot_nunca_sale_equivocado(ocr):
+    """La garantía RNF-02: 8/11 exactos y 3 abstenciones, CERO errores — con CUALQUIER backend.
+
+    Regresión del QA en vivo 2026-07-16: medido sobre estos mismos 11 tiles, PaddleOCR (el
+    primario de la app) daba 7/11 con **4 errores y 0 abstenciones** — no sabe abstenerse en un
+    glifo suelto y siempre devuelve su mejor conjetura. Por eso el slot fuerza Tesseract."""
     verdad = {"Resultados_discos.png": [2, 6], "Resultados_discos_2.png": [2, 3, 6],
               "Resultados_discos_3.png": [4, 4, 4], "Resultados_discos_4.png": [2, 5, 5]}
     ok = err = absn = 0
@@ -188,20 +217,20 @@ def test_el_slot_nunca_sale_equivocado():
     assert (ok, absn) == (8, 3), f"accuracy cambió: {ok} ok / {absn} abstenciones"
 
 
-def test_seccion_incompleta_no_se_declara_completa():
+def test_seccion_incompleta_no_se_declara_completa(ocr):
     """`Resultados_discos` muestra el uso 1 con ▼ y sin el header del uso 2 todavía → no se
     puede afirmar que no haya más discos suyos abajo."""
-    secs = pe.parse_obtenido(_load(_FX / "Resultados_discos.png"), _ocr())
+    secs = pe.parse_obtenido(_load(_FX / "Resultados_discos.png"), ocr)
     assert secs[0].completa is False
 
 
-def test_el_fondo_de_la_lista_cierra_la_ultima_seccion():
-    secs = pe.parse_obtenido(_load(_FX / "Resultados_discos_4.png"), _ocr())
+def test_el_fondo_de_la_lista_cierra_la_ultima_seccion(ocr):
+    secs = pe.parse_obtenido(_load(_FX / "Resultados_discos_4.png"), ocr)
     assert [s.n_uso for s in secs] == [4]
     assert secs[0].completa is True
 
 
-def test_el_header_de_la_siguiente_corrida_cierra_la_actual():
+def test_el_header_de_la_siguiente_corrida_cierra_la_actual(ocr):
     """`Resultados_discos_3` muestra el uso 3 y, debajo, ya asoma el header del uso 4 (su
     primera FILA todavía no). Ver ese header prueba que el uso 3 no tiene más filas → cierra.
 
@@ -209,38 +238,36 @@ def test_el_header_de_la_siguiente_corrida_cierra_la_actual():
     ser huérfanas (su propio header sale de pantalla) y se descartan, así que la evidencia de
     cierre no vuelve a aparecer y quedaría en '≥3' para siempre."""
     frame = _load(_FX / "Resultados_discos_3.png")
-    ocr = _ocr()
     assert pe.next_section_header(frame, pe.strip_rows(frame)[-1], ocr) == 4
     secs = pe.parse_obtenido(frame, ocr)
     assert [s.n_uso for s in secs] == [3]
     assert secs[0].completa is True
 
 
-def test_sin_evidencia_de_cierre_no_se_declara_completa():
+def test_sin_evidencia_de_cierre_no_se_declara_completa(ocr):
     """`Resultados_discos` muestra el uso 1 con ▼ y sin asomar el header del uso 2 → no se
     puede afirmar que no haya más discos suyos abajo."""
     frame = _load(_FX / "Resultados_discos.png")
-    ocr = _ocr()
     assert pe.next_section_header(frame, pe.strip_rows(frame)[-1], ocr) is None
     assert pe.parse_obtenido(frame, ocr)[0].completa is False
 
 
-def test_filas_huerfanas_se_descartan():
+def test_filas_huerfanas_se_descartan(ocr):
     """`Resultados_discos_2` arranca con la cola del uso 1 (su header quedó scrolleado fuera):
     esas filas no se pueden atribuir a ninguna corrida → se descartan, no se fusionan."""
-    secs = pe.parse_obtenido(_load(_FX / "Resultados_discos_2.png"), _ocr())
+    secs = pe.parse_obtenido(_load(_FX / "Resultados_discos_2.png"), ocr)
     assert [s.n_uso for s in secs] == [2]
 
 
-def test_sin_matcher_no_hay_set_pero_si_discos():
-    secs = pe.parse_obtenido(_load(_FX / "Resultados_discos.png"), _ocr(), matcher=None)
+def test_sin_matcher_no_hay_set_pero_si_discos(ocr):
+    secs = pe.parse_obtenido(_load(_FX / "Resultados_discos.png"), ocr, matcher=None)
     assert len(secs[0].discos) == 2
     assert all(d.set_name is None for d in secs[0].discos)
 
 
-def test_sin_candidatos_no_se_afirma_set():
+def test_sin_candidatos_no_se_afirma_set(ocr):
     """Sin predicción de nodo (S13), el matcher no tiene contra qué comparar → abstención."""
-    secs = pe.parse_obtenido(_load(_FX / "Resultados_discos.png"), _ocr(),
+    secs = pe.parse_obtenido(_load(_FX / "Resultados_discos.png"), ocr,
                              _FakeMatcher(), cand_en=[])
     assert all(d.set_name is None for d in secs[0].discos)
 

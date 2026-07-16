@@ -1507,8 +1507,9 @@ class Monitor:
                 continue                      # no creció ni cerró → no re-loguear
             self._s22_seen[sec.n_uso] = _S22_SEC_CERRADA if sec.completa else len(sec.discos)
             msg = self._fmt_seccion(sec, n_total, cand_en)
-            log.info("Extracción S22: uso %s · %d disco(s) S · completa=%s",
-                     sec.n_uso, len(sec.discos), sec.completa)
+            # Loguear el mensaje ENTERO (no solo el conteo): el log es la única traza del QA
+            # en vivo, y sin los slots/sets no se puede contrastar contra lo que se ve.
+            log.info("Extracción S22: %s · completa=%s", msg, sec.completa)
             if self._id_diag_on:
                 log.info("[s22_diag] uso=%s discos=%s", sec.n_uso,
                          [(d.slot, d.set_name, d.conf) for d in sec.discos])
