@@ -457,6 +457,73 @@ class DiscSyncer:
         finally:
             con_w.close()
 
+    def move_disc_between_agents(
+        self, origin_name: str | None, dest_name: str | None, slot: int,
+        set_id: int | None = None,
+    ) -> bool:
+        """Mueve el disco equipado del PJ ORIGEN en `slot` al PJ DESTINO (swap detectado en S23).
+
+        Actualiza la fila EXISTENTE del disco del origen (`update_assignment` → destino), en vez de
+        dejar que la persistencia S17 inserte una fila nueva (que duplicaría el disco y dejaría al
+        origen reclamándolo). Desequipa primero el disco desplazado del destino en ese slot. Corre
+        ANTES de la persistencia S17 del mismo disco: al persistir, `find_equipped_by_agent_slot`
+        del destino ya encuentra este disco (set correcto) → va por el path de update, sin duplicar.
+
+        Devuelve True si movió una fila. No-op (False) si readonly, si falta un PJ, o si el disco
+        del origen no está en la DB (en ese caso la persistencia S17 normal lo dará de alta en el
+        destino — sin la fila del origen no hay nada que mover). RNF-01: el backup de sesión lo hace
+        el controller al arrancar; escribe en su propia transacción."""
+        if is_readonly():
+            log.info("[readonly] swap NO persiste — %s → %s slot=%s", origin_name, dest_name, slot)
+            return False
+        if not origin_name or not dest_name:
+            log.info("Swap sin PJ resoluble (origen=%s destino=%s) — no se mueve.", origin_name, dest_name)
+            return False
+        origin = self._agent_repo.get_by_nombre(origin_name)
+        dest = self._agent_repo.get_by_nombre(dest_name)
+        if origin is None or dest is None:
+            log.info("Swap: PJ no resuelto (origen=%s destino=%s) — no se mueve.", origin_name, dest_name)
+            return False
+        if origin.id == dest.id:
+            return False
+
+        con_w = sqlite3.connect(str(self._db_path))
+        con_w.row_factory = sqlite3.Row
+        disc_repo_w = InventoryDiscRepo(con_w)
+        try:
+            with con_w:
+                moved = disc_repo_w.find_equipped_by_agent_slot(origin.id, slot)
+                if moved is None:
+                    log.info(
+                        "Swap: el disco del origen %s slot=%d no está en la DB → lo dará de alta "
+                        "la persistencia S17 en %s (sin fila de origen que mover).",
+                        origin_name, slot, dest_name,
+                    )
+                    return False
+                if set_id is not None and moved.set_id != set_id:
+                    log.warning(
+                        "Swap: el disco equipado de %s slot=%d es set=%s pero el diálogo decía "
+                        "set_id=%s — no se mueve (RNF-02).", origin_name, slot, moved.set_id, set_id,
+                    )
+                    return False
+                # Desequipar el disco desplazado del destino en ese slot (si tenía otro distinto).
+                displaced = disc_repo_w.find_equipped_by_agent_slot(dest.id, slot)
+                if displaced is not None and displaced.id != moved.id:
+                    disc_repo_w.set_unequipped(displaced.id)
+                # Mover la fila EXISTENTE del disco al destino (sin duplicar).
+                disc_repo_w.update_assignment(moved.id, dest.id, equipado=1)
+            log.info(
+                "Swap persistido: disco id=%d slot=%d movido %s → %s%s",
+                moved.id, slot, origin_name, dest_name,
+                f" (desplazó id={displaced.id})" if displaced and displaced.id != moved.id else "",
+            )
+            return True
+        except Exception as exc:
+            log.exception("Error en move_disc_between_agents: %s", exc)
+            return False
+        finally:
+            con_w.close()
+
     def _schedule_optimizer(self, agente_id: int) -> None:
         """Dispara recompute_best_build con debounce de 2 s por PJ."""
         def _run() -> None:

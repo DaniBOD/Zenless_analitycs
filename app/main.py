@@ -476,6 +476,7 @@ class MainWindow(QMainWindow):
 
         # Cableado controller → toast
         self._controller.disc_detected.connect(self._on_disc_show_toast)
+        self._controller.disc_replaced.connect(self._on_disc_show_replacement_toast)
 
         # Cableado controller.log_message → live_panel.append_log
         # (mensajes informativos: cambios de estado, capturas descartadas, etc)
@@ -611,6 +612,24 @@ class MainWindow(QMainWindow):
             timeout_secs=4.0,
         )
         self._toast.show_recommendation(td)
+
+    def _on_disc_show_replacement_toast(self, payload: dict):
+        """Slot: toast REEMPLAZADO (swap de disco entre PJs). El destino usa target_*, el origen
+        from_*. Sin score ni countdown (confirmación pasiva)."""
+        from app.ui.toast import ToastData
+        td = ToastData(
+            variant="reemplazado",
+            set_name=payload.get("set", "?"),
+            slot=payload.get("slot", 0),
+            rarity=payload.get("rarity", "S"),
+            set_logo=payload.get("set_logo"),
+            from_agent=payload.get("from_agent", "—"),
+            from_avatar=payload.get("from_avatar"),
+            target_agent=payload.get("to_agent", "—"),
+            target_avatar=payload.get("to_avatar"),
+            timeout_secs=3.0,
+        )
+        self._toast.show_replacement(td)
 
     def closeEvent(self, event):
         """

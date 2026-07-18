@@ -54,6 +54,10 @@ VARIANTS: dict[str, dict] = {
     "reserva":   {"label": "RESERVA",   "color": YELLOW,   "tone": "yellow", "icon": "stack"},
     "descartar": {"label": "DESCARTAR", "color": WARNING,  "tone": "purple", "icon": "trash"},
     "lategame":  {"label": "RUN REGISTRADA", "color": YELLOW, "tone": "yellow", "icon": "feed"},
+    # Confirmación pasiva de un swap de disco entre PJs detectado por OCR (S23→S17). Acento
+    # violeta (color "libre" del sistema, no usado por otra variante). Sin score ni countdown:
+    # es una notificación de que YA pasó y la DB se sincronizó (ver BRIEF_card_reemplazado.md).
+    "reemplazado": {"label": "REEMPLAZADO", "color": PURPLE, "tone": "purple", "icon": "swap"},
 }
 
 

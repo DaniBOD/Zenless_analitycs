@@ -80,6 +80,10 @@ THRESHOLD_BY_STATE: dict[str, float] = {
                    #   auto-combate NO hay S2 ni S3 después, es la ÚNICA ventana donde existen
                    #   estos drops. "Obtenido" es un título genérico (correo/login/pase) → el
                    #   umbral alto va acompañado de _verify_s22 (franjas de rareza en la grilla).
+    "S23": 0.85,   # Diálogo de sustitución de disco entre PJs ("{PJ} equipa actualmente {set}
+                   #   ({slot}). ¿Deseas sustituirlo?") — arma un WRITE a DB (mover disco), así
+                   #   que umbral alto. Template = fila "Cancelar/Confirmar" (genérica de ZZZ) →
+                   #   acompañado de _verify_s23 (OCR del texto "sustituirlo").
     "S12": 0.0,    # Sin coincidencia — no aplica
 }
 
@@ -102,16 +106,16 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     # caía a S12 ⇒ el disco no se parseaba y NO saltaba el toast (bug de QA en vivo 2026-07-16).
     "S6":  {"S7", "S12", "S4", "S5", "S9", "S10", "S22"},
     "S7":  {"S12", "S4", "S6", "S5", "S9", "S10", "S22"},
-    "S8":  {"S17", "S18", "S19", "S12", "S15", "S9"},
+    "S8":  {"S17", "S18", "S19", "S12", "S15", "S9", "S23"},   # equipar un disco de otro PJ → diálogo swap
     "S9":  {"S8", "S12", "S17", "S16", "S6", "S7"},   # "Ver" un disco del inventario → S6/S7
     "S10": {"S12", "S9", "S3", "S20", "S6", "S7"},    # volver de la mejora a la vista individual
     "S11": {"S12", "S9", "S3"},
-    "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18", "S19", "S20", "S21", "S22"},
+    "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18", "S19", "S20", "S21", "S22", "S23"},
     "S13": {"S12", "S14", "S1", "S18", "S21", "S22"},
     "S14": {"S12", "S1", "S13", "S15", "S18"},
     "S15": {"S8", "S18", "S19", "S12", "S14"},
     "S16": {"S12", "S9", "S8", "S18"},
-    "S17": {"S8", "S18", "S19", "S12", "S15", "S9"},
+    "S17": {"S8", "S18", "S19", "S12", "S15", "S9", "S23"},   # desde el detalle, sustituir un disco de otro PJ
     "S18": {"S8", "S19", "S12", "S15", "S17"},
     "S19": {"S8", "S18", "S12", "S15", "S17"},
     "S20": {"S12", "S17", "S9", "S8", "S15", "S10"},   # tras confirmar el vuelto → inventario
@@ -120,6 +124,9 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     "S21": {"S12", "S13", "S1", "S22"},
     # S22 → S6/S7: "Ver" un drop del "Obtenido" abre la vista individual (y desde ahí se mejora).
     "S22": {"S12", "S13", "S1", "S21", "S6", "S7"},
+    # S23 (diálogo de sustitución): modal sobre el flujo de equipamiento. Se abre desde S8/S17 (o
+    # la grilla de selección de disco, que cae a S12) y al confirmar/cancelar vuelve a ese flujo.
+    "S23": {"S12", "S17", "S8", "S9"},
 }
 
 STATE_DESCRIPTIONS: dict[str, str] = {
@@ -145,6 +152,7 @@ STATE_DESCRIPTIONS: dict[str, str] = {
     "S20": "Materiales recuperados (vuelto tras mejorar disco)",
     "S21": "Modal selección de usos (baterías) — ANTELACIÓN A CAPTURA",
     "S22": "Modal 'Obtenido' (drops del farmeo por baterías)",
+    "S23": "Diálogo de sustitución de disco entre PJs (confirmar swap)",
 }
 
 # Estados que SÍ tienen un disco visible para parsear
@@ -154,7 +162,7 @@ UPGRADE_STATES: set[str] = {"S10"}
 # Estados sin disco (solo logging informativo)
 NON_CAPTURE_STATES: set[str] = {
     "S1", "S2", "S4", "S8", "S9",
-    "S11", "S12", "S13", "S14", "S15", "S16", "S19", "S20", "S21", "S22",
+    "S11", "S12", "S13", "S14", "S15", "S16", "S19", "S20", "S21", "S22", "S23",
 }
 
 # Estados donde hay stats de agente visibles (Atributos base)
@@ -1099,6 +1107,49 @@ def _verify_s22(frame: np.ndarray) -> tuple[bool, str | None]:
         return (True, None)   # convención del repo: ante excepción, no bloquear
 
 
+# Banda del texto del diálogo de sustitución ("{PJ} equipa actualmente {set} ({slot}). ¿Deseas
+# sustituirlo?") — 1 o 2 líneas, centrado. Generosa para cubrir ambos casos (medido sobre los 7
+# fixtures). La usan `_verify_s23` (anti-FP) y el parser (parser_sustitucion).
+_S23_TEXT_ROI = (0.10, 0.44, 0.80, 0.12)   # x, y, w, h
+_RE_S23_VERIFY = re.compile(r"sustituir|equipa\s+actualmente", re.I)
+_s23_verify_ocr = None
+
+
+def _get_s23_verify_ocr():
+    """Tesseract lazy solo para `_verify_s23`. Corre únicamente cuando el template de botones
+    matchea (diálogo de confirmación en pantalla), así que el costo es puntual. None si falta."""
+    global _s23_verify_ocr
+    if _s23_verify_ocr is None:
+        try:
+            from app.core.ocr_tesseract import TesseractBackend
+            _s23_verify_ocr = TesseractBackend()
+        except Exception:
+            _s23_verify_ocr = False   # sentinela: no reintentar
+    return _s23_verify_ocr or None
+
+
+def _verify_s23(frame: np.ndarray) -> tuple[bool, str | None]:
+    """Verifica que S23 sea el diálogo de SUSTITUCIÓN de disco. El template es la fila
+    "Cancelar/Confirmar", GENÉRICA de ZZZ (varios diálogos de confirmación la tienen), así que el
+    template solo sería un FP a la espera. La firma exclusiva es el TEXTO del diálogo ("... equipa
+    actualmente ... sustituirlo"). OCR de esa banda (anti-FP, RNF-02). Sin Tesseract → no bloquear
+    (convención del repo: ante ausencia/excepción, no degradar)."""
+    ocr = _get_s23_verify_ocr()
+    if ocr is None:
+        return (True, None)
+    try:
+        h, w = frame.shape[:2]
+        x, y, rw, rh = _S23_TEXT_ROI
+        crop = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
+        if crop.size == 0:
+            return (True, None)
+        text, _ = ocr.text(crop, psm=6, lang="spa")
+        ok = bool(_RE_S23_VERIFY.search(text or ""))
+        return (ok, "txt=sustituir" if ok else "txt=no-match")
+    except Exception:
+        return (True, None)
+
+
 def _verify_s2(frame: np.ndarray) -> tuple[bool, str | None]:
     """Verifica que S2 sea un FARMEO DE DISCOS real. El template 's2_resultado_desafio' matchea
     (a ≥0.80) tanto los resultados de farmeo de discos como OTRAS pantallas de "Resultados del
@@ -1144,6 +1195,7 @@ def _is_music_selector(frame: np.ndarray) -> bool:
 _VERIFICATION_REGISTRY: dict[str, callable] = {
     "S2":  _verify_s2,
     "S22": _verify_s22,
+    "S23": _verify_s23,
     "S3":  _verify_s3,
     "S10": _verify_s10,
     "S17": _verify_s17,
@@ -1258,6 +1310,7 @@ _STATE_TEMPLATES: list[dict] = [
     {"code": "S15", "template": "s15_menu_personajes.png",          "desc": "Menú de personajes (plan entrenamiento)"},
     {"code": "S21", "template": "s21_seleccion_usos.png",           "desc": "Modal selección número de usos (baterías)"},
     {"code": "S22", "template": "s22_obtenido.png",                 "desc": "Modal 'Obtenido' (drops del farmeo por baterías)"},
+    {"code": "S23", "template": "s23_sustitucion.png",              "desc": "Diálogo de sustitución de disco entre PJs (Cancelar/Confirmar)"},
 ]
 
 
@@ -1570,5 +1623,6 @@ def polling_cadence_ms(state: ScreenState) -> int:
         "S9":  1500, "S10":  500, "S11": 5000, "S12": 2000,
         "S13": 1000, "S14": 1000, "S15": 1000, "S16": 1500,
         "S17": 1000, "S18": 1500, "S19": 1500, "S21": 1000, "S22": 700,
+        "S23": 1000,   # diálogo modal breve; el latch del destino se captura al detectarlo
     }
     return cadence.get(state.code, 2000)

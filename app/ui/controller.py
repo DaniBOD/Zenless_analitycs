@@ -72,6 +72,7 @@ class MonitorController(QObject):
 
     # Eventos de captura
     disc_detected = Signal(dict)             # payload listo para LivePanel + Toast
+    disc_replaced = Signal(dict)             # swap de disco entre PJs confirmado → toast REEMPLAZADO
     agent_stats_detected = Signal(dict)      # stats de agente desde S18
     error_occurred = Signal(str)
     # Mensaje informativo crudo para el log (estado, captura descartada, etc).
@@ -161,6 +162,7 @@ class MonitorController(QObject):
             set_badge_matcher=self._set_badge_matcher, # set por badge del disco en S2
             capture_only_focused=_capture_only_focused(),  # gate anti-FP por foco de ventana
             upgrade_syncer=self._upgrade_syncer,      # tracking PRE→POST modal upgrade (S10)
+            on_replacement=self._on_replacement_from_monitor,  # swap de disco confirmado (S23→S17)
         )
         self._monitor.start()
         self.monitor_started.emit()
@@ -658,6 +660,56 @@ class MonitorController(QObject):
         except Exception as exc:
             log.exception("Error procesando disco capturado")
             self.error_occurred.emit(f"Procesando disco: {exc}")
+
+    def _on_replacement_from_monitor(self, ev: dict):
+        """Swap de disco confirmado (S23 → confirmación por S17). Mueve el disco en la DB
+        (origen → destino, sin duplicar; ver `DiscSyncer.move_disc_between_agents`) y emite el
+        toast REEMPLAZADO. Corre en el thread del monitor; `disc_replaced` cruza a la UI."""
+        try:
+            if self._disc_syncer is not None:
+                moved = self._disc_syncer.move_disc_between_agents(
+                    ev.get("from_name"), ev.get("to_name"),
+                    ev.get("slot"), ev.get("set_id"),
+                )
+                if moved and self._owner_tiebreaker is not None:
+                    self._owner_tiebreaker.mark_dirty()
+            self.disc_replaced.emit(self._build_replacement_payload(ev))
+        except Exception as exc:
+            log.exception("Error procesando swap de disco")
+            self.error_occurred.emit(f"Procesando swap: {exc}")
+
+    def _build_replacement_payload(self, ev: dict) -> dict:
+        """Evento crudo del monitor {set_name, set_id, slot, from_name, to_name} → payload del
+        toast (logo del set + avatares de los 2 PJs, resueltos por asset_resolver)."""
+        from app.core.asset_resolver import set_logo_path, agent_avatar_path
+        set_name = ev.get("set_name") or "?"
+        set_logo = None
+        set_id = ev.get("set_id")
+        if set_id and self._disc_set_repo is not None:
+            try:
+                for s in self._disc_set_repo.get_all():
+                    if s.id == set_id:
+                        pth = set_logo_path(s.nombre_en)
+                        set_logo = str(pth) if pth else None
+                        set_name = s.nombre       # canónico de la DB
+                        break
+            except Exception:
+                pass
+
+        def _avatar(name):
+            if not name:
+                return None
+            try:
+                pth = agent_avatar_path(name, variant="ico")
+                return str(pth) if pth else None
+            except Exception:
+                return None
+
+        return {
+            "set": set_name, "slot": ev.get("slot", 0), "rarity": "S", "set_logo": set_logo,
+            "from_agent": ev.get("from_name") or "—", "from_avatar": _avatar(ev.get("from_name")),
+            "to_agent": ev.get("to_name") or "—", "to_avatar": _avatar(ev.get("to_name")),
+        }
 
     @staticmethod
     def _fmt_sub(s) -> str:

@@ -59,6 +59,9 @@ class ToastData:
     urgency:       float = 0.7          # 0-1
     threshold:     float = 0.75         # threshold equip o stock
     timeout_secs:  float = 4.0
+    # Variante "reemplazado" (swap origen→destino). El DESTINO reusa target_agent/target_avatar.
+    from_agent:    str = "—"            # PJ que DEJA el disco (atenuado)
+    from_avatar:   str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +232,44 @@ class DiscToast(QWidget):
         self._tick_timer.start()
         self.update()
 
+    def show_replacement(self, data: ToastData) -> None:
+        """Toast de swap confirmado (variante 'reemplazado'): origen → disco → destino, sin score
+        ni countdown. Reusa el marco/glow; el body lo pinta `_paint_body_replacement`. El thumb va
+        CENTRADO (no a la izquierda como en las recomendaciones)."""
+        data.variant = "reemplazado"
+        self._data = data
+        self._secs_remaining = data.timeout_secs or 3.0
+        self._paused = False
+        self._urgency_phase = 0.0
+
+        screen = QApplication.primaryScreen().availableGeometry()
+        margin = 24
+        x = screen.right() - self.width() + 20
+        y = screen.bottom() - self.height() + 20 - margin
+        self.move(x, y)
+
+        if self._thumb:
+            self._thumb.deleteLater()
+        accent = T.variant("reemplazado")["color"]
+        self._thumb = DiscThumb(
+            accent=accent, tier=data.rarity, set_logo_path=data.set_logo, size=48, parent=self,
+        )
+        # Centrado horizontalmente (ox=20), debajo del header.
+        self._thumb.move(20 + WIDTH // 2 - 24, HEADER_GAP + 50)
+
+        self.setWindowOpacity(0.0)
+        self.show()
+        self._fade_anim.stop()
+        try:
+            self._fade_anim.finished.disconnect(self.hide)
+        except (TypeError, RuntimeError):
+            pass
+        self._fade_anim.setStartValue(0.0)
+        self._fade_anim.setEndValue(0.96)
+        self._fade_anim.start()
+        self._tick_timer.start()
+        self.update()
+
     def hide_with_fade(self):
         self._tick_timer.stop()
         self._fade_anim.stop()
@@ -322,8 +363,12 @@ class DiscToast(QWidget):
 
         # ---- Contenido ----
         self._paint_header(p, ox, oy, accent, v)
-        self._paint_body(p, ox, oy, accent, v)
-        self._paint_footer(p, ox, oy, accent, v)
+        if self._data.variant == "reemplazado":
+            self._paint_body_replacement(p, ox, oy, accent, v)
+            self._paint_footer_static(p, ox, oy, accent, "EQUIPAMIENTO SINCRONIZADO", "inventory_discs ✓")
+        else:
+            self._paint_body(p, ox, oy, accent, v)
+            self._paint_footer(p, ox, oy, accent, v)
 
     def _chamfered_path(self, rect: QRect, chamfer: int) -> QPainterPath:
         """Path con chamfer en top-left y bottom-right."""
@@ -383,6 +428,20 @@ class DiscToast(QWidget):
         id_str = f"#{self._data.disc_id:05d}" if self._data.disc_id else "#-----"
         id_rect = QRect(sep_x + 6, label_y, 60, label_h)
         p.drawText(id_rect, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), id_str)
+
+        # Variante confirmación (reemplazado): micro-badge "✓ SINCRONIZADO" estático, sin countdown.
+        if self._data.variant == "reemplazado":
+            badge_txt = "✓ SINCRONIZADO"
+            p.setFont(T.font_caps(7))
+            bw = p.fontMetrics().horizontalAdvance(badge_txt) + 14
+            bx = ox + WIDTH - PADDING_X - bw
+            p.setBrush(T.color(T.POSITIVE, 0.08))
+            p.setPen(QPen(T.color(T.POSITIVE, 0.4), 1))
+            p.drawRoundedRect(bx, label_y + 1, bw, label_h - 2, 3, 3)
+            p.setPen(T.color(T.POSITIVE))
+            p.drawText(QRect(bx, label_y, bw, label_h),
+                       int(Qt.AlignmentFlag.AlignCenter), badge_txt)
+            return
 
         # Countdown (derecha)
         cd_w = 64
@@ -530,6 +589,87 @@ class DiscToast(QWidget):
         thr_w = p.fontMetrics().horizontalAdvance(thr_str)
         p.setFont(T.font_mono(8))
         p.drawText(bar_x + bar_w - thr_w, bar_y + URGENCY_BAR_H + 13, thr_str)
+
+    def _paint_avatar(self, p: QPainter, path_str: str | None, x: int, y: int, d: int,
+                      ring: QColor | None, dim: bool = False):
+        """Avatar circular en (x,y) diámetro d. `ring`=color del aro (None sin aro). `dim`=atenuado
+        (el PJ que DEJA el disco). Si no hay imagen, dibuja un placeholder con el aro."""
+        drew = False
+        if path_str and Path(path_str).exists():
+            av = QPixmap(path_str)
+            if not av.isNull():
+                av = av.scaled(d, d, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                               Qt.TransformationMode.SmoothTransformation)
+                p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+                clip = QPainterPath(); clip.addEllipse(x, y, d, d)
+                p.setClipPath(clip)
+                if dim:
+                    p.setOpacity(0.55)
+                p.drawPixmap(x, y, av)
+                p.setOpacity(1.0)
+                p.setClipping(False)
+                drew = True
+        if not drew:
+            p.setBrush(T.color("#1a1a1a")); p.setPen(Qt.PenStyle.NoPen)
+            p.drawEllipse(x, y, d, d)
+        if ring is not None:
+            p.setPen(QPen(ring, 1.5)); p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(x, y, d, d)
+
+    def _paint_body_replacement(self, p: QPainter, ox: int, oy: int, accent: QColor, v: dict):
+        """Body del toast REEMPLAZADO: PJ origen (DEJA, atenuado) → disco (thumb central + set/slot)
+        → PJ destino (EQUIPA, resaltado con aro violeta). Sin score ni substats (anti-sobrecarga)."""
+        d = 38
+        col_top = oy + 58
+        name_y = col_top + d + 14
+        # --- Origen (izquierda, atenuado) ---
+        ox_l = ox + PADDING_X + 6
+        p.setFont(T.font_caps(7)); p.setPen(T.color(T.TEXT_MUTED))
+        p.drawText(QRect(ox_l - 4, col_top - 12, 56, 10), int(Qt.AlignmentFlag.AlignCenter), "DEJA")
+        self._paint_avatar(p, self._data.from_avatar, ox_l + 8, col_top, d,
+                           T.color(T.BORDER_MID), dim=True)
+        p.setFont(T.font_ui(9)); p.setPen(T.color(T.TEXT_SECONDARY))
+        p.drawText(QRect(ox_l - 6, name_y - 10, 60, 14),
+                   int(Qt.AlignmentFlag.AlignCenter),
+                   p.fontMetrics().elidedText(self._data.from_agent, Qt.TextElideMode.ElideRight, 58))
+        # --- Destino (derecha, resaltado) ---
+        ox_r = ox + WIDTH - PADDING_X - 56
+        p.setFont(T.font_caps(7)); p.setPen(accent)
+        p.drawText(QRect(ox_r - 4, col_top - 12, 56, 10), int(Qt.AlignmentFlag.AlignCenter), "EQUIPA")
+        self._paint_avatar(p, self._data.target_avatar, ox_r + 8, col_top, d, accent)
+        p.setFont(T.font_ui(9, bold=True)); p.setPen(T.color(T.TEXT_PRIMARY))
+        p.drawText(QRect(ox_r - 6, name_y - 10, 60, 14),
+                   int(Qt.AlignmentFlag.AlignCenter),
+                   p.fontMetrics().elidedText(self._data.target_agent, Qt.TextElideMode.ElideRight, 58))
+        # --- Flechas violeta origen→centro→destino ---
+        cy = col_top + d // 2
+        p.setFont(T.font_ui(13, bold=True)); p.setPen(accent)
+        p.drawText(QRect(ox_l + 8 + d, cy - 8, (ox + WIDTH // 2 - 24) - (ox_l + 8 + d), 16),
+                   int(Qt.AlignmentFlag.AlignCenter), "→")
+        p.drawText(QRect(ox + WIDTH // 2 + 24, cy - 8, (ox_r + 8) - (ox + WIDTH // 2 + 24), 16),
+                   int(Qt.AlignmentFlag.AlignCenter), "→")
+        # --- Set + slot debajo del thumb central ---
+        p.setFont(T.font_ui(9, bold=True)); p.setPen(T.color(T.TEXT_PRIMARY))
+        set_txt = p.fontMetrics().elidedText(self._data.set_name, Qt.TextElideMode.ElideRight, 118)
+        p.drawText(QRect(ox + WIDTH // 2 - 62, name_y - 12, 124, 12),
+                   int(Qt.AlignmentFlag.AlignCenter), set_txt)
+        p.setFont(T.font_ui(8)); p.setPen(T.color(T.TEXT_MUTED))
+        p.drawText(QRect(ox + WIDTH // 2 - 62, name_y + 1, 124, 11),
+                   int(Qt.AlignmentFlag.AlignCenter), f"Slot {self._data.slot}")
+
+    def _paint_footer_static(self, p: QPainter, ox: int, oy: int, accent: QColor,
+                             left_txt: str, right_txt: str):
+        """Footer de confirmación: barra fina ESTÁTICA (sin pulso) + línea de estado."""
+        bar_y = oy + HEIGHT - URGENCY_BAR_H - 18
+        bar_w = WIDTH - 2 * PADDING_X
+        bar_x = ox + PADDING_X
+        p.setBrush(accent); p.setPen(Qt.PenStyle.NoPen)
+        p.drawRect(bar_x, bar_y, bar_w, URGENCY_BAR_H)
+        p.setFont(T.font_caps(7)); p.setPen(T.color(T.TEXT_MUTED))
+        p.drawText(bar_x, bar_y + URGENCY_BAR_H + 13, left_txt)
+        p.setFont(T.font_mono(8))
+        rw = p.fontMetrics().horizontalAdvance(right_txt)
+        p.drawText(bar_x + bar_w - rw, bar_y + URGENCY_BAR_H + 13, right_txt)
 
 
 # ---------------------------------------------------------------------------
