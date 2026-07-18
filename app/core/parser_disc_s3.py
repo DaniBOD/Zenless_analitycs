@@ -52,6 +52,7 @@ from app.core.parser_disc_s17 import (
     _RE_TITULO_SLOT,
     _RE_PISTAS,
     _ROW_DY,
+    _S9_JUNK_TOKENS,
 )
 
 # Modal centrado: banda horizontal total + las DOS columnas de la grilla 2×2 (calibradas sobre
@@ -567,3 +568,104 @@ def parse_s5_grid(frame: np.ndarray, ocr) -> list[tuple[int, str]]:
         entries.append((sv, name))
     slots = _monotone_slots([sv for sv, _ in entries])
     return [(slots[i], name) for i, (_sv, name) in enumerate(entries)]
+
+
+# --- S6/S7: vista individual del disco (detalle a pantalla completa) ----------
+# Misma ficha que S3/S17 (título "<set> (N)", headers, main, substats con badges de rolls,
+# "Efecto de conjunto") pero a PANTALLA COMPLETA: el arte del disco ocupa la mitad izquierda y el
+# panel de stats va a la derecha, con los substats en grilla 2×2 → reusa el motor de S3 con DOS
+# columnas. Se llega con "Ver" desde tres flujos y desde ella se mejora el disco:
+#     tienda:     S4 → S5 (afinación) → "Ver" → S6/S7 → "Mejorar" → S10
+#     baterías:   S13 → S21 → [auto-combate] → S22 ("Obtenido") → "Ver" → S6/S7 → S10
+#     inventario: S9 → "Ver" → S6/S7 → S10
+#
+# Reemplaza a `parse_modal_detalle` (per-ROI) para estos estados, por la MISMA razón que S3: sus
+# ROIs por-campo se comen la columna vecina y no toleran nombres envueltos a 2 líneas. Medido
+# 2026-07-16 sobre Ejemplo_17: 'Probabilidad de Crítico' salía como DOS substats fantasma
+# ('Probabilidad de' + 'Critico'), el 2º con un valor RESCATADO de otra fila (inventado → RNF-02).
+#
+# Calibrado 2026-07-16 contra los 3 fixtures de 04_Inventario_Disco_Vista_Individual (2559×1439):
+#   col A → nombres xn≈0.615 | valores xn≈0.725-0.749      col B → nombres xn≈0.782 | valores xn≈0.905
+#   filas fijas: main cy≈0.301 · substats cy≈0.389 y ≈0.440
+#
+# A diferencia de S3/S5 NO se puede OCRizar el frame completo y filtrar por banda: el título vive
+# arriba a la IZQUIERDA (xn≈0.05) y el panel a la DERECHA (xn≈0.60-0.95), así que cualquier banda
+# que cubra a ambos deja entrar la barra superior del juego ('Ciudad', créditos, batería…), que al
+# caer por ENCIMA del header 'Atributo principal' se leería como parte del título. Se OCRizan dos
+# ROIs acotadas y se unen con coords absolutas.
+_S7_TITLE_ROI = (0.040, 0.108, 0.320, 0.052)   # "<set> (N)" arriba-izquierda
+_S7_PANEL_ROI = (0.580, 0.235, 0.400, 0.360)   # headers + main + grilla 2×2 + efecto
+_S7_NIVEL_ROI = (0.620, 0.192, 0.085, 0.038)   # píldora "Nivel NN"
+_S7_BAND  = (0.04, 0.96)
+_S7_COL_A = PanelLayout(0.60, 0.77, 0.70)
+_S7_COL_B = PanelLayout(0.77, 0.96, 0.87)
+
+# El pill de nivel es "Nivel 00 / 15", pero el "/15" es un gráfico aparte y PaddleOCR devuelve el
+# pill PARTIDO en dos líneas ('Nivel 0o' + '15') → `_RE_NIVEL` (que exige el "/15" en la misma
+# línea) nunca matchea acá. Se lee de su propia ROI con una regex sin el "/15". El cero del
+# formato zero-padded se lee seguido como 'o' ('Nivel 0o'): mapear o→0 es seguro porque la propia
+# palabra 'nivel' no tiene ninguna 'o'.
+_RE_S7_NIVEL = re.compile(r"nivel\s*(\d{1,2})")
+
+
+def _ocr_s7_lines(frame: np.ndarray, ocr):
+    """OCR de las dos ROIs de la vista individual (título + panel), re-offseteadas a coords del
+    frame completo. Descarta los tokens basura del panel ('EMPTY' de los slots de substat vacíos),
+    que si no caerían por encima del header 'Atributo principal' y contaminarían el título."""
+    from app.core.capturer import crop_roi
+    H, W = frame.shape[:2]
+    out = []
+    for roi in (_S7_TITLE_ROI, _S7_PANEL_ROI):
+        x0, y0 = int(roi[0] * W), int(roi[1] * H)
+        for (t, c, b) in ocr.text_with_bboxes(crop_roi(frame, roi)):
+            if _norm_key(t) in _S9_JUNK_TOKENS:
+                continue
+            out.append((t, c, (b[0] + x0, b[1] + y0, b[2] + x0, b[3] + y0)))
+    return out
+
+
+def _read_s7_nivel(frame: np.ndarray, ocr) -> int | None:
+    """Nivel del pill propio. None si no se lee (RNF-02: no se inventa un nivel)."""
+    from app.core.capturer import crop_roi
+    try:
+        txt, _ = ocr.text(crop_roi(frame, _S7_NIVEL_ROI), psm=7)
+    except Exception:
+        return None
+    m = _RE_S7_NIVEL.search(_strip(txt).lower().replace("o", "0"))
+    if not m:
+        return None
+    n = int(m.group(1))
+    return n if 0 <= n <= 15 else None
+
+
+def parse_disc_s7(frame: np.ndarray, ocr) -> DiscParsed:
+    """Parsea la vista individual del disco a pantalla completa (S6/S7). Motor de S3 con las dos
+    columnas de esta pantalla. Display-only: NO persiste."""
+    lines = _ocr_s7_lines(frame, ocr)
+    H, W = frame.shape[:2]
+    parsed = _parse_s3_from_lines(lines, W, H, frame=frame, ocr=ocr,
+                                  band=_S7_BAND, cols=(_S7_COL_A, _S7_COL_B))
+    nivel = _read_s7_nivel(frame, ocr)
+    if nivel is not None:
+        parsed.nivel = nivel
+    # Los slots de substat VACÍOS se dibujan con un placeholder "EMPTY" que PaddleOCR devuelve
+    # mutilado de mil formas ('EMPT', 'EUPT', …) → cazarlas por token es whack-a-mole (el propio
+    # `_S9_JUNK_TOKENS` ya acumula 'empty'/'ept'/'rpt'). Gate por INFORMACIÓN en su lugar: un
+    # substat real SIEMPRE tiene valor, así que una entrada que ni canoniza ni tiene valor no
+    # aporta nada y solo puede ser el placeholder → se descarta con su nota (RNF-02: descartar,
+    # no adivinar). Se aplica acá y no en `_parse_s3_from_lines` para no tocar S3/S5.
+    vacios = {s.nombre_raw for s in parsed.subs if s.nombre_canon is None and s.valor is None}
+    if vacios:
+        parsed.subs = [s for s in parsed.subs
+                       if not (s.nombre_canon is None and s.valor is None)]
+        parsed.notas = [n for n in parsed.notas
+                        if n not in {f"substat_desconocido:{v}" for v in vacios}]
+    # Rareza best-effort por color del borde del icono (no bloquea si falla), igual que S3.
+    try:
+        from app.core.capturer import crop_named_roi
+        rar = _detect_rareza(crop_named_roi(frame, "modal_detalle_s7", "rareza_borde"))
+        if rar != "?":
+            parsed.rareza = rar
+    except Exception:
+        pass
+    return parsed

@@ -244,3 +244,186 @@ def test_el_matcher_se_restringe_a_los_sets_del_nodo(mon):
     mon._stub = [_sec(1, [2])]
     mon._dispatch_state(_frame(), _ST22)
     assert mon._calls[0] == ["Wuthering Salon", "The Sky Ablaze"]
+
+
+# --- panel DETAIL (disco seleccionado) -------------------------------------
+
+
+def _disc(set_raw="Salönhuracanado", slot=2, nivel=0, main=("ATK", 79.0, "flat"),
+          subs=(("Perforación", 9.0, "flat"), ("DEF%", 4.8, "%"))):
+    from app.core.parser_disc import DiscParsed, SubstatParsed
+    return DiscParsed(
+        set_name_raw=set_raw, set_name_canon=None, slot=slot,
+        main_stat_raw=main[0], main_stat_canon=main[0], main_valor=main[1],
+        main_unidad=main[2], nivel=nivel, rareza="S",
+        subs=[SubstatParsed(n, n, v, u, 0, 0.9) for (n, v, u) in subs],
+    )
+
+
+class _SetRepo:
+    """DiscSetRepo falso con resolución DIFUSA (el OCR rompe las tildes)."""
+    class _E:
+        def __init__(self, i, n): self.id, self.nombre, self.nombre_en = i, n, None
+
+    def get_all(self):
+        return [self._E(52, "Salón huracanado"), self._E(53, "Firmamento llameante")]
+
+    def resolve_id(self, raw):
+        return 52 if "huracanado" in (raw or "").lower() else None
+
+
+@pytest.fixture
+def mon_det(monkeypatch):
+    """Monitor con el parser del DETAIL stubbeado. `m._det` = lo que devuelve."""
+    import app.core.monitor as mon_mod
+    import app.core.parser_extraccion as pe_mod
+    from app.core.farm_session import FarmSession
+
+    diags: list[str] = []
+    emitted: list = []
+    m = mon_mod.Monitor(ocr=object(), detector=None, on_diagnostic=diags.append,
+                        on_disc=lambda d, st: emitted.append((d, st)),
+                        farm_session=FarmSession(), set_repo=_SetRepo())
+    m._diags = diags
+    m._emitted = emitted          # discos enviados al recommender/toast (on_disc)
+    m._det = None
+    m._det_calls = []
+    monkeypatch.setattr(pe_mod, "parse_obtenido",
+                        lambda frame, ocr, matcher=None, cand_en=None: [])
+    monkeypatch.setattr(pe_mod, "parse_detail_disc",
+                        lambda frame, ocr: (m._det_calls.append(1), m._det)[1])
+    return m
+
+
+def _discos(m):
+    return [d for d in m._diags if d.startswith("[disco]")]
+
+
+def test_detail_emite_el_disco_con_sus_stats(mon_det):
+    mon_det._det = _disc()
+    mon_det._dispatch_state(_frame(), _ST22)
+    linea = _discos(mon_det)
+    assert len(linea) == 1, mon_det._diags
+    assert "Salón huracanado" in linea[0]        # canon resuelto pese a la tilde rota
+    assert "slot 2" in linea[0]
+    assert "nivel 0/15" in linea[0]
+    assert "ATK 79" in linea[0]
+    assert "Perforación 9" in linea[0] and "DEF% 4.8%" in linea[0]
+
+
+def test_detail_dispara_el_toast_como_el_ver(mon_det):
+    """El panel DETAIL enruta el disco al recommender/toast (on_disc), no solo a la línea de
+    log — igual que el "Ver" (S6/S7) y que el detalle de un drop S3. Pedido de QA 2026-07-18:
+    el toast salía solo en "Ver", no al mirar el detalle en el propio "Obtenido"."""
+    mon_det._det = _disc()
+    mon_det._dispatch_state(_frame(), _ST22)
+    assert len(mon_det._emitted) == 1, mon_det._emitted
+    disc, st = mon_det._emitted[0]
+    assert st.code == "S22"                       # el controller enruta S22 al recommender
+    assert disc.slot == 2 and (disc.set_name_canon or disc.set_name_raw)
+    assert disc.rareza == "S"                     # invariante del "Obtenido": drop conservado = tier S
+
+
+def test_detail_no_reemite_el_toast_al_reclickear(mon_det):
+    """El mismo disco visto de nuevo avisa 'ya capturado' y NO vuelve a toastar (un toast por
+    disco distinto, como el dedup de la línea de log)."""
+    mon_det._det = _disc()
+    for i in range(3):
+        mon_det._dispatch_state(_frame(fill=10 + i * 40), _ST22)
+    assert len(mon_det._emitted) == 1, mon_det._emitted
+
+
+def test_detail_lee_el_slot_que_la_grilla_no_puede(mon_det):
+    """El '4' es el único dígito que el OCR de la grilla no lee; acá viene en texto."""
+    mon_det._det = _disc(set_raw="Firmamentollameante", slot=4)
+    mon_det._dispatch_state(_frame(), _ST22)
+    assert "slot 4" in _discos(mon_det)[0]
+
+
+def test_detail_sin_disco_seleccionado_no_emite(mon_det):
+    """El modal abre en 'Crédito proxy'; el panel también muestra materiales/EXP/denny."""
+    mon_det._det = None
+    mon_det._dispatch_state(_frame(), _ST22)
+    assert _discos(mon_det) == []
+
+
+def test_detail_no_reemite_el_mismo_disco(mon_det):
+    """El disco COMPLETO se reporta una sola vez; verlo de nuevo solo avisa 'ya capturado'
+    (ver `test_reclickear_un_disco_ya_visto_avisa_en_vez_de_callar`)."""
+    mon_det._det = _disc()
+    for i in range(3):
+        mon_det._dispatch_state(_frame(fill=10 + i * 40), _ST22)
+    completas = [d for d in _discos(mon_det) if "ya capturado" not in d]
+    assert len(completas) == 1, completas
+
+
+def test_detail_emite_cada_disco_distinto(mon_det):
+    mon_det._det = _disc(slot=2)
+    mon_det._dispatch_state(_frame(fill=10), _ST22)
+    mon_det._det = _disc(set_raw="Firmamentollameante", slot=4,
+                         subs=(("Daño Crítico", 4.8, "%"),))
+    mon_det._dispatch_state(_frame(fill=90), _ST22)
+    assert len(_discos(mon_det)) == 2
+
+
+def test_detail_gate_de_firma_no_reparsea_con_el_panel_quieto(mon_det):
+    """RNF-06: el panel quieto = el mismo disco = nada nuevo que OCRear."""
+    mon_det._det = _disc()
+    f = _frame(fill=33)
+    for _ in range(4):
+        mon_det._dispatch_state(f, _ST22)
+    assert len(mon_det._det_calls) == 1
+
+
+def test_el_detalle_se_lee_aunque_la_grilla_este_quieta(mon_det):
+    """Regresión de diseño: clickear otro disco cambia el panel ENTERO pero apenas mueve el
+    viewport de la grilla (solo el borde de selección). Con una firma compartida, el gate de
+    la grilla haría return y el disco no se leería nunca."""
+    f = _frame(fill=50)
+    mon_det._det = _disc(slot=2)
+    mon_det._dispatch_state(f, _ST22)          # 1er disco
+    mon_det._det = _disc(set_raw="Firmamentollameante", slot=6,
+                         subs=(("ATK", 19.0, "flat"),))
+    mon_det._s22_detail_sig = None             # el panel cambió...
+    mon_det._dispatch_state(f, _ST22)          # ...con el MISMO frame de grilla
+    assert len(_discos(mon_det)) == 2
+
+
+def test_detail_sin_set_repo_no_rompe(mon_det):
+    mon_det._set_repo = None
+    mon_det._det = _disc()
+    mon_det._dispatch_state(_frame(), _ST22)
+    assert len(_discos(mon_det)) == 1
+
+
+def test_un_parser_de_detalle_que_explota_no_tumba_el_monitor(mon_det, monkeypatch):
+    import app.core.parser_extraccion as pe_mod
+
+    def boom(frame, ocr):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(pe_mod, "parse_detail_disc", boom)
+    mon_det._dispatch_state(_frame(), _ST22)
+    assert _discos(mon_det) == []
+
+
+def test_reset_al_salir_olvida_los_discos_vistos(mon_det):
+    mon_det._det = _disc()
+    mon_det._dispatch_state(_frame(fill=10), _ST22)
+    mon_det._dispatch_state(_frame(fill=10), _ST13)
+    mon_det._dispatch_state(_frame(fill=10), _ST22)
+    assert len(_discos(mon_det)) == 2
+
+
+def test_reclickear_un_disco_ya_visto_avisa_en_vez_de_callar(mon_det):
+    """QA en vivo 2026-07-16: el disco ya se había leído al ARRANCAR la app (el juego lo tenía
+    seleccionado); al clickearlo después, el dedup lo tragaba EN SILENCIO y desde el lado del
+    usuario parecía que no lo detectaba. Mismo feedback que S5: avisar, no callar."""
+    mon_det._det = _disc()
+    mon_det._dispatch_state(_frame(fill=10), _ST22)
+    mon_det._s22_detail_sig = None            # se lo vuelve a clickear
+    mon_det._dispatch_state(_frame(fill=10), _ST22)
+
+    lineas = _discos(mon_det)
+    assert len(lineas) == 2
+    assert "ya capturado" in lineas[1]
+    assert "Salón huracanado" in lineas[1] and "slot 2" in lineas[1]

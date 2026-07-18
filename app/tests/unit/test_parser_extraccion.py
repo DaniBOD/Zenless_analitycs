@@ -181,15 +181,21 @@ def test_parse_agrupa_por_corrida_y_lee_los_slots(ocr):
 
 
 def test_parse_lee_los_slots_de_cada_corrida(ocr):
-    """Slots por fixture. El uso 3 (tres '4') abstiene: el OCR del glifo estilizado falla
-    crónicamente en el '4' y el matcher NCC está descartado acá (ver `_AlwaysAbstain`).
-    Lo que NO puede pasar nunca es un slot EQUIVOCADO.
+    """Slots por fixture. Depende del GATE del matcher (ver `_get_slot_matcher_extraccion`):
+
+      * set de refs INCOMPLETO (hoy: falta el slot 1) → matcher apagado, manda el OCR, y el
+        uso 3 (tres '4') ABSTIENE: Tesseract lee el '4' estilizado como 'a' siempre.
+      * set COMPLETO → matcher activo y los tres '4' salen (medido: score 0.999).
+
+    En los dos casos el invariante duro es el mismo: un slot puede faltar, NUNCA ser equivocado.
 
     Parametrizado por backend a propósito: el resultado debe ser IDÉNTICO con los dos, porque
     el slot NO usa el `ocr` que se pasa — usa Tesseract siempre (ver `_get_slot_ocr`)."""
+    matcher_activo = pe._get_slot_matcher_extraccion().n_refs > 0
+    cuatros = [4, 4, 4] if matcher_activo else [None, None, None]
     esperado = {"Resultados_discos.png": [2, 6],
                 "Resultados_discos_2.png": [2, 3, 6],
-                "Resultados_discos_3.png": [None, None, None],   # '4' → abstiene, no yerra
+                "Resultados_discos_3.png": cuatros,
                 "Resultados_discos_4.png": [2, 5, 5]}
     for name, slots in esperado.items():
         secs = pe.parse_obtenido(_load(_FX / name), ocr)
@@ -213,8 +219,15 @@ def test_el_slot_nunca_sale_equivocado(ocr):
         for g, e in zip(got, exp):
             ok, err, absn = (ok + 1, err, absn) if g == e else (
                 (ok, err, absn + 1) if g is None else (ok, err + 1, absn))
+    # El invariante DURO (RNF-02) no depende del gate: jamás un slot equivocado.
     assert err == 0, f"{err} slot(s) EQUIVOCADOS — viola RNF-02"
-    assert (ok, absn) == (8, 3), f"accuracy cambió: {ok} ok / {absn} abstenciones"
+    # La accuracy sí depende del gate del matcher (ver `_get_slot_matcher_extraccion`): con el
+    # set de refs completo (6 clases) lee los 11; sin él, solo OCR = 8/11 con 3 abstenciones
+    # (los tres '4'). Cosechar Ejemplo_12 completó el set y encendió el matcher (2026-07-18).
+    if pe._get_slot_matcher_extraccion().n_refs > 0:
+        assert (ok, absn) == (11, 0), f"matcher activo: {ok} ok / {absn} abstenciones"
+    else:
+        assert (ok, absn) == (8, 3), f"solo OCR: {ok} ok / {absn} abstenciones"
 
 
 def test_seccion_incompleta_no_se_declara_completa(ocr):
@@ -285,3 +298,130 @@ def test_frame_vacio_no_rompe():
 def test_las_franjas_verifican_el_estado(fx):
     n = pe.count_rarity_strips_viewport(_load(fx))
     assert n >= pe._EXTRACCION_STRIP_MIN, f"{fx.name}: solo {n} franjas"
+
+
+# --- panel DETAIL (disco seleccionado) -----------------------------------------------------
+
+_EJ = sorted(_FX.glob("Ejemplo_*.png"),
+             key=lambda p: int("".join(c for c in p.name if c.isdigit())))
+
+# Ground-truth de los 11 discos, leído del propio panel DETAIL de cada screenshot.
+_EJ_TRUTH = {
+    1: ("Salón huracanado", 2), 2: ("Firmamento llameante", 6), 3: ("Salón huracanado", 2),
+    4: ("Salón huracanado", 3), 5: ("Firmamento llameante", 6), 6: ("Salón huracanado", 4),
+    7: ("Firmamento llameante", 4), 8: ("Firmamento llameante", 4),
+    9: ("Firmamento llameante", 2), 10: ("Firmamento llameante", 5),
+    11: ("Firmamento llameante", 5),
+    # Ejemplo_12 es una captura del "Obtenido" completa (grilla + panel DETAIL); su detalle es
+    # un slot 1 — el único de todo el set, y el caso que destapó el bug del "(" comido por el OCR.
+    12: ("Firmamento llameante", 1),
+}
+
+
+@pytest.mark.skipif(not _EJ, reason="ejemplos del panel DETAIL no presentes")
+def test_el_detalle_lee_set_slot_y_stats_de_los_11_discos():
+    """Los slots leídos del panel DETAIL coinciden con el ground-truth de la GRILLA — incluidos
+    los tres '4' que la grilla no puede leer y el slot 1 de Ejemplo_12. El panel es la fuente
+    autoritativa del slot: viene en texto, no como glifo."""
+    from app.db.connection import get_connection
+    from app.db.repositories import DiscSetRepo
+    repo = DiscSetRepo(get_connection("db/danibod_zzz_v2.db"))
+    ocr = _backend("paddle")
+    for p in _EJ:
+        n = int("".join(c for c in p.name if c.isdigit()))
+        set_esp, slot = _EJ_TRUTH[n]
+        d = pe.parse_detail_disc(_load(p), ocr)
+        assert d is not None, f"{p.name}: no detectó disco"
+        assert d.slot == slot, f"{p.name}: slot {d.slot} != {slot}"
+        sid = repo.resolve_id(d.set_name_raw)
+        canon = next((e.nombre for e in repo.get_all() if e.id == sid), None)
+        assert canon == set_esp, f"{p.name}: set {canon!r} != {set_esp!r} (raw={d.set_name_raw!r})"
+        assert d.main_stat_canon or d.main_stat_raw, f"{p.name}: sin atributo principal"
+        assert len(d.subs) >= 3, f"{p.name}: solo {len(d.subs)} substats"
+        assert all(s.valor is not None for s in d.subs), f"{p.name}: substat sin valor"
+
+
+@pytest.mark.skipif(not _EJ, reason="ejemplos del panel DETAIL no presentes")
+def test_el_titulo_de_dos_lineas_no_pierde_el_slot():
+    """`Firmamento llameante (4)` envuelve: el '(4)' cae al segundo renglón. Con una franja de
+    una sola línea el slot se perdía (aviso del usuario, confirmado en Ejemplo_7/11)."""
+    ocr = _backend("paddle")
+    for name, slot in [("Ejemplo_7.png", 4), ("Ejemplo_11.png", 5)]:
+        nombre, got = pe._read_detail_title(_load(_FX / name), ocr)
+        assert got == slot, f"{name}: slot {got} != {slot}"
+        assert nombre and "lameante" in nombre, f"{name}: nombre {nombre!r}"
+
+
+@pytest.mark.skipif(not _EJ, reason="ejemplos del panel DETAIL no presentes")
+def test_sin_disco_seleccionado_el_detalle_se_abstiene():
+    """El modal abre con "Crédito proxy" en el panel: no es un disco → no se parsea nada.
+    La firma es el "(N)" del título; ningún otro ítem lo tiene."""
+    ocr = _backend("paddle")
+    for name in ("Resultados_discos.png", "Resultados_discos_3.png"):
+        frame = _load(_FX / name)
+        assert pe.detail_has_disc(frame, ocr) is False, f"{name}: creyó ver un disco"
+        assert pe.parse_detail_disc(frame, ocr) is None
+
+
+# --- Gate del matcher de dígito de slot ---------------------------------------------------
+# El matcher NCC resuelve este badge mucho mejor que el OCR (leave-one-sample-out: 9/9, con los
+# tres '4' en 0.999), pero SOLO si su set de refs cubre las 6 clases: con clases faltantes no
+# abstiene, INVENTA (leave-one-class-out: 6/11 equivocados con score hasta 0.799, solapado con
+# los aciertos ≥0.755 → no hay umbral que los separe). De ahí el gate. Ver
+# `tools/harvest_extraccion_slot_digits.py` para el detalle de la medición.
+
+def _reset_slot_matcher():
+    pe._slot_matcher_extraccion = None
+    pe._slot_matcher_loaded = False
+
+
+def _fake_refs(tmp_path, clases):
+    """Set de refs de juguete: un badge por clase (contenido irrelevante, solo el prefijo)."""
+    import cv2
+    import numpy as np
+    for d in clases:
+        img = np.full((30, 30, 3), 10 * d, dtype=np.uint8)
+        img[10:20, 10:20] = 255 - 10 * d          # que no sean todas iguales
+        cv2.imwrite(str(tmp_path / f"{d}_fake_0.png"), img)
+    return tmp_path
+
+
+def test_gate_apaga_el_matcher_si_falta_alguna_clase(tmp_path, monkeypatch):
+    """Falta el slot 1 → matcher apagado (RNF-02: mejor abstenerse que inventar)."""
+    monkeypatch.setattr(pe, "_EXTRACCION_REFS_DIR", _fake_refs(tmp_path, [2, 3, 4, 5, 6]))
+    _reset_slot_matcher()
+    try:
+        assert pe._get_slot_matcher_extraccion().n_refs == 0
+    finally:
+        _reset_slot_matcher()
+
+
+def test_gate_enciende_el_matcher_con_las_6_clases(tmp_path, monkeypatch):
+    monkeypatch.setattr(pe, "_EXTRACCION_REFS_DIR", _fake_refs(tmp_path, [1, 2, 3, 4, 5, 6]))
+    _reset_slot_matcher()
+    try:
+        m = pe._get_slot_matcher_extraccion()
+        assert m.n_refs == 6 and set(m._refs) == {1, 2, 3, 4, 5, 6}
+    finally:
+        _reset_slot_matcher()
+
+
+def test_gate_no_explota_sin_carpeta_de_refs(tmp_path, monkeypatch):
+    monkeypatch.setattr(pe, "_EXTRACCION_REFS_DIR", tmp_path / "no_existe")
+    _reset_slot_matcher()
+    try:
+        assert pe._get_slot_matcher_extraccion().n_refs == 0
+    finally:
+        _reset_slot_matcher()
+
+
+def test_las_refs_cosechadas_cubren_las_6_clases_y_encienden_el_matcher():
+    """Las refs versionadas se leen por el prefijo `<digito>_`. El set se completó con las 6
+    clases al cosechar el slot 1 de Ejemplo_12 (2026-07-18) → el matcher queda ACTIVO. Este
+    test es la guarda de que no se pierda ninguna clase (volvería a apagarse en silencio)."""
+    if not pe._EXTRACCION_REFS_DIR.exists():
+        pytest.skip("no hay refs cosechadas")
+    clases = {int(p.name[0]) for p in pe._EXTRACCION_REFS_DIR.glob("*.png")}
+    assert clases <= set(range(1, 7)), f"prefijo fuera de rango: {clases}"
+    assert clases == set(range(1, 7)), f"faltan clases (matcher se apagaría): {sorted(clases)}"
+    assert pe._get_slot_matcher_extraccion().n_refs > 0, "el matcher debería estar activo"

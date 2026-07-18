@@ -121,3 +121,7 @@ Documentacion/Interfaz/mockups/Codigos-claude-desing/.design-canvas.state.json
 # ────────────── Skills / sessions de asistentes ──────────────
 .skills-plugin/
 local-agent-mode-sessions/
+
+# ────────────── Personal ──────────────
+# CV de Daniel: archivo personal, no forma parte del proyecto (pedido 2026-07-19)
+cv_daniel_pilquil.docx

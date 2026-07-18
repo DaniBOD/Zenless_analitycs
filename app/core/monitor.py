@@ -107,6 +107,21 @@ _S22_VIEWPORT_ROI = (0.200, 0.280, 0.360, 0.530)
 _S22_SIG_MAX = 5.0
 # Marca de "sección ya cerrada" en `_s22_seen` (no vuelve a emitirse nunca).
 _S22_SEC_CERRADA = -1
+# ROI del panel DETAIL (disco seleccionado). Firma PROPIA, separada de la de la grilla: al
+# clickear otro disco el viewport izquierdo casi no cambia (solo se corre el borde amarillo de
+# selección, que a 32×32 se pierde) mientras que el panel cambia entero. Con una sola firma, el
+# gate de la grilla bloquearía el re-parseo del disco. Espeja `parser_extraccion._DETAIL_PANEL_ROI`.
+_S22_DETAIL_ROI = (0.55, 0.29, 0.26, 0.52)
+# Umbral MUY por debajo del de la grilla (5.0), y es deliberado: dos paneles de disco son
+# estructuralmente IDÉNTICOS (título, nivel, main, subs) y difieren solo en el TEXTO, que a
+# 32×32 en gris queda hecho puré. Medido sobre los 11 ejemplos, el diff entre discos DISTINTOS
+# va de 2.5 a 6.4 (subir a 64×64 o 96×96 no separa: el mínimo sigue en ~3) → con 5.0 se perdían
+# 6 de 10 discos. Con el panel quieto el diff es ~0, así que 1.0 deja 2.5× de margen.
+#
+# El gate es una OPTIMIZACIÓN, no corrección: quien garantiza que no se repita una línea es el
+# dedup por identidad (`_s22_disc_ids`). Por eso conviene errar hacia re-parsear — un disco
+# perdido es un bug; un OCR de más, solo costo (acotado: 2 llamadas por ciclo de 700ms).
+_S22_DETAIL_SIG_MAX = 1.0
 
 # Guarda de asignación S17 (latch + avatar). El PJ asignado a un disco equipado
 # sale del LATCH (PJ cuya pantalla se ve, ya confiable); el avatar circular S17 se
@@ -567,6 +582,10 @@ class Monitor:
         # re-parseo (RNF-06): con el scroll quieto no hay nada nuevo que leer.
         self._s22_last_sig = None
         self._s22_seen: dict[int, int] = {}
+        # S22 panel DETAIL (disco seleccionado): firma propia + dedup por IDENTIDAD del disco
+        # (no por posición): el usuario puede volver a clickear el mismo disco.
+        self._s22_detail_sig = None
+        self._s22_disc_ids: set = set()
 
         # S4 (selector tienda música): predicción display-only edge-triggered por (set, slot).
         # `_s4_last_sig` gatea el re-OCR del género (RNF-06); `_s4_last_key` deduplica la emisión;
@@ -921,6 +940,8 @@ class Monitor:
         if state.code != "S22":
             self._s22_last_sig = None
             self._s22_seen = {}
+            self._s22_detail_sig = None
+            self._s22_disc_ids = set()
         if state.code != "S4":
             self._s4_last_sig = None
             self._s4_last_key = None
@@ -1470,16 +1491,128 @@ class Monitor:
             partes.append("set: " + " o ".join(cand_en))
         return " · ".join(partes)
 
-    def _process_s22_obtenido(self, frame, state: ScreenState) -> None:
-        """Modal "Obtenido" (S22): los drops del farmeo por baterías, desglosados por corrida.
+    @staticmethod
+    def _s22_detail_signature(frame):
+        """Firma 32×32 gris del panel DETAIL (S22), sin OCR (RNF-06). Gatea el re-parseo del
+        disco seleccionado: si el panel no cambió, es el mismo disco."""
+        if frame is None or getattr(frame, "size", 0) == 0:
+            return None
+        try:
+            import cv2
+            h, w = frame.shape[:2]
+            x, y, rw, rh = _S22_DETAIL_ROI
+            sub = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
+            if sub.size == 0:
+                return None
+            return cv2.cvtColor(
+                cv2.resize(sub, (32, 32), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
+            ).astype(np.float32)
+        except Exception:
+            return None
 
-        Emite UNA LÍNEA POR CORRIDA al verla mientras se scrollea (decisión del usuario: un
-        total al cerrar mentiría si no se scrollea hasta el fondo). El dedup es CONVERGENTE:
-        una sección que todavía no se probó completa sale con "≥" y se re-emite —una sola vez
-        más, ya sin "≥"— cuando el scroll trae la evidencia de cierre. Una vez cerrada, nunca
-        más. Display-only: no persiste ni puntúa."""
+    @staticmethod
+    def _fmt_stat(nombre: str, valor, unidad: str | None) -> str:
+        if valor is None:
+            return nombre
+        num = f"{valor:g}"
+        return f"{nombre} {num}%" if unidad == "%" else f"{nombre} {num}"
+
+    def _process_s22_detail(self, frame, state: ScreenState) -> None:
+        """Panel DETAIL de S22: el disco que el usuario tiene seleccionado, COMPLETO (set en
+        texto + slot + nivel + main + substats). Es la fuente autoritativa del slot — la grilla
+        se abstiene en el '4' — y la única que da los stats.
+
+        Dedup por IDENTIDAD del disco (no por posición): volver a clickear el mismo disco no
+        re-loguea, pero dos discos distintos del mismo set/slot sí se distinguen (la identidad
+        incluye los substats). Display-only: no persiste ni puntúa."""
+        # Gate propio (RNF-06): mismo panel = mismo disco = nada nuevo que leer.
+        sig = self._s22_detail_signature(frame)
+        if (sig is not None and self._s22_detail_sig is not None
+                and self._sig_component_diff(sig, self._s22_detail_sig) <= _S22_DETAIL_SIG_MAX):
+            return
+        self._s22_detail_sig = sig
+        try:
+            from app.core.parser_extraccion import parse_detail_disc
+            d = parse_detail_disc(frame, self._ocr)
+        except Exception:
+            log.exception("Error parseando el panel DETAIL de S22")
+            return
+        if d is None:
+            return   # no hay disco seleccionado (el modal abre en "Crédito proxy"), o ilegible
+
+        # Canon del set: resolución DIFUSA (el OCR rompe las tildes — 'Salönhuracanado' por
+        # 'Salón huracanado'). La comparación exacta de `parse_modal_detalle` no serviría acá.
+        if self._set_repo is not None and not d.set_name_canon and d.set_name_raw:
+            try:
+                sid = self._set_repo.resolve_id(d.set_name_raw)
+                if sid is not None:
+                    entry = next((e for e in self._set_repo.get_all() if e.id == sid), None)
+                    if entry is not None:
+                        d.set_name_canon = entry.nombre
+            except Exception:
+                log.debug("No se pudo resolver el set del disco S22", exc_info=True)
+
+        set_disp = d.set_name_canon or d.set_name_raw or "set no identificado"
+        identity = self._disc_identity(d)
+        if identity in self._s22_disc_ids:
+            # Avisar en vez de callar: el silencio se lee como "no lo detectó" (QA en vivo
+            # 2026-07-16 — el disco ya se había leído al arrancar, porque el juego lo tenía
+            # seleccionado, y al clickearlo después no pasaba nada). Mismo feedback que S5.
+            if self._on_diagnostic:
+                try:
+                    self._on_diagnostic(f"[disco] ya capturado: {set_disp} slot {d.slot}")
+                except Exception:
+                    log.debug("on_diagnostic S22 ya-capturado falló", exc_info=True)
+            return
+        self._s22_disc_ids.add(identity)
+
+        partes = [f"[disco] {set_disp} · slot {d.slot}", f"nivel {d.nivel}/15"]
+        main = d.main_stat_canon or d.main_stat_raw
+        if main:
+            partes.append(self._fmt_stat(main, d.main_valor, d.main_unidad))
+        subs = [self._fmt_stat(s.nombre_canon or s.nombre_raw, s.valor, s.unidad)
+                for s in (d.subs or []) if (s.nombre_canon or s.nombre_raw)]
+        if subs:
+            partes.append("subs: " + ", ".join(subs))
+        msg = " · ".join(partes)
+        log.info("Disco S22 (extracción): %s", msg)
+        if self._on_diagnostic:
+            try:
+                self._on_diagnostic(msg)
+            except Exception:
+                log.debug("on_diagnostic disco S22 falló", exc_info=True)
+
+        # Toast + recomendación, igual que el detalle de un drop S3 (mismo tipo de disco: un
+        # drop nuevo, sin dueño). El panel DETAIL de S22 es la vista autoritativa del disco, así
+        # que al mirarlo el usuario espera la MISMA recomendación (Equipar/Mejorar/…) que le da
+        # el "Ver" (S6/S7) — era el único camino de detalle que no toastaba (QA en vivo
+        # 2026-07-18). El controller enruta S22 al recommender (no a persistencia): display-only.
+        d.rareza = "S"   # invariante del "Obtenido": todo drop conservado es tier S (dorado)
+        if self._on_disc:
+            try:
+                self._on_disc(d, state)
+            except Exception:
+                log.exception("Error en on_disc S22 (detalle)")
+
+    def _process_s22_obtenido(self, frame, state: ScreenState) -> None:
+        """Modal "Obtenido" (S22): los drops del farmeo por baterías.
+
+        Dos lecturas INDEPENDIENTES, cada una con su gate: la GRILLA (una línea por corrida) y
+        el panel DETAIL (el disco seleccionado, completo). El detalle va primero: el gate de la
+        grilla hace return, y clickear un disco cambia el panel entero pero apenas mueve el
+        viewport izquierdo (solo el borde de selección) → detrás del gate de la grilla el disco
+        no se leería nunca."""
         if self._farm_session is None:
             return   # sin contexto de farmeo no hay par de sets útil; y un FP no debe hablar
+        self._process_s22_detail(frame, state)
+        self._process_s22_grid(frame, state)
+
+    def _process_s22_grid(self, frame, state: ScreenState) -> None:
+        """Grilla de S22: UNA LÍNEA POR CORRIDA al verla mientras se scrollea (decisión del
+        usuario: un total al cerrar mentiría si no se scrollea hasta el fondo). El dedup es
+        CONVERGENTE: una sección que todavía no se probó completa sale con "≥" y se re-emite
+        —una sola vez más, ya sin "≥"— cuando el scroll trae la evidencia de cierre. Una vez
+        cerrada, nunca más. Display-only: no persiste ni puntúa."""
         # Gate de re-parseo: si el viewport no cambió, no hay nada nuevo (RNF-06).
         sig = self._s22_viewport_signature(frame)
         if (sig is not None and self._s22_last_sig is not None
@@ -3065,10 +3198,16 @@ class Monitor:
         try:
             # S17 (disco equipado, "Personalización de pistas") usa el parser
             # ESPACIAL full-frame — más robusto que el per-ROI a 2560×1440.
-            # El resto de disc-states (S3/S6/S7) sigue con parse_modal_detalle.
             if state.code == "S17":
                 disc, _face = parse_disc_s17_full(frame, self._ocr)
                 self._assign_s17_pj(disc, frame)   # identidad por badge de grilla (5R.5)
+            elif state.code in ("S6", "S7"):
+                # Vista individual del disco: parser ESPACIAL de 2 columnas (motor de S3). El
+                # per-ROI leía mal esta pantalla igual que el modal S3 — cada celda se comía la
+                # columna vecina y partía los nombres largos en substats fantasma con valores
+                # rescatados de otra fila (medido 2026-07-16 sobre los 3 fixtures).
+                from app.core.parser_disc_s3 import parse_disc_s7
+                disc = parse_disc_s7(frame, self._ocr)
             else:
                 disc = parse_modal_detalle(frame, self._ocr, self._set_repo, state_code=state.code)
             if disc.confianza_global < 0.7:

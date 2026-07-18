@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -33,6 +34,7 @@ from app.core.parser_s2 import (
     read_tile_slot,
     tile_rarity,
 )
+from app.core.parser_disc_s17 import PanelLayout
 
 log = logging.getLogger(__name__)
 
@@ -206,24 +208,11 @@ def crop_art(frame: np.ndarray, box: TileBox) -> np.ndarray:
 
 
 class _AlwaysAbstain:
-    """Matcher de dígito que nunca opina, para forzar el camino OCR en `read_tile_slot`.
+    """Matcher de dígito que nunca opina → fuerza el camino OCR en `read_tile_slot`.
 
-    NO se usa `SlotDigitMatcher` acá, ni el de S2 ni uno sembrado con este modal:
-
-    - El de S2 tiene refs del HEXÁGONO de S2; este modal usa un tag rectangular más chico.
-      Medido sobre los 11 tiles dorados de los fixtures: abstiene en los 11 (aporta cero). Se
-      inyecta este stub igual, en vez de confiar en esa abstención, para no acoplarse a las
-      refs de S2: si algún día se re-siembran, este parser cambiaría de comportamiento solo.
-    - Sembrar uno propio se probó y se DESCARTÓ (2026-07-16). El matcher resta el template
-      promedio de sus refs para aislar el residuo del dígito, así que necesita las 6 clases
-      cubiertas (`slot_digits/` y `slot_digits_s5/` tienen 3-8 refs por dígito). Los 4 fixtures
-      solo dan 11 tiles: {2:3, 3:1, 4:3, 5:2, 6:2} y CERO del slot 1. Con clases faltantes el
-      matcher no abstiene, INVENTA: en leave-one-class-out, 4 de 11 devolvieron un dígito
-      equivocado con score sobre el umbral (p.ej. un '5' leído como 6 a 0.71). Un slot 1 real
-      se leería mal en silencio → RNF-02. Re-evaluar cuando haya fixtures con slots 1 y 3.
-
-    El OCR solo acierta 8/11 con **0 errores** (falla únicamente el '4', que abstiene). Cambiar
-    3 abstenciones por el riesgo de errores silenciosos es justo el trade que RNF-02 prohíbe.
+    Se inyecta cuando el set de refs propio de este modal (`slot_digits_extraccion/`) NO está
+    completo. NO se cae al matcher de S2 por default: eso acoplaría este parser a las refs de
+    S2 (si algún día se re-siembran, cambiaría de comportamiento solo).
     """
     n_refs = 0
 
@@ -232,6 +221,53 @@ class _AlwaysAbstain:
 
 
 _NO_SLOT_MATCHER = _AlwaysAbstain()
+
+# Refs del dígito de slot de ESTE modal. Cada pantalla necesita su propio set (ya hay dos:
+# `slot_digits/` para S2 y `slot_digits_s5/` para S5) porque `SlotDigitMatcher` resta el
+# template PROMEDIO de su set para aislar el residuo del dígito: un badge de otro estilo deja
+# un residuo dominado por la diferencia de estilo. Medido 2026-07-16 sobre los 11 tiles dorados
+# de los fixtures: las refs de S2 y las de S5 abstienen en los 11 (aportan cero), y usarlas
+# como base es peor que nada — un dígito ausente del set se contesta EQUIVOCADO con score ~0.94.
+_EXTRACCION_REFS_DIR = Path(__file__).resolve().parent.parent / "resources" / "slot_digits_extraccion"
+
+# GATE DE COMPLETITUD — load-bearing, no es paranoia. Con clases faltantes el matcher no
+# abstiene: INVENTA. Leave-one-CLASS-out sobre los 11 tiles: 6 de 11 devolvieron un dígito
+# equivocado con score hasta 0.799, SOLAPADO con los aciertos (mínimo 0.755) → no existe umbral
+# que los separe. Con las 6 clases, en cambio, es excelente: leave-one-SAMPLE-out da 9/9, con
+# los tres '4' en 0.999 (justo los que el OCR no puede leer).
+#
+# Hoy el set tiene {2,3,4,5,6} y le falta el 1 → el matcher queda APAGADO y el slot sale solo
+# por OCR (8/11, 0 errores). Alcanza UNA captura del "Obtenido" con un disco de slot 1 para
+# completarlo: `tools/harvest_extraccion_slot_digits.py --write` y se enciende solo, sin tocar
+# código. Ver ese script para el detalle de la medición.
+_SLOT_CLASSES = frozenset(range(1, 7))
+
+_slot_matcher_extraccion = None
+_slot_matcher_loaded = False
+
+
+def _get_slot_matcher_extraccion():
+    """Matcher del dígito de slot de este modal, o `_NO_SLOT_MATCHER` si el set de refs no
+    cubre las 6 clases (ver `_SLOT_CLASSES`). Singleton lazy; nunca lanza."""
+    global _slot_matcher_extraccion, _slot_matcher_loaded
+    if _slot_matcher_loaded:
+        return _slot_matcher_extraccion
+    _slot_matcher_loaded = True
+    _slot_matcher_extraccion = _NO_SLOT_MATCHER
+    try:
+        from app.core.slot_digit_matcher import SlotDigitMatcher
+        m = SlotDigitMatcher.from_resources(refs_dir=_EXTRACCION_REFS_DIR)
+        cubiertas = set(getattr(m, "_refs", {}))
+        if cubiertas >= _SLOT_CLASSES:
+            _slot_matcher_extraccion = m
+            log.info("Matcher de slot S22 ACTIVO (%d refs, 6 clases)", m.n_refs)
+        else:
+            log.info("Matcher de slot S22 apagado: faltan las clases %s → solo OCR",
+                     sorted(_SLOT_CLASSES - cubiertas))
+    except Exception:
+        log.debug("No se pudo cargar el matcher de slot de S22", exc_info=True)
+    return _slot_matcher_extraccion
+
 
 _slot_ocr_singleton = None
 
@@ -270,8 +306,11 @@ def read_slot(frame: np.ndarray, box: TileBox) -> int | None:
     """Dígito de slot del tile, o None si no se puede afirmar.
 
     NO toma el `ocr` del monitor a propósito: usa Tesseract sí o sí (ver `_get_slot_ocr`).
+    El matcher es el camino PRIMARIO cuando su set de refs está completo; si no, abstiene y
+    manda el OCR (ver `_get_slot_matcher_extraccion`).
     """
-    return read_tile_slot(frame, box, _get_slot_ocr(), slot_matcher=_NO_SLOT_MATCHER)
+    return read_tile_slot(frame, box, _get_slot_ocr(),
+                          slot_matcher=_get_slot_matcher_extraccion())
 
 
 def _read_header_at(frame: np.ndarray, cy_header: float, ocr) -> int | None:
@@ -346,6 +385,105 @@ def has_more_below(frame: np.ndarray) -> bool:
 def has_more_above(frame: np.ndarray) -> bool:
     """True si la flecha ▲ está visible ⇒ hay contenido sin scrollear arriba."""
     return _arrow_visible(frame, _ARROW_UP)
+
+
+# --- Panel DETAIL (disco seleccionado) -----------------------------------------------------
+# Al clickear un disco de la grilla, el panel derecho muestra el disco COMPLETO: nombre del set
+# en TEXTO + slot entre paréntesis, nivel, atributo principal y secundarios con sus valores —
+# calidad S17. Resuelve además la abstención del dígito '4' de la grilla: acá el slot es texto.
+_DETAIL_PANEL_ROI = (0.55, 0.29, 0.26, 0.52)          # (x, y, w, h) → x 0.55-0.81, y 0.29-0.81
+_DETAIL_LAYOUT = PanelLayout(0.55, 0.81, 0.70)        # col_split 0.70: nombres ≤0.65, valores ≥0.74
+# Franja del TÍTULO, aparte: cubre las DOS líneas. El nombre del set envuelve cuando es largo
+# ("Firmamento llameante (4)") y el "(N)" se cae al segundo renglón → el parse del panel pierde
+# el slot. Mismo caso que el título de nodo de S13. `x` corta antes del badge circular de la
+# derecha, que el OCR leería como un dígito suelto.
+_DETAIL_TITLE_ROI = (0.56, 0.335, 0.20, 0.062)
+# Marcador de slot "(N)" del título. El "(" de apertura es OPCIONAL: PaddleOCR lo dropea a
+# veces y devuelve solo "N)" (QA en vivo 2026-07-18, Ejemplo_12 'Firmamento llameante' + '1)'
+# → el disco NO se detectaba). El ")" de cierre SÍ es obligatorio: es lo que distingue el slot
+# de un disco de la cantidad de un material ("×N", sin paréntesis) → sin él, `detail_has_disc`
+# daría falsos positivos (RNF-02). Se busca (no se ancla): el nombre es todo lo anterior.
+_RE_DETAIL_TITULO = re.compile(r"\(?\s*([1-6])\s*\)")
+
+
+def _read_detail_title(frame, ocr) -> tuple[str | None, int | None]:
+    """(nombre_raw, slot) del título del panel DETAIL, uniendo sus 1-2 líneas.
+
+    PaddleOCR devuelve las líneas por separado y SIN espacios internos
+    ('Firmamentollameante' + '(4)'); unirlas reconstruye el título parseable. El nombre sale
+    con ruido de tildes ('Salönhuracanado' por 'Salón huracanado'), pero la resolución difusa
+    del set (`DiscSetRepo.resolve_id`) lo absorbe — normaliza acentos y espacios.
+    """
+    if frame is None or ocr is None or getattr(frame, "size", 0) == 0:
+        return None, None
+    try:
+        from app.core.capturer import crop_roi
+        strip = crop_roi(frame, _DETAIL_TITLE_ROI)
+        if strip is None or getattr(strip, "size", 0) == 0:
+            return None, None
+        partes = [t for (t, _c, _b) in ocr.text_with_bboxes(strip) if t and t.strip()]
+    except Exception:
+        return None, None
+    if not partes:
+        return None, None
+    joined = " ".join(partes).strip()
+    m = _RE_DETAIL_TITULO.search(joined)
+    if not m:
+        return None, None
+    slot = int(m.group(1))
+    nombre = joined[:m.start()].strip()   # el nombre es todo lo anterior al marcador "(N)"
+    return (nombre or None), (slot if 1 <= slot <= 6 else None)
+
+
+def detail_has_disc(frame, ocr) -> bool:
+    """True si el panel DETAIL está mostrando un DISCO (y no el ítem por defecto).
+
+    El modal abre con "Crédito proxy" seleccionado y el panel muestra materiales, EXP o denny
+    según lo que se clickee. La firma de un disco es el título con "(N)": ningún otro ítem lo
+    tiene. Sin esto se parsearía basura como si fuera un disco (RNF-02).
+    """
+    return _read_detail_title(frame, ocr)[1] is not None
+
+
+def parse_detail_disc(frame, ocr):
+    """Disco seleccionado en el panel DETAIL → `DiscParsed`, o None si no hay disco.
+
+    Reusa el núcleo de S17 (`_parse_s17_from_lines`) con el layout de este panel: la estructura
+    es la misma que la del panel lateral de S9 (sin hexágono, ≤4 substats), solo cambia la `x`.
+    El título se lee de su propia franja porque envuelve a 2 líneas (ver `_read_detail_title`).
+    """
+    if frame is None or ocr is None or getattr(frame, "size", 0) == 0:
+        return None
+    nombre, slot = _read_detail_title(frame, ocr)
+    if slot is None:
+        return None   # no hay disco seleccionado (o el título no se pudo leer) → no inventar
+    try:
+        from app.core.capturer import crop_roi
+        from app.core.parser_disc_s17 import _norm_key as _nk
+        from app.core.parser_disc_s17 import _parse_s17_from_lines
+        from app.core.parser_disc_s17 import _S9_JUNK_TOKENS
+
+        H, W = frame.shape[:2]
+        x0 = int(_DETAIL_PANEL_ROI[0] * W)
+        y0 = int(_DETAIL_PANEL_ROI[1] * H)
+        crop = crop_roi(frame, _DETAIL_PANEL_ROI)
+        raw = ocr.text_with_bboxes(crop) if (crop is not None and getattr(crop, "size", 0)) else []
+        lines = [(t, c, (b[0] + x0, b[1] + y0, b[2] + x0, b[3] + y0))
+                 for (t, c, b) in raw if _nk(t) not in _S9_JUNK_TOKENS]
+        d = _parse_s17_from_lines(lines, W, H, frame=frame, ocr=ocr,
+                                  layout=_DETAIL_LAYOUT, detect_slot_hexagon=False,
+                                  max_substats=4)
+    except Exception:
+        log.exception("Error parseando el panel DETAIL de S22")
+        return None
+    # El título de la franja MANDA sobre lo que el core sacó del panel: acá el nombre del set
+    # compite con el junk de los botones (el core llegaba a tomar un '6' suelto como set).
+    if nombre:
+        d.set_name_raw = nombre
+    d.slot = slot
+    if "slot_no_detectado" in d.notas:
+        d.notas.remove("slot_no_detectado")
+    return d
 
 
 def parse_obtenido(frame, ocr, matcher=None, cand_en: list[str] | None = None) -> list[Seccion]:

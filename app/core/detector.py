@@ -40,8 +40,15 @@ MATCH_THRESHOLD = 0.85
 # más estrictos para captura crítica)
 THRESHOLD_BY_STATE: dict[str, float] = {
     "S3":  0.85,   # Modal detalle drop — crítico, evitar FPs
-    "S6":  0.85,   # Tienda panel — crítico
-    "S7":  0.85,   # Tienda fullscreen — crítico
+    "S6":  0.85,   # Vista individual del disco — crítico
+    "S7":  0.85,   # Vista individual del disco — crítico. El template `s7_detalle_full_iconos`
+                   #   (cluster papelera/candado/R/T) es chrome de UI ⇒ invariante al nivel, al
+                   #   set y al wallpaper: medido 0.997–1.000 en los 3 fixtures de la vista vs
+                   #   ≤0.74 en S17/S9/S10/S5/S22/S2 y ≤0.45 en los 37 negativos de QA.
+                   #   Los otros dos templates de esta pantalla matchean por accidente y NO se
+                   #   puede depender de ellos: `s7_tienda_detalle_full` incluye el texto
+                   #   "Nivel 15/MAX" (solo matchea discos maxeados) y `s6_tienda_detalle_panel`
+                   #   es una banda oscura que matchea por el FONDO de Ejemplo_6, no por UI.
     "S10": 0.80,   # Modal upgrade — template = barra botones "Añadir/Mejorar" (estable entre
                    #   niveles, única de S10). Los S10 reales matchean ≥0.85, los NON-S10 ≤0.50 →
                    #   0.80 da margen para la deriva de captura viva (mss 2560×1440) sin FP.
@@ -85,11 +92,19 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     "S3":  {"S12", "S2", "S11"},
     "S4":  {"S5", "S6", "S7", "S12"},
     "S5":  {"S6", "S7", "S12"},
-    "S6":  {"S7", "S12", "S4"},
-    "S7":  {"S12", "S4", "S6"},
+    # S6/S7 son la MISMA pantalla (vista individual del disco a pantalla completa; `rois.toml`
+    # les da coords idénticas). Se llega con "Ver" desde varios flujos —no solo la tienda—, y
+    # desde ella se puede mejorar el disco (S10):
+    #   tienda:    S4 → S5 (afinación) → "Ver" → S6/S7 → "Mejorar" → S10
+    #   baterías:  S13 → S21 → [auto-combate] → S22 ("Obtenido") → "Ver" → S6/S7 → S10
+    #   inventario: S9 → "Ver" → S6/S7 → S10
+    # Antes solo se aceptaba {S4, S6, S7}: viniendo de S22 la transición se rechazaba como FP y
+    # caía a S12 ⇒ el disco no se parseaba y NO saltaba el toast (bug de QA en vivo 2026-07-16).
+    "S6":  {"S7", "S12", "S4", "S5", "S9", "S10", "S22"},
+    "S7":  {"S12", "S4", "S6", "S5", "S9", "S10", "S22"},
     "S8":  {"S17", "S18", "S19", "S12", "S15", "S9"},
-    "S9":  {"S8", "S12", "S17", "S16"},
-    "S10": {"S12", "S9", "S3", "S20"},
+    "S9":  {"S8", "S12", "S17", "S16", "S6", "S7"},   # "Ver" un disco del inventario → S6/S7
+    "S10": {"S12", "S9", "S3", "S20", "S6", "S7"},    # volver de la mejora a la vista individual
     "S11": {"S12", "S9", "S3"},
     "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18", "S19", "S20", "S21", "S22"},
     "S13": {"S12", "S14", "S1", "S18", "S21", "S22"},
@@ -103,7 +118,8 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     # S21 (modal de usos de batería): se abre sobre S13 y se cierra a S13. El auto-combate que
     # dispara pasa por S12 antes del "Obtenido" (S22), que se cierra de vuelta a S13.
     "S21": {"S12", "S13", "S1", "S22"},
-    "S22": {"S12", "S13", "S1", "S21"},
+    # S22 → S6/S7: "Ver" un drop del "Obtenido" abre la vista individual (y desde ahí se mejora).
+    "S22": {"S12", "S13", "S1", "S21", "S6", "S7"},
 }
 
 STATE_DESCRIPTIONS: dict[str, str] = {
@@ -112,8 +128,8 @@ STATE_DESCRIPTIONS: dict[str, str] = {
     "S3":  "Modal detalle disco (desde resultado)",
     "S4":  "Tienda música — selector",
     "S5":  "Resultado de afinación",
-    "S6":  "Tienda música — panel detalle disco",
-    "S7":  "Tienda música — detalle fullscreen",
+    "S6":  "Vista individual del disco (detalle a pantalla completa)",
+    "S7":  "Vista individual del disco (detalle a pantalla completa)",
     "S8":  "Equipamiento disco personaje (vista previa, sin slot abierto)",
     "S9":  "Inventario general de discos",
     "S10": "Modal upgrade disco",
@@ -1236,6 +1252,7 @@ _STATE_TEMPLATES: list[dict] = [
     {"code": "S3",  "template": "s3_modal_detalle_drop.png",        "desc": "Modal detalle drop (post-farmeo)"},
     {"code": "S6",  "template": "s6_tienda_detalle_panel.png",      "desc": "Tienda musica panel"},
     {"code": "S7",  "template": "s7_tienda_detalle_full.png",       "desc": "Tienda musica fullscreen"},
+    {"code": "S7",  "template": "s7_detalle_full_iconos.png",       "desc": "Vista individual disco (cluster papelera/candado/R/T)"},
     {"code": "S13", "template": "s13_seleccion_set_farmeo.png",     "desc": "Selección set de discos a farmear"},
     {"code": "S14", "template": "s14_seleccion_equipo_combate.png", "desc": "Selección de equipo pre-combate"},
     {"code": "S15", "template": "s15_menu_personajes.png",          "desc": "Menú de personajes (plan entrenamiento)"},

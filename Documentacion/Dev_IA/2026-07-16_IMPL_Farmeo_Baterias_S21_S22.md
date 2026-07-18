@@ -92,27 +92,100 @@ flecha presente ≈0.34 de píxeles claros, ausente 0.000 → `Resultados_discos
 El dedup es **convergente** (`_s22_seen`): una sección se re-emite solo si creció o si ahora
 cierra; una vez cerrada, nunca más. En el caso típico son 1–2 líneas por corrida.
 
-## El slot: por qué NO se usa `SlotDigitMatcher`
+## El slot: matcher NCC detrás de un gate de completitud
 
-Medido sobre los 11 tiles dorados con la caja correcta:
+**Actualizado 2026-07-16 (2ª pasada).** La 1ª pasada descartó el matcher y dejó solo OCR. Al
+volver sobre el reporte del usuario ("problemas con el slot 4 y el 6") se midió más fino y la
+conclusión cambió: el matcher es la vía correcta, lo que falta son **datos**, no diseño.
 
-| Vía | Resultado |
+### El OCR es estructuralmente malo con esta fuente
+
+No es que falle "a veces": pasando las refs etiquetadas de `slot_digits*/` por el camino OCR se
+ve el comportamiento **por clase** de Tesseract (`psm=10`, thr150 + fallback Otsu):
+
+| Clase | Qué devuelve | Sirve |
+|---|---|---|
+| 1 | `'LV:'`, `'IV:'`, `'y.'`, `'‘T:'` | **nunca** un dígito |
+| 2 | `'2:'` (Otsu: `'(a,'`) | sí |
+| 3 | `'3.'` | sí |
+| 4 | `'a'` **siempre** (conf 0.75-0.89) | **no** |
+| 5 | `'Ss'` → `_SLOT_CONFUSION['S']=5` | sí |
+| 6 | `'(7'`, `'(FF'`, `'e:'` | casi nunca |
+
+Esto explica el reporte: el `4` y el `6` son justo las dos clases que el OCR no puede.
+
+**Y `'a' → 4` NO se puede mapear**, aunque el `4` la devuelva siempre: un `2` por la pasada Otsu
+devuelve `'(a,'` y un `3` de las refs de S5 devuelve `'a'` en ambas pasadas. Mapearla convertiría
+2s y 3s en 4s **en silencio** — exactamente lo que RNF-02 prohíbe, y por eso `_SLOT_CONFUSION`
+tiene solo `S→5`.
+
+### El matcher sí resuelve este badge — pero necesita las 6 clases
+
+Sobre los 11 tiles dorados (`_raw_vec` + NCC del residuo):
+
+| Experimento | Resultado |
 |---|---|
-| `SlotDigitMatcher` de S2 (vía PRIMARIA en `read_tile_slot`) | **abstiene en los 11** — aporta cero (sus refs son el hexágono de S2; acá el tag es rectangular) |
-| OCR de fallback | **8/11 exactos, 0 errores, 3 abstenciones** (solo el `4`, confusión ya documentada en `read_tile_slot`) |
+| leave-one-**sample**-out (in-class) | **9/9 aciertos**, los tres `4` en score **0.999** |
+| leave-one-**class**-out (dígito desconocido) | **6/11 INVENTAN**, score hasta **0.799** |
+| ¿umbral separador? | **NO**: aciertos ≥0.755 vs invenciones ≤0.799 → **se solapan** |
 
-**Sembrar un matcher propio se probó y se DESCARTÓ.** El matcher resta el template promedio de
-sus refs para aislar el residuo del dígito ⇒ necesita las 6 clases cubiertas — y no por casualidad
-`slot_digits/` y `slot_digits_s5/` tienen **3-8 refs por dígito, los 6**. Los 4 fixtures solo
-dan `{2:3, 3:1, 4:3, 5:2, 6:2}` y **cero del slot 1**. Con clases faltantes el matcher no
-abstiene: **inventa**. Leave-one-class-out sobre las refs cosechadas → **4 de 11 devolvieron un
-dígito equivocado con score sobre el umbral** (p.ej. un `5` leído como `6` a 0.71). Un slot 1
-real se leería mal en silencio.
+Con clases faltantes el matcher no abstiene, **inventa con confianza**. De ahí el gate.
 
-Cambiar 3 abstenciones por el riesgo de errores silenciosos es exactamente el trade que RNF-02
-prohíbe. Se inyecta un `_AlwaysAbstain` explícito en vez de confiar en que el matcher de S2
-abstenga, para no acoplarse a sus refs: si algún día se re-siembran, este parser no debe
-cambiar de comportamiento solo. **Re-evaluar cuando haya fixtures con slots 1 y 3.**
+### Las refs de otras pantallas no transfieren (y son peores que nada)
+
+El matcher resta el template **promedio de su propio set**, así que un badge de otro estilo deja
+un residuo dominado por la diferencia de estilo:
+
+| Base de refs | Contra los 11 tiles | Simulación slot-1 (clase solo en la base) |
+|---|---|---|
+| `slot_digits/` (S2) | abstiene en los 11 | **0 ok / 11 WRONG / 0 abst** (score hasta 0.946) |
+| `slot_digits_s5/` (S5) | abstiene en los 11 | ídem |
+
+Sumarlas como base no solo no ayuda: contesta **equivocado y confiado**, y hasta rompe un caso
+in-class que hoy funciona (`3 → 2` a 0.898). Por eso ya hay **un set por pantalla**, y este
+modal necesita el suyo.
+
+### Estado: matcher ACTIVO (completado 2026-07-18)
+
+`app/resources/slot_digits_extraccion/` tiene el set completo `{1:1, 2:3, 3:2, 4:3, 5:2, 6:3}`
+= **6 clases** ⇒ el gate (`_get_slot_matcher_extraccion`) lo mantiene **encendido**. El slot 1
+que faltaba se cosechó de `Ejemplo_12.png` (una captura nueva del "Obtenido" que trajo un slot 1;
+la OCR lo leyó mal como "5" → verificado a ojo y renombrado a `1_`).
+
+| Set de refs | Resultado sobre los 5 fixtures (14 tiles dorados) |
+|---|---|
+| 5 clases (sin el 1) | matcher apagado → solo OCR: **8/11, 0 errores, 3 abstenciones** (los tres `4`) |
+| **6 clases (hoy)** | **matcher activo → 14/14, 0 errores, 0 abstenciones** |
+
+Los tres `4,4,4` que el OCR no puede leer ahora salen (score 0.999). **Confirmado EN VIVO
+2026-07-18**: la grilla del "Obtenido" leyó slot 1 y slot 4 correctamente.
+
+Se completa con `tools/harvest_extraccion_slot_digits.py --glob "Ejemplo_12.png" --write`. Si
+alguna vez se pierde una clase, el matcher se apaga en silencio → lo cubre el test
+`test_las_refs_cosechadas_cubren_las_6_clases_y_encienden_el_matcher`.
+
+### Toast en el panel DETAIL (2026-07-18)
+
+El panel DETAIL de S22 era el **único** camino de detalle que no toastaba: solo emitía la línea
+`[disco]` de log. Ahora `_process_s22_detail` llama a `self._on_disc(d, state)` como S3/S5 (el
+controller enruta S22 al recommender, no a persistencia → display-only; `d.rareza="S"` por el
+invariante del "Obtenido"). Al mirar el detalle de un disco salta el toast con la recomendación,
+deduplicado por identidad. **Caveat esperado:** el disco preseleccionado al abrir el modal toasta
+al abrir (no al clickearlo); re-clickearlo avisa `ya capturado` sin re-toast.
+
+### Bug del `(` comido en el título del DETAIL (2026-07-18)
+
+`Ejemplo_12` destapó que cuando PaddleOCR se come el paréntesis de apertura del slot (devuelve
+`'1)'` en vez de `'(1)'`), el título no matcheaba y el disco **no se detectaba** (intermitente).
+Fix en `_RE_DETAIL_TITULO`: `(` opcional, `)` obligatorio (distingue el slot de la cantidad `×N`
+de un material → sin FP en `detail_has_disc`); `search` en vez de `match` anclado.
+
+### Bug abierto: denominador `/N` del S21
+
+QA 2026-07-18: el usuario puso 1 uso, luego lo subió a 4 con el slider, y el S21 **no releyó** el
+cambio → el "Obtenido" mostró `uso 4/1` (headers 1→4 pero denominador pegado en 1). El re-read
+edge-triggered de `_process_s21_usos` no se disparó al mover el slider. No rompe la captura de
+discos. Pendiente de investigar (la firma del ROI de usos no detectó el cambio del slider).
 
 ## El set: sí transfiere
 
