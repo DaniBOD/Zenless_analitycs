@@ -206,3 +206,30 @@ def test_s21_lee_los_screenshots_reales():
         assert linea, f"{name}: no emitió, diags={diags}"
         assert f"{n} uso(s)" in linea[-1], f"{name}: esperaba {n}, salió {linea[-1]!r}"
         assert "stock 8" in linea[-1], f"{name}: esperaba stock 8, salió {linea[-1]!r}"
+
+
+def test_s21_reemite_al_cambiar_el_slider_con_frames_reales():
+    """Regresión del bug del `/N` (QA en vivo 2026-07-18): tras leer ×1, mover el slider a ×4
+    debía re-leer. El gate de firma lo bloqueaba (el cambio visual del slider es < umbral, medido
+    ~3 sobre los fixtures reales) → el 'Obtenido' quedaba en `uso 4/1`. Sin gate, OCReando cada
+    ciclo y dedupeando por valor, el 2º frame (×4) se re-lee. Frames y OCR REALES."""
+    import cv2
+    import pytest
+    x1, x4 = _FX / "Seleccion_baterias_uso.png", _FX / "Seleccion_nodo_4.png"
+    if not (x1.exists() and x4.exists()):
+        pytest.skip("screenshots S21 no presentes")
+    try:
+        from app.core.ocr_tesseract import TesseractBackend
+        ocr = TesseractBackend()
+    except Exception:
+        pytest.skip("Tesseract no disponible")
+
+    diags: list[str] = []
+    m = _monitor(ocr, diags)
+    m._dispatch_state(cv2.imdecode(np.fromfile(str(x1), np.uint8), cv2.IMREAD_COLOR), _ST21)
+    m._dispatch_state(cv2.imdecode(np.fromfile(str(x4), np.uint8), cv2.IMREAD_COLOR), _ST21)
+
+    lineas = [d for d in diags if d.startswith("[extracción]")]
+    assert len(lineas) == 2, f"esperaba re-emitir al cambiar el slider, hubo {lineas}"
+    assert "1 uso(s)" in lineas[0] and "4 uso(s)" in lineas[1]
+    assert m._farm_session.usos(time.monotonic()) == 4   # el denominador queda en 4, no en 1

@@ -93,7 +93,15 @@ _S13_SIG_MAX = 5.0
 # contra los 4 fixtures (OCR limpio en los 4).
 _S21_USOS_ROI = (0.320, 0.548, 0.360, 0.042)    # barra "Cantidad consumida × N"
 _S21_STOCK_ROI = (0.400, 0.395, 0.190, 0.045)   # "Batería etérea × 8" (stock disponible)
-_S21_SIG_MAX = 5.0
+# S21 NO usa gate de firma (a diferencia del resto de estados con re-OCR). Bug de QA en vivo
+# 2026-07-18: el usuario puso 1 uso, movió el slider a 4 y el "Obtenido" quedó en `uso 4/1`.
+# Causa medida sobre los 4 fixtures reales (×1/×2/×3/×4): la señal visual de un cambio de valor
+# es DEMASIADO CHICA para gatear con confianza — la barra "Cantidad consumida × N" cambia un solo
+# dígito (diff 32×32 ≈ 0.5) y hasta incluyendo la perilla del slider el diff es ≈3, y ese número
+# ENCOGE cuanto más pasos tenga el slider (con más stock, un paso adyacente mueve la perilla
+# menos) → ningún umbral fijo es robusto. Como S21 es un modal breve, se OCRea en cada ciclo y se
+# deduplica por VALOR (`_s21_last_usos`), que ya es el mecanismo de correctitud. Así es imposible
+# perder un cambio de slider (RNF-06 ok: OCR chico ~1×/s solo mientras el modal está abierto).
 # El regex ANCLA en "consumida" a propósito: el modal tiene otro "× 8" (el stock) en el mismo
 # eje vertical y un "1 … 4" de slider debajo. Un `×\s*(\d)` suelto leería el número equivocado
 # si el ROI se corre — un error silencioso, que es justo lo que RNF-02 prohíbe.
@@ -573,9 +581,8 @@ class Monitor:
         self._s13_last_sig = None
         self._s13_last_node: str | None = None
         # S21 (modal de usos de batería): previa display-only EDGE-triggered por valor de N.
-        # Se re-emite al mover el slider (sigue siendo S21). `_s21_last_sig` gatea el re-OCR
-        # (RNF-06); `_s21_last_usos` deduplica la emisión.
-        self._s21_last_sig = None
+        # Se re-emite al mover el slider (sigue siendo S21). Sin gate de firma (ver nota en
+        # `_S21_USOS_ROI`): `_s21_last_usos` deduplica la emisión por valor.
         self._s21_last_usos: int | None = None
         # S22 (modal "Obtenido"): dedup CONVERGENTE por corrida. {n_uso: nº de discos ya
         # emitidos} o _S22_SEC_CERRADA si ya se emitió completa. `_s22_last_sig` gatea el
@@ -935,7 +942,6 @@ class Monitor:
             self._s13_last_sig = None
             self._s13_last_node = None
         if state.code != "S21":
-            self._s21_last_sig = None
             self._s21_last_usos = None
         if state.code != "S22":
             self._s22_last_sig = None
@@ -1347,26 +1353,6 @@ class Monitor:
             except Exception:
                 log.debug("on_diagnostic S13 falló", exc_info=True)
 
-    @staticmethod
-    def _s21_usos_signature(frame):
-        """Firma 32×32 gris del ROI de la barra de usos (S21), sin OCR (RNF-06). Gatea el
-        re-OCR: mover el slider cambia el dígito Y la perilla, así que la firma se mueve
-        cuando hay algo nuevo que leer. None si no se puede."""
-        if frame is None or getattr(frame, "size", 0) == 0:
-            return None
-        try:
-            import cv2
-            h, w = frame.shape[:2]
-            x, y, rw, rh = _S21_USOS_ROI
-            sub = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
-            if sub.size == 0:
-                return None
-            return cv2.cvtColor(
-                cv2.resize(sub, (32, 32), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
-            ).astype(np.float32)
-        except Exception:
-            return None
-
     def _ocr_s21_roi(self, frame, roi, rx) -> int | None:
         """OCR de una ROI del modal S21 → el entero que capture `rx`, o None si no matchea."""
         try:
@@ -1389,16 +1375,12 @@ class Monitor:
         S13. Display-only: no persiste ni puntúa.
 
         EDGE-triggered por VALOR (NO 1× por entrada a S21): mover el slider cambia N sin salir
-        del modal, así que se re-emite cada vez que N cambia. Gate RNF-06: solo re-OCR si la
-        firma del ROI cambió. Se resetea al salir de S21 (ver _dispatch_state)."""
+        del modal, así que se re-emite cada vez que N cambia. Sin gate de firma (ver nota en
+        `_S21_USOS_ROI`): se OCRea cada ciclo y `_s21_last_usos` deduplica por valor — la señal
+        visual de un cambio de slider es demasiado chica para gatear con confianza. Se resetea al
+        salir de S21 (ver _dispatch_state)."""
         if self._farm_session is None:
             return
-        # Gate de re-OCR: si la barra en pantalla no cambió, no re-leer (RNF-06).
-        sig = self._s21_usos_signature(frame)
-        if (sig is not None and self._s21_last_sig is not None
-                and self._sig_component_diff(sig, self._s21_last_sig) <= _S21_SIG_MAX):
-            return
-        self._s21_last_sig = sig
 
         n_usos = self._ocr_s21_roi(frame, _S21_USOS_ROI, _RE_S21_USOS)
         if self._id_diag_on:
