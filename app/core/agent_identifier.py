@@ -26,7 +26,8 @@ from pathlib import Path
 import numpy as np  # noqa: F401  (compat: tests/otros importan np de acá indirectamente)
 
 from app.core.avatar_descriptor import AvatarMatcher, build_name_map
-from app.core.detector import crop_selected_avatar
+from app.core.badge_surface import BadgeSurface
+from app.core.detector import crop_detail_badge, crop_grid_selected_badge, crop_selected_avatar
 from app.core.stats_vocab import _norm_key
 from app.db.connection import is_readonly
 
@@ -35,11 +36,18 @@ log = logging.getLogger(__name__)
 _RESOURCES = Path(__file__).resolve().parents[1] / "resources"
 _ICO_DIR = _RESOURCES / "avatar_refs"
 _REJECT_DIR = _RESOURCES / "avatar_reject"
+# Reject-set PROPIO del detalle (5R.L.8): crops reales del texto '(N)' del nº de slot
+# que el localizador del detalle a veces recorta en discos LIBRES. Solo el matcher
+# _detbadge los usa — el texto no debe rechazar crops del grid/row. Es la base de la
+# PRESENCIA ESTRUCTURAL: crop no-rechazado = hay una cara (nombrable o no).
+_REJECT_DET_DIR = _RESOURCES / "avatar_reject_det"
 
 # Cache del seed -ico: los descriptores son inmutables (frozen) y caros de construir
 # (53 PNGs + CLAHE + histogramas). Se construyen UNA vez y se comparten entre
 # instancias (cada una recibe listas propias, así su cosecha no se filtra).
 _ICO_SEED_CACHE: tuple[dict, list] | None = None
+# Cache de los rejects de texto del detalle (mismo criterio: frozen + compartidos).
+_DET_REJECT_CACHE: list | None = None
 
 # Similitud mínima para NOMBRAR al dueño de un candidato (identify_s17). Bajado de
 # 0.86 → 0.80 (sub-fase B, 2026-06-12): recupera matches correctos sub-0.86 (Burnice,
@@ -82,12 +90,35 @@ class AgentIdentifier:
         self._row = AvatarMatcher()
         self._badge = AvatarMatcher()
         self._detbadge = AvatarMatcher()
+        self._det_text_rejects: list = []   # anclas de texto '(N)' (presencia, 5R.L.8)
         self._ico_names: set[str] = set()   # refs sembradas de -ico (no podar)
         self._roster_norm: dict[str, str] | None = (
             {_norm_key(n): n for n in roster} if roster is not None else None
         )
+        # Superficies de badge (5R.L.8/B1): el boilerplate crop+match+cosecha+presencia
+        # de cada encuadre, empaquetado reusable (app/core/badge_surface.py). Los métodos
+        # históricos de abajo delegan acá; una pantalla NUEVA (S9/S23) registra la suya
+        # con su crop_fn + librería propia y consume sample()/learn().
+        _harvest_gate = lambda: not is_readonly() or _badge_harvest_enabled()  # noqa: E731
+        self.surfaces: dict[str, BadgeSurface] = {
+            "row": BadgeSurface(
+                "row", crop_selected_avatar, self._row, self._row_path,
+                canonicalize=self._canonical_name,
+                persist_gate=lambda: not is_readonly(),
+            ),
+            "grid": BadgeSurface(
+                "grid", crop_grid_selected_badge, self._badge, self._badge_path,
+                canonicalize=self._canonical_name, persist_gate=_harvest_gate,
+            ),
+            "detail": BadgeSurface(
+                "detail", crop_detail_badge, self._detbadge, self._detbadge_path,
+                canonicalize=self._canonical_name, persist_gate=_harvest_gate,
+                presence_fn=self.s17_detail_is_face,
+            ),
+        }
         if autoload:
             self._seed_ico()
+            self._seed_det_rejects()
             self.load()
             self.load_s17()
             self.load_s17_detail()
@@ -119,6 +150,29 @@ class AgentIdentifier:
             self._ico_names = set(refs.keys())
         except Exception:
             log.exception("AgentIdentifier: error sembrando -ico")
+
+    def _seed_det_rejects(self) -> None:
+        """Carga las anclas de TEXTO '(N)' del detalle (avatar_reject_det/) para el
+        clasificador de PRESENCIA estructural (5R.L.8, `s17_detail_is_face`). NO se
+        mezclan con el reject-set de naming del matcher: la presencia y el naming son
+        señales separadas (mezclarlas causaba abstenciones nuevas en caras grises —
+        Nangong Yu dista 0.349 del texto por la ruta de luminancia)."""
+        global _DET_REJECT_CACHE
+        if not _REJECT_DET_DIR.is_dir():
+            return
+        try:
+            if _DET_REJECT_CACHE is None:
+                import cv2
+                from app.core.avatar_descriptor import build_descriptor
+                descs = []
+                for p in sorted(_REJECT_DET_DIR.glob("*.png")):
+                    d = build_descriptor(cv2.imread(str(p)))
+                    if d is not None:
+                        descs.append(d)
+                _DET_REJECT_CACHE = descs
+            self._det_text_rejects = list(_DET_REJECT_CACHE)
+        except Exception:
+            log.exception("AgentIdentifier: error cargando anclas de texto del detalle")
 
     # ---- Roster (validación de nombres) -------------------------------------
 
@@ -165,28 +219,22 @@ class AgentIdentifier:
     # ---- Persistencia -------------------------------------------------------
 
     def load(self) -> None:
-        n = self._row.load_merge(self._row_path)
-        if n:
-            log.info("AgentIdentifier: %d refs de fila cargadas de %s", n, self._row_path)
+        self.surfaces["row"].load()
 
     def save(self) -> None:
-        self._row.save(self._row_path)
+        self.surfaces["row"].save()
 
     def load_s17(self) -> None:
-        n = self._badge.load_merge(self._badge_path)
-        if n:
-            log.info("AgentIdentifier: %d refs de badge cargadas de %s", n, self._badge_path)
+        self.surfaces["grid"].load()
 
     def save_s17(self) -> None:
-        self._badge.save(self._badge_path)
+        self.surfaces["grid"].save()
 
     def load_s17_detail(self) -> None:
-        n = self._detbadge.load_merge(self._detbadge_path)
-        if n:
-            log.info("AgentIdentifier: %d refs de detalle-badge cargadas de %s", n, self._detbadge_path)
+        self.surfaces["detail"].load()
 
     def save_s17_detail(self) -> None:
-        self._detbadge.save(self._detbadge_path)
+        self.surfaces["detail"].save()
 
     # ---- API: avatar de FILA (S8/S18/S19) -----------------------------------
 
@@ -196,19 +244,14 @@ class AgentIdentifier:
 
     def learn(self, frame, name: str) -> bool:
         """Aprende/cosecha el avatar de fila de `name` desde el frame (típicamente
-        S18, nombre por OCR). Multi-ref. No escribe en readonly."""
-        if not name or is_readonly():
+        S18, nombre por OCR). Multi-ref. No escribe en readonly. Delegado a la
+        superficie `row` (canonicalización + gate + persistencia, 5R.L.8/B1)."""
+        if not name:
             return False
         canon = self._canonical_name(name)
-        if canon is None:
-            log.debug("AgentIdentifier: '%s' fuera del roster → no se aprende", name)
+        new = canon is not None and canon not in self._row._refs
+        if not self.surfaces["row"].learn(crop_selected_avatar(frame), name):
             return False
-        face = crop_selected_avatar(frame)
-        if face is None:
-            return False
-        new = canon not in self._row._refs
-        self._row.add_reference(canon, face)
-        self.save()
         if new:
             log.info("AgentIdentifier: avatar de fila aprendido para '%s'", canon)
         return True
@@ -231,16 +274,14 @@ class AgentIdentifier:
     def learn_s17(self, face, name: str) -> bool:
         """Aprende/cosecha el badge de `name` (ground-truth del latch). Multi-ref.
         En readonly NO persiste, SALVO en modo cosecha de badges (DANIBOD_BADGE_HARVEST),
-        que escribe solo la librería de badges (no la DB)."""
-        if not name or face is None or (is_readonly() and not _badge_harvest_enabled()):
+        que escribe solo la librería de badges (no la DB). Delegado a la superficie
+        `grid` (5R.L.8/B1)."""
+        if not name:
             return False
         canon = self._canonical_name(name)
-        if canon is None:
-            log.debug("AgentIdentifier: S17 '%s' fuera del roster → no se aprende", name)
+        new = canon is not None and (canon not in self._badge._refs or canon in self._ico_names)
+        if not self.surfaces["grid"].learn(face, name):
             return False
-        new = canon not in self._badge._refs or canon in self._ico_names
-        self._badge.add_reference(canon, face)
-        self.save_s17()
         if new:
             log.info("AgentIdentifier: badge aprendido para '%s'", canon)
         return True
@@ -287,18 +328,47 @@ class AgentIdentifier:
     def learn_s17_detail(self, face, name: str) -> bool:
         """Cosecha el detalle-badge de `name` (ground-truth del latch) a su librería
         PROPIA. Mismo gating que learn_s17: en readonly NO persiste salvo en cosecha
-        de badges (DANIBOD_BADGE_HARVEST), que escribe solo la librería (no la DB)."""
-        if not name or face is None or (is_readonly() and not _badge_harvest_enabled()):
+        de badges (DANIBOD_BADGE_HARVEST), que escribe solo la librería (no la DB).
+        Delegado a la superficie `detail` (5R.L.8/B1)."""
+        if not name:
             return False
         canon = self._canonical_name(name)
-        if canon is None:
+        new = canon is not None and canon not in self._detbadge._refs
+        if not self.surfaces["detail"].learn(face, name):
             return False
-        new = canon not in self._detbadge._refs
-        self._detbadge.add_reference(canon, face)
-        self.save_s17_detail()
         if new:
             log.info("AgentIdentifier: detalle-badge aprendido para '%s'", canon)
         return True
+
+    def s17_detail_is_face(self, face) -> bool:
+        """PRESENCIA ESTRUCTURAL del crop del detalle (5R.L.8): ¿el crop es una CARA
+        (de cualquier PJ, nombrable o no) o el texto '(N)' del nº de slot que el
+        localizador recorta a veces en discos libres? Compara la distancia mínima a
+        las anclas de CARA (refs cosechadas del detalle ∪ semilla -ico del roster,
+        disponibles desde día-1) contra las anclas de TEXTO (avatar_reject_det/).
+        Independiente del NAMING: un avatar real con matcher débil (gap de refs,
+        p.ej. Jane visto desde Velina QA 2026-07-18) sigue contando como presente.
+        Medido sobre el gold set (audit/harvest_badges): 163/163 caras → True (0
+        falso-texto = 0 falso-LIBRE); texto de estilo no visto puede dar True (costo:
+        'incierto' en vez de LIBRE — dirección segura, RNF-02).
+        Sin anclas (de texto o de cara) → True: ante la duda, presencia (nunca
+        habilitar un falso LIBRE por falta de calibración)."""
+        if face is None:
+            return False
+        from app.core.avatar_descriptor import build_descriptor, descriptor_distance
+        q = build_descriptor(face)
+        if q is None:
+            return False
+        if not self._det_text_rejects:
+            return True
+        anchors = [d for lst in self._detbadge._refs.values() for d in lst]
+        if _ICO_SEED_CACHE is not None:
+            anchors += [d for lst in _ICO_SEED_CACHE[0].values() for d in lst]
+        if not anchors:
+            return True
+        d_face = min(descriptor_distance(q, a, None, q.is_gray) for a in anchors)
+        d_text = min(descriptor_distance(q, t, None, q.is_gray) for t in self._det_text_rejects)
+        return d_face < d_text
 
     def s17_match_detail(self, face, min_sim: float = _S17_GUARD_DEFAULT):
         """Match del detalle-badge contra su librería propia: (nombre|None, conf, margin,

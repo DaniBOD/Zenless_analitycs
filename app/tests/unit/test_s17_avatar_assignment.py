@@ -353,14 +353,15 @@ class _StubIdent:
     """Identificador controlado para testear la lógica de `_assign_s17_pj` (5R.5)
     sin depender de fixtures: define la similitud al latch y el dueño identificado."""
     def __init__(self, sim=None, owner=None, free=False, det_owner=None,
-                 det_conf=0.66, det_margin=0.5):
+                 det_conf=0.66, det_margin=0.5, det_rej=False):
         self._sim = sim; self._owner = owner; self.learned = []
         self._roster_norm = {}; self._free = free
         self._det_owner = det_owner; self.learned_detail = []
-        # Para el gate de presencia del detalle (5R.L.7.3): conf+margen del crop cuando NO
-        # hay dueño identificado. Default = avatar real presente (margen claro); un crop
-        # espurio tipo texto '(N)' se modela con det_margin chico (~0.02).
+        # Presencia del detalle (5R.L.8): un crop de TEXTO '(N)' se modela con
+        # det_rej=True (cae en el reject-set de texto); un avatar REAL no nombrable
+        # se modela con conf/margen bajos y det_rej=False (presencia estructural).
         self._det_conf = det_conf; self._det_margin = det_margin
+        self._det_rej = det_rej
 
     def s17_similarity(self, badge, name):
         return self._sim
@@ -377,7 +378,11 @@ class _StubIdent:
     def s17_match_detail(self, badge, min_sim=0.80):
         if self._det_owner:
             return self._det_owner[0], self._det_owner[1], 0.5, False
-        return None, self._det_conf, self._det_margin, False
+        return None, self._det_conf, self._det_margin, self._det_rej
+
+    def s17_detail_is_face(self, badge):
+        # Presencia estructural (5R.L.8): det_rej=True modela un crop de TEXTO '(N)'.
+        return not self._det_rej
 
     def learn_s17(self, badge, name):
         self.learned.append(name); return True
@@ -563,16 +568,17 @@ def test_monitor_grid_presente_leaky_sin_voto_igual_libre(monkeypatch):
 
 
 def test_monitor_detalle_espurio_texto_no_bloquea_libre(monkeypatch):
-    """5R.L.7.3 (QA 2026-06-20, Metal colmilludo): el localizador del detalle a veces recorta
-    el texto '(N)' del nº de slot en discos LIBRES (det_loc>0 pero conf 0.66 + margen 0.02 =
-    equidistante = no es cara). Ese crop espurio NO debe contar como avatar presente → no
-    bloquea LIBRE. (Antes: det_loc>0 → 'badge no localizado'/incierto.)"""
+    """5R.L.8 (QA 2026-06-20, Metal colmilludo): el localizador del detalle a veces recorta
+    el texto '(N)' del nº de slot en discos LIBRES. Ese crop cae en el REJECT-SET de texto
+    (avatar_reject_det/) → rejected=True → cuenta como AUSENTE → no bloquea LIBRE.
+    (Antes se filtraba por conf/margen del matcher, lo que también descartaba avatares
+    reales no nombrables → falso LIBRE, QA 2026-07-18.)"""
     import app.core.monitor as mon
     monkeypatch.setattr(mon, "crop_grid_selected_badge", lambda f: None)             # grid NOLOC
     monkeypatch.setattr(mon, "crop_detail_badge", lambda f: np.zeros((40, 40, 3), np.uint8))  # detalle recorta algo
     m = _monitor()
     m._identifier = _StubIdent(sim=0.40, owner=None, det_owner=None,
-                               det_conf=0.66, det_margin=0.02)   # crop espurio: ambos bajos
+                               det_conf=0.66, det_margin=0.02, det_rej=True)  # texto → reject-set
     m._last_agent_name = "Zhu Yuan"
     m._s17_last_slot = 1
     disc = _disc(slot=1)
@@ -584,26 +590,52 @@ def test_monitor_detalle_espurio_texto_no_bloquea_libre(monkeypatch):
     assert disc.equip_pj_visual is None
 
 
-def test_s17_is_libre_libre_gana_salvo_presencia_dominante(monkeypatch):
-    """LIBRE gana a 'incierto' (usuario 2026-06-21): sin voto → LIBRE salvo que el detalle
-    vea un avatar REAL de forma DOMINANTE (present ≥ 2× absent). Tolera spikes espurios del
-    texto '(N)' (no dominantes) y no exige acumular frames."""
+def test_monitor_avatar_real_no_nombrable_nunca_libre(monkeypatch):
+    """REGRESIÓN QA 2026-07-18 (5R.L.8, disco de Jane visto desde la grilla de Velina):
+    el detalle LOCALIZA un avatar REAL pero el matcher no puede nombrarlo (conf Y margen
+    bajos — gap/contaminación de refs). PRESENCIA ESTRUCTURAL gana a LIBRE (decisión del
+    usuario 2026-07-19): hay una cara → el disco ESTÁ equipado por alguien → 'equipado ·
+    dueño incierto', NUNCA LIBRE. (Antes la presencia se contaba por confianza del matcher
+    → avatar no-nombrable = 'ausente' → falso LIBRE, peligroso con la escritura de Fase 5.)"""
     import numpy as np
     import app.core.monitor as mon
-    monkeypatch.setattr(mon, "_s17_disc_signature", lambda self, f: (1, 2, 3), raising=False)
+    monkeypatch.setattr(mon, "crop_grid_selected_badge", lambda f: None)             # grid NOLOC
+    monkeypatch.setattr(mon, "crop_detail_badge", lambda f: np.zeros((40, 40, 3), np.uint8))
+    m = _monitor()
+    # Avatar real con matcher débil: conf 0.50 + margen 0.03, NO rechazado (no es texto).
+    m._identifier = _StubIdent(sim=0.40, owner=None, det_owner=None,
+                               det_conf=0.50, det_margin=0.03, det_rej=False)
+    m._last_agent_name = "Velina"
+    m._s17_last_slot = 1
+    disc = _disc(slot=1)
+    m._sample_s17_owner(_frame())                    # 1 solo frame basta: hubo una cara
+    assert m._s17_detail_present >= 1                # presencia ESTRUCTURAL (no por conf)
+    m._assign_s17_pj(disc, _frame())
+    assert disc.equip_libre is False, "avatar real visto → NUNCA falso-LIBRE"
+    assert disc.equip_detectado is True              # está equipado (por alguien)
+    assert disc.equip_pj_visual is None              # pero no sabemos por quién → incierto
+    assert disc.agente_asignado_nombre is None       # RNF-02: no se toca la asignación
+
+
+def test_s17_is_libre_presencia_estructural_bloquea(monkeypatch):
+    """5R.L.8: `_s17_is_libre` con la regla invertida — UN solo frame con avatar real
+    (detail_present ≥ 1) bloquea LIBRE aunque las ausencias dominen (parpadeo de
+    localización). LIBRE exige presencia CERO. El texto '(N)' no cuenta como presencia
+    (lo filtra el reject-set upstream) → los libres siguen saliendo en 1 frame."""
+    import numpy as np
     m = _monitor()
     sig = (np.zeros((48, 24), np.float32), np.zeros((48, 48), np.float32), np.zeros((24, 24), np.float32))
     monkeypatch.setattr(m, "_s17_disc_signature", lambda frame: sig)
     m._s17_owner_sig = sig
-    # Sin evidencia (0/0) → LIBRE (no exige 2 frames).
+    # Sin evidencia (0/0) → LIBRE (latencia 1 frame, igual que antes).
     m._s17_detail_present, m._s17_detail_absent = 0, 0
     assert m._s17_is_libre(_frame()) is True
-    # 1 spike presente vs 1 ausente → no dominante → LIBRE.
-    m._s17_detail_present, m._s17_detail_absent = 1, 1
-    assert m._s17_is_libre(_frame()) is True
-    # presencia DOMINANTE (4 presentes vs 1 ausente = avatar real sin nombrar) → no libre.
-    m._s17_detail_present, m._s17_detail_absent = 4, 1
+    # 1 frame con avatar real, 5 ausentes (parpadeo) → presencia gana → NO libre.
+    m._s17_detail_present, m._s17_detail_absent = 1, 5
     assert m._s17_is_libre(_frame()) is False
+    # Muchas ausencias puras (libre navegado lento) → LIBRE.
+    m._s17_detail_present, m._s17_detail_absent = 0, 6
+    assert m._s17_is_libre(_frame()) is True
 
 
 _FREE_DIR = (REPO / "Documentacion" / "Screenshots_Triggers" / "Discos_Triggers"
@@ -751,6 +783,36 @@ def test_crop_detail_badge_localiza_y_none():
     assert crop is not None and crop.size > 0
     # sin avatar (todo oscuro) → None
     assert crop_detail_badge(np.zeros((H, W, 3), np.uint8)) is None
+
+
+def test_detail_is_face_distingue_cara_de_texto(tmp_path):
+    """5R.L.8: `s17_detail_is_face` = PRESENCIA estructural del detalle. Anclas de cara
+    (semilla -ico del roster + refs cosechadas) vs anclas de texto '(N)'
+    (avatar_reject_det/). Caras → True (aunque el PJ no tenga refs propias — el caso
+    Jane); texto → False (no bloquea LIBRE). Independiente del naming: el matcher puede
+    abstenerse y la presencia igual cuenta."""
+    rej_dir = REPO / "app" / "resources" / "avatar_reject_det"
+    refs_dir = REPO / "app" / "resources" / "avatar_refs"
+    texto = cv2.imread(str(rej_dir / "texto_5_a.png"))
+    cara = cv2.imread(str(refs_dir / "Ellen.png"))
+    otra_cara = cv2.imread(str(refs_dir / "Nicole.png"))  # colorida; las grises (Lycaon)
+    # no llegan acá: el gate de saturación de crop_detail_badge no las localiza.
+    assert texto is not None and cara is not None and otra_cara is not None
+    ident = AgentIdentifier(library_path=tmp_path / "lib.npz", autoload=False,
+                            roster={"Ellen"})
+    ident._seed_ico()            # anclas de cara día-1 (no requiere cosecha)
+    ident._seed_det_rejects()    # anclas de texto
+    assert ident.s17_detail_is_face(texto) is False, "el texto '(N)' no es una cara"
+    assert ident.s17_detail_is_face(cara) is True
+    assert ident.s17_detail_is_face(otra_cara) is True, \
+        "una cara sin refs propias del detalle igual cuenta como presencia (caso Jane)"
+    # Crop inválido → False (no hay nada que contar).
+    assert ident.s17_detail_is_face(None) is False
+    # Sin anclas de texto cargadas (instalación sin calibrar) → True conservador:
+    # ante la duda presencia (nunca habilitar un falso LIBRE por falta de datos).
+    virgen = AgentIdentifier(library_path=tmp_path / "lib2.npz", autoload=False,
+                             roster={"Ellen"})
+    assert virgen.s17_detail_is_face(texto) is True
 
 
 def test_learn_s17_detail_readonly_gateado_por_badge_harvest(tmp_path, monkeypatch):
@@ -1260,7 +1322,7 @@ def test_s17_libre_emite_sin_warmup_completo(monkeypatch):
                         lambda frame, ocr: (_disc_full(slot=1), None))
     # El loop rápido (10fps) ya juntó la evidencia de presencia: 2 frames sin avatar.
     m._s17_owner_sig = sig
-    m._s17_detail_absent = mon._S17_FREE_MIN_FRAMES
+    m._s17_detail_absent = 2
     m._s17_owner_passes = 1                     # < _S17_OWNER_MIN_SAMPLES (no calentó)
     st = ScreenState("S17", 1.0, "tmpl")
     m._process_disc_s17_continuous(None, st)

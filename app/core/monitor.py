@@ -239,77 +239,19 @@ _S12_SIG_MAX = 2.0
 # OCR funcionan, pero corta antes del cuelgue (~12 GB). Desactivable con DANIBOD_NO_RAM_GUARD=1.
 _RAM_RESTART_MB = 6000
 _RAM_CHECK_INTERVAL_S = 15.0
-# Detector LIBRE/equipado (5R.B): un frame es "evidencia de libre" si el badge cae en
-# el reject-set o su conf < _S17_FREE_CONF (nada se parece a una cara → sin dueño). Se
-# declara LIBRE solo con ≥ _S17_FREE_MIN_FRAMES de evidencia mayoritaria y cero dueños
-# identificados (conservador: ante duda → "dueño incierto").
-_S17_FREE_CONF = 0.58
-_S17_FREE_MIN_FRAMES = 2
-
-# Voto del dueño grid+detail (5R.L.3) — acumuladores SEPARADOS + política con garantía
-# RNF-02 (cero wrong). El GRID es la fuente primaria (sus reads son 0-wrong, verificado en
-# QA: solo-grilla = 62% ok / 0% wrong). El DETAIL (post-fix L.2b: crop Hough, 90% top-1 /
-# 0 wrong cross-domain) SUMA yield en los discos donde el grid da NOLOC, pero su margen
-# per-frame es menor → para PROPONER un dueño SIN respaldo del grid exige evidencia
-# acumulada fuerte + dominancia (no puede introducir un PJ que el grid nunca propuso salvo
-# este guard alto). Calibrables en L.4 (QA en vivo).
-# Un voto del detalle YA pasó su propio guard (conf≥0.80 + margen + reject-set en
-# `s17_match_detail`), así que UN frame confiable es señal válida. En vivo los discos
-# reciben ~1 frame por visita (el usuario navega rápido) → exigir ≥2 frames dejaba a
-# Yanagi/Seth (det@1.00/0.81, 1 frame) en "incierto" (bug QA 2026-06-18). Bajado 1.30→0.80
-# = "al menos un frame confiable del detalle". La DOMINANCIA sigue cortando empates
-# (dos PJs alternando un frame c/u → se abstiene).
-_DET_SOLO_MIN_SCORE = 0.80   # suma de conf del detail ganador (≈ 1 frame confiable)
-_DET_SOLO_DOMINANCE = 1.50   # ganador ≥ 1.5× el 2º acumulado (sin empate cerrado)
-
-# 5R.L.7.3 — PRESENCIA de avatar en el detalle (¿el crop es una cara o un crop espurio?).
-# El localizador del detalle a veces recorta el texto '(N)' del nº de slot en discos LIBRES
-# (QA 2026-06-20: '(1)' → conf 0.64-0.66, margen 0.02-0.054, INESTABLE). Un avatar REAL en
-# librería matchea a conf ~1.0 (vota); uno sin ref con cara clara tiene margen amplio. El
-# texto da conf baja Y margen chico. Cuenta como "avatar presente" (bloquea LIBRE) solo si
-# no-rejected y (conf≥CONF o margen≥MARGIN). Calibrado sobre 163 avatares reales (conf p5=1.0,
-# margen p5=0.092) + textos conocidos: 0/163 avatares caen ausente; los textos quedan fuera.
-_DET_PRESENCE_CONF = 0.86      # = guard de voto: un match así de fuerte ya es un avatar real
-_DET_PRESENCE_MARGIN = 0.10    # margen al 2º (avatares reales p5=0.092; textos ≤0.054 casi siempre)
-
-
-def _vote_winner(votes: dict[str, float]) -> tuple[str | None, float, float]:
-    """(nombre, score_1º, score_2º) del dict de votos acumulados, o (None, 0, 0)."""
-    if not votes:
-        return None, 0.0, 0.0
-    ordered = sorted(votes.items(), key=lambda kv: -kv[1])
-    name, score = ordered[0]
-    second = ordered[1][1] if len(ordered) > 1 else 0.0
-    return name, score, second
-
-
-def _decide_s17_owner(grid_votes: dict[str, float],
-                      det_votes: dict[str, float],
-                      latch: str | None = None) -> tuple[str | None, str | None]:
-    """Decide el dueño votado de un disco CANDIDATO combinando grid + detail con
-    garantía RNF-02. Devuelve (owner|None, source):
-      - grid-PRIMARIO: si el grid votó, manda el grid; el detail solo corrobora (no puede
-        introducir otro PJ). source='grid+det' si coinciden, 'grid' si no.
-      - detail-SOLO: si el grid no votó (NOLOC), el detail propone dueño SOLO con score
-        acumulado ≥ _DET_SOLO_MIN_SCORE y dominancia ≥ _DET_SOLO_DOMINANCE. source='det'.
-      - si nada alcanza, (None, None) → incierto (abstención antes que error).
-    `latch` (opcional) = agente cuya página se está viendo; activa el guard anti-imán.
-    """
-    g_name, _gs, _g2 = _vote_winner(grid_votes)
-    d_name, d_score, d2 = _vote_winner(det_votes)
-    if g_name:
-        return g_name, ("grid+det" if d_name == g_name else "grid")
-    if d_name and d_score >= _DET_SOLO_MIN_SCORE and d_score >= _DET_SOLO_DOMINANCE * max(d2, 1e-9):
-        # ANTI-IMÁN (5R.L.6b): un CANDIDATO cuyo detalle solo-propone al MISMO agente cuya
-        # página estamos viendo (latch) es la firma del imán — refs del latch sobre-representadas
-        # + correlación de fondo tiran del descriptor hacia el dueño de la página. El disco
-        # realmente equipado lo asigna el ANCLA (no este path); un candidato que "casualmente"
-        # matchea al latch sin que la grilla corrobore es sospechoso → abstenerse (RNF-02:
-        # incierto > wrong). Se libera solo cuando el PJ correcto entra a la librería (cosecha).
-        if latch is not None and _norm_key(d_name) == _norm_key(latch):
-            return None, None
-        return d_name, "det"
-    return None, None
+# Voto/presencia del dueño (5R.L.3 → L.8): la maquinaria vive en el módulo REUSABLE
+# `app/core/owner_vote.py` (OwnerVoteAccumulator + decide_owner) para que futuras
+# pantallas (S9 inventario global, S23 reemplazo) la instancien sin re-implementar la
+# política. Historia/calibración: grid-primario 0-wrong; detail-solo 1 frame confiable
+# (QA 2026-06-18); presencia estructural gana a LIBRE (QA 2026-07-18). Los alias de
+# abajo preservan los nombres históricos que importan los tests.
+from app.core.owner_vote import (  # noqa: E402
+    _DET_SOLO_DOMINANCE,
+    _DET_SOLO_MIN_SCORE,
+    OwnerVoteAccumulator,
+    decide_owner as _decide_s17_owner,
+)
+from app.core.owner_vote import DETAIL as _SURF_DET, GRID as _SURF_GRID  # noqa: E402
 
 # Intervalo de captura rápida (entre frames para buffer, sin procesar)
 _FAST_CAPTURE_MS = 100  # 10 fps — MSS captura en ~20ms, template match en ~50ms
@@ -507,22 +449,13 @@ class Monitor:
         # parpadeo Yuzuha↔incierto (el recorte varía frame a frame por la animación
         # idle del modelo 3D y el resaltado deslizante). Resetea al cambiar de disco.
         self._s17_owner_sig: tuple | None = None
-        # Acumuladores de voto SEPARADOS (5R.L.3): grid (primario, 0-wrong) y detail
-        # (boost de yield bajo guard). La decisión la toma `_decide_s17_owner`.
-        self._s17_grid_votes: dict[str, float] = {}
-        self._s17_det_votes: dict[str, float] = {}
-        self._s17_free_evidence: int = 0   # frames con badge sin cara (5R.B)
-        self._s17_samples: int = 0         # frames muestreados del disco actual
-        # 5R.L.7.3 — PRESENCIA de badge (estructural, desacoplada de identidad): cuántos
-        # frames del disco actual tuvieron / no tuvieron avatar de dueño en cada superficie.
-        # El detail (loc ~100%) ARBITRA libre/equipado; el grid (post-gate L.7.2) corrobora.
-        self._s17_detail_present: int = 0
-        self._s17_detail_absent: int = 0
-        self._s17_grid_present: int = 0
-        self._s17_grid_absent: int = 0
-        # 5R.L.6 — warmup del dueño: pasadas TOTALES del loop rápido para el disco actual
-        # (cuenta todas, no solo las localizadas) + flag de "maduró pero dueño aún frío".
-        self._s17_owner_passes: int = 0
+        # 5R.L.8 — el estado de voto/presencia del disco actual vive en el acumulador
+        # reusable (app/core/owner_vote.py): votos separados grid (primario, 0-wrong) /
+        # detail (boost bajo guard), presencia estructural por superficie (el detail
+        # arbitra LIBRE) y las pasadas del warmup. Los nombres `_s17_*` históricos
+        # quedan como properties de compatibilidad (tests + call sites).
+        self._s17_vote = OwnerVoteAccumulator()
+        # flag de "maduró pero dueño aún frío" (warmup 5R.L.6).
         self._s17_warming: bool = False
         # Mapa disco→dueño (5R.C): verdad de tierra automática. Si DANIBOD_EQUIP_MAP
         # está seteado, al emitir un disco EQUIPADO (agente_asignado por flujo-ancla,
@@ -2038,17 +1971,9 @@ class Monitor:
         # Anchor de flujo (5R.5b): al re-entrar a un slot, el primer disco vuelve a ser
         # el equipado por el latch (estructura del juego) → resetear el slot rastreado.
         self._s17_last_slot = 0
-        # Votación del dueño (5R.5c) + evidencia-libre (5R.B): olvidar al salir de S17.
+        # Votación del dueño (5R.5c/L.8): olvidar al salir de S17.
         self._s17_owner_sig = None
-        self._s17_grid_votes = {}
-        self._s17_det_votes = {}
-        self._s17_free_evidence = 0
-        self._s17_samples = 0
-        self._s17_detail_present = 0
-        self._s17_detail_absent = 0
-        self._s17_grid_present = 0
-        self._s17_grid_absent = 0
-        self._s17_owner_passes = 0
+        self._s17_vote.reset()
         self._s17_warming = False
         self._grid_diag_counts.clear()
 
@@ -3027,56 +2952,47 @@ class Monitor:
             return
         if self._s17_owner_sig is None or not self._sig_close(sig, self._s17_owner_sig):
             self._s17_owner_sig = sig          # disco nuevo → empezar votación limpia
-            self._s17_grid_votes = {}
-            self._s17_det_votes = {}
-            self._s17_free_evidence = 0
-            self._s17_samples = 0
-            self._s17_detail_present = 0
-            self._s17_detail_absent = 0
-            self._s17_grid_present = 0
-            self._s17_grid_absent = 0
-            self._s17_owner_passes = 0         # 5R.L.6: reiniciar el warmup del dueño
+            self._s17_vote.reset()
             if self._id_diag_on:
                 self._id_diag = {"samples": 0, "grid_loc": 0, "grid_match": 0,
                                  "det_loc": 0, "det_match": 0, "grid_votes": {}, "det_votes": {}}
         # 5R.L.6: cada pasada del loop rápido (10fps) cuenta para el warmup del dueño,
         # localice o no la grilla (el detalle vota aparte). `_process_disc_s17_continuous`
         # difiere la emisión de discos con dueño INCIERTO hasta juntar varias pasadas.
-        self._s17_owner_passes += 1
+        self._s17_vote.passes += 1
         badge = crop_grid_selected_badge(frame)
         g_name, g_conf = None, 0.0
         if badge is None:
-            self._s17_grid_absent += 1         # gate L.7.2: sin avatar en el tile (libre/NOLOC)
+            self._s17_vote.mark_absent(_SURF_GRID)   # gate L.7.2: sin avatar (libre/NOLOC)
             self._dump_grid_diag(frame, None, None, 0.0, False, sig)   # grid no localizó (NOLOC)
         else:
-            self._s17_grid_present += 1        # hay avatar de dueño en el tile (equipado)
+            self._s17_vote.mark_present(_SURF_GRID)  # hay avatar de dueño en el tile
             g_name, g_conf, rejected = self._identifier.s17_match(badge)
             self._dump_grid_diag(frame, badge, g_name, g_conf, rejected, sig)
-            self._s17_samples += 1
             if g_name:
-                self._s17_grid_votes[g_name] = self._s17_grid_votes.get(g_name, 0.0) + float(g_conf)
-            elif rejected or g_conf < _S17_FREE_CONF:   # crop sin cara (lock/disco/vacío)
-                self._s17_free_evidence += 1
+                self._s17_vote.vote(_SURF_GRID, g_name, g_conf)
         # DETALLE-badge (5R.C.4 + L.2b/L.3): localiza ~siempre (incl. cuando el grid da
-        # NOLOC) → vota a su PROPIO acumulador (separado del grid). `_decide_s17_owner`
-        # combina ambos con grid-primario: el detail sube yield en NOLOC del grid sin poder
-        # meter wrongs (RNF-02). NO toca _s17_samples/free (la detección LIBRE sigue
-        # calibrada por el grid). Inerte hasta que la librería de detalle se cosecha.
+        # NOLOC) → vota a su PROPIO acumulador (separado del grid). `decide()` combina
+        # ambos con grid-primario: el detail sube yield en NOLOC del grid sin poder
+        # meter wrongs (RNF-02). Inerte hasta que la librería de detalle se cosecha.
         det = crop_detail_badge(frame)
         d_name, d_conf = None, 0.0
         if det is None:
-            self._s17_detail_absent += 1       # 5R.L.7.3: el árbitro no vio avatar (libre?)
+            self._s17_vote.mark_absent(_SURF_DET)    # sin avatar en el panel (libre?)
         else:
-            d_name, d_conf, d_margin, d_rej = self._identifier.s17_match_detail(det)
-            # ¿el crop es una CARA o un crop espurio (texto '(N)' del nº de slot)? Un avatar
-            # real matchea con conf alta O margen claro; el texto da ambos bajos → cuenta como
-            # AUSENTE (no bloquea LIBRE). RNF-02: exige ambos bajos (no piso un avatar dudoso).
-            if (not d_rej) and (d_conf >= _DET_PRESENCE_CONF or d_margin >= _DET_PRESENCE_MARGIN):
-                self._s17_detail_present += 1   # avatar de dueño plausible en el panel
+            d_name, d_conf, _d_margin, _d_rej = self._identifier.s17_match_detail(det)
+            # PRESENCIA ESTRUCTURAL (5R.L.8): ¿el crop es una CARA o el texto '(N)'?
+            # Clasificador cara-vs-texto (`s17_detail_is_face`, anclas -ico + reject de
+            # texto), INDEPENDIENTE del naming: un avatar real que el matcher no puede
+            # nombrar (gap de refs) cuenta como presente igual. Antes se exigía
+            # conf/margen del matcher → avatar no-nombrable contaba ausente → falso
+            # LIBRE (Jane desde Velina, QA 2026-07-18).
+            if self._identifier.s17_detail_is_face(det):
+                self._s17_vote.mark_present(_SURF_DET)  # avatar de dueño (nombrable o no)
             else:
-                self._s17_detail_absent += 1    # crop espurio (texto/ambiguo) → como ausente
+                self._s17_vote.mark_absent(_SURF_DET)   # crop espurio (texto) → ausente
             if d_name:
-                self._s17_det_votes[d_name] = self._s17_det_votes.get(d_name, 0.0) + float(d_conf)
+                self._s17_vote.vote(_SURF_DET, d_name, d_conf)
         # Instrumentación L.0 (gated): desglose por-disco grid/detalle (loc + match + voto).
         if self._id_diag_on and self._id_diag:
             d = self._id_diag
@@ -3130,8 +3046,7 @@ class Monitor:
         asignado por flujo-ancla. Cruzable con equip_map por `identity` → ubica el cuello
         (¿NOLOC del grid? ¿el detalle no matchea? ¿el voto elige mal?)."""
         d = self._id_diag or {}
-        voted, _src = _decide_s17_owner(
-            self._s17_grid_votes, self._s17_det_votes, latch=self._last_agent_name)
+        voted, _src = self._s17_vote.decide(latch=self._last_agent_name)
 
         def _top(v):
             return ",".join(f"{k}:{val:.2f}" for k, val in
@@ -3151,8 +3066,7 @@ class Monitor:
         si la votación del loop rápido corresponde a ESTE disco. None si incierto."""
         if not self._s17_owner_sig_matches(frame):
             return None
-        owner, _src = _decide_s17_owner(
-            self._s17_grid_votes, self._s17_det_votes, latch=self._last_agent_name)
+        owner, _src = self._s17_vote.decide(latch=self._last_agent_name)
         return owner
 
     def _s17_owner_sig_matches(self, frame) -> bool:
@@ -3161,20 +3075,81 @@ class Monitor:
                     or not self._sig_close(sig, self._s17_owner_sig))
 
     def _s17_is_libre(self, frame) -> bool:
-        """True si el disco mirado está LIBRE (nadie lo equipa). LIBRE GANA A 'INCIERTO'
-        (decisión del usuario 2026-06-21): los matchers de badge (grid+detail) son ROBUSTOS
-        y 0-wrong → si NADIE votó un dueño, lo más probable es que NO TENGA dueño (un disco
-        equipado habría producido un voto). El parpadeo LIBRE↔incierto del QA venía de exigir
-        evidencia acumulada (≥2 frames + mayoría) que no se junta navegando rápido.
-        Regla: sin votos (grid ni detail) → LIBRE, SALVO que el detalle haya visto un avatar
-        REAL de forma DOMINANTE (≥2× los frames ausentes) sin poder nombrarlo — ahí abstenerse
-        ('incierto', RNF-02): es el coverage-gap raro (PJ sin refs tipo Lycaon-candidato). La
-        presencia espuria del grid (gate leaky, L.7.2) NO bloquea — no votó."""
-        if self._s17_grid_votes or self._s17_det_votes or not self._s17_owner_sig_matches(frame):
+        """True si el disco mirado está LIBRE (nadie lo equipa). PRESENCIA GANA A LIBRE
+        (5R.L.8, decisión del usuario 2026-07-19 — REEMPLAZA "LIBRE gana a incierto" de
+        2026-06-21): un avatar LOCALIZADO en el detalle, aunque el matcher no pueda
+        nombrarlo, prueba que el disco ESTÁ equipado → nunca LIBRE (falso LIBRE = riesgo
+        real con la escritura de Fase 5/S23). La regla vieja asumía "matchers 0-wrong ⇒
+        sin voto = sin dueño", pero se rompía con dueños no-nombrables (gap de refs:
+        Jane visto desde Velina, QA 2026-07-18).
+        Regla: sin votos ∧ firma vigente ∧ detail_present == 0 → LIBRE. La presencia es
+        ESTRUCTURAL (crop no rechazado; el texto '(N)' cae en el reject-set → ausente),
+        así que un libre real sigue saliendo con 1 solo frame (sin parpadeo). Un único
+        frame con cara bloquea LIBRE hasta el reset por cambio de disco. La presencia
+        espuria del grid (gate leaky en libres, L.7.2) sigue SIN participar."""
+        if not self._s17_owner_sig_matches(frame):
             return False
-        # Sin voto: LIBRE salvo presencia REAL dominante del detalle (avatar visto pero no
-        # nombrado). Tolera spikes espurios sueltos del texto '(N)' (no dominantes).
-        return self._s17_detail_present < 2 * max(1, self._s17_detail_absent)
+        return self._s17_vote.is_libre()
+
+    # ---- Compat 5R.L.8: nombres históricos del estado de voto/presencia ----------
+    # El estado vive en `self._s17_vote` (OwnerVoteAccumulator, módulo reusable).
+    # Estas properties preservan los nombres `_s17_*` que usan tests y call sites.
+
+    @property
+    def _s17_grid_votes(self) -> dict:
+        return self._s17_vote.votes(_SURF_GRID)
+
+    @_s17_grid_votes.setter
+    def _s17_grid_votes(self, v: dict) -> None:
+        self._s17_vote.set_votes(_SURF_GRID, v)
+
+    @property
+    def _s17_det_votes(self) -> dict:
+        return self._s17_vote.votes(_SURF_DET)
+
+    @_s17_det_votes.setter
+    def _s17_det_votes(self, v: dict) -> None:
+        self._s17_vote.set_votes(_SURF_DET, v)
+
+    @property
+    def _s17_detail_present(self) -> int:
+        return self._s17_vote.present(_SURF_DET)
+
+    @_s17_detail_present.setter
+    def _s17_detail_present(self, n: int) -> None:
+        self._s17_vote.set_present(_SURF_DET, n)
+
+    @property
+    def _s17_detail_absent(self) -> int:
+        return self._s17_vote.absent(_SURF_DET)
+
+    @_s17_detail_absent.setter
+    def _s17_detail_absent(self, n: int) -> None:
+        self._s17_vote.set_absent(_SURF_DET, n)
+
+    @property
+    def _s17_grid_present(self) -> int:
+        return self._s17_vote.present(_SURF_GRID)
+
+    @_s17_grid_present.setter
+    def _s17_grid_present(self, n: int) -> None:
+        self._s17_vote.set_present(_SURF_GRID, n)
+
+    @property
+    def _s17_grid_absent(self) -> int:
+        return self._s17_vote.absent(_SURF_GRID)
+
+    @_s17_grid_absent.setter
+    def _s17_grid_absent(self, n: int) -> None:
+        self._s17_vote.set_absent(_SURF_GRID, n)
+
+    @property
+    def _s17_owner_passes(self) -> int:
+        return self._s17_vote.passes
+
+    @_s17_owner_passes.setter
+    def _s17_owner_passes(self, n: int) -> None:
+        self._s17_vote.passes = int(n)
 
     def _assign_s17_pj(self, disc: DiscParsed, frame) -> None:
         """
@@ -3259,6 +3234,19 @@ class Monitor:
                 disc.equip_libre = True
                 self._log_s17_assign(
                     ("libre",), "[S17] disco LIBRE (sin dueño en grilla ni detalle)."
+                )
+                return
+            # PRESENCIA sin naming (5R.L.8): el detalle VIO un avatar (crop no rechazado)
+            # pero nadie pudo nombrarlo → el disco ESTÁ equipado por alguien desconocido.
+            # Reportar "equipado · dueño incierto" (honesto, RNF-02) — nunca dejarlo en
+            # limbo ni LIBRE (el falso LIBRE habilitaría un reemplazo erróneo en Fase 5).
+            if self._s17_detail_present > 0 and self._s17_owner_sig_matches(frame):
+                disc.equip_detectado = True
+                disc.equip_pj_visual = None
+                disc.equip_libre = False
+                self._log_s17_assign(
+                    ("presencia_incierto",),
+                    "[S17] equipado · dueño incierto (avatar visto, no identificado).",
                 )
                 return
             disc.equip_pj_visual = None
