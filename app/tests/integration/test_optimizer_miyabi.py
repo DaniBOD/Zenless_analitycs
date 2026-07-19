@@ -1,7 +1,8 @@
 """
 Hito 2.6.5 — Test canónico del optimizador: Miyabi (agente_id=2).
-Usa la DB real (no fixture en memoria) para validar que el optimizador
-produce builds coherentes con el inventario actual.
+Usa una COPIA temporal de la DB real (no la DB versionada) para validar que
+el optimizador produce builds coherentes con el inventario actual sin dejar
+filas persistidas en db/danibod_zzz_v2.db (RNF-01).
 
 Propiedades verificadas:
 - Devuelve exactamente 3 builds.
@@ -15,21 +16,30 @@ Propiedades verificadas:
 """
 from __future__ import annotations
 
+import shutil
 import sqlite3
 from pathlib import Path
 
 import pytest
 
-DB_PATH = Path("db/danibod_zzz_v2.db")
+REAL_DB_PATH = Path("db/danibod_zzz_v2.db")
 MIYABI_ID = 2
 
 
 @pytest.fixture(scope="module")
-def optimizer():
-    if not DB_PATH.exists():
+def db_path(tmp_path_factory):
+    """Copia temporal de la DB real: mismo inventario, cero escrituras al archivo versionado."""
+    if not REAL_DB_PATH.exists():
         pytest.skip("DB no disponible — ejecutar desde la raíz del repo.")
+    copia = tmp_path_factory.mktemp("optimizer_db") / "danibod_zzz_v2.db"
+    shutil.copy2(REAL_DB_PATH, copia)
+    return copia
+
+
+@pytest.fixture(scope="module")
+def optimizer(db_path):
     from app.core.optimizer import BuildOptimizer
-    opt = BuildOptimizer(DB_PATH)
+    opt = BuildOptimizer(db_path)
     yield opt
     opt.close()
 
@@ -92,10 +102,8 @@ class TestOptimizerMiyabi:
         for b in result.builds:
             uuid.UUID(b.build_id)  # raises ValueError si no es UUID válido
 
-    def test_persisted_in_db(self):
-        if not DB_PATH.exists():
-            pytest.skip("DB no disponible.")
-        con = sqlite3.connect(str(DB_PATH))
+    def test_persisted_in_db(self, result, db_path):
+        con = sqlite3.connect(str(db_path))
         con.row_factory = sqlite3.Row
         try:
             rows = list(con.execute(
@@ -120,10 +128,8 @@ class TestOptimizerMiyabi:
     def test_agente_nombre(self, result):
         assert result.agente_nombre == "Miyabi"
 
-    def test_no_protected_build_swaps(self, result):
-        if not DB_PATH.exists():
-            pytest.skip("DB no disponible.")
-        con = sqlite3.connect(str(DB_PATH))
+    def test_no_protected_build_swaps(self, result, db_path):
+        con = sqlite3.connect(str(db_path))
         con.row_factory = sqlite3.Row
         try:
             protected_ids = {
