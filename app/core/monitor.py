@@ -293,12 +293,10 @@ class Monitor:
         farm_node_catalog=None,                                 # FarmNodeCatalog opcional (predicción S13)
         set_badge_matcher=None,                                 # SetBadgeMatcher opcional (set por badge S2)
         capture_only_focused: bool = True,                      # gate anti-FP por foco de ventana
-        on_replacement: Callable[[dict], None] | None = None,   # swap de disco confirmado (toast REEMPLAZADO)
     ):
         self._ocr = ocr
         self._detector = detector
         self._on_disc = on_disc
-        self._on_replacement = on_replacement
         self._on_state_change = on_state_change
         self._on_toggle_panel = on_toggle_panel
         self._set_repo = set_repo
@@ -1410,9 +1408,10 @@ class Monitor:
         return None
 
     def _process_s23_sustitucion(self, frame, state: ScreenState) -> None:
-        """Diálogo de sustitución: arma el swap PENDIENTE {origen, set, slot, destino=latch}. La
-        confirmación llega después en S17 (`_maybe_confirm_swap`). Acá solo se loguea la intención
-        (tentativo): ver el diálogo NO prueba que se haya confirmado (se puede cancelar)."""
+        """Diálogo de sustitución: arma el swap PENDIENTE {origen, set, slot, destino=latch}. El
+        hint se adjunta después en S17 (`_attach_swap_hint`) para que la persistencia mueva la fila.
+        Acá solo se loguea la intención (tentativo): ver el diálogo NO prueba que se haya confirmado
+        (se puede cancelar) → si no llega el disco, el pending expira por TTL en silencio."""
         from app.core.parser_sustitucion import parse_sustitucion
         d = parse_sustitucion(frame, self._ocr)
         if d is None:
@@ -1453,11 +1452,15 @@ class Monitor:
             except Exception:
                 log.debug("on_diagnostic S23 falló", exc_info=True)
 
-    def _maybe_confirm_swap(self, merged, state: ScreenState) -> None:
-        """Confirma un swap pendiente cuando el flujo S17 muestra el disco (set+slot) equipado por
-        el PJ DESTINO. Dispara el toast REEMPLAZADO (`on_replacement`). Expira por TTL si no llega
-        (canceló / navegó a otra cosa) → sin toast (RNF-02). La persistencia del `agente_asignado`
-        la hace el sync S17 normal; acá solo se reconoce el swap y se notifica."""
+    def _attach_swap_hint(self, merged, state: ScreenState) -> None:
+        """Si un swap PENDIENTE (diálogo S23 reciente) matchea el disco que S17 está por emitir
+        —mismo (set, slot) ahora equipado por el DESTINO— adjunta el HINT de origen al disco para
+        que la persistencia MUEVA la fila (sin duplicar) y el controller dispare el toast.
+
+        Es el reemplazo de la vieja confirmación por-toast: la corrección de DB ya NO cuelga de
+        atrapar este instante (la persistencia también mueve por identidad si no hubo diálogo);
+        acá sólo marcamos el swap como FRESCO (`swap_fresh`) para que el toast salte. Consume el
+        pending al matchear; expira solo por TTL si nunca llega el disco (canceló/navegó)."""
         ps = self._pending_swap
         if ps is None:
             return
@@ -1466,7 +1469,7 @@ class Monitor:
             return
         owner = merged.agente_asignado_nombre
         if not owner:
-            return   # aún no equipado por nadie certero (candidato) → esperar la confirmación
+            return   # aún no equipado por nadie certero (candidato) → esperar
         if (merged.slot or 0) != ps["slot"]:
             return
         from app.core.stats_vocab import _norm_key
@@ -1485,23 +1488,17 @@ class Monitor:
         # conocíamos, el dueño que reporta S17 ES el destino (así lo confirma la pantalla).
         if ps["dest_name"] and _norm_key(owner) != _norm_key(ps["dest_name"]):
             return
+        # Match: adjuntar el hint al disco (la persistencia lo consumirá para mover la fila).
+        merged.swap_origin_hint = ps["origin_name"]
+        merged.swap_fresh = True
         self._pending_swap = None
-        set_disp = ps["set_name"]
-        msg = f"[reemplazo] {set_disp} slot {ps['slot']} · {ps['origin_name']} → {owner} ✓"
+        msg = f"[reemplazo] {ps['set_name']} slot {ps['slot']} · {ps['origin_name']} → {owner} ✓"
         log.info("Sustitución S23 confirmada: %s", msg)
         if self._on_diagnostic:
             try:
                 self._on_diagnostic(msg)
             except Exception:
                 log.debug("on_diagnostic swap confirmado falló", exc_info=True)
-        if self._on_replacement:
-            try:
-                self._on_replacement({
-                    "set_name": set_disp, "set_id": ps["set_id"], "slot": ps["slot"],
-                    "from_name": ps["origin_name"], "to_name": owner,
-                })
-            except Exception:
-                log.exception("on_replacement falló")
 
     @staticmethod
     def _s22_viewport_signature(frame):
@@ -2130,9 +2127,10 @@ class Monitor:
     def _emit_s17_disc(self, merged, state: ScreenState, mature: bool) -> None:
         """Emite (dedup + equip_map + id_diag + log + on_disc) un disco S17 ya resuelto.
         Extraído de `_process_disc_s17_continuous` para reusarlo desde el path de warmup."""
-        # Confirmación de swap ANTES del dedup: un disco recién movido puede tener una identidad
-        # ya vista (mismos stats) → si se gateara por dedup, la confirmación no se dispararía.
-        self._maybe_confirm_swap(merged, state)
+        # Hint de swap ANTES del dedup: un disco recién movido puede tener una identidad ya vista
+        # (mismos stats) → si se gateara por dedup, no se adjuntaría el hint. La persistencia lo
+        # usa para mover la fila (sin duplicar) y el controller dispara el toast si es fresco.
+        self._attach_swap_hint(merged, state)
         self._disc_emitted = True
         # Dedup por IDENTIDAD: si la firma parpadeó (modelo 3D animado) y este
         # disco ya se emitió en esta sesión S17, no re-emitir (ni re-persistir).

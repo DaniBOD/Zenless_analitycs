@@ -92,6 +92,13 @@ class DiscParsed:
     # en reject-set/conf-muy-baja entre frames + nunca se identificó dueño). Conservador:
     # ante duda queda False ("dueño incierto") para no marcar libre un disco equipado.
     equip_libre: bool = False
+    # SWAP entre PJs (S23): hint de ORIGEN cierto cuando el monitor vio el diálogo de
+    # sustitución en esta sesión/ventana (el PJ que PIERDE el disco). La persistencia lo
+    # usa para mover la fila sin duplicar; None si no hubo diálogo reciente (→ la
+    # persistencia cae al match por identidad exacta única). `swap_fresh` marca que el
+    # swap es RECIENTE (dispara el toast REEMPLAZADO; las correcciones tardías no).
+    swap_origin_hint: str | None = None
+    swap_fresh: bool = False
 
 
 def _parse_titulo(raw: str) -> tuple[str, int]:

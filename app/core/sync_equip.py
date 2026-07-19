@@ -59,6 +59,15 @@ class SyncResult:
     # Composición de set del PJ asignado (derivada de los discos equipados en
     # inventory_discs): resumen legible "4pc X + 2pc Y · 6/6 · estándar 4+2".
     set_composition: str | None = None
+    # SWAP entre PJs: la persistencia MOVIÓ una fila existente (de otro PJ) al destino en
+    # vez de insertar un duplicado. `moved_from_nombre` = PJ que perdió el disco (origen).
+    # `swap_fresh` = el swap fue reciente (hint del diálogo S23 en esta sesión) → el
+    # controller dispara el toast REEMPLAZADO solo si es True (las correcciones tardías por
+    # identidad mueven la fila en silencio). `set_id` conveniencia para armar el toast.
+    moved: bool = False
+    moved_from_nombre: str | None = None
+    swap_fresh: bool = False
+    set_id: int | None = None
 
 
 # Callback opcional que recibe el resultado (para el toast de Fase 3)
@@ -392,6 +401,8 @@ class DiscSyncer:
         con_w = sqlite3.connect(str(self._db_path))
         con_w.row_factory = sqlite3.Row
         disc_repo_w = InventoryDiscRepo(con_w)
+        moved = False
+        moved_from_id: int | None = None
         try:
             with con_w:
                 # Clave NATURAL del equipamiento: un PJ tiene un disco por slot.
@@ -402,20 +413,40 @@ class DiscSyncer:
                     disc_id = slot_disc.id
                     trigger = "s17_update"
                     disc_repo_w.update_from_parsed(disc_id, parsed)
-                elif slot_disc is not None:
-                    # El PJ cambió el disco de este slot (set distinto): swap-out el
-                    # viejo (queda en inventario) e inserta el nuevo equipado.
-                    disc_repo_w.set_unequipped(slot_disc.id)
-                    disc_id = disc_repo_w.insert_from_parsed(
-                        parsed, set_id, agente_asignado=agente_id, equipado=1,
-                    )
-                    trigger = "s17_swap"
                 else:
-                    # PJ sin disco previo en ese slot → alta.
-                    disc_id = disc_repo_w.insert_from_parsed(
-                        parsed, set_id, agente_asignado=agente_id, equipado=1,
+                    # El destino muestra un disco DISTINTO al del slot (o el slot estaba
+                    # vacío). ¿El entrante YA existe (equipado por otro PJ, o desequipado del
+                    # propio destino)? → MOVER/RE-EQUIPAR esa fila, no insertar un duplicado.
+                    # Origen: hint del diálogo S23 (cierto) o match por identidad exacta ÚNICA.
+                    to_move, moved_from_id, cross_pj = self._find_disc_to_move(
+                        disc_repo_w, parsed, set_id, agente_id,
+                        slot_disc.id if slot_disc is not None else None,
                     )
-                    trigger = "s17_insert"
+                    if to_move is not None:
+                        # Desplazar el disco viejo del destino en ese slot (si tenía otro).
+                        if slot_disc is not None and slot_disc.id != to_move.id:
+                            disc_repo_w.set_unequipped(slot_disc.id)
+                        # Mover/re-equipar la fila EXISTENTE al destino (una sola fila, sin dup).
+                        disc_repo_w.update_assignment(to_move.id, agente_id, equipado=1)
+                        disc_id = to_move.id
+                        # Solo el swap ENTRE PJs cuenta como "move" (dispara el toast); re-equipar
+                        # un disco propio desplazado corrige la DB en silencio.
+                        moved = cross_pj
+                        trigger = "s17_move" if cross_pj else "s17_reequip"
+                    elif slot_disc is not None:
+                        # El PJ cambió el disco de este slot (set distinto) y el entrante es
+                        # NUEVO: swap-out el viejo (queda en inventario) e inserta el nuevo.
+                        disc_repo_w.set_unequipped(slot_disc.id)
+                        disc_id = disc_repo_w.insert_from_parsed(
+                            parsed, set_id, agente_asignado=agente_id, equipado=1,
+                        )
+                        trigger = "s17_swap"
+                    else:
+                        # PJ sin disco previo en ese slot y entrante nuevo → alta.
+                        disc_id = disc_repo_w.insert_from_parsed(
+                            parsed, set_id, agente_asignado=agente_id, equipado=1,
+                        )
+                        trigger = "s17_insert"
 
             bonus_2p_stat, bonus_2p_valor, bonus_4p = self._set_repo.get_bonus(set_id)
             bonus_2p = (
@@ -432,13 +463,31 @@ class DiscSyncer:
                     )
                 except Exception:
                     log.exception("Error computando composición de set")
+            # Origen del swap (para el toast) = dueño previo de la fila movida.
+            moved_from_nombre = None
+            if moved and moved_from_id is not None:
+                a = self._agent_repo.get_by_id(moved_from_id)
+                moved_from_nombre = a.nombre if a is not None else None
+            # Toast solo si el swap es FRESCO (vimos el diálogo S23 en esta sesión). Una
+            # corrección tardía por identidad mueve la fila en silencio (sin toast confuso).
+            swap_fresh = bool(moved and getattr(parsed, "swap_fresh", False))
             latency_ms = (time.perf_counter() - t0) * 1000
-            log.info(
-                "S17 persistido id=%d %s set=%s slot=%d asignado=%s 2pc=%s comp=%s %.0fms",
-                disc_id, trigger, parsed.set_name_raw, parsed.slot,
-                parsed.agente_asignado_nombre or "-", bonus_2p or "-",
-                composition or "-", latency_ms,
-            )
+            if moved:
+                log.info(
+                    "S17 persistido id=%d %s set=%s slot=%d %s → %s (movido, sin duplicar%s) "
+                    "2pc=%s comp=%s %.0fms",
+                    disc_id, trigger, parsed.set_name_raw, parsed.slot,
+                    moved_from_nombre or "?", parsed.agente_asignado_nombre or "-",
+                    "" if swap_fresh else "; corrección tardía",
+                    bonus_2p or "-", composition or "-", latency_ms,
+                )
+            else:
+                log.info(
+                    "S17 persistido id=%d %s set=%s slot=%d asignado=%s 2pc=%s comp=%s %.0fms",
+                    disc_id, trigger, parsed.set_name_raw, parsed.slot,
+                    parsed.agente_asignado_nombre or "-", bonus_2p or "-",
+                    composition or "-", latency_ms,
+                )
             return SyncResult(
                 disc_id=disc_id,
                 trigger=trigger,
@@ -450,6 +499,10 @@ class DiscSyncer:
                 set_bonus_2p=bonus_2p,
                 set_bonus_4p=bonus_4p,
                 set_composition=composition,
+                moved=moved,
+                moved_from_nombre=moved_from_nombre,
+                swap_fresh=swap_fresh,
+                set_id=set_id,
             )
         except Exception as exc:
             log.exception("Error en persist_s17_disc: %s", exc)
@@ -457,72 +510,42 @@ class DiscSyncer:
         finally:
             con_w.close()
 
-    def move_disc_between_agents(
-        self, origin_name: str | None, dest_name: str | None, slot: int,
-        set_id: int | None = None,
-    ) -> bool:
-        """Mueve el disco equipado del PJ ORIGEN en `slot` al PJ DESTINO (swap detectado en S23).
+    def _find_disc_to_move(
+        self, disc_repo_w: "InventoryDiscRepo", parsed: DiscParsed, set_id: int,
+        dest_agent_id: int, exclude_disc_id: int | None,
+    ) -> tuple["Disc | None", int | None, bool]:
+        """Fila EXISTENTE a mover/re-equipar al destino (sin duplicar), o (None, None, False) si el
+        disco entrante es nuevo / no se identifica sin riesgo. Corre DENTRO de la transacción de
+        `persist_s17_disc`. Devuelve `(fila, origen_id, es_cross_pj)`: `es_cross_pj=True` cuando la
+        fila la tenía OTRO PJ (swap → cuenta para el toast); `False` si es re-equipar un disco
+        propio desplazado del destino (sin toast). RNF-02: nunca robar.
 
-        Actualiza la fila EXISTENTE del disco del origen (`update_assignment` → destino), en vez de
-        dejar que la persistencia S17 inserte una fila nueva (que duplicaría el disco y dejaría al
-        origen reclamándolo). Desequipa primero el disco desplazado del destino en ese slot. Corre
-        ANTES de la persistencia S17 del mismo disco: al persistir, `find_equipped_by_agent_slot`
-        del destino ya encuentra este disco (set correcto) → va por el path de update, sin duplicar.
-
-        Devuelve True si movió una fila. No-op (False) si readonly, si falta un PJ, o si el disco
-        del origen no está en la DB (en ese caso la persistencia S17 normal lo dará de alta en el
-        destino — sin la fila del origen no hay nada que mover). RNF-01: el backup de sesión lo hace
-        el controller al arrancar; escribe en su propia transacción."""
-        if is_readonly():
-            log.info("[readonly] swap NO persiste — %s → %s slot=%s", origin_name, dest_name, slot)
-            return False
-        if not origin_name or not dest_name:
-            log.info("Swap sin PJ resoluble (origen=%s destino=%s) — no se mueve.", origin_name, dest_name)
-            return False
-        origin = self._agent_repo.get_by_nombre(origin_name)
-        dest = self._agent_repo.get_by_nombre(dest_name)
-        if origin is None or dest is None:
-            log.info("Swap: PJ no resuelto (origen=%s destino=%s) — no se mueve.", origin_name, dest_name)
-            return False
-        if origin.id == dest.id:
-            return False
-
-        con_w = sqlite3.connect(str(self._db_path))
-        con_w.row_factory = sqlite3.Row
-        disc_repo_w = InventoryDiscRepo(con_w)
-        try:
-            with con_w:
-                moved = disc_repo_w.find_equipped_by_agent_slot(origin.id, slot)
-                if moved is None:
-                    log.info(
-                        "Swap: el disco del origen %s slot=%d no está en la DB → lo dará de alta "
-                        "la persistencia S17 en %s (sin fila de origen que mover).",
-                        origin_name, slot, dest_name,
-                    )
-                    return False
-                if set_id is not None and moved.set_id != set_id:
-                    log.warning(
-                        "Swap: el disco equipado de %s slot=%d es set=%s pero el diálogo decía "
-                        "set_id=%s — no se mueve (RNF-02).", origin_name, slot, moved.set_id, set_id,
-                    )
-                    return False
-                # Desequipar el disco desplazado del destino en ese slot (si tenía otro distinto).
-                displaced = disc_repo_w.find_equipped_by_agent_slot(dest.id, slot)
-                if displaced is not None and displaced.id != moved.id:
-                    disc_repo_w.set_unequipped(displaced.id)
-                # Mover la fila EXISTENTE del disco al destino (sin duplicar).
-                disc_repo_w.update_assignment(moved.id, dest.id, equipado=1)
-            log.info(
-                "Swap persistido: disco id=%d slot=%d movido %s → %s%s",
-                moved.id, slot, origin_name, dest_name,
-                f" (desplazó id={displaced.id})" if displaced and displaced.id != moved.id else "",
+        1) HINT del diálogo S23 (origen CIERTO, `swap_origin_hint`): la fila equipada del origen en
+           ese slot, si su set concuerda → cross-PJ.
+        2) RESPALDO por identidad exacta ÚNICA (`find_swap_candidates_by_identity`): equipado por
+           otro PJ (cross-PJ) o desequipado del destino (re-equip). 1 → usar; 0 → nuevo; ≥2 →
+           ambiguo (warning, no tocar)."""
+        hint = getattr(parsed, "swap_origin_hint", None)
+        if hint:
+            origin = self._agent_repo.get_by_nombre(hint)
+            if origin is not None and origin.id != dest_agent_id:
+                row = disc_repo_w.find_equipped_by_agent_slot(origin.id, parsed.slot)
+                if row is not None and row.set_id == set_id:
+                    return row, origin.id, True
+                # El hint no calza con la DB (disco no registrado / otro set) → respaldo.
+        matches = disc_repo_w.find_swap_candidates_by_identity(
+            parsed, set_id, dest_agent_id, exclude_disc_id
+        )
+        if len(matches) == 1:
+            row = matches[0]
+            cross = bool(row.equipado and row.agente_asignado not in (None, dest_agent_id))
+            return row, (row.agente_asignado if cross else None), cross
+        if len(matches) >= 2:
+            log.warning(
+                "Swap: %d discos matchean la identidad de '%s' slot=%d — ambiguo, no se mueve "
+                "(se inserta; RNF-02).", len(matches), parsed.set_name_raw, parsed.slot,
             )
-            return True
-        except Exception as exc:
-            log.exception("Error en move_disc_between_agents: %s", exc)
-            return False
-        finally:
-            con_w.close()
+        return None, None, False
 
     def _schedule_optimizer(self, agente_id: int) -> None:
         """Dispara recompute_best_build con debounce de 2 s por PJ."""

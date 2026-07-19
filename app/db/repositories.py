@@ -327,6 +327,49 @@ class InventoryDiscRepo:
         ).fetchone()
         return self._row_to_disc(r) if r else None
 
+    def find_swap_candidates_by_identity(
+        self, p: "DiscParsed", set_id: int, dest_agent_id: int | None,
+        exclude_disc_id: int | None = None,
+    ) -> list["Disc"]:
+        """Filas EXISTENTES candidatas a mover/re-equipar al destino (evitar duplicar), cuya
+        identidad COMPLETA coincide con el parseado. DOS orígenes válidos (targeted, RNF-02):
+          - EQUIPADO por OTRO PJ  → swap entre PJs (el otro lo pierde).
+          - DESEQUIPADO del DESTINO → re-equipar su propio disco desplazado.
+        Deliberadamente NO incluye discos sueltos de otros dueños ni sin dueño (evita robar por
+        colisión de firma). Identidad = (set_id, slot, main, nivel, {substat normalizado + rolls}):
+        incluye NIVEL (entero limpio) y omite VALORES (ruidosos por OCR). Match GRUESO (set+slot+
+        nivel) en SQL; fino (main+substats) en Python. El caller mueve solo si hay EXACTAMENTE UNO
+        (0 → nuevo; ≥2 → ambiguo → no tocar)."""
+        from app.core.stats_vocab import _norm_key
+        main_canon = p.main_stat_canon or p.main_stat_raw
+        want = self._identity_subs(
+            (s.nombre_canon or s.nombre_raw, s.rolls) for s in (p.subs or [])
+        )
+        rows = self._con.execute(
+            "SELECT * FROM inventory_discs WHERE set_id=? AND slot=? AND nivel=? AND descartado=0 "
+            "AND (? IS NULL OR id<>?) AND ("
+            "  (equipado=1 AND agente_asignado IS NOT NULL AND (? IS NULL OR agente_asignado<>?)) "
+            "  OR (equipado=0 AND agente_asignado IS NOT NULL AND agente_asignado=?)"
+            ")",
+            (set_id, p.slot, p.nivel, exclude_disc_id, exclude_disc_id,
+             dest_agent_id, dest_agent_id, dest_agent_id),
+        ).fetchall()
+        out: list["Disc"] = []
+        for r in rows:
+            d = self._row_to_disc(r)
+            if _norm_key(d.main_stat or "") != _norm_key(main_canon or ""):
+                continue
+            have = self._identity_subs((name, rolls) for name, _v, _u, rolls in d.subs)
+            if have == want:
+                out.append(d)
+        return out
+
+    @staticmethod
+    def _identity_subs(pairs) -> tuple:
+        """Firma de substats para identidad: {(nombre normalizado, rolls)} ordenada."""
+        from app.core.stats_vocab import _norm_key
+        return tuple(sorted((_norm_key(n or ""), rolls or 0) for n, rolls in pairs))
+
     def set_unequipped(self, disc_id: int) -> None:
         """Marca un disco como NO equipado (swap-out). Conserva agente_asignado y data."""
         self._con.execute(

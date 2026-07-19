@@ -1,16 +1,15 @@
-"""Puente de sustitución de disco entre PJs (S23 → confirmación por S17) en el monitor.
+"""Puente de sustitución de disco entre PJs (S23 → hint en S17) en el monitor.
 
-Flujo: al ver el diálogo S23 se ARMA un swap pendiente {origen (del diálogo), set, slot,
-destino = latch}. La confirmación NO es ver el diálogo (se puede cancelar) sino que el flujo S17
-muestre después ese disco (set+slot) equipado por el DESTINO → ahí se dispara el toast
-(`on_replacement`) y se confirma. Si no llega dentro del TTL, el pending expira en silencio.
+Rediseño 2026-07-19: ver el diálogo S23 ARMA un swap pendiente {origen, set, slot, destino=latch}.
+La confirmación NO es un toast disparado desde acá, sino que cuando el flujo S17 emite ese disco
+(set+slot) equipado por el DESTINO, el monitor le ADJUNTA el hint de origen (`swap_origin_hint`)
+y lo marca fresco (`swap_fresh`). La persistencia usa el hint para MOVER la fila (sin duplicar) y
+el controller dispara el toast. Si el disco no llega dentro del TTL, el pending expira en silencio.
 
 Se stubbea `parse_sustitucion` (la lectura real está en `test_parser_sustitucion`); acá se testea
-la lógica de armado/confirmación/expiración.
+el armado del pending y el adjuntado del hint / expiración.
 """
 from __future__ import annotations
-
-import time
 
 import numpy as np
 import pytest
@@ -69,14 +68,11 @@ def _monitor(monkeypatch, sust, roster=("Yixuan", "Nangong Yu")):
     import app.core.monitor as mon_mod
     import app.core.parser_sustitucion as psu
     diags: list[str] = []
-    repl: list[dict] = []
     m = mon_mod.Monitor(
         ocr=object(), detector=None, on_diagnostic=diags.append,
-        on_replacement=repl.append, set_repo=_SetRepo(),
-        agent_identifier=_Identifier(roster),
+        set_repo=_SetRepo(), agent_identifier=_Identifier(roster),
     )
     m._diags = diags
-    m._repl = repl
     monkeypatch.setattr(psu, "parse_sustitucion", lambda frame, ocr: sust)
     return m
 
@@ -85,7 +81,7 @@ def _reemplazos(m):
     return [d for d in m._diags if d.startswith("[reemplazo]")]
 
 
-# ---- armado ----------------------------------------------------------------
+# ---- armado del pending -----------------------------------------------------
 
 def test_s23_arma_el_pending_y_loguea_tentativo(monkeypatch):
     m = _monitor(monkeypatch, SustitucionParsed("7ixuan", "Balada de la rama y la espada", 2, 1.0))
@@ -119,46 +115,48 @@ def test_dispatch_s23_no_resetea_el_latch(monkeypatch):
     assert m._pending_swap is not None
 
 
-# ---- confirmación ----------------------------------------------------------
+# ---- adjuntado del hint en S17 ---------------------------------------------
 
-def test_confirma_cuando_s17_muestra_el_disco_en_el_destino(monkeypatch):
+def test_adjunta_el_hint_cuando_s17_muestra_el_disco_en_el_destino(monkeypatch):
     m = _monitor(monkeypatch, SustitucionParsed("Yixuan", "Balada de la rama y la espada", 2, 1.0))
     m._last_agent_name = "Nangong Yu"
     m._process_s23_sustitucion(_frame(), _ST23)
-    # S17 muestra el mismo disco (set+slot) ahora equipado por el destino → confirma.
-    m._maybe_confirm_swap(_disc(slot=2, owner="Nangong Yu"), _ST17)
+    # S17 muestra el mismo disco (set+slot) ahora equipado por el destino → adjunta el hint.
+    disc = _disc(slot=2, owner="Nangong Yu")
+    m._attach_swap_hint(disc, _ST17)
 
-    assert m._pending_swap is None                 # consumido
-    assert len(m._repl) == 1                        # toast disparado
-    assert m._repl[0] == {"set_name": "Balada de la rama y la espada", "set_id": 1, "slot": 2,
-                          "from_name": "Yixuan", "to_name": "Nangong Yu"}
+    assert m._pending_swap is None                 # pending consumido
+    assert disc.swap_origin_hint == "Yixuan"       # hint de origen adjuntado
+    assert disc.swap_fresh is True                 # fresco → el controller disparará el toast
     assert any("✓" in d for d in _reemplazos(m))
 
 
-def test_no_confirma_si_lo_equipa_otro_pj(monkeypatch):
+def test_no_adjunta_si_lo_equipa_otro_pj(monkeypatch):
     m = _monitor(monkeypatch, SustitucionParsed("Yixuan", "Balada de la rama y la espada", 2, 1.0))
     m._last_agent_name = "Nangong Yu"
     m._process_s23_sustitucion(_frame(), _ST23)
-    m._maybe_confirm_swap(_disc(slot=2, owner="Ellen"), _ST17)   # otro dueño
-    assert m._pending_swap is not None and m._repl == []
+    disc = _disc(slot=2, owner="Ellen")            # otro dueño, no el destino
+    m._attach_swap_hint(disc, _ST17)
+    assert m._pending_swap is not None and disc.swap_origin_hint is None
 
 
-def test_no_confirma_si_el_disco_no_esta_equipado(monkeypatch):
-    """Un candidato (sin agente_asignado) no confirma: hay que ver el disco EQUIPADO."""
+def test_no_adjunta_si_el_disco_no_esta_equipado(monkeypatch):
+    """Un candidato (sin agente_asignado) no adjunta: hay que ver el disco EQUIPADO."""
     m = _monitor(monkeypatch, SustitucionParsed("Yixuan", "Jazz caótico", 2, 1.0))
     m._last_agent_name = "Nangong Yu"
     m._process_s23_sustitucion(_frame(), _ST23)
-    m._maybe_confirm_swap(_disc(set_canon="Jazz caótico", slot=2, owner=None), _ST17)
-    assert m._pending_swap is not None and m._repl == []
+    disc = _disc(set_canon="Jazz caótico", slot=2, owner=None)
+    m._attach_swap_hint(disc, _ST17)
+    assert m._pending_swap is not None and disc.swap_origin_hint is None
 
 
-def test_no_confirma_otro_set_o_slot(monkeypatch):
+def test_no_adjunta_otro_set_o_slot(monkeypatch):
     m = _monitor(monkeypatch, SustitucionParsed("Yixuan", "Balada de la rama y la espada", 2, 1.0))
     m._last_agent_name = "Nangong Yu"
     m._process_s23_sustitucion(_frame(), _ST23)
-    m._maybe_confirm_swap(_disc(set_canon="Jazz caótico", slot=2, owner="Nangong Yu"), _ST17)
-    m._maybe_confirm_swap(_disc(slot=5, owner="Nangong Yu"), _ST17)
-    assert m._pending_swap is not None and m._repl == []
+    m._attach_swap_hint(_disc(set_canon="Jazz caótico", slot=2, owner="Nangong Yu"), _ST17)
+    m._attach_swap_hint(_disc(slot=5, owner="Nangong Yu"), _ST17)
+    assert m._pending_swap is not None
 
 
 def test_el_pending_expira_por_ttl(monkeypatch):
@@ -166,14 +164,18 @@ def test_el_pending_expira_por_ttl(monkeypatch):
     m._last_agent_name = "Nangong Yu"
     m._process_s23_sustitucion(_frame(), _ST23)
     m._pending_swap["ts"] -= 999.0                 # vencido
-    m._maybe_confirm_swap(_disc(set_canon="Jazz caótico", slot=2, owner="Nangong Yu"), _ST17)
-    assert m._pending_swap is None and m._repl == []   # expiró sin toast
+    disc = _disc(set_canon="Jazz caótico", slot=2, owner="Nangong Yu")
+    m._attach_swap_hint(disc, _ST17)
+    assert m._pending_swap is None and disc.swap_origin_hint is None   # expiró sin adjuntar
 
 
-def test_emit_s17_dispara_la_confirmacion(monkeypatch):
-    """Integración: `_emit_s17_disc` llama a `_maybe_confirm_swap` (antes del dedup)."""
+def test_emit_s17_adjunta_el_hint(monkeypatch):
+    """Integración: `_emit_s17_disc` llama a `_attach_swap_hint` (antes del dedup)."""
     m = _monitor(monkeypatch, SustitucionParsed("Yixuan", "Balada de la rama y la espada", 2, 1.0))
+    captured: list = []
+    m._on_disc = lambda disc, state: captured.append(disc)
     m._last_agent_name = "Nangong Yu"
     m._process_s23_sustitucion(_frame(), _ST23)
     m._emit_s17_disc(_disc(slot=2, owner="Nangong Yu"), _ST17, True)
-    assert len(m._repl) == 1 and m._pending_swap is None
+    assert captured and captured[0].swap_origin_hint == "Yixuan" and captured[0].swap_fresh
+    assert m._pending_swap is None
