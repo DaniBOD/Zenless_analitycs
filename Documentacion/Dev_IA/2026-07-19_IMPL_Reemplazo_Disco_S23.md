@@ -84,11 +84,117 @@ conserva como **hint de origen** (cierto) cuando se vio; si no, respaldo por **i
   `disc_replaced` → toast. **Correcciones tardías** (moved sin fresco) mueven la fila **en silencio**.
   `_on_replacement_from_monitor` eliminado; `main.py` sigue conectando `disc_replaced`.
 
+## QA en vivo 2026-07-20 — la DB pasó, el toast no; frescura sin reloj
+
+**Resultado:** el swap (Jazz caótico slot 1 · Jane → Velina) persistió `s17_move id=25`, **367
+discos, cero duplicados**, integrity/fk ok. El rediseño v2 cumplió su promesa central: la DB queda
+correcta. **Pero el toast no saltó**, y el log explicó por qué: `(movido, sin duplicar; corrección
+tardía)` — el pending había expirado.
+
+**Causa raíz (dos capas):**
+1. **El handler S17 se trabó 8m42s sin emitir** (16:41:35 → 16:50:17). Reentrar a la pantalla lo
+   destrabó al instante. El log no decía NADA en ese lapso porque
+   `_process_disc_s17_continuous` tiene **dos returns tempranos mudos**: firma no calculable
+   (`sig is None`) y `confianza_global < 0.7`. Desde afuera eran indistinguibles.
+2. Con la emisión llegando ~10 min tarde, el **TTL de 120s** del pending ya había vencido → el
+   movimiento se hizo por el respaldo de identidad, en silencio, sin toast.
+
+**Fixes:**
+- **`_note_s17_stall` / `_clear_s17_stall`** (`monitor.py`): instrumentan los dos returns mudos.
+  Logueo por **flanco** (al trabarse y al destrabarse, con el conteo de ciclos), no por ciclo —
+  RNF-06. Sin esto, el próximo trabe vuelve a ser invisible.
+- **FRESCURA = "no superado todavía", NO "dentro de N segundos"** (decisión del usuario): se
+  eliminó `_S23_WINDOW_S`. El pending vive hasta consumirse, hasta que otro S23 lo reemplace, o
+  hasta cerrar la app. Es seguro porque `_attach_swap_hint` exige que el disco esté equipado por
+  el **DESTINO**: si cancelaste el swap, eso nunca ocurre.
+- **Endurecimiento del hint (RNF-02)** — el riesgo que abre un pending inmortal: cancelás y
+  después equipás al destino OTRO disco del mismo set+slot; el hint diría "origen = Jane" y se
+  movería la fila de Jane, que es la equivocada. Ahora el hint solo se usa si la fila del origen
+  coincide por **identidad COMPLETA** (`InventoryDiscRepo.row_matches_parsed_identity`, extraído
+  de `find_swap_candidates_by_identity` para compartir criterio); si no calza, cae al respaldo.
+
+## Rediseño 2026-07-20 (v3) — el toast es OBSERVACIONAL, no depende de la DB
+
+**Por qué.** La v2 puso la corrección en la persistencia (bien) pero dejó el **toast** colgado de
+su resultado (`result.moved and result.swap_fresh`, `controller.py:657`). Eso trajo dos costos que
+el QA del 2026-07-20 hizo evidentes en cuatro intentos fallidos seguidos:
+- **En read-only el toast no podía salir NUNCA**: `persist_s17_disc` corta en `sync_equip.py:375`
+  y devuelve `moved=False`. El feature era intesteable sin escribir la DB.
+- **Cualquier desincronización DB↔juego se comía un swap real.** Si la DB creía que el disco era
+  de otro dueño, el respaldo por identidad lo clasificaba como `s17_reequip` (re-equipar propio) y
+  el toast desaparecía, aunque el reemplazo hubiera ocurrido delante de la cámara.
+
+El error era conceptual: **el toast afirma lo que se VIO en pantalla**; lo hicimos depender de lo
+que la DB logró escribir. La observación es la fuente de verdad; la DB es una consecuencia.
+
+**Decisión del usuario (3 preguntas):** persistencia **conservada pero desacoplada**; el check
+acepta el dueño **certero + observado**; y corre **apenas se sepan slot+set+dueño**, sin esperar
+a que el disco madure.
+
+### 23.6 — `monitor._check_swap_owner` (reemplaza a `_attach_swap_hint`)
+Cambia de nombre porque cambia de trabajo: ya no "adjunta un hint en silencio", **chequea y
+loguea siempre**. Cuando el disco en pantalla es el del pending (mismo set+slot), clasifica en
+**cuatro desenlaces** y loguea el resultado por FLANCO (RNF-06, el ciclo repite muchas veces/s):
+
+| Desenlace | Condición | Acción |
+|---|---|---|
+| `CAMBIÓ ✓` | el dueño es el **destino** | hint + `swap_fresh` + `on_replacement` (toast) |
+| `sin cambio` | sigue siendo el **origen** → canceló | nada; **no** consume el pending |
+| `incierto` | equipado sin nombre / libre | nada; **no** consume (RNF-02) |
+| `otro` | ni origen ni destino | nada; **no** consume (RNF-02) |
+
+Dueño = `agente_asignado_nombre` **o** `equip_pj_visual`. El observado cubre el caso real de los
+logs (`[badge] ancla decía X pero el badge dice Y`): ahí el badge tiene razón y exigir solo el
+certero perdía el swap. El pending lleva un `seq` propio para el flanco del log (no `id()`, que
+Python reutiliza tras el gc).
+
+### 23.7 — El check corre en el ciclo continuo, no en la emisión
+Se movió de `_emit_s17_disc` a `_process_disc_s17_continuous` (tras el merge del aggregator y en
+el path de warmup). Mismo patrón —y mismo motivo— que la confirmación de upgrade, que ya se había
+desacoplado por quedar en warming eterno: `_emit_s17_disc` exige madurez (`conf>=0.70`) y en QA
+hubo **trabes de 8m42s sin emitir** con un swap real perdido en el medio. El chequeo solo necesita
+(set, slot, dueño), que ya están en el merge parcial.
+
+### 23.8 — `on_replacement` vuelve, ahora sin DB
+El callback que la v2 había eliminado regresa con la semántica correcta: **notifica una
+observación, no ejecuta un write**. `controller._on_replacement_from_monitor` resuelve el `set_id`
+con `_lookup_set_id` (lectura) y arma el payload con `asset_resolver` — mismo estilo que el toast
+de recomendación, que ya salía en read-only. Se quitó la rama del toast de `_on_disc_from_monitor`
+para que no dispare dos veces.
+
+### 23.9 — Persistencia: el diálogo le gana a la atribución vieja
+`_find_disc_to_move`: si el respaldo por identidad halla fila única que la DB atribuía al destino,
+pero **hay un hint del S23 nombrando otro origen**, gana el diálogo — es evidencia directa del
+juego contra una creencia que la app nunca vio cambiar. Convierte un `s17_reequip` falso en el
+`s17_move` correcto.
+
+### 23.10 — Rescate del slot en el diálogo (causa raíz de los fallos "aleatorios")
+`parser_sustitucion.py`: PaddleOCR leía **`(1)` como `(i)`** → la regex exigía `[1-6]`, no
+matcheaba, y `parse_sustitucion` devolvía `None` en un `return` mudo. **Sin pending → sin toast.**
+Por eso el diálogo del **slot 1** fallaba "al azar" y los slots 2-6 no. Segunda pasada de rescate
+(`i/l/|`→1, `s`→5, `b`→6, `z`→2) que **solo corre si la estricta falla** y **exige el paréntesis
+de apertura** (sin él, un set terminado en 's' podría colarse como slot 5).
+
+### 23.11 — Instrumentación de trabes (`_note_stall` / `_clear_stall`)
+Los returns tempranos mudos de `_process_disc_s17_continuous` (`sig is None`, `conf<0.70`) y de
+`_process_s23_sustitucion` (parser devolvió None) ahora loguean por flanco, con el conteo de
+ciclos. Además `_dump_s23_fallo` guarda el frame en `audit/s23_parse_fallo/` la primera vez que
+el parser falla — fue lo que permitió encontrar el `(i)`.
+
 ## Verificación
 - Unit: `test_detector_sustitucion` (7→S23 + 37 negativos), `test_parser_sustitucion` (Paddle, 7/7),
   `test_monitor_sustitucion` (armado/hint/TTL/latch), `test_sync_swap` (move por hint / por identidad
   única / ambiguo-no-roba / distinto-nivel-no-roba / re-ver-no-duplica / readonly / **regresión del
   caso Jane→Velina sin duplicar**), `test_toast_reemplazado` (variant + smoke offscreen).
-- **QA en vivo pendiente** (`qa_launch -FromSource -NoFocusGate`, SIN `-ReadOnly`, con backup):
-  equipar en el destino un disco de otro PJ → verificar log `s17_move ... (movido, sin duplicar)`,
-  toast REEMPLAZADO, y que la DB movió `agente_asignado` **sin** filas nuevas.
+- Unit nuevos (2026-07-20): `test_monitor_sustitucion::test_el_pending_no_expira_por_reloj` +
+  `::test_un_s23_nuevo_reemplaza_al_pending_anterior`;
+  `test_sync_swap::test_hint_desactualizado_no_mueve_la_fila_equivocada`.
+- **DB verificada en vivo 2026-07-20** (367 discos, `id=25` → Velina, sin duplicar, integrity ok).
+- Unit v3 (2026-07-20): `test_monitor_sustitucion` (4 desenlaces del check + dueño observado +
+  log por flanco + independencia de la emisión), `test_reemplazo_readonly` (**el toast sale con
+  `DANIBOD_READONLY=1`**, la persistencia no reporta movimiento, y la vía de emisión ya no
+  emite el toast → anti-doble-disparo), `test_parser_sustitucion` (rescate `(i)`→slot 1).
+- **QA en vivo PENDIENTE, ahora en READ-ONLY** (`qa_launch -FromSource -NoFocusGate -ReadOnly`):
+  entrar al equipamiento del destino → abrir el slot (ancla) → navegar a un disco de otro PJ →
+  Reemplazar → Confirmar. Esperado: `[reemplazo] check dueño · … · CAMBIÓ ✓` + **toast violeta**,
+  y la DB **sin cambios** (read-only). Repetir cancelando → `sin cambio`, sin toast.

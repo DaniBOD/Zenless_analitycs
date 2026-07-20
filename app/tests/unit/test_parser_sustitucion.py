@@ -70,6 +70,34 @@ def test_regex_arma_origen_set_slot():
     assert m2 and m2.group("pj") == "Nangong Yu" and m2.group("slot") == "2"
 
 
+class _OcrFijo:
+    """OCR de mentira que devuelve un texto dado (una sola caja), para testear el parseo puro."""
+    def __init__(self, texto):
+        self._t = texto
+
+    def text_with_bboxes(self, _crop):
+        return [(self._t, 0.94, (0, 0, 100, 20))]
+
+
+def test_rescata_el_slot_cuando_el_ocr_lee_1_como_i():
+    """REGRESIÓN QA en vivo 2026-07-20: PaddleOCR leyó '(1)' como '(i)' y el parser devolvía
+    None → sin pending S23, sin toast, y en silencio. El rescate lo recupera como slot 1."""
+    import numpy as np
+    real = "Jane equipa actualmente Salón huracanado (i). cDeseas sustituirlo?"
+    d = ps.parse_sustitucion(np.zeros((1439, 2559, 3), dtype=np.uint8), _OcrFijo(real))
+    assert d is not None, "el rescate no recuperó el slot"
+    assert d.slot == 1 and d.origin_raw == "Jane"
+    assert "huracanado" in d.set_raw.lower()
+
+
+def test_el_rescate_exige_parentesis_para_no_comerse_el_set():
+    """Sin '(' el rescate NO corre: si no, la última letra del nombre del set podría colarse
+    como slot (p.ej. '...pícidos)' → slot 5). RNF-02: antes None que inventar."""
+    import numpy as np
+    txt = "Yixuan equipa actualmente Tecno pícidos)"     # 's' final, sin paréntesis de apertura
+    assert ps.parse_sustitucion(np.zeros((10, 10, 3), dtype=np.uint8), _OcrFijo(txt)) is None
+
+
 def test_texto_sin_patron_no_inventa():
     """Otro diálogo Cancelar/Confirmar sin 'equipa actualmente' → None (RNF-02)."""
     assert ps._RE_SUSTITUCION.search("¿Deseas descartar este disco?") is None

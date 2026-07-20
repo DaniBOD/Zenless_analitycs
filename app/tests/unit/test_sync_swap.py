@@ -222,6 +222,31 @@ def test_hint_gana_a_ambiguedad(db):
     assert {r["id"]: r["agente_asignado"] for r in _rows(db)}[ellen_id] == 5  # Ellen intacta
 
 
+def test_hint_desactualizado_no_mueve_la_fila_equivocada(db):
+    """RNF-02 · desde 2026-07-20 el pending S23 no expira por reloj, así que un hint viejo puede
+    apuntar a un origen cuyo disco NO es el que estamos viendo (cancelaste el swap y después
+    equipaste al destino OTRO disco del mismo set+slot). El hint solo vale si la fila del origen
+    coincide por identidad COMPLETA; si no, se cae al respaldo, que sí acierta."""
+    con = sqlite3.connect(str(db))
+    # Jane tiene un Jazz slot 1 DISTINTO (nivel 9) — el hint apunta a esta fila.
+    con.execute(
+        "INSERT INTO inventory_discs (id, set_id, slot, main_stat, main_valor, "
+        "sub1, val1, rolls1, nivel, equipado, agente_asignado) "
+        "VALUES (600, 1, 1, 'HP', 2200.0, 'ATK', 38.0, 1, 9, 1, 3)"
+    )
+    con.commit(); con.close()
+    ellen_id = _insert_jazz_row(db, 5)      # Ellen sí tiene EL disco que se está viendo
+    s = _syncer(db)
+    try:
+        res = s.persist_s17_disc(_jazz(agent="Velina", fresh=True, hint="Jane"))
+    finally:
+        s.close()
+    assert res.disc_id == ellen_id, "movió la fila del hint en vez de la que coincide de verdad"
+    assert res.moved and res.moved_from_nombre == "Ellen"
+    by_id = {r["id"]: r for r in _rows(db)}
+    assert by_id[600]["agente_asignado"] == 3 and by_id[600]["equipado"] == 1  # Jane intacta
+
+
 def test_reequipar_disco_propio_desplazado_no_duplica(db):
     """Velina tiene Jazz equipado y su Salón propio DESPLAZADO (equipado=0). Al re-equipar el
     Salón (sin diálogo S23 cross-PJ), se RE-EQUIPA la fila existente (no inserta), sin toast."""

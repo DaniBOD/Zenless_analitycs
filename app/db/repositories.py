@@ -364,6 +364,24 @@ class InventoryDiscRepo:
                 out.append(d)
         return out
 
+    def row_matches_parsed_identity(self, d: "Disc", p: "DiscParsed", set_id: int) -> bool:
+        """True si la fila `d` es EL MISMO disco que el parseado `p`, por identidad COMPLETA
+        (set, slot, nivel, main, {substat normalizado + rolls}) — misma definición que
+        `find_swap_candidates_by_identity`, extraída para poder validar también el hint del
+        diálogo S23. RNF-02: sin esto, un hint viejo podía mover la fila del origen solo por
+        compartir el set, aunque el disco que estamos viendo fuera otro."""
+        from app.core.stats_vocab import _norm_key
+        if d.set_id != set_id or d.slot != p.slot or d.nivel != p.nivel:
+            return False
+        main_canon = p.main_stat_canon or p.main_stat_raw
+        if _norm_key(d.main_stat or "") != _norm_key(main_canon or ""):
+            return False
+        want = self._identity_subs(
+            (s.nombre_canon or s.nombre_raw, s.rolls) for s in (p.subs or [])
+        )
+        have = self._identity_subs((name, rolls) for name, _v, _u, rolls in d.subs)
+        return have == want
+
     @staticmethod
     def _identity_subs(pairs) -> tuple:
         """Firma de substats para identidad: {(nombre normalizado, rolls)} ordenada."""

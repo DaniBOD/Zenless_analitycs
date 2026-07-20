@@ -33,6 +33,19 @@ _RE_SUSTITUCION = re.compile(
     re.IGNORECASE,
 )
 
+# SEGUNDA pasada (rescate): el OCR confunde el dígito del slot con letras de forma parecida.
+# Visto en vivo el 2026-07-20: "Salón huracanado (1)" salió como "(i)" → la regex estricta no
+# matcheaba y el parser devolvía None SIN pending y SIN toast. Como el dominio está acotado
+# (slot 1-6) y el contexto no es ambiguo, rescatarlo no es inventar (RNF-02).
+# Acá el "(" es OBLIGATORIO (a diferencia de la pasada estricta): sin el paréntesis, una letra
+# final del nombre del set podría colarse como slot. Solo corre si la estricta falla, así que
+# el camino normal no cambia.
+_SLOT_OCR_ALIAS = {"i": "1", "l": "1", "|": "1", "¡": "1", "z": "2", "s": "5", "b": "6"}
+_RE_SUSTITUCION_LAX = re.compile(
+    r"(?P<pj>.+?)\s+equipa\s+actualmente\s+(?P<set>.+?)\s*\(\s*(?P<slot>[il|¡zsb])\s*\)",
+    re.IGNORECASE,
+)
+
 
 @dataclass(frozen=True)
 class SustitucionParsed:
@@ -74,9 +87,17 @@ def parse_sustitucion(frame: np.ndarray, ocr) -> SustitucionParsed | None:
     if not text:
         return None
     m = _RE_SUSTITUCION.search(text)
-    if not m:
-        return None
-    slot = int(m.group("slot"))
+    if m:
+        slot_raw = m.group("slot")
+    else:
+        m = _RE_SUSTITUCION_LAX.search(text)
+        if not m:
+            return None
+        slot_raw = _SLOT_OCR_ALIAS.get(m.group("slot").lower())
+        if slot_raw is None:
+            return None
+        log.debug("S23: slot rescatado de %r → %r", m.group("slot"), slot_raw)
+    slot = int(slot_raw)
     if not (1 <= slot <= 6):
         return None
     origin = m.group("pj").strip()

@@ -525,20 +525,32 @@ class DiscSyncer:
         2) RESPALDO por identidad exacta ÚNICA (`find_swap_candidates_by_identity`): equipado por
            otro PJ (cross-PJ) o desequipado del destino (re-equip). 1 → usar; 0 → nuevo; ≥2 →
            ambiguo (warning, no tocar)."""
+        hint_origin_id: int | None = None
         hint = getattr(parsed, "swap_origin_hint", None)
         if hint:
             origin = self._agent_repo.get_by_nombre(hint)
             if origin is not None and origin.id != dest_agent_id:
+                hint_origin_id = origin.id
                 row = disc_repo_w.find_equipped_by_agent_slot(origin.id, parsed.slot)
-                if row is not None and row.set_id == set_id:
+                # Identidad COMPLETA, no solo el set (RNF-02): el pending S23 ya no expira por
+                # reloj, así que un hint viejo podría apuntar al origen mientras el destino
+                # equipa OTRO disco del mismo set+slot → mover la fila del origen sería robar
+                # la equivocada. Si no calza exacto, caemos al respaldo por identidad.
+                if row is not None and disc_repo_w.row_matches_parsed_identity(row, parsed, set_id):
                     return row, origin.id, True
-                # El hint no calza con la DB (disco no registrado / otro set) → respaldo.
+                # El hint no calza con la DB (disco no registrado / otro disco) → respaldo.
         matches = disc_repo_w.find_swap_candidates_by_identity(
             parsed, set_id, dest_agent_id, exclude_disc_id
         )
         if len(matches) == 1:
             row = matches[0]
             cross = bool(row.equipado and row.agente_asignado not in (None, dest_agent_id))
+            if not cross and hint_origin_id is not None:
+                # La fila figuraba como disco suelto del propio destino, pero el diálogo S23 dijo
+                # textualmente que la tenía OTRO PJ. El diálogo es evidencia DIRECTA del juego;
+                # nuestra atribución es una creencia vieja de un movimiento que la app nunca vio.
+                # Gana el diálogo → es un swap entre PJs, no un re-equipar (QA 2026-07-20).
+                return row, hint_origin_id, True
             return row, (row.agente_asignado if cross else None), cross
         if len(matches) >= 2:
             log.warning(

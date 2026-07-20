@@ -153,6 +153,7 @@ class MonitorController(QObject):
             on_disc_rejected=self._on_disc_rejected_from_monitor,
             on_agent_stats=self._on_agent_stats_from_monitor,
             on_diagnostic=self._on_diagnostic_from_monitor,
+            on_replacement=self._on_replacement_from_monitor,
             on_agent_detail=self._on_agent_detail_from_monitor,
             set_repo=self._disc_set_repo,
             on_ram_critical=self.ram_critical.emit,   # watchdog RNF-06 → main thread
@@ -652,15 +653,9 @@ class MonitorController(QObject):
                 # tiebreaker para que el próximo desempate vea los datos nuevos (build en vivo).
                 if result is not None and self._owner_tiebreaker is not None:
                     self._owner_tiebreaker.mark_dirty()
-                # Swap FRESCO (la persistencia movió la fila y el diálogo S23 fue reciente) →
-                # toast REEMPLAZADO. Las correcciones tardías por identidad no disparan toast.
-                if result is not None and result.moved and result.swap_fresh:
-                    self.disc_replaced.emit(self._build_replacement_payload({
-                        "set_name": disc_parsed.set_name_canon or disc_parsed.set_name_raw,
-                        "set_id": result.set_id, "slot": disc_parsed.slot,
-                        "from_name": result.moved_from_nombre,
-                        "to_name": disc_parsed.agente_asignado_nombre,
-                    }))
+                # (El toast REEMPLAZADO ya NO se dispara acá: lo emite `_on_replacement_from_monitor`
+                # cuando el monitor OBSERVA el cambio de dueño, sin depender de que la persistencia
+                # haya movido una fila. Así sale también en read-only.)
                 self._log_s17_extraction(disc_parsed, result)
                 return
             payload = self._build_payload(disc_parsed, state)
@@ -669,10 +664,30 @@ class MonitorController(QObject):
             log.exception("Error procesando disco capturado")
             self.error_occurred.emit(f"Procesando disco: {exc}")
 
+    def _on_replacement_from_monitor(self, ev: dict) -> None:
+        """El monitor OBSERVÓ que un disco cambió de dueño (check por badge tras el diálogo S23)
+        → toast REEMPLAZADO.
+
+        No toca la DB: resuelve el `set_id` con `_lookup_set_id` (lectura) y los assets por
+        filesystem. Es a propósito — el toast afirma lo que se vio en pantalla, no lo que la
+        persistencia logró escribir; por eso funciona igual en read-only. La corrección de la DB
+        corre por su cuenta en `persist_s17_disc` y ya no gatilla nada visual."""
+        try:
+            set_name = ev.get("set_name")
+            self.disc_replaced.emit(self._build_replacement_payload({
+                "set_name": set_name,
+                "set_id": self._lookup_set_id(set_name),
+                "slot": ev.get("slot", 0),
+                "from_name": ev.get("from_name"),
+                "to_name": ev.get("to_name"),
+            }))
+        except Exception:
+            log.exception("Error armando el toast de reemplazo")
+
     def _build_replacement_payload(self, ev: dict) -> dict:
         """Evento {set_name, set_id, slot, from_name, to_name} → payload del toast (logo del set
-        + avatares de los 2 PJs, resueltos por asset_resolver). Lo arma `_on_disc_from_monitor`
-        cuando la persistencia S17 movió una fila por un swap fresco."""
+        + avatares de los 2 PJs, resueltos por asset_resolver). Solo lecturas — mismo estilo que
+        `_build_payload` del toast de recomendación."""
         from app.core.asset_resolver import set_logo_path, agent_avatar_path
         set_name = ev.get("set_name") or "?"
         set_logo = None

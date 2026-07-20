@@ -109,11 +109,10 @@ _S21_STOCK_ROI = (0.400, 0.395, 0.190, 0.045)   # "Batería etérea × 8" (stock
 _RE_S21_USOS = re.compile(r"consumida\s*[x×*]\s*(\d+)", re.I)
 _RE_S21_STOCK = re.compile(r"[x×*]\s*(\d+)\s*$")
 
-# S23 (sustitución de disco entre PJs): ventana para CONFIRMAR el swap tras ver el diálogo. El
-# diálogo no revela si se confirmó o canceló; la confirmación es ver, después, ese disco (set+slot)
-# equipado por el PJ DESTINO en el flujo S17. Si no llega dentro de la ventana (canceló o navegó a
-# otra cosa) el pending expira en silencio — sin write ni toast (RNF-02: no afirmar lo no visto).
-_S23_WINDOW_S = 120.0
+# S23 (sustitución de disco entre PJs): el diálogo no revela si se confirmó o canceló; la
+# confirmación es ver, después, ese disco (set+slot) equipado por el PJ DESTINO en el flujo S17.
+# NO hay ventana de reloj (se quitó el TTL de 120s el 2026-07-20): el pending vive hasta
+# consumirse, hasta que otro S23 lo reemplace, o hasta cerrar la app. Ver `_check_swap_owner`.
 
 # ROI (x, y, rw, rh) del viewport scrolleable del modal "Obtenido" (S22), para la firma que
 # gatea el re-parseo. Espeja _VIEWPORT_X/_Y de parser_extraccion.
@@ -285,6 +284,7 @@ class Monitor:
         on_disc_rejected: Callable[[DiscParsed, ScreenState, str], None] | None = None,
         on_agent_stats: Callable[[AgentStatsParsed, ScreenState], None] | None = None,
         on_diagnostic: Callable[[str], None] | None = None,
+        on_replacement: Callable[[dict], None] | None = None,   # reemplazo S23 OBSERVADO (toast)
         on_agent_detail: Callable[[ScreenState, str | None, bool, str | None], None] | None = None,
         agent_identifier: AgentIdentifier | None = None,
         on_ram_critical: Callable[[], None] | None = None,
@@ -309,6 +309,10 @@ class Monitor:
         # Callback para mensajes de diagnóstico (heartbeat, fallos de captura, etc).
         # Permite que la UI muestre por qué el monitor "está silencioso".
         self._on_diagnostic = on_diagnostic
+        # Reemplazo S23 confirmado por OBSERVACIÓN (cambio de dueño por badge) → toast. Es
+        # independiente de la persistencia a propósito: el toast afirma lo que se vio, no lo que
+        # la DB logró escribir — por eso sale también en read-only. Ver `_check_swap_owner`.
+        self._on_replacement = on_replacement
         # Tracking interno para el heartbeat
         self._last_diagnostic_msg: str | None = None
         self._loop_ticks: int = 0
@@ -338,6 +342,8 @@ class Monitor:
         # estática y resetea el aggregator. Sin esto el MISMO disco quieto se
         # re-emite ~7×. Se limpia al salir de S17 o forzar (F8). RNF-06: sin OCR.
         self._disc_emitted_ids: set = set()
+        # Diagnóstico de trabes (returns tempranos mudos) — ver `_note_stall`. {scope: (motivo, n)}
+        self._stalls: dict[str, tuple[str, int]] = {}
         # --- S9 (inventario global): mismo patrón aggregator/dedup, estado propio ---
         self._s9_aggregator = DiscAggregator()
         self._s9_agg_sig = None           # firma-ancla del disco S9 que se fusiona
@@ -524,10 +530,15 @@ class Monitor:
         # `_S21_USOS_ROI`): `_s21_last_usos` deduplica la emisión por valor.
         self._s21_last_usos: int | None = None
         # S23 (sustitución de disco): swap PENDIENTE de confirmar. Se arma al ver el diálogo y se
-        # consume cuando S17 muestra el disco equipado por el destino (o expira por TTL). Persiste
+        # consume cuando S17 muestra ese disco en manos del destino. NO expira por reloj. Persiste
         # al SALIR de S23 (la confirmación llega después, en S17). `_s23_last_key` deduplica el log
         # tentativo mientras el diálogo está en pantalla (se resetea al salir de S23).
         self._pending_swap: dict | None = None
+        # Flanco del log del check de dueño: (seq del pending, desenlace). El chequeo corre en el
+        # ciclo continuo (varias veces por segundo) y sin esto loguearía en loop — RNF-06. El
+        # `seq` identifica al pending sin usar `id()`, que Python reutiliza tras el gc.
+        self._swap_seq: int = 0
+        self._swap_check_mark: tuple | None = None
         self._s23_last_key: tuple | None = None
         # S22 (modal "Obtenido"): dedup CONVERGENTE por corrida. {n_uso: nº de discos ya
         # emitidos} o _S22_SEC_CERRADA si ya se emitió completa. `_s22_last_sig` gatea el
@@ -1407,15 +1418,40 @@ class Monitor:
             return scored[0][1]
         return None
 
+    def _dump_s23_fallo(self, frame) -> None:
+        """Guarda el frame de un S23 que el parser NO pudo leer, para reproducir offline.
+
+        Una vez por trabe (el primer ciclo), no por ciclo: S23 corre a 1000ms y el diálogo dura
+        varios segundos. Sin esto no hay forma de saber QUÉ leyó el OCR — el frame se pierde."""
+        if self._stalls.get("S23", ("", 0))[1] != 1:
+            return
+        try:
+            import cv2
+            from datetime import datetime
+            from pathlib import Path
+            p = Path("audit") / "s23_parse_fallo"
+            p.mkdir(parents=True, exist_ok=True)
+            f = p / f"s23_{datetime.now():%Y%m%d_%H%M%S}.png"
+            cv2.imwrite(str(f), frame)
+            log.info("[S23] frame guardado para diagnóstico: %s", f)
+        except Exception:
+            log.debug("dump S23 falló", exc_info=True)
+
     def _process_s23_sustitucion(self, frame, state: ScreenState) -> None:
         """Diálogo de sustitución: arma el swap PENDIENTE {origen, set, slot, destino=latch}. El
-        hint se adjunta después en S17 (`_attach_swap_hint`) para que la persistencia mueva la fila.
+        check del dueño ocurre después en S17 (`_check_swap_owner`), que decide toast y hint.
         Acá solo se loguea la intención (tentativo): ver el diálogo NO prueba que se haya confirmado
         (se puede cancelar) → si no llega el disco, el pending expira por TTL en silencio."""
         from app.core.parser_sustitucion import parse_sustitucion
         d = parse_sustitucion(frame, self._ocr)
         if d is None:
+            # El detector ve el diálogo (conf alta) pero el parser no lo lee → sin pending, sin
+            # toast, y antes esto era MUDO: desde afuera "no reconoce el swap" no distinguía
+            # entre no-detectado y no-parseado (QA 2026-07-20, intento con Soukaku).
+            self._note_stall("S23", "el parser no leyó el diálogo")
+            self._dump_s23_fallo(frame)
             return
+        self._clear_stall("S23")
         set_id = None
         set_name = None
         if self._set_repo is not None:
@@ -1435,7 +1471,9 @@ class Monitor:
             return
         self._s23_last_key = key
 
+        self._swap_seq += 1
         self._pending_swap = {
+            "seq": self._swap_seq,          # identifica ESTE pending para el flanco del log
             "origin_name": origin,
             "set_id": set_id,
             "set_name": set_name or d.set_raw,
@@ -1443,6 +1481,7 @@ class Monitor:
             "dest_name": dest,
             "ts": time.monotonic(),
         }
+        self._swap_check_mark = None        # pending nuevo → el check vuelve a loguear
         set_disp = set_name or d.set_raw
         msg = f"[reemplazo] {set_disp} slot {d.slot} · {origin} → {dest or '?'} (pendiente)"
         log.info("Sustitución S23 (pendiente): %s", msg)
@@ -1452,28 +1491,35 @@ class Monitor:
             except Exception:
                 log.debug("on_diagnostic S23 falló", exc_info=True)
 
-    def _attach_swap_hint(self, merged, state: ScreenState) -> None:
-        """Si un swap PENDIENTE (diálogo S23 reciente) matchea el disco que S17 está por emitir
-        —mismo (set, slot) ahora equipado por el DESTINO— adjunta el HINT de origen al disco para
-        que la persistencia MUEVA la fila (sin duplicar) y el controller dispare el toast.
+    def _check_swap_owner(self, merged, state: ScreenState) -> None:
+        """CHECK observacional del reemplazo: ¿el disco del swap pendiente cambió de dueño?
 
-        Es el reemplazo de la vieja confirmación por-toast: la corrección de DB ya NO cuelga de
-        atrapar este instante (la persistencia también mueve por identidad si no hubo diálogo);
-        acá sólo marcamos el swap como FRESCO (`swap_fresh`) para que el toast salte. Consume el
-        pending al matchear; expira solo por TTL si nunca llega el disco (canceló/navegó)."""
+        Es el corazón del feature (rediseño 2026-07-20). El toast es una afirmación sobre lo que
+        se VE en pantalla —"este disco cambió de manos"— así que se decide acá, mirando el dueño
+        por badge, y NO en la persistencia. Antes colgaba de que la transacción SQL moviera una
+        fila (`SyncResult.moved`), lo que lo hacía imposible de validar en read-only y lo mataba
+        ante cualquier desincronización DB↔juego, aunque el swap hubiera ocurrido a la vista.
+
+        Origen = el diálogo S23 (la pantalla dice quién lo tiene). Destino = el PJ cuyo
+        equipamiento se está viendo. Confirmación = ver ese disco ahora en manos del destino.
+
+        Cuatro desenlaces, TODOS logueados (antes esto era mudo y "no saltó el toast" no
+        distinguía entre canceló, incierto o roto). Solo `cambió` afirma el reemplazo; el resto
+        se abstiene y NO consume el pending (RNF-02: nunca afirmar lo no visto).
+
+        FRESCURA = "no superado todavía", NO "dentro de N segundos": el pending no expira por
+        reloj, vive hasta consumirse acá, hasta que otro S23 lo reemplace, o hasta cerrar la app.
+        Es seguro porque exigimos ver el disco en manos del DESTINO: si cancelaste, no pasa."""
         ps = self._pending_swap
         if ps is None:
             return
-        if time.monotonic() - ps["ts"] > _S23_WINDOW_S:
-            self._pending_swap = None
-            return
-        owner = merged.agente_asignado_nombre
-        if not owner:
-            return   # aún no equipado por nadie certero (candidato) → esperar
-        if (merged.slot or 0) != ps["slot"]:
-            return
-        from app.core.stats_vocab import _norm_key
+        slot = merged.slot or 0
         merged_set = merged.set_name_canon or merged.set_name_raw or ""
+        if not slot or not merged_set:
+            return   # todavía no sabemos qué disco es → aún no hay nada que chequear
+        if slot != ps["slot"]:
+            return   # otro slot → no es el disco del swap
+        from app.core.stats_vocab import _norm_key
         merged_set_id = None
         if self._set_repo is not None:
             try:
@@ -1483,22 +1529,54 @@ class Monitor:
         set_ok = (ps["set_id"] is not None and merged_set_id == ps["set_id"]) or \
                  _norm_key(merged_set) == _norm_key(ps["set_name"])
         if not set_ok:
+            return   # otro set → no es el disco del swap
+
+        # --- Es EL disco del swap: de acá en adelante el resultado SIEMPRE se loguea ---
+        # Dueño CERTERO (ancla/latch) o, si no lo hay, el OBSERVADO por badge. El observado cubre
+        # el caso real visto en QA: "[badge] ancla decía X pero el badge dice Y" — ahí el badge
+        # tiene razón y el ancla se equivocó; exigir solo el certero perdía esos swaps.
+        owner = merged.agente_asignado_nombre or merged.equip_pj_visual
+        origin, dest = ps["origin_name"], ps["dest_name"]
+        if not owner:
+            outcome = "incierto"      # equipado sin nombre, o libre → esperar más votos
+        elif _norm_key(owner) == _norm_key(origin):
+            outcome = "sin cambio"    # sigue con el origen → se canceló el reemplazo
+        elif dest and _norm_key(owner) != _norm_key(dest):
+            outcome = "otro"          # ni origen ni destino → algo no cierra, abstenerse
+        else:
+            outcome = "cambió"        # está en manos del destino → el reemplazo ocurrió
+
+        # Log por FLANCO (RNF-06): el ciclo continuo repite el chequeo muchas veces por segundo.
+        marca = (ps.get("seq"), outcome)
+        if self._swap_check_mark != marca:
+            self._swap_check_mark = marca
+            etiqueta = "CAMBIÓ ✓" if outcome == "cambió" else outcome
+            msg = (f"[reemplazo] check dueño · {ps['set_name']} slot {ps['slot']}: "
+                   f"{origin} → {owner or '?'} · {etiqueta}")
+            log.info("%s", msg)
+            if self._on_diagnostic:
+                try:
+                    self._on_diagnostic(msg)
+                except Exception:
+                    log.debug("on_diagnostic check swap falló", exc_info=True)
+
+        if outcome != "cambió":
             return
-        # Si conocíamos el destino (latch al ver el diálogo), exigir que coincida; si no lo
-        # conocíamos, el dueño que reporta S17 ES el destino (así lo confirma la pantalla).
-        if ps["dest_name"] and _norm_key(owner) != _norm_key(ps["dest_name"]):
-            return
-        # Match: adjuntar el hint al disco (la persistencia lo consumirá para mover la fila).
-        merged.swap_origin_hint = ps["origin_name"]
+        # Confirmado: marcar el disco (la persistencia usará el hint para MOVER la fila sin
+        # duplicar) y avisar al toast. Son dos consumidores independientes: el toast sale igual
+        # aunque la persistencia esté gateada por read-only.
+        merged.swap_origin_hint = origin
         merged.swap_fresh = True
         self._pending_swap = None
-        msg = f"[reemplazo] {ps['set_name']} slot {ps['slot']} · {ps['origin_name']} → {owner} ✓"
-        log.info("Sustitución S23 confirmada: %s", msg)
-        if self._on_diagnostic:
+        self._swap_check_mark = None
+        if self._on_replacement:
             try:
-                self._on_diagnostic(msg)
+                self._on_replacement({
+                    "set_name": ps["set_name"], "slot": ps["slot"],
+                    "from_name": origin, "to_name": owner,
+                })
             except Exception:
-                log.debug("on_diagnostic swap confirmado falló", exc_info=True)
+                log.exception("Error en on_replacement (toast de reemplazo)")
 
     @staticmethod
     def _s22_viewport_signature(frame):
@@ -1964,6 +2042,7 @@ class Monitor:
         self._disc_agg_cycles = 0
         self._disc_emitted_ids.clear()
         self._last_emitted_identity = None
+        self._stalls.pop("S17", None)
         self._s17_assign_sig = None
         # Anchor de flujo (5R.5b): al re-entrar a un slot, el primer disco vuelve a ser
         # el equipado por el latch (estructura del juego) → resetear el slot rastreado.
@@ -2043,6 +2122,28 @@ class Monitor:
         except Exception:
             log.debug("equip_map write falló", exc_info=True)
 
+    def _note_stall(self, scope: str, reason: str) -> None:
+        """Registra que un handler está TRABADO en un return temprano (sin producir resultado).
+
+        Estos returns eran mudos y desde afuera se veían todos iguales: en el QA del 2026-07-20
+        el handler S17 estuvo 8m42s sin emitir y el log no decía absolutamente nada; más tarde
+        el diálogo S23 se detectaba (conf=1.00) pero el parser devolvía None, también en
+        silencio — y ambos se veían como 'no reconoce el swap'. Se loguea por FLANCO (al empezar
+        el trabe y al salir), no por ciclo, para no inundar el log ni pagar RNF-06."""
+        if self._stalls.get(scope, (None, 0))[0] == reason:
+            prev = self._stalls[scope]
+            self._stalls[scope] = (reason, prev[1] + 1)
+            return
+        self._stalls[scope] = (reason, 1)
+        log.info("[%s] sin resultado — %s", scope, reason)
+
+    def _clear_stall(self, scope: str) -> None:
+        """Cierra un trabe abierto por `_note_stall` (el handler volvió a avanzar)."""
+        prev = self._stalls.pop(scope, None)
+        if prev is None:
+            return
+        log.info("[%s] destrabado tras %d ciclo(s) — %s", scope, prev[1], prev[0])
+
     def _process_disc_s17_continuous(self, frame, state: ScreenState) -> None:
         """
         S17 CONTINUO (Fase 1, espejo de la extracción S18): cada cadencia re-extrae
@@ -2053,6 +2154,7 @@ class Monitor:
         """
         sig = self._s17_disc_signature(frame)
         if sig is None:
+            self._note_stall("S17", "firma no calculable")
             return
         if self._is_new_s17_disc(sig):
             self._disc_aggregator.reset()
@@ -2077,6 +2179,7 @@ class Monitor:
                 self._s17_warming = False
             else:
                 self._assign_s17_pj(merged, frame)   # re-decide el dueño con más votos (sin OCR)
+                self._check_swap_owner(merged, state)   # el dueño acaba de refrescarse
                 warm = self._s17_owner_passes >= _S17_OWNER_MIN_SAMPLES
                 ceiling = self._disc_agg_cycles >= _S17_AGG_MAX_CYCLES
                 if self._s17_owner_resolved(merged) or warm or ceiling:
@@ -2090,9 +2193,19 @@ class Monitor:
             return
         self._assign_s17_pj(disc, frame)   # identidad por badge de grilla (5R.5)
         if disc.confianza_global < 0.7:
-            return  # frame de transición/baja confianza → no contaminar el aggregator
+            # frame de transición/baja confianza → no contaminar el aggregator
+            self._note_stall("S17", f"conf={disc.confianza_global:.2f} < 0.70")
+            return
+        self._clear_stall("S17")
         merged = self._disc_aggregator.merge(disc)
         self._disc_agg_cycles += 1
+        # CHECK del reemplazo S23 — DESACOPLADO de la emisión, igual que la confirmación de
+        # upgrade de más abajo y por el mismo motivo: `_emit_s17_disc` está gateado por la
+        # madurez del disco y el warming del dueño, y en QA hubo trabes de 8m42s sin emitir con
+        # un swap real perdido en el medio. El chequeo solo necesita (set, slot, dueño), que ya
+        # están en el merge parcial.
+        if merged is not None:
+            self._check_swap_owner(merged, state)
         if self._disc_emitted or merged is None:
             return
         mature = disc_is_mature(merged)
@@ -2127,10 +2240,8 @@ class Monitor:
     def _emit_s17_disc(self, merged, state: ScreenState, mature: bool) -> None:
         """Emite (dedup + equip_map + id_diag + log + on_disc) un disco S17 ya resuelto.
         Extraído de `_process_disc_s17_continuous` para reusarlo desde el path de warmup."""
-        # Hint de swap ANTES del dedup: un disco recién movido puede tener una identidad ya vista
-        # (mismos stats) → si se gateara por dedup, no se adjuntaría el hint. La persistencia lo
-        # usa para mover la fila (sin duplicar) y el controller dispara el toast si es fresco.
-        self._attach_swap_hint(merged, state)
+        # (El check del reemplazo S23 ya NO vive acá: corre en el ciclo continuo, apenas se
+        # conocen set+slot+dueño, sin esperar a que el disco madure. Ver `_check_swap_owner`.)
         self._disc_emitted = True
         # Dedup por IDENTIDAD: si la firma parpadeó (modelo 3D animado) y este
         # disco ya se emitió en esta sesión S17, no re-emitir (ni re-persistir).
