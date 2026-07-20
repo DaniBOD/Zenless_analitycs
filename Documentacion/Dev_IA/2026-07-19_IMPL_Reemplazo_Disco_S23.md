@@ -181,6 +181,24 @@ Los returns tempranos mudos de `_process_disc_s17_continuous` (`sig is None`, `c
 ciclos. Además `_dump_s23_fallo` guarda el frame en `audit/s23_parse_fallo/` la primera vez que
 el parser falla — fue lo que permitió encontrar el `(i)`.
 
+### 23.12 — El avatar de Jane salía con el cuadrado de HoYoLAB
+Detectado en el QA visual del toast (2026-07-20). `agent_avatar_path(nombre, variant="ico")`
+tenía como **último recurso** un fallback al jpeg de `Pj_stats` (`asset_resolver.py:225`), que es
+el cuadrado del perfil de HoYoLAB —con marco y fondo—, estéticamente incompatible con el `-ico`
+(cara redonda limpia). La DB llama a la agente **`Jane`** y su archivo es **`Jane-Doe-ico.webp`**,
+así que el nombre no matcheaba, caía al fallback y el toast la mostraba con el estilo equivocado.
+Era el **único** caso: 48/49 resolvían bien, y por eso nunca se notó.
+
+Dos correcciones:
+- Override `"Jane" → "Jane-Doe"` en `_AGENT_SPLASH_OVERRIDES` → **49/49 con ico limpio**.
+- **El `-ico` ya no cae a `Pj_stats`**: devuelve `None` + `log.warning`. El toast degrada a
+  placeholder (ya lo soporta, ver `test_show_replacement_sin_avatares_ni_logo`), que es honesto;
+  el fallback silencioso disimulaba el asset faltante en vez de exponerlo. Seguro de cortar
+  porque `variant="ico"` lo usa **solo** el toast de reemplazo (`controller.py:710`); `extend`
+  y `pj_stats` conservan su fallback.
+- `test_full_coverage_against_db` ahora **también valida el `-ico`** de todo el roster — sin eso
+  Jane pasó desapercibida.
+
 ## Verificación
 - Unit: `test_detector_sustitucion` (7→S23 + 37 negativos), `test_parser_sustitucion` (Paddle, 7/7),
   `test_monitor_sustitucion` (armado/hint/TTL/latch), `test_sync_swap` (move por hint / por identidad
@@ -194,7 +212,19 @@ el parser falla — fue lo que permitió encontrar el `(i)`.
   log por flanco + independencia de la emisión), `test_reemplazo_readonly` (**el toast sale con
   `DANIBOD_READONLY=1`**, la persistencia no reporta movimiento, y la vía de emisión ya no
   emite el toast → anti-doble-disparo), `test_parser_sustitucion` (rescate `(i)`→slot 1).
-- **QA en vivo PENDIENTE, ahora en READ-ONLY** (`qa_launch -FromSource -NoFocusGate -ReadOnly`):
-  entrar al equipamiento del destino → abrir el slot (ancla) → navegar a un disco de otro PJ →
-  Reemplazar → Confirmar. Esperado: `[reemplazo] check dueño · … · CAMBIÓ ✓` + **toast violeta**,
-  y la DB **sin cambios** (read-only). Repetir cancelando → `sin cambio`, sin toast.
+- ✅ **QA EN VIVO VERDE — 2026-07-20 19:39-19:41, en READ-ONLY.** Tres checks, tres desenlaces
+  correctos, **toast violeta confirmado en pantalla**, cero errores, cierre limpio:
+
+  | Hora | Disco | Resultado | Realidad |
+  |---|---|---|---|
+  | 19:39:22 | Jazz Caótico slot 1 | `Jane → Velina · CAMBIÓ ✓` | reemplazo real |
+  | 19:40:22 | Salón huracanado slot 1 | `Jane → Jane · sin cambio` | cancelado |
+  | 19:41:27 | Salón huracanado slot 1 | `Jane → Velina · CAMBIÓ ✓` | confirmado |
+
+  **La DB quedó byte-a-byte idéntica** (mismo sha256 al inicio y al final, 367 discos) — la
+  prueba de que el toast ya no depende de escribir. Los casos 2→3 son la mejor evidencia de que
+  el check LEE la pantalla y no acierta por inercia: mismo disco y mismo par de PJs, desenlaces
+  distintos según lo que el usuario realmente hizo. El `seq` del pending fue lo que permitió que
+  el 3ro logueara (si no, el flanco se lo comía). Ambos `CAMBIÓ` fueron en **slot 1**, así que el
+  rescate `(i)`→1 quedó validado en vivo de paso. Secuencia final: el ancla
+  (`[S17] asignado a 'Velina' (latch)`) y el check en el **mismo segundo**.

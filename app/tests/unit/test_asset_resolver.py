@@ -166,6 +166,21 @@ def test_agent_avatar_invalid_variant():
     assert agent_avatar_path("Yanagi", variant="invalid") is None
 
 
+def test_jane_resuelve_su_ico_limpio():
+    """REGRESIÓN (QA 2026-07-20): el toast de reemplazo mostraba a Jane con el cuadrado de
+    HoYoLAB en vez de la cara redonda. La DB la llama 'Jane' y el archivo es 'Jane-Doe-ico',
+    así que no matcheaba y caía al jpeg de Pj_stats."""
+    p = agent_avatar_path("Jane", variant="ico")
+    assert p is not None and p.suffix == ".webp"
+    assert p.name == "Jane-Doe-ico.webp"
+
+
+def test_ico_no_cae_al_cuadrado_de_hoyolab():
+    """El -ico NUNCA debe degradar al jpeg de Pj_stats: son estilos incompatibles (cara
+    redonda limpia vs cuadrado con marco). Ante un asset faltante, None y placeholder."""
+    assert agent_avatar_path("Agente Inexistente 123", variant="ico") is None
+
+
 # ---------------------------------------------------------------------------
 # Cobertura full contra DB (test de integración liviano)
 # ---------------------------------------------------------------------------
@@ -197,13 +212,19 @@ def test_full_coverage_against_db():
 
         # Agents
         agent_misses_extend = []
+        agent_misses_ico = []
         agent_misses_pj = []
         for a in AgentRepo(con).get_all():
             if agent_avatar_path(a.nombre, variant="extend") is None:
                 agent_misses_extend.append(a.nombre)
+            # El -ico se chequea desde 2026-07-20: sin esto, Jane pasó desapercibida porque el
+            # resolver disimulaba el faltante cayendo al jpeg de Pj_stats.
+            if agent_avatar_path(a.nombre, variant="ico") is None:
+                agent_misses_ico.append(a.nombre)
             if a.nombre not in _PJ_STATS_DEFERIDO and agent_avatar_path(a.nombre, variant="pj_stats") is None:
                 agent_misses_pj.append(a.nombre)
         assert not agent_misses_extend, f"Agentes sin -extend.webp: {agent_misses_extend}"
+        assert not agent_misses_ico, f"Agentes sin -ico.webp limpio: {agent_misses_ico}"
         assert not agent_misses_pj, f"Agentes sin Pj_stats.jpeg: {agent_misses_pj}"
     finally:
         con.close()

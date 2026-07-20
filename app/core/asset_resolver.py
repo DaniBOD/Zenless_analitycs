@@ -14,9 +14,12 @@ explícito de overrides.
 """
 from __future__ import annotations
 
+import logging
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Rutas base
@@ -50,6 +53,7 @@ _AGENT_SPLASH_OVERRIDES: dict[str, str] = {
     "Cissia":         "cissia",        # archivo en lowercase con _
     "Billy Estelar":  "Billy-starlight",  # Billy Kid (v2.x); archivo EN. -extend usa "_"
                                           # → lo resuelve el fallback de separador.
+    "Jane":           "Jane-Doe",      # DB usa el nombre corto; los archivos, el completo
 }
 
 # Algunos archivos cissia usan "_" en lugar de "-" como separador
@@ -221,6 +225,16 @@ def agent_avatar_path(nombre: str | None, variant: str = "extend") -> Path | Non
     if path.exists():
         return path
 
+    if variant == "ico":
+        # SIN fallback al jpeg de Pj_stats: son estilos incompatibles. El -ico es la cara
+        # redonda limpia; el de Pj_stats es el cuadrado del perfil de HoYoLAB (con marco y
+        # fondo). Sustituirlo silenciosamente rompía la estética del toast — pasó con Jane,
+        # cuyo archivo es 'Jane-Doe-ico' y no matcheaba el nombre corto de la DB (QA
+        # 2026-07-20). Mejor devolver None: el toast degrada a placeholder, que es honesto,
+        # y el warning deja el asset faltante a la vista en vez de disimularlo.
+        log.warning("Falta el ico limpio de '%s' (%s) — el toast usará placeholder.",
+                    nombre, SPLASH_ARTS_DIR / f"{base}-ico.webp")
+        return None
     # Último recurso: fallback al jpeg de Pj_stats
     return agent_avatar_path(nombre, variant="pj_stats")
 
