@@ -540,6 +540,12 @@ class Monitor:
         self._swap_seq: int = 0
         self._swap_check_mark: tuple | None = None
         self._s23_last_key: tuple | None = None
+        # Botón de acción de S17 ("Equipar"/"Reemplazar"/"Desequipar"): 2ª señal del feature
+        # "disco libre equipado" (2026-07-22). `_btn_read_key` gatea la RELECTURA (RNF-06): es
+        # una llamada extra a OCR y solo cambia en transiciones reales — abrir otro disco, o que
+        # el badge aparezca/desaparezca. Ambas cosas ya se computan cada ciclo y son baratas.
+        self._s17_action_btn: str | None = None
+        self._btn_read_key: tuple | None = None
         # S22 (modal "Obtenido"): dedup CONVERGENTE por corrida. {n_uso: nº de discos ya
         # emitidos} o _S22_SEC_CERRADA si ya se emitió completa. `_s22_last_sig` gatea el
         # re-parseo (RNF-06): con el scroll quieto no hay nada nuevo que leer.
@@ -1474,6 +1480,7 @@ class Monitor:
         self._swap_seq += 1
         self._pending_swap = {
             "seq": self._swap_seq,          # identifica ESTE pending para el flanco del log
+            "origin_kind": "pj",            # ver `_arm_libre_pending` para el otro origen
             "origin_name": origin,
             "set_id": set_id,
             "set_name": set_name or d.set_raw,
@@ -1490,6 +1497,163 @@ class Monitor:
                 self._on_diagnostic(msg)
             except Exception:
                 log.debug("on_diagnostic S23 falló", exc_info=True)
+
+    def _refresh_action_button(self, merged, frame) -> None:
+        """Relee el botón de acción de S17 y lo cachea en `_s17_action_btn`.
+
+        Gate RNF-06: es una llamada EXTRA a OCR, así que solo se relee cuando cambia
+        `(identidad del disco, libre?, badge presente?)`. Esas tres ya se computan cada ciclo y
+        son baratas (el badge es un crop + Canny), y entre las tres cubren las únicas
+        transiciones que pueden cambiar el botón: abrir otro disco, o equipar/desequipar el que
+        se está mirando."""
+        if frame is None or merged is None:
+            return
+        try:
+            key = (self._disc_identity(merged),
+                   bool(merged.equip_libre), bool(merged.equip_detectado))
+        except Exception:
+            return
+        if key == self._btn_read_key:
+            return
+        self._btn_read_key = key
+        try:
+            from app.core.parser_disc_s17 import read_s17_action_button
+            self._s17_action_btn = read_s17_action_button(frame, self._ocr)
+        except Exception:
+            log.debug("lectura del botón de acción S17 falló", exc_info=True)
+            self._s17_action_btn = None
+
+    def _arm_libre_pending(self, merged) -> None:
+        """Arma el pendiente de un disco LIBRE que el usuario podría estar por equipar.
+
+        Es el espejo del diálogo S23, pero con evidencia MUCHO más débil: ver un disco libre no
+        compromete a nada (podés estar mirando). Por eso el que decide es el CHECK, no esto —
+        armar es gratis y no afirma nada.
+
+        Se exigen las DOS señales desde el arranque: `equip_libre` (badge ausente) y un botón que
+        solo aparece en discos libres. LIBRE es la lectura más frágil del sistema de badges (falso
+        LIBRE de Jane, 2026-07-19 → "presencia gana a LIBRE"), y el botón —texto de posición fija—
+        la confirma por una vía independiente.
+
+        Un pendiente nuevo SUPERA al anterior (sea LIBRE o de S23): las dos acciones son
+        mutuamente excluyentes y la última intención es la que vale."""
+        if merged is None or not merged.equip_libre:
+            return
+        if self._s17_action_btn not in ("equipar", "reemplazar"):
+            return
+        latch = self._last_agent_name
+        if not latch:
+            return   # sin destino no hay nada que afirmar después (RNF-02)
+        slot = merged.slot or 0
+        set_name = merged.set_name_canon or merged.set_name_raw or ""
+        if not slot or not set_name:
+            return
+        try:
+            identity = self._disc_identity(merged)
+        except Exception:
+            return
+        ps = self._pending_swap
+        if (ps is not None and ps.get("origin_kind") == "libre"
+                and ps.get("identity") == identity and ps.get("dest_name") == latch):
+            return   # ya armado para este disco y este PJ → no re-loguear (RNF-06)
+        set_id = None
+        if self._set_repo is not None:
+            try:
+                set_id = self._set_repo.resolve_id(set_name)
+            except Exception:
+                set_id = None
+        self._swap_seq += 1
+        self._pending_swap = {
+            "seq": self._swap_seq,
+            "origin_kind": "libre",
+            "origin_name": "LIBRE",
+            "identity": identity,
+            "set_id": set_id,
+            "set_name": set_name,
+            "slot": slot,
+            "dest_name": latch,
+            "ts": time.monotonic(),
+        }
+        self._swap_check_mark = None
+        msg = (f"[equipado] {set_name} slot {slot} · LIBRE → {latch} "
+               f"(pendiente · botón '{self._s17_action_btn}')")
+        log.info("%s", msg)
+        if self._on_diagnostic:
+            try:
+                self._on_diagnostic(msg)
+            except Exception:
+                log.debug("on_diagnostic armado libre falló", exc_info=True)
+
+    def _check_libre_equipado(self, merged, ps: dict) -> None:
+        """CHECK observacional del disco LIBRE: ¿lo equipó al PJ que está mirando?
+
+        Exige que las DOS señales volteen juntas: el badge pasa a nombrar al destino Y el botón
+        pasa a "Desequipar". Cada una tapa el agujero de la otra — el badge puede dar un falso
+        LIBRE/falso dueño, y el botón no dice quién es el dueño. Para un falso positivo tendrían
+        que fallar las dos a la vez y de forma coherente.
+
+        Dos diferencias deliberadas con el pendiente de S23:
+          - **Identidad COMPLETA** (set, slot, main, {substat+rolls}), no solo set+slot. Sin esto
+            hay un falso positivo concreto: mirás un Jazz Caótico slot 1 libre, NO lo equipás, y
+            más tarde entrás a un PJ que ya tiene uno puesto → "antes LIBRE, ahora ese PJ".
+          - **Muere al cambiar de PJ.** El diálogo S23 es un compromiso explícito y por eso su
+            pendiente vive hasta consumirse; mirar un disco libre no compromete nada. Un disco
+            libre se equipa al PJ que estás mirando, en la misma visita."""
+        from app.core.stats_vocab import _norm_key
+        dest = ps.get("dest_name")
+        latch = self._last_agent_name
+        if latch and dest and _norm_key(latch) != _norm_key(dest):
+            log.info("[equipado] pendiente descartado · cambiaste de %s a %s sin equipar",
+                     dest, latch)
+            self._pending_swap = None
+            self._swap_check_mark = None
+            return
+        try:
+            if self._disc_identity(merged) != ps.get("identity"):
+                return   # otro disco → no es el del pendiente
+        except Exception:
+            return
+
+        owner = merged.agente_asignado_nombre or merged.equip_pj_visual
+        btn = self._s17_action_btn
+        if not owner:
+            outcome = "incierto"                 # sigue sin dueño → todavía no lo equipó
+        elif dest and _norm_key(owner) != _norm_key(dest):
+            outcome = "otro"                     # lo equipó otro PJ (¿?) → abstenerse
+        elif btn != "desequipar":
+            outcome = "solo badge"               # el badge dice dueño pero el botón no confirma
+        else:
+            outcome = "cambió"                   # las dos señales voltearon → lo equipó
+
+        marca = (ps.get("seq"), outcome)
+        if self._swap_check_mark != marca:
+            self._swap_check_mark = marca
+            etiqueta = "CAMBIÓ ✓" if outcome == "cambió" else outcome
+            msg = (f"[equipado] check dueño · {ps['set_name']} slot {ps['slot']}: "
+                   f"LIBRE → {owner or '?'} · botón '{btn or '?'}' · {etiqueta}")
+            log.info("%s", msg)
+            if self._on_diagnostic:
+                try:
+                    self._on_diagnostic(msg)
+                except Exception:
+                    log.debug("on_diagnostic check libre falló", exc_info=True)
+
+        if outcome != "cambió":
+            return
+        # Confirmado. A diferencia del reemplazo NO se marca `swap_origin_hint`/`swap_fresh`: no
+        # hay fila de origen que mover (el disco no era de nadie), así que la persistencia sigue
+        # su camino normal sin pistas nuestras. Este feature es puramente observacional.
+        self._pending_swap = None
+        self._swap_check_mark = None
+        if self._on_replacement:
+            try:
+                self._on_replacement({
+                    "kind": "equipado",
+                    "set_name": ps["set_name"], "slot": ps["slot"],
+                    "from_name": None, "to_name": owner,
+                })
+            except Exception:
+                log.exception("Error en on_replacement (toast de equipado)")
 
     def _check_swap_owner(self, merged, state: ScreenState) -> None:
         """CHECK observacional del reemplazo: ¿el disco del swap pendiente cambió de dueño?
@@ -1512,6 +1676,9 @@ class Monitor:
         Es seguro porque exigimos ver el disco en manos del DESTINO: si cancelaste, no pasa."""
         ps = self._pending_swap
         if ps is None:
+            return
+        if ps.get("origin_kind") == "libre":
+            self._check_libre_equipado(merged, ps)
             return
         slot = merged.slot or 0
         merged_set = merged.set_name_canon or merged.set_name_raw or ""
@@ -1572,6 +1739,7 @@ class Monitor:
         if self._on_replacement:
             try:
                 self._on_replacement({
+                    "kind": "reemplazo",
                     "set_name": ps["set_name"], "slot": ps["slot"],
                     "from_name": origin, "to_name": owner,
                 })
@@ -2052,6 +2220,11 @@ class Monitor:
         self._s17_vote.reset()
         self._s17_warming = False
         self._grid_diag_counts.clear()
+        # Botón de acción: olvidar la lectura y su gate. El `_pending_swap` NO se toca — sobrevive
+        # a salir de S17 a propósito (el reemplazo se confirma al volver), y el pendiente LIBRE
+        # tiene su propia muerte por cambio de PJ en `_check_libre_equipado`.
+        self._s17_action_btn = None
+        self._btn_read_key = None
 
     @staticmethod
     def _disc_identity(d) -> tuple:
@@ -2179,7 +2352,9 @@ class Monitor:
                 self._s17_warming = False
             else:
                 self._assign_s17_pj(merged, frame)   # re-decide el dueño con más votos (sin OCR)
+                self._refresh_action_button(merged, frame)
                 self._check_swap_owner(merged, state)   # el dueño acaba de refrescarse
+                self._arm_libre_pending(merged)      # DESPUÉS del check: no auto-confirmarse
                 warm = self._s17_owner_passes >= _S17_OWNER_MIN_SAMPLES
                 ceiling = self._disc_agg_cycles >= _S17_AGG_MAX_CYCLES
                 if self._s17_owner_resolved(merged) or warm or ceiling:
@@ -2205,7 +2380,11 @@ class Monitor:
         # un swap real perdido en el medio. El chequeo solo necesita (set, slot, dueño), que ya
         # están en el merge parcial.
         if merged is not None:
+            self._refresh_action_button(merged, frame)
             self._check_swap_owner(merged, state)
+            # El armado va DESPUÉS del check, a propósito: si armara antes, el pendiente recién
+            # creado podría confirmarse en el mismo ciclo contra su propio estado inicial.
+            self._arm_libre_pending(merged)
         if self._disc_emitted or merged is None:
             return
         mature = disc_is_mature(merged)

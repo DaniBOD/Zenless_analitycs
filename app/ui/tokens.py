@@ -54,10 +54,15 @@ VARIANTS: dict[str, dict] = {
     "reserva":   {"label": "RESERVA",   "color": YELLOW,   "tone": "yellow", "icon": "stack"},
     "descartar": {"label": "DESCARTAR", "color": WARNING,  "tone": "purple", "icon": "trash"},
     "lategame":  {"label": "RUN REGISTRADA", "color": YELLOW, "tone": "yellow", "icon": "feed"},
-    # Confirmación pasiva de un swap de disco entre PJs detectado por OCR (S23→S17). Acento
-    # violeta (color "libre" del sistema, no usado por otra variante). Sin score ni countdown:
-    # es una notificación de que YA pasó y la DB se sincronizó (ver BRIEF_card_reemplazado.md).
+    # --- Confirmaciones PASIVAS (violeta = "esto ya pasó") -------------------------------
+    # Sin score ni countdown: no aconsejan nada, reportan algo observado en pantalla. El violeta
+    # las separa de las 4 variantes de arriba, que SON recomendaciones. Ninguna afirma que la DB
+    # se haya escrito — el toast es observacional y sale igual en read-only (rediseño 2026-07-20).
     "reemplazado": {"label": "REEMPLAZADO", "color": PURPLE, "tone": "purple", "icon": "swap"},
+    # Disco LIBRE que el usuario acaba de equipar. El label NO lleva el nombre del PJ: se lee
+    # "AHORA EN" + el avatar/nombre que ya pinta el body. Meterlo en el header desbordaba contra
+    # el micro-badge con nombres largos ("AHORA EN ORFIA Y MAGAS" se come los ~87 px de holgura).
+    "equipado":    {"label": "AHORA EN",    "color": PURPLE, "tone": "purple", "icon": "check"},
 }
 
 

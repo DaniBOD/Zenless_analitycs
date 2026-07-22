@@ -73,6 +73,7 @@ class MonitorController(QObject):
     # Eventos de captura
     disc_detected = Signal(dict)             # payload listo para LivePanel + Toast
     disc_replaced = Signal(dict)             # swap de disco entre PJs confirmado → toast REEMPLAZADO
+    disc_equipped = Signal(dict)             # disco LIBRE equipado a un PJ → toast AHORA EN
     agent_stats_detected = Signal(dict)      # stats de agente desde S18
     error_occurred = Signal(str)
     # Mensaje informativo crudo para el log (estado, captura descartada, etc).
@@ -665,8 +666,10 @@ class MonitorController(QObject):
             self.error_occurred.emit(f"Procesando disco: {exc}")
 
     def _on_replacement_from_monitor(self, ev: dict) -> None:
-        """El monitor OBSERVÓ que un disco cambió de dueño (check por badge tras el diálogo S23)
-        → toast REEMPLAZADO.
+        """El monitor OBSERVÓ que un disco cambió de dueño → toast. Dos sabores según `kind`:
+
+          - `reemplazo` — el disco era de otro PJ (diálogo S23 + check por badge) → REEMPLAZADO.
+          - `equipado`  — el disco estaba LIBRE (badge ausente + botón) → AHORA EN.
 
         No toca la DB: resuelve el `set_id` con `_lookup_set_id` (lectura) y los assets por
         filesystem. Es a propósito — el toast afirma lo que se vio en pantalla, no lo que la
@@ -674,15 +677,19 @@ class MonitorController(QObject):
         corre por su cuenta en `persist_s17_disc` y ya no gatilla nada visual."""
         try:
             set_name = ev.get("set_name")
-            self.disc_replaced.emit(self._build_replacement_payload({
+            payload = self._build_replacement_payload({
                 "set_name": set_name,
                 "set_id": self._lookup_set_id(set_name),
                 "slot": ev.get("slot", 0),
                 "from_name": ev.get("from_name"),
                 "to_name": ev.get("to_name"),
-            }))
+            })
+            if ev.get("kind") == "equipado":
+                self.disc_equipped.emit(payload)
+            else:
+                self.disc_replaced.emit(payload)
         except Exception:
-            log.exception("Error armando el toast de reemplazo")
+            log.exception("Error armando el toast de equipamiento")
 
     def _build_replacement_payload(self, ev: dict) -> dict:
         """Evento {set_name, set_id, slot, from_name, to_name} → payload del toast (logo del set

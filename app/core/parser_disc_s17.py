@@ -35,6 +35,7 @@ nivel.
 from __future__ import annotations
 
 import re
+import logging
 import unicodedata
 from typing import TYPE_CHECKING
 
@@ -42,6 +43,8 @@ import numpy as np
 
 if TYPE_CHECKING:
     from app.core.ocr_backend import OcrBackend
+
+log = logging.getLogger(__name__)
 
 from app.core.parser_disc import DiscParsed, SubstatParsed, _detect_rareza
 from app.core.stats_vocab import normalize_stat_name, is_valid_main_for_slot
@@ -696,6 +699,71 @@ def detect_active_set_tier(frame, lines, W, H) -> int | None:
         return 4 if p95 > _ACTIVE_TIER_BRIGHT_MIN else 2
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Botón de acción de la barra inferior (S17)
+# ---------------------------------------------------------------------------
+
+# Franja de los botones inferiores. Medido sobre capturas reales 2557×1439 (2026-07-22).
+_S17_BTN_ROI = (0.915, 0.995, 0.55, 0.99)   # y0n, y1n, x0n, x1n
+
+# El botón de ACCIÓN es el del medio. Los tres tienen centro X estable:
+#   0.639 "Desequipar rápido" · 0.772 el de acción · 0.905 "Mejorar"
+# La ventana [0.72, 0.83] aísla el del medio con margen holgado a ambos lados.
+_S17_BTN_CX_MIN, _S17_BTN_CX_MAX = 0.72, 0.83
+
+# Los 3 valores que puede tomar. Ojo: hablan del SLOT DESTINO, no del disco —
+#   equipar    → el PJ tiene ese slot VACÍO (no desplaza a nadie)
+#   reemplazar → el PJ ya tiene un disco ahí → habrá un desplazado
+#   desequipar → el disco ya lo lleva puesto este PJ
+_S17_BTN_VALUES = ("desequipar", "reemplazar", "equipar")
+
+
+def read_s17_action_button(frame: np.ndarray, ocr: "OcrBackend") -> str | None:
+    """Texto del botón de ACCIÓN de S17, normalizado: 'equipar' | 'reemplazar' | 'desequipar'
+    (None si no se lee).
+
+    Es la segunda señal del feature "disco libre equipado" (2026-07-22). La primera es el badge
+    junto al pill de nivel (`crop_s17_assigned_avatar`), que dice si el disco tiene dueño; esta
+    dice qué va a pasar. Se guardan mutuamente: LIBRE es la lectura más frágil del sistema de
+    badges (falso LIBRE de Jane, 2026-07-19), y 'Equipar'/'Reemplazar' solo aparecen en discos
+    libres → confirman la ausencia de badge por una vía independiente (texto de posición fija).
+
+    Se selecciona POR POSICIÓN, no por presencia del texto: el botón vecino "Desequipar rápido"
+    aporta un 'desequipar' fantasma que haría dar por equipado cualquier disco libre.
+
+    Lectura aparte del parseo de stats — el filtro de basura del panel (`_BASURA_PANEL`) sigue
+    descartando estos textos y está bien que lo haga."""
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return None
+    H, W = frame.shape[:2]
+    if not H or not W:
+        return None
+    y0n, y1n, x0n, x1n = _S17_BTN_ROI
+    y0, y1 = int(y0n * H), int(y1n * H)
+    x0, x1 = int(x0n * W), int(x1n * W)
+    roi = frame[y0:y1, x0:x1]
+    if roi.size == 0:
+        return None
+    try:
+        lines = ocr.text_with_bboxes(roi)
+    except Exception:
+        log.debug("OCR del botón de acción S17 falló", exc_info=True)
+        return None
+    for (t, conf, bb) in lines:
+        if conf < 0.5:
+            continue
+        cx_norm = ((bb[0] + bb[2]) / 2.0 + x0) / W
+        if not (_S17_BTN_CX_MIN <= cx_norm <= _S17_BTN_CX_MAX):
+            continue
+        key = _strip(t or "").strip().lower()
+        # Prefijo, no igualdad: 'desequipar' debe ganarle a 'equipar' (lo contiene como
+        # sufijo), por eso _S17_BTN_VALUES va del más largo al más corto.
+        for val in _S17_BTN_VALUES:
+            if key.startswith(val):
+                return val
+    return None
 
 
 def parse_disc_s17(frame: np.ndarray, ocr: "OcrBackend") -> DiscParsed:

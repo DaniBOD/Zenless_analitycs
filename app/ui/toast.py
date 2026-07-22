@@ -232,11 +232,26 @@ class DiscToast(QWidget):
         self._tick_timer.start()
         self.update()
 
+    def show_equipped(self, data: ToastData) -> None:
+        """Toast de disco LIBRE equipado (variante 'equipado'): disco → destino, sin origen.
+
+        Espejo de `show_replacement` — misma familia visual (violeta, sin score ni countdown)
+        porque las dos reportan algo que YA pasó. Se distinguen por el body: el reemplazo tiene
+        dos PJs y flechas; este tiene uno solo, porque el disco no era de nadie."""
+        data.variant = "equipado"
+        self._show_confirmation(data)
+
     def show_replacement(self, data: ToastData) -> None:
         """Toast de swap confirmado (variante 'reemplazado'): origen → disco → destino, sin score
         ni countdown. Reusa el marco/glow; el body lo pinta `_paint_body_replacement`. El thumb va
         CENTRADO (no a la izquierda como en las recomendaciones)."""
         data.variant = "reemplazado"
+        self._show_confirmation(data)
+
+    def _show_confirmation(self, data: ToastData) -> None:
+        """Presentación común de las variantes de confirmación ('reemplazado' / 'equipado'):
+        posición, thumb centrado con el acento de la variante, fade-in y timeout. Lo único que
+        cambia entre ellas es el body, que decide `paintEvent` por `data.variant`."""
         self._data = data
         self._secs_remaining = data.timeout_secs or 3.0
         self._paused = False
@@ -250,7 +265,7 @@ class DiscToast(QWidget):
 
         if self._thumb:
             self._thumb.deleteLater()
-        accent = T.variant("reemplazado")["color"]
+        accent = T.variant(data.variant)["color"]
         self._thumb = DiscThumb(
             accent=accent, tier=data.rarity, set_logo_path=data.set_logo, size=48, parent=self,
         )
@@ -363,9 +378,16 @@ class DiscToast(QWidget):
 
         # ---- Contenido ----
         self._paint_header(p, ox, oy, accent, v)
+        # Las variantes de CONFIRMACIÓN reportan lo observado en pantalla; el texto no debe
+        # prometer una escritura a la DB. Antes decía "EQUIPAMIENTO SINCRONIZADO" / "inventory_discs ✓",
+        # que quedó falso con el rediseño observacional (2026-07-20): el toast sale igual en
+        # read-only, donde no se escribe nada, y también cuando la persistencia no encuentra la fila.
         if self._data.variant == "reemplazado":
             self._paint_body_replacement(p, ox, oy, accent, v)
-            self._paint_footer_static(p, ox, oy, accent, "EQUIPAMIENTO SINCRONIZADO", "inventory_discs ✓")
+            self._paint_footer_static(p, ox, oy, accent, "REEMPLAZO OBSERVADO", "S23 → badge ✓")
+        elif self._data.variant == "equipado":
+            self._paint_body_equipped(p, ox, oy, accent, v)
+            self._paint_footer_static(p, ox, oy, accent, "EQUIPAMIENTO OBSERVADO", "badge + botón ✓")
         else:
             self._paint_body(p, ox, oy, accent, v)
             self._paint_footer(p, ox, oy, accent, v)
@@ -429,9 +451,10 @@ class DiscToast(QWidget):
         id_rect = QRect(sep_x + 6, label_y, 60, label_h)
         p.drawText(id_rect, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), id_str)
 
-        # Variante confirmación (reemplazado): micro-badge "✓ SINCRONIZADO" estático, sin countdown.
-        if self._data.variant == "reemplazado":
-            badge_txt = "✓ SINCRONIZADO"
+        # Variantes de confirmación: micro-badge estático, sin countdown. Dice OBSERVADO (no
+        # SINCRONIZADO): el toast afirma lo que se vio en pantalla, no lo que la DB guardó.
+        if self._data.variant in ("reemplazado", "equipado"):
+            badge_txt = "✓ OBSERVADO"
             p.setFont(T.font_caps(7))
             bw = p.fontMetrics().horizontalAdvance(badge_txt) + 14
             bx = ox + WIDTH - PADDING_X - bw
@@ -648,6 +671,41 @@ class DiscToast(QWidget):
                    int(Qt.AlignmentFlag.AlignCenter), "→")
         p.drawText(QRect(ox + WIDTH // 2 + 24, cy - 8, (ox_r + 8) - (ox + WIDTH // 2 + 24), 16),
                    int(Qt.AlignmentFlag.AlignCenter), "→")
+        # --- Set + slot debajo del thumb central ---
+        p.setFont(T.font_ui(9, bold=True)); p.setPen(T.color(T.TEXT_PRIMARY))
+        set_txt = p.fontMetrics().elidedText(self._data.set_name, Qt.TextElideMode.ElideRight, 118)
+        p.drawText(QRect(ox + WIDTH // 2 - 62, name_y - 12, 124, 12),
+                   int(Qt.AlignmentFlag.AlignCenter), set_txt)
+        p.setFont(T.font_ui(8)); p.setPen(T.color(T.TEXT_MUTED))
+        p.drawText(QRect(ox + WIDTH // 2 - 62, name_y + 1, 124, 11),
+                   int(Qt.AlignmentFlag.AlignCenter), f"Slot {self._data.slot}")
+
+    def _paint_body_equipped(self, p: QPainter, ox: int, oy: int, accent: QColor, v: dict):
+        """Body del toast 'equipado': disco (thumb central + set/slot) → PJ destino. UN SOLO PJ,
+        sin columna de origen ni flecha de salida — el disco estaba libre, no se lo quitó a nadie.
+
+        Con el header ("AHORA EN") se lee de corrido: AHORA EN → [avatar] Velina."""
+        d = 38
+        col_top = oy + 58
+        name_y = col_top + d + 14
+        # --- Destino (derecha, resaltado) — mismas coordenadas que en el reemplazo ---
+        ox_r = ox + WIDTH - PADDING_X - 56
+        p.setFont(T.font_caps(7)); p.setPen(accent)
+        p.drawText(QRect(ox_r - 4, col_top - 12, 56, 10), int(Qt.AlignmentFlag.AlignCenter), "EQUIPA")
+        self._paint_avatar(p, self._data.target_avatar, ox_r + 8, col_top, d, accent)
+        p.setFont(T.font_ui(9, bold=True)); p.setPen(T.color(T.TEXT_PRIMARY))
+        p.drawText(QRect(ox_r - 6, name_y - 10, 60, 14),
+                   int(Qt.AlignmentFlag.AlignCenter),
+                   p.fontMetrics().elidedText(self._data.target_agent, Qt.TextElideMode.ElideRight, 58))
+        # --- Flecha centro→destino (una sola: no hay origen del que salga) ---
+        cy = col_top + d // 2
+        p.setFont(T.font_ui(13, bold=True)); p.setPen(accent)
+        p.drawText(QRect(ox + WIDTH // 2 + 24, cy - 8, (ox_r + 8) - (ox + WIDTH // 2 + 24), 16),
+                   int(Qt.AlignmentFlag.AlignCenter), "→")
+        # --- "LIBRE" a la izquierda, atenuado: de dónde venía el disco ---
+        ox_l = ox + PADDING_X + 6
+        p.setFont(T.font_caps(7)); p.setPen(T.color(T.TEXT_MUTED))
+        p.drawText(QRect(ox_l - 4, cy - 6, 64, 12), int(Qt.AlignmentFlag.AlignCenter), "SIN DUEÑO")
         # --- Set + slot debajo del thumb central ---
         p.setFont(T.font_ui(9, bold=True)); p.setPen(T.color(T.TEXT_PRIMARY))
         set_txt = p.fontMetrics().elidedText(self._data.set_name, Qt.TextElideMode.ElideRight, 118)

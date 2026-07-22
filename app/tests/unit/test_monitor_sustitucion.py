@@ -140,8 +140,10 @@ def test_cambio_de_dueno_dispara_el_toast(monkeypatch):
     disc = _disc(slot=2, owner="Nangong Yu")
     m._check_swap_owner(disc, _ST17)
 
-    assert m._toasts == [{"set_name": "Balada de la rama y la espada", "slot": 2,
-                          "from_name": "Yixuan", "to_name": "Nangong Yu"}]
+    # `kind` distingue este evento del de "disco libre equipado", que viaja por el MISMO
+    # callback y termina en otro toast (ver test_monitor_equipado).
+    assert m._toasts == [{"kind": "reemplazo", "set_name": "Balada de la rama y la espada",
+                          "slot": 2, "from_name": "Yixuan", "to_name": "Nangong Yu"}]
     assert m._pending_swap is None                 # consumido
     assert disc.swap_origin_hint == "Yixuan"       # hint para que la persistencia mueva la fila
     assert disc.swap_fresh is True

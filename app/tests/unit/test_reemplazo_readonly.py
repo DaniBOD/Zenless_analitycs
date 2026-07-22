@@ -90,6 +90,46 @@ def test_la_persistencia_en_readonly_no_reporta_movimiento(qapp, readonly, tmp_p
     assert result.moved is False and result.swap_fresh is False
 
 
+def test_el_toast_de_equipado_sale_en_readonly(qapp, readonly):
+    """Mismo contrato para el disco LIBRE equipado (2026-07-22): también es observacional.
+
+    Y va por OTRA señal: `kind` enruta el mismo callback a `disc_equipped`, no a
+    `disc_replaced` — si se mezclaran, un equipamiento saldría como reemplazo."""
+    from app.ui.controller import MonitorController
+    ctrl = MonitorController()
+    equipados: list[dict] = []
+    reemplazos: list[dict] = []
+    ctrl.disc_equipped.connect(equipados.append)
+    ctrl.disc_replaced.connect(reemplazos.append)
+
+    ctrl._on_replacement_from_monitor({
+        "kind": "equipado", "set_name": "Jazz caótico", "slot": 1,
+        "from_name": None, "to_name": "Velina",
+    })
+
+    assert len(equipados) == 1, "el toast de equipado no salió en read-only"
+    assert reemplazos == [], "un equipamiento no debe salir como reemplazo"
+    p = equipados[0]
+    assert p["to_agent"] == "Velina" and p["slot"] == 1 and "Jazz" in p["set"]
+
+
+def test_un_reemplazo_no_sale_como_equipado(qapp, readonly):
+    """La otra dirección del ruteo: sin `kind` (o con 'reemplazo') va a `disc_replaced`."""
+    from app.ui.controller import MonitorController
+    ctrl = MonitorController()
+    equipados: list[dict] = []
+    reemplazos: list[dict] = []
+    ctrl.disc_equipped.connect(equipados.append)
+    ctrl.disc_replaced.connect(reemplazos.append)
+
+    ctrl._on_replacement_from_monitor({
+        "kind": "reemplazo", "set_name": "Jazz caótico", "slot": 1,
+        "from_name": "Jane", "to_name": "Velina",
+    })
+
+    assert len(reemplazos) == 1 and equipados == []
+
+
 def test_el_disco_emitido_ya_no_dispara_el_toast(qapp):
     """Anti-doble-toast: la vía de emisión del disco no debe emitir `disc_replaced`.
 

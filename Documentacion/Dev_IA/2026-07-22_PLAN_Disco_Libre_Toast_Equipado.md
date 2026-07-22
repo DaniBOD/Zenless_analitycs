@@ -1,9 +1,34 @@
 # PLAN — Disco libre equipado → toast EQUIPADO (S6/S7)
 
 **Fecha:** 2026-07-22
-**Estado:** 📋 PLANIFICADO — sin implementar.
+**Estado:** ⚠️ **SUPERADO** — ver [IMPL](./2026-07-22_IMPL_Disco_Libre_Toast_Equipado.md).
 **Hermano de:** [Reemplazo de disco S23](./2026-07-19_IMPL_Reemplazo_Disco_S23.md) (cerrado 2026-07-20)
 **Relacionado:** [SPEC Invariante equipado/asignado](./2026-07-22_SPEC_Invariante_Equipado_Asignado.md)
+
+---
+
+> ## ⚠️ CORRECCIÓN — este plan se equivocó de pantalla
+>
+> Todo el documento dice **S6/S7**. **Es falso: la pantalla es S17.** Se descubrió al correr el
+> detector sobre los propios fixtures antes de implementar:
+>
+> | carpeta | clasificación real |
+> |---|---|
+> | `17_Inventario_Disco_Vista_Individual_libres` | **11/11 → S17** (conf 1.00, `s17_personalizacion_pistas.png`) |
+> | `04_Inventario_Disco_Vista_Individual` | 13 → S17, 2 → S7, 1 → S6, 1 → S12 |
+>
+> Los nombres de carpeta son etiquetas organizativas, no estados. El error venía de haberlos leído
+> como si nombraran la pantalla. **Lección: verificar el estado con el detector, no deducirlo del
+> nombre del archivo.**
+>
+> El impacto fue grande y a favor: S17 ya tenía handler continuo, latch de identidad preservado,
+> detección de dueño por badge y `equip_libre` calculado — o sea, **casi todo lo que este plan
+> proponía construir ya existía**. Las fases 0 (capturas del "después") y 1 (badge en la pantalla)
+> quedaron sin objeto.
+>
+> Lo que sí sobrevivió intacto: el diseño de las **dos señales que se guardan mutuamente**, el
+> riesgo del falso LIBRE, y la estructura de pendiente+check heredada del S23. Se conserva el
+> documento por eso.
 
 ---
 
