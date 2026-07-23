@@ -269,7 +269,7 @@ class AgentStatsAggregator:
     Acumula stats por agente entre capturas consecutivas para madurar la
     extraccion.
 
-    Tesseract es no-deterministico frame-a-frame: cada F8 puede capturar
+    Tesseract es no-deterministico frame-a-frame: cada captura puede leer
     distintos stats correctamente, otros None. El aggregator preserva los
     "best-known" valores: si la nueva captura tiene un campo None pero el
     aggregator ya tenia valor previo (mismo agente), se conserva el previo.

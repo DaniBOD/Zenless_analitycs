@@ -517,7 +517,6 @@ class MainWindow(QMainWindow):
         self._live_panel.start_monitor_requested.connect(self._controller.start)
         self._live_panel.stop_monitor_requested.connect(self._controller.stop)
         self._live_panel.pause_toggle_requested.connect(self._controller.toggle_pause)
-        self._live_panel.test_capture_requested.connect(self._controller.force_scan)
 
         # Tabs
         tabs = QTabWidget()
@@ -549,7 +548,7 @@ class MainWindow(QMainWindow):
 
         # Status bar
         sb = QStatusBar()
-        sb.showMessage("DaniBOD · UID 1000860143 · Fase 2 en progreso  |  F8 Captura · F9 Panel · F10 Pausa · F11 Lategame")
+        sb.showMessage("DaniBOD · UID 1000860143 · Fase 2 en progreso  |  F9 Panel · F10 Pausa · F11 Lategame")
         self.setStatusBar(sb)
 
     def _setup_tray(self):

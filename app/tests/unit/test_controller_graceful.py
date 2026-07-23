@@ -60,19 +60,6 @@ def test_controller_emits_error_when_no_ocr_backend(qapp):
     assert ctrl._monitor is None, "El monitor NO debe haberse creado"
 
 
-def test_controller_force_scan_emits_error_when_not_started(qapp):
-    """force_scan sin monitor activo emite error informativo."""
-    from app.ui.controller import MonitorController
-
-    received = []
-    ctrl = MonitorController()
-    ctrl.error_occurred.connect(lambda msg: received.append(msg))
-    ctrl.force_scan()
-
-    assert len(received) == 1
-    assert "Iniciar" in received[0]
-
-
 def test_controller_stop_when_not_started_is_noop(qapp):
     """Llamar stop() sin haber arrancado no debe lanzar excepción."""
     from app.ui.controller import MonitorController

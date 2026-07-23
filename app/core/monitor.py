@@ -1,7 +1,7 @@
 """
 Hito 2.4.7 / 2.5 — Monitor principal con polling adaptativo · RF-04 §5.
 Loop en thread secundario: captura → clasifica → parsea → emite callback.
-Integra UpgradeSyncer (S10 PRE/POST) y HotkeyManager (F8/F10).
+Integra UpgradeSyncer (S10 PRE/POST) y HotkeyManager (F9/F10).
 Hook win32 para EVENT_SYSTEM_FOREGROUND (forzar scan al volver al juego).
 """
 from __future__ import annotations
@@ -296,7 +296,7 @@ class Monitor:
     """
     Loop de monitoreo en thread separado.
     Al detectar un disco en pantalla llama a `on_disc` con el DiscParsed.
-    Integra UpgradeSyncer para S10 y HotkeyManager para F8/F10.
+    Integra UpgradeSyncer para S10 y HotkeyManager para F9/F10.
     """
 
     def __init__(
@@ -367,7 +367,7 @@ class Monitor:
         # Desacopla la emisión de los parpadeos de la firma híbrida: el modelo 3D
         # del disco tiene animación idle → la firma cruza el umbral en pantalla
         # estática y resetea el aggregator. Sin esto el MISMO disco quieto se
-        # re-emite ~7×. Se limpia al salir de S17 o forzar (F8). RNF-06: sin OCR.
+        # re-emite ~7×. Se limpia al salir de S17 o al forzar re-scan (foreground). RNF-06: sin OCR.
         self._disc_emitted_ids: set = set()
         # Diagnóstico de trabes (returns tempranos mudos) — ver `_note_stall`. {scope: (motivo, n)}
         self._stalls: dict[str, tuple[str, int]] = {}
@@ -385,7 +385,7 @@ class Monitor:
         # Identidades de discos de drop YA emitidos en la sesión de farmeo. Propio de S3 (NO el
         # compartido _disc_emitted_ids, que _reset_detail_identity borra al volver a S2) → así
         # re-abrir un disco ya capturado avisa "ya capturado" y no re-dispara el toast. Se limpia
-        # con F8 (o al reiniciar). Limitación: dos farmeos con un disco IDÉNTICO (mismo
+        # con el re-scan de foreground (o al reiniciar). Limitación: dos farmeos con un disco IDÉNTICO (mismo
         # set+slot+stats) dedupean el 2º — caso raro, aceptado.
         self._s3_emitted_ids: set = set()
         # S5 (resultado de afinación tienda música): mismo patrón continuo que S3 (ficha izquierda,
@@ -429,7 +429,7 @@ class Monitor:
         self._last_ram_check_t = 0.0
         # Último estado confirmado por votación. Persiste aunque el buffer
         # dedupee (devuelva None por mismo estado), para permitir
-        # re-extracción CONTINUA de S18 sin requerir cambio de estado ni F8.
+        # re-extracción CONTINUA de S18 sin requerir cambio de estado ni re-scan.
         self._confirmed_state: ScreenState | None = None
         # Flag para loggear "[S18] perfil reconocido" una sola vez por entrada
         # (el log de stats sí se repite en cada ciclo de extracción).
@@ -525,7 +525,7 @@ class Monitor:
         # pueda resetearlo y permitir re-emisión de [reconocido]/[stats].
         self._buffer: TemporalBuffer | None = None
         # Aggregator de stats S18: madura la extracción entre capturas
-        # consecutivas. OCR es no-determinista frame-a-frame; tras 2-3 F8
+        # consecutivas. OCR es no-determinista frame-a-frame; tras 2-3 ciclos
         # los stats convergen a sus valores reales aunque cada captura sea
         # parcial. Se resetea automáticamente cuando cambia el agente.
         self._stats_aggregator = AgentStatsAggregator()
@@ -624,27 +624,28 @@ class Monitor:
 
     def force_scan(self) -> None:
         """
-        Fuerza un scan inmediato (F8 o evento de foreground).
+        Fuerza un scan inmediato. Hoy lo dispara el hook de foreground
+        (EVENT_SYSTEM_FOREGROUND) cuando ZZZ vuelve al frente.
         Resetea buffer y fuerza un ciclo de proceso inmediato.
 
         TAMBIÉN resetea los dedup flags (`_processed_disc_state_code` y
-        `_reported_agent_stats_state_code`) — útil para iterar QA del
-        parser S18: el usuario presiona F8 y se vuelve a extraer stats
-        sin necesidad de salir y volver a entrar al perfil del PJ.
+        `_reported_agent_stats_state_code`) para re-emitir el best-known
+        al reenfocar el juego, sin necesidad de salir y volver a entrar
+        al perfil del PJ.
 
         Emite un diagnóstico visible en el LivePanel para confirmar
-        que F8 disparó (antes era silencioso, sin feedback al usuario).
+        que el re-scan disparó (antes era silencioso, sin feedback).
         """
         if self._thread and self._thread.is_alive():
             self._processed_disc_state_code = None
             self._reported_agent_stats_state_code = None
             # S17 continuo: re-emitir el disco actual aunque ya se haya emitido
-            # (sin tirar lo fusionado — F8 fuerza el re-log/persist del best-known).
+            # (sin tirar lo fusionado — el re-scan fuerza el re-log/persist del best-known).
             self._disc_emitted = False
             self._disc_emitted_ids.clear()
-            self._s3_emitted_ids.clear()   # F8 re-captura también los drops S3 ya vistos
+            self._s3_emitted_ids.clear()   # re-captura también los drops S3 ya vistos
             self._s17_assign_sig = None
-            # Resetear también el TemporalBuffer del loop. Sin esto, F8
+            # Resetear también el TemporalBuffer del loop. Sin esto, el re-scan
             # quedaba sin emitir [reconocido]/[stats] porque `buffer.add`
             # devuelve None para el mismo código ya emitido. El buffer
             # vive en _run() como `self._buffer` (instance var, ver _run).
@@ -654,7 +655,7 @@ class Monitor:
             log.info("force_scan: dedup flags reseteados, scan forzado")
             if self._on_diagnostic:
                 try:
-                    self._on_diagnostic("F8: scan manual forzado (dedup reseteado)")
+                    self._on_diagnostic("re-scan forzado (foreground · dedup reseteado)")
                 except Exception:
                     log.exception("Error en on_diagnostic (force_scan)")
             self._force_event.set()
@@ -669,7 +670,7 @@ class Monitor:
            confirma un estado por mayoría de votos.
 
         El TemporalBuffer es instance var (self._buffer) para que
-        force_scan() pueda resetearlo desde otros threads (F8, hook
+        force_scan() pueda resetearlo desde otros threads (hook
         de foreground), permitiendo re-emitir [reconocido]/[stats]
         sin necesidad de cambio de estado real.
         """
@@ -769,7 +770,7 @@ class Monitor:
             # buffer dedupeó (devolvió None por mismo estado). Esto habilita
             # la EXTRACCIÓN CONTINUA de S18: aunque el estado no cambie,
             # re-procesamos en cada ciclo de cadencia para reflejar cambios
-            # de agente y re-loggear stats sin requerir F8.
+            # de agente y re-loggear stats sin requerir re-scan.
             active_state = voted_state if voted_state is not None else self._confirmed_state
             if active_state is not None:
                 cadence_ms = polling_cadence_ms(active_state)
@@ -784,7 +785,7 @@ class Monitor:
                 # S18 (stats) y S8/S19 (detalle de agente) se re-procesan en cada
                 # ciclo de cadencia aunque el estado no cambie (logging persistente).
                 # El resto de estados procesa solo en la transición (voted_state no
-                # nulo) o por F8 forzado.
+                # nulo) o por re-scan forzado (foreground).
                 # S17 es CONTINUO (Fase 1): se re-procesa cada cadencia como S18/S8/S19.
                 # S15 (menú de personajes, M.1) también: al cambiar de PJ SIN cambiar de
                 # pantalla no hay transición → sin re-procesar quedaba pegado en el 1er PJ
@@ -3822,7 +3823,6 @@ class Monitor:
     def _register_hotkeys(self) -> None:
         from app.core.hotkeys import HotkeyManager
         hk = HotkeyManager()
-        hk.on("f8",  self.force_scan)
         hk.on("f10", self.toggle_pause)
         if self._on_toggle_panel:
             hk.on("f9", self._on_toggle_panel)

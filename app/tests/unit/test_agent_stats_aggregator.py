@@ -36,7 +36,7 @@ def test_aggregator_first_merge_clones_input():
 
 
 def test_aggregator_preserves_value_when_new_is_none():
-    """F8 #1 captura PV. F8 #2 no captura PV. Resultado: aggregator preserva PV."""
+    """Captura #1 lee PV. Captura #2 no lee PV. Resultado: aggregator preserva PV."""
     agg = AgentStatsAggregator()
     agg.merge(_stats(pv=10797, ataque=2531, agente_nombre="Nangong Yu"))
     # Segunda captura: PV None, pero ATK presente + nuevo DEF
@@ -96,7 +96,7 @@ def test_aggregator_resets_on_stats_divergence_even_without_name():
 def test_aggregator_progressively_completes_stats():
     """
     Tres capturas parciales del mismo agente → aggregator converge a stats
-    completos. Esto simula 3 F8 con OCR no-determinista frame-a-frame.
+    completos. Esto simula 3 ciclos con OCR no-determinista frame-a-frame.
     """
     agg = AgentStatsAggregator()
     # Captura 1: nivel+PV+ATK

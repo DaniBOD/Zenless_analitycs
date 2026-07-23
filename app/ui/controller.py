@@ -235,25 +235,6 @@ class MonitorController(QObject):
         paused = self._monitor.toggle_pause()
         self.pause_changed.emit(paused)
 
-    @Slot()
-    def force_scan(self):
-        if self._monitor is None:
-            # Si auto-detect está activo y la ventana de ZZZ está abierta, arrancar.
-            if self._auto_detect_enabled:
-                from app.core.capturer import find_zzz_window
-                if find_zzz_window() is not None:
-                    self.start()
-                    if self._monitor is not None:
-                        self._monitor.force_scan()
-                    return
-            self.error_occurred.emit("Iniciar captura primero (F8 sin monitor activo).")
-            return
-        try:
-            self._monitor.force_scan()
-        except Exception as exc:
-            log.exception("force_scan failed")
-            self.error_occurred.emit(f"force_scan: {exc}")
-
     # ---- Auto-detect (arranque automático cuando ZZZ está abierto) -------------
 
     @Slot(bool)
@@ -493,7 +474,8 @@ class MonitorController(QObject):
 
         Los 11 atributos base están siempre presentes (None se muestra como '-').
         El último mensaje indica si la extracción es completa o si faltan
-        campos a re-intentar con F8 (el aggregator los completará).
+        campos (la re-extracción continua de S18 + el aggregator los completan
+        en ciclos sucesivos sin intervención del usuario).
 
         Madurez role-aware:
           - Roles Disruptivos requieren `fuerza_bruta` (no `tasa_perforacion`).

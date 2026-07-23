@@ -1,7 +1,6 @@
 """
 Hotkeys globales (RNF-03: solo lectura, nunca enviamos teclas).
 
-  F8  → captura manual (force_scan en Monitor)
   F9  → toggle panel principal
   F10 → toggle pause/resume monitor
   F11 → registrar run lategame (Fase 4)
@@ -26,7 +25,6 @@ log = logging.getLogger(__name__)
 
 # Win32 virtual key codes (ver MSDN: Virtual-Key Codes)
 _VK_CODES = {
-    "f8":  0x77,
     "f9":  0x78,
     "f10": 0x79,
     "f11": 0x7A,
@@ -34,7 +32,6 @@ _VK_CODES = {
 
 # Mapeo legible (para logs)
 _KEY_NAMES = {
-    "f8":  "captura_manual",
     "f9":  "toggle_panel",
     "f10": "toggle_pausa",
     "f11": "registrar_run",
@@ -63,7 +60,7 @@ class HotkeyManager:
         self._debounce_s: float = 0.25
 
     def on(self, key_name: str, callback: Callable) -> None:
-        """Registra callback para key_name (f8, f9, f10, f11)."""
+        """Registra callback para key_name (f9, f10, f11)."""
         key_name = key_name.lower()
         if key_name not in self._handlers:
             raise ValueError(f"Hotkey desconocida: {key_name}. Válidas: {list(_KEY_NAMES)}")
@@ -110,7 +107,7 @@ class HotkeyManager:
 
         if started:
             log.info(
-                "HotkeyManager activo (%s): F8=captura F9=panel F10=pausa F11=run",
+                "HotkeyManager activo (%s): F9=panel F10=pausa F11=run",
                 " + ".join(started),
             )
             self._warn_if_not_elevated()
@@ -123,10 +120,9 @@ class HotkeyManager:
     def _warn_if_not_elevated() -> None:
         """
         Si la app NO corre elevada y el juego sí (caso común en HoYoverse),
-        Windows (UIPI) puede suprimir las hotkeys globales mientras el juego
-        tiene el foco. Avisamos para que el usuario sepa la causa/solución.
-        La extracción continua de S18 NO depende de F8, así que esto es solo
-        para la captura manual explícita.
+        Windows (UIPI) puede suprimir las hotkeys globales (F9/F10/F11)
+        mientras el juego tiene el foco. Avisamos para que el usuario sepa
+        la causa/solución.
         """
         try:
             import ctypes
@@ -135,10 +131,10 @@ class HotkeyManager:
             return
         if not is_admin:
             log.warning(
-                "App NO elevada: si el juego corre como administrador, F8 puede "
-                "no dispararse con el juego en foco (UIPI de Windows). Solución: "
-                "ejecutar la app como administrador. La extracción CONTINUA de "
-                "stats S18 funciona igual sin F8."
+                "App NO elevada: si el juego corre como administrador, las "
+                "hotkeys globales (F9/F10/F11) pueden no dispararse con el juego "
+                "en foco (UIPI de Windows). Solución: ejecutar la app como "
+                "administrador."
             )
         else:
             log.info("App elevada (admin): hotkeys globales robustas con el juego en foco.")

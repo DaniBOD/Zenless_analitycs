@@ -27,7 +27,6 @@ polling_resultado_ms = 1000
 polling_modal_ms = 500
 
 [hotkeys]
-captura_manual = "f8"
 toggle_panel = "f9"
 toggle_pausa = "f10"
 registrar_run = "f11"

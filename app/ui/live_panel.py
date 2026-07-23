@@ -208,7 +208,6 @@ class LivePanel(QWidget):
     start_monitor_requested = Signal()
     stop_monitor_requested = Signal()
     pause_toggle_requested = Signal()
-    test_capture_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -258,12 +257,6 @@ class LivePanel(QWidget):
         self._pause_btn.setStyleSheet(self._btn_style(T.YELLOW))
         self._pause_btn.clicked.connect(self.pause_toggle_requested.emit)
         controls.addWidget(self._pause_btn)
-
-        self._test_btn = QPushButton("Probar captura (F8)")
-        self._test_btn.setMinimumHeight(34)
-        self._test_btn.setStyleSheet(self._btn_style(T.INFO))
-        self._test_btn.clicked.connect(self.test_capture_requested.emit)
-        controls.addWidget(self._test_btn)
 
         controls.addStretch()
         layout.addLayout(controls)
@@ -339,7 +332,7 @@ class LivePanel(QWidget):
         self._pause_btn.setEnabled(True)
         self._monitor_dot.setText("● ON")
         self._monitor_dot.setStyleSheet(f"color: {T.POSITIVE};")
-        self.append_log("[monitor] Capturando. F8 fuerza scan · F10 pausa.")
+        self.append_log("[monitor] Capturando. F10 pausa.")
 
     @Slot()
     def on_monitor_stopped(self):
