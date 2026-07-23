@@ -233,6 +233,59 @@ def test_un_s23_reemplaza_al_pendiente_libre(monkeypatch):
     assert m._pending_swap["origin_kind"] == "pj"
 
 
+# ---- el botón VETA al ancla ---------------------------------------------------
+
+def _monitor_con_ancla(boton, monkeypatch, badge=None):
+    """Monitor listo para que el ANCLA quiera disparar: hay latch y el slot es nuevo."""
+    import app.core.monitor as mon_mod
+    m = _monitor()
+    m._last_agent_name = "Velina"
+    m._s17_last_slot = 0                       # slot nuevo → el ancla aplica
+    monkeypatch.setattr(mon_mod, "crop_grid_selected_badge", lambda f: badge)
+    monkeypatch.setattr(m, "_refresh_action_button",
+                        lambda d, f, badge_present=False: None)
+    m._s17_action_btn = boton
+    return m
+
+
+def test_boton_equipar_veta_el_ancla(monkeypatch):
+    """EL FP que encontró Daniel (QA 2026-07-23): Velina con el slot 1 VACÍO. Sin disco
+    equipado, el "primer disco del slot" es un candidato libre — pero el ancla se lo atribuía
+    igual, y el badge no podía desmentirla porque su AUSENCIA no cuenta como evidencia."""
+    m = _monitor_con_ancla("equipar", monkeypatch)
+    disc = _disc(libre=True, slot=1)
+    m._assign_s17_pj(disc, np.zeros((1439, 2559, 3), np.uint8))
+    assert disc.agente_asignado_nombre is None, "el ancla le adjudicó un disco libre al PJ"
+    assert m._s17_last_slot == 0, "el ancla vetada no debe fijar el slot"
+
+
+def test_boton_reemplazar_tambien_veta(monkeypatch):
+    """'Reemplazar' = el slot tiene OTRO disco → el que se ve es un candidato, no el equipado."""
+    m = _monitor_con_ancla("reemplazar", monkeypatch)
+    disc = _disc(libre=True, slot=1)
+    m._assign_s17_pj(disc, np.zeros((1439, 2559, 3), np.uint8))
+    assert disc.agente_asignado_nombre is None
+
+
+def test_boton_desequipar_deja_pasar_el_ancla(monkeypatch):
+    """La contraparte: 'Desequipar' CONFIRMA que el disco lo lleva puesto este PJ."""
+    m = _monitor_con_ancla("desequipar", monkeypatch)
+    monkeypatch.setattr(m, "_s17_voted_owner", lambda f: "Velina")
+    disc = _disc(slot=1)
+    m._assign_s17_pj(disc, np.zeros((1439, 2559, 3), np.uint8))
+    assert disc.agente_asignado_nombre == "Velina"
+
+
+def test_sin_lectura_del_boton_el_ancla_se_comporta_como_siempre(monkeypatch):
+    """RNF-02 al revés: el guard solo actúa ante evidencia POSITIVA en contra. Si el OCR no
+    leyó el botón (None), no se cambia nada — no se rompe lo que ya andaba."""
+    m = _monitor_con_ancla(None, monkeypatch)
+    monkeypatch.setattr(m, "_s17_voted_owner", lambda f: "Velina")
+    disc = _disc(slot=1)
+    m._assign_s17_pj(disc, np.zeros((1439, 2559, 3), np.uint8))
+    assert disc.agente_asignado_nombre == "Velina"
+
+
 # ---- gate de la relectura del botón (RNF-06) ---------------------------------
 
 def test_el_boton_se_relee_solo_cuando_cambia_el_estado(monkeypatch):
@@ -245,7 +298,11 @@ def test_el_boton_se_relee_solo_cuando_cambia_el_estado(monkeypatch):
     frame = np.zeros((1439, 2559, 3), np.uint8)
     libre = _disc(libre=True)
     for _ in range(4):
-        m._refresh_action_button(libre, frame)
+        m._refresh_action_button(libre, frame, badge_present=False)
     assert len(llamadas) == 1                      # mismo disco, mismo badge → 1 sola lectura
-    m._refresh_action_button(_disc(libre=False, owner="Nangong Yu"), frame)
-    assert len(llamadas) == 2                      # el badge apareció → releer
+    # El badge APARECIÓ (lo equiparon) → el botón pudo cambiar a 'Desequipar' → releer.
+    m._refresh_action_button(libre, frame, badge_present=True)
+    assert len(llamadas) == 2
+    # Otro disco distinto (substats distintos) también fuerza la relectura.
+    m._refresh_action_button(_disc(subs=("ATK%", "PEN")), frame, badge_present=True)
+    assert len(llamadas) == 3

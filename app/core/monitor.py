@@ -159,6 +159,12 @@ _S9_TIEBREAK_CONF_MIN = 0.80
 # de emitir BEST-EFFORT si el disco no maduró (red de seguridad). Si madura antes
 # (todos los campos), se emite en ese ciclo. ~5 ciclos cubre OCR no-determinista.
 _S17_AGG_MAX_CYCLES = 5
+# Resets consecutivos de la firma SIN llegar a emitir que se consideran patológicos. Si la firma
+# cambia en cada ciclo, el aggregator se reinicia sin parar: `_disc_agg_cycles` vuelve a 0, el techo
+# de arriba NUNCA se alcanza, el disco no madura, y el handler devuelve en silencio — para siempre.
+# Es lo que pasó en el QA del 2026-07-23 (6 min en S17 sin una sola línea, con el OCR corriendo).
+# 3 = por encima del jitter normal de un disco recién abierto, muy por debajo de un trabe real.
+_S17_SIG_RESET_ALERT = 3
 # Tope de re-lecturas de la grilla S5 antes de emitir el preview aunque no haya convergido (badge
 # genuinamente ilegible). Cubre de sobra la animación de revelado; evita re-OCR indefinido.
 _S5_GRID_MAX_TRIES = 6
@@ -206,6 +212,27 @@ _S17_WARM_CADENCE_MS = 100     # mientras calienta, re-chequear el voto rápido 
 _S17_SIG_NAME_MAX = 3.0
 _S17_SIG_DETAIL_MAX = 3.5
 _S17_SIG_HEX_MAX = 3.0
+
+
+def _hex_center_mask(n: int = 24) -> "np.ndarray":
+    """Máscara del centro del hexágono S17 — la zona ANIMADA que hay que excluir de la firma.
+
+    El ROI `hex` (x∈[0.58,0.95], y∈[0.18,0.88]) existe para detectar el cambio de SLOT: el anillo
+    de selección salta entre los 6 círculos del borde. Pero el ROI también abarca el arte del
+    centro (el W-Engine sobre un fondo con movimiento), que cambia SOLO — y con eso alcanzaba para
+    que la firma se considerara "otro disco" en cada ciclo. Efecto: el aggregator se reiniciaba sin
+    parar, `_disc_agg_cycles` volvía a 0, el techo nunca llegaba y el handler devolvía en silencio
+    para siempre (QA 2026-07-23: 6 min en S17 sin una línea; medido hex=5.5 contra un umbral de 3.0,
+    con name=0.6 y detail=1.3 perfectamente estables).
+
+    Centro en (0.42, 0.45) del ROI y radio 0.23 — medido sobre capturas reales 2557×1439. Los 6
+    círculos de slot quedan a ≥0.24 del centro, así que la máscara no toca lo que da la señal útil.
+    """
+    yy, xx = np.ogrid[:n, :n]
+    return ((xx - 0.42 * n) ** 2 + (yy - 0.45 * n) ** 2) <= (0.23 * n) ** 2
+
+
+_S17_HEX_CENTER_MASK = _hex_center_mask()
 # Gate de OCR S18 (RNF-06): umbral de diff de la firma del panel de stats. Sensible
 # (bajo) a propósito — errar hacia re-OCR de más (sin riesgo) antes que saltarse un
 # cambio real (stats viejos). El cambio de agente es un diff enorme; el shimmer de
@@ -546,6 +573,8 @@ class Monitor:
         # el badge aparezca/desaparezca. Ambas cosas ya se computan cada ciclo y son baratas.
         self._s17_action_btn: str | None = None
         self._btn_read_key: tuple | None = None
+        # Resets de firma encadenados SIN emisión de por medio (ver `_S17_SIG_RESET_ALERT`).
+        self._s17_sig_resets: int = 0
         # S22 (modal "Obtenido"): dedup CONVERGENTE por corrida. {n_uso: nº de discos ya
         # emitidos} o _S22_SEC_CERRADA si ya se emitió completa. `_s22_last_sig` gatea el
         # re-parseo (RNF-06): con el scroll quieto no hay nada nuevo que leer.
@@ -1498,19 +1527,17 @@ class Monitor:
             except Exception:
                 log.debug("on_diagnostic S23 falló", exc_info=True)
 
-    def _refresh_action_button(self, merged, frame) -> None:
+    def _refresh_action_button(self, merged, frame, badge_present: bool = False) -> None:
         """Relee el botón de acción de S17 y lo cachea en `_s17_action_btn`.
 
         Gate RNF-06: es una llamada EXTRA a OCR, así que solo se relee cuando cambia
-        `(identidad del disco, libre?, badge presente?)`. Esas tres ya se computan cada ciclo y
-        son baratas (el badge es un crop + Canny), y entre las tres cubren las únicas
-        transiciones que pueden cambiar el botón: abrir otro disco, o equipar/desequipar el que
-        se está mirando."""
+        `(identidad del disco, badge presente?)`. Las dos ya se computan cada ciclo y son
+        baratas (el badge es un crop + Canny), y entre las dos cubren las únicas transiciones
+        que pueden cambiar el botón: abrir otro disco, o equipar/desequipar el que se mira."""
         if frame is None or merged is None:
             return
         try:
-            key = (self._disc_identity(merged),
-                   bool(merged.equip_libre), bool(merged.equip_detectado))
+            key = (self._disc_identity(merged), bool(badge_present))
         except Exception:
             return
         if key == self._btn_read_key:
@@ -2018,6 +2045,9 @@ class Monitor:
             sig_hex = cv2.cvtColor(
                 cv2.resize(hexr, (24, 24), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
             ).astype(np.float32)
+            # Anular el centro ANIMADO (ver `_hex_center_mask`): el anillo de selección de los 6
+            # slots —lo único que esta componente aporta— vive en el borde, así que se conserva.
+            sig_hex[_S17_HEX_CENTER_MASK] = 0.0
             return (sig_name, sig_detail, sig_hex)
         except Exception:
             return None
@@ -2211,6 +2241,7 @@ class Monitor:
         self._disc_emitted_ids.clear()
         self._last_emitted_identity = None
         self._stalls.pop("S17", None)
+        self._stalls.pop("S17/firma", None)
         self._s17_assign_sig = None
         # Anchor de flujo (5R.5b): al re-entrar a un slot, el primer disco vuelve a ser
         # el equipado por el latch (estructura del juego) → resetear el slot rastreado.
@@ -2225,6 +2256,7 @@ class Monitor:
         # tiene su propia muerte por cambio de PJ en `_check_libre_equipado`.
         self._s17_action_btn = None
         self._btn_read_key = None
+        self._s17_sig_resets = 0
 
     @staticmethod
     def _disc_identity(d) -> tuple:
@@ -2330,6 +2362,35 @@ class Monitor:
             self._note_stall("S17", "firma no calculable")
             return
         if self._is_new_s17_disc(sig):
+            # Diagnóstico del trabe MUDO (QA 2026-07-23): un reset devuelve `_disc_agg_cycles` a 0,
+            # así que si la firma cambia en cada ciclo el techo nunca llega, el disco nunca madura y
+            # el handler devuelve en silencio indefinidamente. Contar los resets SIN emisión de por
+            # medio es lo que distingue "el usuario navega discos" (resets con emisión entre medio)
+            # de "la firma es inestable" (resets encadenados). `_note_stall` lo loguea por flanco.
+            if self._disc_agg_sig is not None:
+                self._s17_sig_resets += 1
+                if self._s17_sig_resets == _S17_SIG_RESET_ALERT:
+                    # Desglose por componente UNA sola vez (al cruzar el umbral): sin esto el log
+                    # dice "la firma cambia" y hay que adivinar cuál de las tres ROIs es la
+                    # inestable. Va aparte de `_note_stall` porque este texto cambia en cada
+                    # ciclo y el dedup por razón no lo filtraría → inundaría el log (RNF-06).
+                    d = [self._sig_component_diff(a, b) for a, b in zip(sig, self._disc_agg_sig)]
+                    log.info(
+                        "[S17] firma inestable · name=%.1f/%.1f detail=%.1f/%.1f hex=%.1f/%.1f "
+                        "(el que supera su umbral es el ROI culpable)",
+                        d[0], _S17_SIG_NAME_MAX, d[1], _S17_SIG_DETAIL_MAX,
+                        d[2], _S17_SIG_HEX_MAX,
+                    )
+                if self._s17_sig_resets >= _S17_SIG_RESET_ALERT:
+                    # Scope PROPIO, no "S17": ese lo limpia el chequeo de confianza en CADA ciclo
+                    # (el parse anda bien, lo que falla es la firma), así que compartirlo hacía
+                    # alternar nota/destrabe sin parar — inundó el log en el QA 2026-07-23.
+                    # Este se limpia solo al emitir de verdad.
+                    self._note_stall(
+                        "S17/firma",
+                        "la firma cambia en cada ciclo — el aggregator se reinicia y el disco "
+                        "nunca madura",
+                    )
             self._disc_aggregator.reset()
             self._disc_agg_sig = sig
             self._disc_emitted = False
@@ -2351,8 +2412,7 @@ class Monitor:
             if merged is None:
                 self._s17_warming = False
             else:
-                self._assign_s17_pj(merged, frame)   # re-decide el dueño con más votos (sin OCR)
-                self._refresh_action_button(merged, frame)
+                self._assign_s17_pj(merged, frame)   # re-decide el dueño (y refresca el botón)
                 self._check_swap_owner(merged, state)   # el dueño acaba de refrescarse
                 self._arm_libre_pending(merged)      # DESPUÉS del check: no auto-confirmarse
                 warm = self._s17_owner_passes >= _S17_OWNER_MIN_SAMPLES
@@ -2380,7 +2440,7 @@ class Monitor:
         # un swap real perdido en el medio. El chequeo solo necesita (set, slot, dueño), que ya
         # están en el merge parcial.
         if merged is not None:
-            self._refresh_action_button(merged, frame)
+            # El botón ya lo refrescó `_assign_s17_pj` unas líneas más arriba, sobre el mismo frame.
             self._check_swap_owner(merged, state)
             # El armado va DESPUÉS del check, a propósito: si armara antes, el pendiente recién
             # creado podría confirmarse en el mismo ciclo contra su propio estado inicial.
@@ -2390,6 +2450,11 @@ class Monitor:
         mature = disc_is_mature(merged)
         ceiling = self._disc_agg_cycles >= _S17_AGG_MAX_CYCLES
         if not (mature or ceiling):
+            # Los primeros ciclos acá son NORMALES (el aggregator todavía está fusionando). Solo
+            # es trabe si el contador ya pasó el techo esperado y aun así no maduró — la otra
+            # forma del silencio, distinta a la de la firma inestable de arriba.
+            if self._disc_agg_cycles >= _S17_AGG_MAX_CYCLES - 1:
+                self._note_stall("S17", "el disco no madura y el techo de ciclos no avanza")
             return
         # Confirmación de UPGRADE — DESACOPLADA de la resolución del DUEÑO. El resumen PRE→POST
         # compara stats; no necesita saber quién equipa el disco. Antes colgaba de `_emit_s17_disc`,
@@ -2422,6 +2487,9 @@ class Monitor:
         # (El check del reemplazo S23 ya NO vive acá: corre en el ciclo continuo, apenas se
         # conocen set+slot+dueño, sin esperar a que el disco madure. Ver `_check_swap_owner`.)
         self._disc_emitted = True
+        # Llegamos a emitir → la cadena de resets (si la hubo) no era patológica.
+        self._s17_sig_resets = 0
+        self._clear_stall("S17/firma")
         # Dedup por IDENTIDAD: si la firma parpadeó (modelo 3D animado) y este
         # disco ya se emitió en esta sesión S17, no re-emitir (ni re-persistir).
         identity = self._disc_identity(merged)
@@ -3454,6 +3522,9 @@ class Monitor:
         latch = self._last_agent_name
         badge = crop_grid_selected_badge(frame) if frame is not None else None
         disc.equip_detectado = badge is not None
+        # El botón se lee ACÁ, antes de que el ancla decida: es la única señal que puede
+        # desmentirla (ver el guard más abajo).
+        self._refresh_action_button(disc, frame, badge_present=badge is not None)
         # --- ANCHOR DE FLUJO (5R.5b) ---------------------------------------------
         # Estructura del juego: al abrir/cambiar de slot, el PRIMER disco mostrado es
         # SIEMPRE el equipado por el latch. Un disco en un slot DISTINTO al último
@@ -3461,6 +3532,25 @@ class Monitor:
         # slot + disco distinto (la firma resetea el aggregator) ⇒ candidato.
         slot = disc.slot or 0
         is_equipped = bool(latch) and slot != 0 and slot != self._s17_last_slot
+        # GUARD POR BOTÓN (2026-07-23, FP encontrado por Daniel): el ancla es una suposición
+        # ESTRUCTURAL, y el botón inferior es una afirmación DIRECTA sobre la relación entre el
+        # disco en pantalla y el slot del PJ:
+        #     Desequipar → este disco lo lleva puesto el PJ   ⇒ el ancla vale
+        #     Equipar    → el slot está VACÍO, no hay equipado ⇒ el ancla es falsa
+        #     Reemplazar → el slot tiene otro disco, este es candidato ⇒ el ancla es falsa
+        # El caso que lo destapó: Velina con el slot 1 vacío. Sin equipado, el "primer disco"
+        # es un candidato libre — y el badge NO puede corregirlo, porque su AUSENCIA no cuenta
+        # como evidencia en contra (regla "presencia gana a LIBRE", 5R.L.8). Así el ancla ganaba
+        # por default y le atribuía a Velina un disco que no era suyo.
+        # Es un GUARD, no un reemplazo: solo se abstiene ante evidencia positiva en contra; si el
+        # OCR no leyó el botón (None), el comportamiento es el de siempre.
+        if is_equipped and self._s17_action_btn in ("equipar", "reemplazar"):
+            is_equipped = False
+            self._log_s17_assign(
+                ("anchor_btn_veto", self._s17_action_btn),
+                "[botón] el ancla decía 'equipado por %s' pero el botón dice '%s' → NO es el "
+                "equipado (slot vacío o candidato).", latch, self._s17_action_btn,
+            )
         if is_equipped:
             voted = self._s17_voted_owner(frame)
             # ANCHOR-WARMUP (QA 2026-06-20): el ancla ("1er disco del slot = equipado por el
