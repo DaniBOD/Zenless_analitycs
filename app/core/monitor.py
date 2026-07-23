@@ -1532,15 +1532,22 @@ class Monitor:
 
         Gate RNF-06: es una llamada EXTRA a OCR, así que solo se relee cuando cambia
         `(identidad del disco, badge presente?)`. Las dos ya se computan cada ciclo y son
-        baratas (el badge es un crop + Canny), y entre las dos cubren las únicas transiciones
-        que pueden cambiar el botón: abrir otro disco, o equipar/desequipar el que se mira."""
+        baratas (el badge es un crop + Canny).
+
+        **Excepción (QA 2026-07-23, caso A):** con un pendiente LIBRE abierto sobre ESTE disco,
+        el gate se saltea y se relee en cada ciclo. Esa clave no alcanzaba: al equipar un disco
+        libre en un slot VACÍO no cambia la identidad (es el mismo disco) ni `badge_present` (ya
+        estaba en True por el voto previo) → el botón quedaba cacheado en 'equipar' para siempre
+        y el check se abstenía con "solo badge" eternamente. El bypass está acotado al disco que
+        hay que confirmar, que es exactamente cuando la respuesta importa."""
         if frame is None or merged is None:
             return
         try:
-            key = (self._disc_identity(merged), bool(badge_present))
+            identity = self._disc_identity(merged)
         except Exception:
             return
-        if key == self._btn_read_key:
+        key = (identity, bool(badge_present))
+        if key == self._btn_read_key and not self._btn_gate_bypassed(identity):
             return
         self._btn_read_key = key
         try:
@@ -1549,6 +1556,15 @@ class Monitor:
         except Exception:
             log.debug("lectura del botón de acción S17 falló", exc_info=True)
             self._s17_action_btn = None
+
+    def _btn_gate_bypassed(self, identity) -> bool:
+        """¿Hay un pendiente LIBRE abierto sobre ESTE disco? Entonces el botón se relee siempre.
+
+        Acotado a propósito: solo el disco del pendiente, y solo con origen LIBRE (el pendiente
+        de S23 no consulta el botón). Fuera de eso rige el gate normal."""
+        ps = self._pending_swap
+        return (ps is not None and ps.get("origin_kind") == "libre"
+                and self._same_disc_fuzzy(ps.get("identity"), identity))
 
     def _arm_libre_pending(self, merged) -> None:
         """Arma el pendiente de un disco LIBRE que el usuario podría estar por equipar.
@@ -1581,8 +1597,10 @@ class Monitor:
             return
         ps = self._pending_swap
         if (ps is not None and ps.get("origin_kind") == "libre"
-                and ps.get("identity") == identity and ps.get("dest_name") == latch):
-            return   # ya armado para este disco y este PJ → no re-loguear (RNF-06)
+                and ps.get("dest_name") == latch
+                and self._same_disc_fuzzy(ps.get("identity"), identity)):
+            return   # ya armado para este disco y este PJ → no re-loguear ni re-armar por
+                     # parpadeo de substats (RNF-06; QA 2026-07-23 re-logueaba a conf 0.89)
         set_id = None
         if self._set_repo is not None:
             try:
@@ -1636,8 +1654,18 @@ class Monitor:
             self._swap_check_mark = None
             return
         try:
-            if self._disc_identity(merged) != ps.get("identity"):
-                return   # otro disco → no es el del pendiente
+            cur_id = self._disc_identity(merged)
+            if not self._same_disc_fuzzy(cur_id, ps.get("identity")):
+                # El disco en pantalla no es el del pendiente. Era el ÚNICO desenlace del check
+                # que salía mudo; se loguea por flanco (una vez por pendiente) para no volver a
+                # perseguir "no saltó el toast" a ciegas (QA 2026-07-23). Incluye ambas
+                # identidades: si el fuzzy alguna vez se queda corto ante ruido de OCR, acá se ve.
+                if self._swap_check_mark != (ps.get("seq"), "nomatch"):
+                    self._swap_check_mark = (ps.get("seq"), "nomatch")
+                    log.info("[equipado] check dueño · %s slot %s · no coincide con el disco del "
+                             "pendiente (armado=%r ahora=%r) → se abstiene",
+                             ps.get("set_name"), ps.get("slot"), ps.get("identity"), cur_id)
+                return
         except Exception:
             return
 
@@ -2282,6 +2310,40 @@ class Monitor:
             subs,
         )
 
+    def _disc_emit_key(self, identity, merged):
+        """Clave de dedup de EMISIÓN = identidad + dueño equipado.
+
+        La identidad de `_disc_identity` es ciega al dueño a propósito (dos discos distintos no
+        deben colapsar). Pero para el dedup eso hacía que un disco visto LIBRE y luego EQUIPADO
+        no se re-emitiera nunca: misma identidad → cortaba (QA 2026-07-23, "no volvió a salir el
+        detalle al equiparlo"). Metiendo el dueño certero en la clave, la transición
+        LIBRE→equipado es una clave nueva y el detalle vuelve a emitirse, mientras que el parpadeo
+        del modelo 3D (que no cambia ni identidad ni dueño) sigue deduplicado."""
+        from app.core.stats_vocab import _norm_key
+        owner = merged.agente_asignado_nombre
+        return (identity, _norm_key(owner) if owner else None)
+
+    @staticmethod
+    def _same_disc_fuzzy(id_a, id_b) -> bool:
+        """¿Son el MISMO disco tolerando ruido de substats en el OCR?
+
+        Exige (set, slot, main) EXACTOS y que los nombres de substat coincidan salvo, a lo
+        sumo, UNO (los `rolls` —lo más ruidoso— no entran). Se usa SOLO en el check del
+        pendiente LIBRE: ahí el disco puede leerse sucio entre armar y confirmar (QA
+        2026-07-23, disco B a conf 0.89 → la identidad exacta parpadeaba y el check salía
+        mudo). Con la identidad exacta de `_disc_identity` seguimos deduplicando emisión.
+
+        El límite es inherente y aceptado (elección de Daniel): un disco que difiere de otro
+        en exactamente un substat es indistinguible de una lectura sucia del mismo — pero para
+        un falso positivo tendrían que ser gemelos casi idénticos del mismo set/slot/main sobre
+        el mismo PJ, caso en que igual son intercambiables y el toast no miente."""
+        if id_a[:3] != id_b[:3]:
+            return False
+        names_a = {s[0] for s in id_a[3]}
+        names_b = {s[0] for s in id_b[3]}
+        need = max(len(names_a), len(names_b)) - 1   # tolera 1 substat mal leído
+        return len(names_a & names_b) >= max(need, 0)
+
     def _is_new_s17_disc(self, sig) -> bool:
         """True si la firma indica que el disco mirado cambió (o no había ancla)."""
         return self._disc_agg_sig is None or not self._sig_close(sig, self._disc_agg_sig)
@@ -2401,6 +2463,20 @@ class Monitor:
         # de Paddle (la cosecha = parar en discos → este era el driver). El badge del dueño
         # sigue votando aparte en _sample_s17_owner (10 fps) sin OCR.
         if self._disc_emitted:
+            # Con un pendiente LIBRE abierto, EQUIPAR ocurre DESPUÉS de que el disco emitió (se
+            # vio libre y maduró). Equipar en un slot vacío cambia la firma (sin disco → disco
+            # con badge) y dispara un reset que re-corre el check; pero equipar por "Reemplazar"
+            # la cambia MUCHO menos → sin reset, este gate cortaba mudo y el check nunca corría
+            # (QA 2026-07-23, "sigo cambiando discos y no lo detecta" — 74s sin una línea). El
+            # badge del dueño se muestrea a 10fps aparte, así que acá refrescamos dueño+botón
+            # sobre el merge ya logrado y confirmamos, SIN re-OCR del disco entero. Acotado: solo
+            # con un pendiente libre vivo, que es exactamente la ventana en que importa.
+            ps = self._pending_swap
+            if ps is not None and ps.get("origin_kind") == "libre":
+                merged = self._disc_aggregator.current
+                if merged is not None:
+                    self._assign_s17_pj(merged, frame)   # refresca dueño (badge) y botón
+                    self._check_swap_owner(merged, state)
             return
         # 5R.L.6 — WARMUP del dueño: el disco ya maduró (OCR completo) pero salía con dueño
         # INCIERTO sobre 1 frame. Mientras calienta, NO re-OCR (RNF-06): el loop rápido (10fps)
@@ -2493,17 +2569,18 @@ class Monitor:
         # Dedup por IDENTIDAD: si la firma parpadeó (modelo 3D animado) y este
         # disco ya se emitió en esta sesión S17, no re-emitir (ni re-persistir).
         identity = self._disc_identity(merged)
+        emit_key = self._disc_emit_key(identity, merged)
         if self._recapture_on:
             # Re-captura QA estilo S18: re-emite al CAMBIAR de disco, NO en cada
             # parpadeo del modelo 3D (que reabre la firma visual del MISMO disco). El
             # parpadeo deja la identidad-OCR igual → se saltea; navegar a otro disco la
             # cambia → re-emite (incluso al VOLVER a uno ya visto).
-            if identity == self._last_emitted_identity:
+            if emit_key == self._last_emitted_identity:
                 return
-        elif identity in self._disc_emitted_ids:
+        elif emit_key in self._disc_emitted_ids:
             return
-        self._disc_emitted_ids.add(identity)
-        self._last_emitted_identity = identity
+        self._disc_emitted_ids.add(emit_key)
+        self._last_emitted_identity = emit_key
         # Verdad de tierra (5R.C): si el disco está EQUIPADO (agente_asignado por el
         # flujo-ancla = dueño certero), registrar firma→dueño al mapa. Candidatos no
         # setean agente_asignado → no contaminan el mapa.
@@ -2679,13 +2756,14 @@ class Monitor:
         Espejo de `_emit_s17_disc`; comparte el dedup con S17 (un disco es un disco)."""
         self._s9_emitted = True
         identity = self._disc_identity(merged)
+        emit_key = self._disc_emit_key(identity, merged)
         if self._recapture_on:
-            if identity == self._last_emitted_identity:
+            if emit_key == self._last_emitted_identity:
                 return
-        elif identity in self._disc_emitted_ids:
+        elif emit_key in self._disc_emitted_ids:
             return
-        self._disc_emitted_ids.add(identity)
-        self._last_emitted_identity = identity
+        self._disc_emitted_ids.add(emit_key)
+        self._last_emitted_identity = emit_key
         if merged.agente_asignado_nombre:
             self._record_equip_map(identity, merged.agente_asignado_nombre)
         log.info(

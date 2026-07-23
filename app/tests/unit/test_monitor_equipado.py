@@ -306,3 +306,185 @@ def test_el_boton_se_relee_solo_cuando_cambia_el_estado(monkeypatch):
     # Otro disco distinto (substats distintos) también fuerza la relectura.
     m._refresh_action_button(_disc(subs=("ATK%", "PEN")), frame, badge_present=True)
     assert len(llamadas) == 3
+
+
+def _lector_de_boton(monkeypatch, valores: list):
+    """Stub de `read_s17_action_button` que devuelve `valores` uno por lectura (el último se
+    repite). Devuelve la lista de lecturas hechas, para contarlas."""
+    import app.core.parser_disc_s17 as p17
+    hechas: list[str] = []
+
+    def _leer(frame, ocr):
+        v = valores[min(len(hechas), len(valores) - 1)]
+        hechas.append(v)
+        return v
+
+    monkeypatch.setattr(p17, "read_s17_action_button", _leer)
+    return hechas
+
+
+def test_con_pendiente_abierto_el_boton_se_relee_en_cada_ciclo(monkeypatch):
+    """EL BUG del caso A (QA 2026-07-23): equipar un disco libre en un slot VACÍO no cambia la
+    identidad (mismo disco) ni `badge_present` (ya estaba en True) → con el gate viejo el botón
+    quedaba cacheado en 'equipar' PARA SIEMPRE y el check se abstenía con "solo badge" sin fin."""
+    hechas = _lector_de_boton(monkeypatch, ["equipar"])
+    m = _monitor()
+    frame = np.zeros((1439, 2559, 3), np.uint8)
+    libre = _disc(libre=True)
+    m._refresh_action_button(libre, frame, badge_present=True)
+    _armado(m, libre)                                  # ← pendiente abierto sobre ESTE disco
+    for _ in range(3):
+        m._refresh_action_button(libre, frame, badge_present=True)
+    assert len(hechas) == 4, "con un pendiente abierto el botón debe releerse en cada ciclo"
+
+
+def test_el_bypass_esta_acotado_al_disco_del_pendiente(monkeypatch):
+    """RNF-06: el bypass no es "pendiente abierto ⇒ OCR libre". Si mirás OTRO disco mientras el
+    pendiente sigue vivo, vuelve a regir el gate normal."""
+    hechas = _lector_de_boton(monkeypatch, ["equipar"])
+    m = _monitor()
+    frame = np.zeros((1439, 2559, 3), np.uint8)
+    _armado(m, _disc(libre=True))
+    otro = _disc(libre=True, subs=("ATK%", "PEN"))
+    for _ in range(4):
+        m._refresh_action_button(otro, frame, badge_present=False)
+    assert len(hechas) == 1
+
+
+def test_caso_A_el_disco_libre_en_slot_vacio_termina_disparando(monkeypatch):
+    """De punta a punta con la lectura REAL del gate (sin stubbear `_s17_action_btn`): el botón
+    voltea a 'desequipar' en el 2º ciclo y el toast sale. Es el caso que quedó ABIERTO en el QA."""
+    hechas = _lector_de_boton(monkeypatch, ["equipar", "desequipar"])
+    m = _monitor()
+    frame = np.zeros((1439, 2559, 3), np.uint8)
+    libre = _disc(libre=True)
+    m._last_agent_name = "Nangong Yu"
+    m._refresh_action_button(libre, frame, badge_present=True)
+    m._arm_libre_pending(libre)
+    assert m._pending_swap is not None
+    # Ciclo siguiente: Daniel equipó. Mismo disco, mismo badge, pero el botón cambió.
+    puesto = _disc(visual="Nangong Yu")
+    m._refresh_action_button(puesto, frame, badge_present=True)
+    assert m._s17_action_btn == "desequipar"
+    m._check_swap_owner(puesto, _ST17)
+    assert [e.get("kind") for e in m._eventos] == ["equipado"]
+    assert m._pending_swap is None
+
+
+# ---- identidad difusa: el disco B (gemelo, OCR sucio) del QA 2026-07-23 -------
+
+def _ident(m, **kw):
+    return m._disc_identity(_disc(**kw))
+
+
+def test_fuzzy_tolera_un_substat_mal_leido():
+    """Un solo substat cambia de nombre entre armar y chequear (OCR sucio a conf 0.89) → sigue
+    siendo el mismo disco. Es EXACTAMENTE lo que rompía el disco B en el QA."""
+    m = _monitor()
+    a = _ident(m, subs=("CR", "CD", "ATK%", "PEN"))
+    b = _ident(m, subs=("CR", "CD", "ATK%", "HP%"))   # PEN→HP% (1 mal leído)
+    assert m._same_disc_fuzzy(a, b)
+
+
+def test_fuzzy_no_confunde_discos_genuinamente_distintos():
+    """Dos substats distintos ya es otro disco: la guarda del falso positivo sigue en pie."""
+    m = _monitor()
+    a = _ident(m, subs=("CR", "CD", "ATK%", "PEN"))
+    b = _ident(m, subs=("CR", "CD", "DEF%", "HP%"))   # 2 distintos
+    assert not m._same_disc_fuzzy(a, b)
+
+
+def test_fuzzy_exige_nucleo_exacto():
+    """Set, slot y main NO se aflojan: solo los substats toleran ruido. Las identidades se
+    arman a mano (mismo formato que `_disc_identity`: set, slot, main, {(substat, rolls)})."""
+    m = _monitor()
+    subs = (("cr", 0), ("cd", 0), ("atk%", 0), ("pen", 0))
+    base = ("balada de la rama y la espada", 2, "atk", subs)
+    assert m._same_disc_fuzzy(base, base)
+    assert not m._same_disc_fuzzy(base, ("balada de la rama y la espada", 5, "atk", subs))
+    assert not m._same_disc_fuzzy(base, ("balada de la rama y la espada", 2, "cr", subs))
+    assert not m._same_disc_fuzzy(base, ("otro set", 2, "atk", subs))
+
+
+def test_disco_B_con_substat_sucio_igual_dispara():
+    """Regresión del QA 2026-07-23: armás con 4 substats y al confirmar uno se leyó distinto.
+    Con la identidad exacta el check salía mudo; con fuzzy dispara igual."""
+    m = _monitor()
+    libre = _disc(libre=True, subs=("CR", "CD", "ATK%", "PEN"))
+    _armado(m, libre, boton="reemplazar")
+    m._s17_action_btn = "desequipar"
+    sucio = _disc(owner="Nangong Yu", subs=("CR", "CD", "ATK%", "HP%"))   # PEN→HP%
+    m._check_swap_owner(sucio, _ST17)
+    assert [e.get("kind") for e in m._eventos] == ["equipado"]
+
+
+def test_reamar_no_se_dispara_por_parpadeo_de_substats():
+    """El re-log/re-arm espurio del QA (14:08:16 y 14:09:07 la misma línea): un substat parpadea
+    y el pendiente se re-armaba con seq nueva. Con fuzzy, el mismo disco no re-arma."""
+    m = _monitor()
+    _armado(m, _disc(libre=True, subs=("CR", "CD", "ATK%", "PEN")))
+    seq = m._pending_swap["seq"]
+    _armado(m, _disc(libre=True, subs=("CR", "CD", "ATK%", "HP%")))   # 1 substat parpadeó
+    assert m._pending_swap["seq"] == seq                              # no re-armó
+    assert len([x for x in m._diags if x.startswith("[equipado]")]) == 1
+
+
+# ---- dedup con dueño: el detalle vuelve a salir al equipar --------------------
+
+def test_dedup_reemite_el_detalle_al_equipar():
+    """Lo que pidió Daniel (QA 2026-07-23): tras equipar un disco visto libre, su detalle debe
+    volver a loguearse. El dedup era ciego al dueño → misma identidad → nunca re-emitía."""
+    emitidos: list = []
+    m = _monitor()
+    m._on_disc = lambda d, s: emitidos.append(d.agente_asignado_nombre)
+    libre = _disc(libre=True)
+    m._emit_s17_disc(libre, _ST17, mature=True)
+    m._emit_s17_disc(libre, _ST17, mature=True)                 # parpadeo del 3D → NO re-emite
+    assert emitidos == [None]
+    puesto = _disc(owner="Nangong Yu")                          # ahora equipado
+    m._emit_s17_disc(puesto, _ST17, mature=True)
+    assert emitidos == [None, "Nangong Yu"]                     # re-emite con el dueño nuevo
+    m._emit_s17_disc(puesto, _ST17, mature=True)                # y ya no vuelve a repetir
+    assert emitidos == [None, "Nangong Yu"]
+
+
+# ---- confirmar aunque el disco ya haya emitido (gate de _disc_emitted) --------
+
+def test_equipar_un_disco_ya_emitido_igual_confirma(monkeypatch):
+    """EL bug de fondo del QA 2026-07-23 ("sigo cambiando discos y no lo detecta"): equipar por
+    REEMPLAZAR cambia la firma tan poco que NO hay reset, y el gate `if self._disc_emitted:
+    return` cortaba antes del check → 74s de log mudo. Con un pendiente LIBRE abierto, el check
+    debe correr igual sobre el merge ya logrado, sin re-OCR del disco entero."""
+    import types
+    m = _monitor()
+    _armado(m, _disc(libre=True), boton="reemplazar")            # pendiente libre, dest Nangong Yu
+    sig = (np.zeros((48, 24), np.float32), np.zeros((48, 48), np.float32),
+           np.zeros((24, 24), np.float32))
+    monkeypatch.setattr(m, "_s17_disc_signature", lambda frame: sig)
+    m._disc_agg_sig = sig                                        # firma estable → sin reset
+    m._disc_emitted = True                                       # el disco YA emitió (libre)
+    m._disc_aggregator = types.SimpleNamespace(current=_disc(owner="Nangong Yu"))
+    # Al entrar al gate se refresca el dueño por badge (ahora Nangong Yu) y el botón ya viró.
+    monkeypatch.setattr(m, "_assign_s17_pj",
+                        lambda disc, frame: setattr(disc, "agente_asignado_nombre", "Nangong Yu"))
+    m._s17_action_btn = "desequipar"
+    m._process_disc_s17_continuous(None, _ST17)
+    assert [e.get("kind") for e in m._eventos] == ["equipado"]
+
+
+def test_disco_ya_emitido_sin_pendiente_no_corre_el_check(monkeypatch):
+    """RNF-06: el gate solo se afloja con un pendiente LIBRE vivo. Sin pendiente, sigue cortando
+    (no gastar OCR ni badge por ciclo sobre un disco ya cerrado)."""
+    import types
+    llamado = []
+    m = _monitor()
+    sig = (np.zeros((48, 24), np.float32), np.zeros((48, 48), np.float32),
+           np.zeros((24, 24), np.float32))
+    monkeypatch.setattr(m, "_s17_disc_signature", lambda frame: sig)
+    m._disc_agg_sig = sig
+    m._disc_emitted = True
+    m._pending_swap = None
+    m._disc_aggregator = types.SimpleNamespace(current=_disc(owner="Nangong Yu"))
+    monkeypatch.setattr(m, "_check_swap_owner", lambda *a, **k: llamado.append(1))
+    m._process_disc_s17_continuous(None, _ST17)
+    assert llamado == []

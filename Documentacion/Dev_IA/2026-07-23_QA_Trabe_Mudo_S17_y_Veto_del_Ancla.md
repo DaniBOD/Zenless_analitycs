@@ -14,7 +14,7 @@
 | 1 | **Caso B** — disco libre a slot OCUPADO | ✅ **cerrado** (toast confirmado en pantalla) |
 | 2 | **Trabe mudo de S17** — 6 min sin una línea de log | ✅ **causa hallada y corregida** |
 | 3 | **FP del ancla** — disco libre atribuido a Velina | ✅ **corregido** (veto por botón) |
-| 4 | **Caso A** — disco libre a slot VACÍO | ⚠️ **ABIERTO**: arma bien, pero no confirma |
+| 4 | **Caso A** — disco libre a slot VACÍO | ✅ **corregido** (gate del botón), pendiente QA en vivo |
 | 5 | Casos C y D | ⏳ sin correr |
 
 ---
@@ -192,12 +192,103 @@ línea el log quede en silencio — lo que se vio.
 **Nota:** la abstención fue lo correcto (dos señales que no coinciden ⇒ no afirmar). El bug no es el
 check, es que **una de las dos señales se congeló**.
 
-### Arreglo propuesto (para mañana)
+### Arreglo (aplicado 2026-07-23 tarde)
 
-**Mientras haya un pendiente abierto, releer el botón en cada ciclo.** Está acotado —solo corre
-cuando hay algo que confirmar, que es exactamente cuando la respuesta importa— y fuera del pendiente
-se conserva el gate actual. Alternativa peor: meter el dueño votado en la clave (sigue siendo un
-proxy indirecto de "el botón pudo cambiar").
+**Mientras haya un pendiente LIBRE abierto sobre ESTE disco, releer el botón en cada ciclo.** El gate
+`(identidad, badge_present)` se saltea solo en ese caso, vía `_btn_gate_bypassed(identity)`. Está
+acotado dos veces: al disco del pendiente (mirar otro vuelve al gate normal) y al origen `libre` (el
+pendiente de S23 no consulta el botón). Fuera de eso se conserva el gate original.
+
+Tests que lo fijan (`test_monitor_equipado.py`):
+- `test_con_pendiente_abierto_el_boton_se_relee_en_cada_ciclo` — el síntoma exacto.
+- `test_el_bypass_esta_acotado_al_disco_del_pendiente` — RNF-06: no es "pendiente ⇒ OCR libre".
+- `test_caso_A_el_disco_libre_en_slot_vacio_termina_disparando` — de punta a punta con la lectura
+  real del gate: botón `equipar`→`desequipar` y el evento `equipado` sale.
+
+**Pendiente:** confirmarlo en vivo (era lo único que faltaba probar del caso A).
+
+---
+
+## 4b. Continuación (tarde del 2026-07-23) — caso A cerrado + los discos gemelos
+
+**✅ Caso A confirmado en vivo.** Velina, slot 1 vacío, disco libre → Equipar:
+
+```
+14:07:38  [equipado] Salón huracanado slot 1 · LIBRE → Velina (pendiente · botón 'equipar')
+14:07:48  [equipado] check dueño · botón 'desequipar' · CAMBIÓ ✓
+```
+
+El gate arreglado releyó el botón con el pendiente abierto y disparó. Toast confirmado por Daniel.
+
+**Pero el segundo disco destapó dos agujeros**, porque los dos discos que probó eran **gemelos**
+(ambos *Salón huracanado · slot 1 · HP*), el segundo leído más sucio (`conf 0.89` vs `0.98`):
+
+### 1. El detalle no re-aparecía al equipar (Daniel lo pidió de frente)
+
+`_emit_s17_disc` deduplicaba por **identidad ciega al dueño**. Un disco visto LIBRE y luego
+equipado tiene la MISMA identidad → cortaba → nunca re-emitía el detalle. Es el "dedup ciego al
+dueño" (item 4). **Arreglo:** `_disc_emit_key(identity, merged) = (identity, dueño_norm)`. La
+transición LIBRE→equipado es una clave nueva → re-emite; el parpadeo del 3D (mismo dueño) sigue
+deduplicado. Se aplicó a los dos emit que comparten el set (`_emit_s17_disc` y `_emit_s9_disc`); los
+paths S3/S5 quedan con identidad pelada (drops sin dueño). `_disc_identity` NO se tocó — sigue
+alimentando equip_map, id_diag y la identidad del pendiente.
+
+### 2. El segundo disco no disparaba el toast
+
+El check exigía identidad **exacta** entre armar y confirmar. A `conf 0.89` los substats parpadeaban
+→ la identidad cambiaba entre `_arm` (14:09:07) y el check (14:09:28) → salía **mudo** (`asignado a
+Velina` sin `CAMBIÓ` detrás). El re-log del pendiente a 14:09:07 era el mismo parpadeo.
+
+**Decisión de Daniel:** aflojar a **identidad difusa** (`_same_disc_fuzzy`): set+slot+main EXACTOS
+y nombres de substat coincidiendo salvo a lo sumo UNO (los rolls no cuentan). Distingue discos
+genuinamente distintos (casi siempre difieren en ≥2 substats) y sobrevive una lectura sucia. El
+falso positivo que la identidad exacta cubría (gemelo libre no equipado + navegar al que el PJ ya
+lleva) solo sobrevive si los dos gemelos son idénticos hasta en substats — caso en que igual son
+intercambiables y el toast no miente. Se usa en el check, en el gate del botón y en el anti-re-arm;
+`_disc_identity` (dedup de emisión) sigue exacto.
+
+**Síntoma 3** ("volví al primero y saltó un log que no correspondía") no dejó rastro en el log — es
+coherente con lo mismo (dos gemelos + identidad inestable), no se fuerza un diagnóstico sin evidencia.
+
+### 3. La causa de FONDO: el check ni corría (el gate de `_disc_emitted`)
+
+Fuzzy y dedup no alcanzaron: al **seguir cambiando discos**, el segundo seguía mudo (74s sin una
+línea). El fuzzy era irrelevante porque **`_check_swap_owner` ni se llamaba**. En
+`_process_disc_s17_continuous` hay un gate RNF-06:
+
+```python
+if self._disc_emitted:
+    return          # ya emitió y la firma no cambió → no malgastar OCR
+```
+
+Equipar en un slot **vacío** (Equipar) cambia mucho la imagen → resetea la firma → re-procesa →
+corre el check → toast (por eso el 1º siempre andaba). Equipar por **Reemplazar** la cambia tan poco
+que **no hay reset** → el disco queda "ya emitido" → el gate corta **antes** del check, para siempre.
+
+**Arreglo:** con un pendiente LIBRE abierto, el gate no corta seco — refresca dueño+botón sobre el
+merge ya logrado y corre el check, **sin re-OCR del disco entero**. Acotado a esa ventana (es
+justo cuando importa). Desacopla la confirmación de la sensibilidad de la firma, que era lo frágil.
+
+### ✅ Validación en vivo (14:52–14:54, DB `ceb152d28e258a9c` intacta)
+
+```
+14:52:47  check · botón 'desequipar' · CAMBIÓ ✓          ← disco 1 (Equipar)  → toast
+14:52:59  Salón huracanado slot 1 · LIBRE → Velina (pendiente · 'reemplazar')
+14:53:05  check · botón 'desequipar' · CAMBIÓ ✓          ← disco 2 (Reemplazar) → toast ★
+14:53:47  [reemplazo] Jazz Oscilante: Soukaku → Velina · CAMBIÓ ✓   ← S23 (caso D) OK
+```
+
+Discos equipados en fila, cada uno dispara; las abstenciones `incierto` previas muestran las dos
+señales esperando juntas; el caso D (S23) sale como `[reemplazo]` sin interferir; el desequipar se
+detecta como LIBRE de nuevo (sin toast, fuera de alcance). Cerrados A, B, C (las abstenciones) y D.
+
+**Fuera de alcance confirmado:** no hay toast de **desequipar** (dejar un slot vacío). Daniel lo vio
+detectado en el log y le parece bien así por ahora.
+
+**Tests nuevos** (`test_monitor_equipado.py`, 68 passed en el subset · 489 en la tanda monitor/disc):
+`test_disco_B_con_substat_sucio_igual_dispara`, `test_fuzzy_*` (3), `test_reamar_no_se_dispara_por_parpadeo_de_substats`, `test_dedup_reemite_el_detalle_al_equipar`, `test_caso_A_...`, y el par del gate del botón.
+
+**Pendiente de QA en vivo:** re-probar el escenario de gemelos (equipar el 2º, volver a ambos).
 
 ---
 
