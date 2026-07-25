@@ -29,6 +29,8 @@ Calibrado 2026-07-24 sobre las 225 celdas (5 capturas × 45) de
 """
 from __future__ import annotations
 
+import re
+
 import cv2
 import numpy as np
 
@@ -125,6 +127,67 @@ def _tile_strip_frac(frame: np.ndarray, row: int, col: int) -> float:
     for lo, hi in _RARITY_BANDS:
         mask |= cv2.inRange(hsv, lo, hi)
     return float(mask.mean()) / 255.0
+
+
+# --- Contador del header: la ÚNICA autoridad del conteo ------------------------------------
+# El censo de tildes solo ve el viewport, así que no puede contar: `Ejemplo_3` tiene 7 discos
+# seleccionados y solo 1 visible. El contador del header es global y sobrevive al scroll, por
+# eso es la fuente del "cuántos" y los tildes solo sirven para aparear.
+_HEADER_ROI = (0.09, 0.020, 0.30, 0.055)
+
+# El total del juego. Se exige como ANCLA: sin él, cualquier dígito suelto de cualquier pantalla
+# se leería como "hay N discos seleccionados".
+_HEADER_TOTAL = 300
+
+_RE_COUNTER = re.compile(r"(\d{1,3})\s*/\s*" + str(_HEADER_TOTAL))
+
+# PaddleOCR lee el denominador de la fuente estilizada del header como **`3o0`** — el cero del
+# medio sale como `o`, de forma consistente en las 5 capturas. Un regex con `/300` literal no
+# matchearía nunca. Estas confusiones se normalizan solo en la 2ª pasada, y el resultado se
+# acepta únicamente si el ancla aparece DESPUÉS de normalizar (RNF-02: sin ancla no se afirma).
+_OCR_DIGIT_FIXES = str.maketrans({
+    "o": "0", "O": "0", "Q": "0", "D": "0",
+    "l": "1", "I": "1", "|": "1", "i": "1",
+    "S": "5", "s": "5",
+    "Z": "2", "z": "2",
+    "B": "8",
+})
+
+
+def _counter_from_text(text: str) -> int | None:
+    """Extrae `N` de un `N/300` en el texto del header. `None` si no hay ancla."""
+    if not text:
+        return None
+    m = _RE_COUNTER.search(text)
+    if m is None:
+        m = _RE_COUNTER.search(text.translate(_OCR_DIGIT_FIXES))
+    if m is None:
+        return None
+    try:
+        n = int(m.group(1))
+    except ValueError:
+        return None
+    return n if 0 <= n <= _HEADER_TOTAL else None
+
+
+def parse_header_counter(frame: np.ndarray, ocr) -> int | None:
+    """Cuántos discos están marcados para desmontar, según el header `N/300`.
+
+    `None` significa "no se pudo leer", no "cero" — quien lo consuma debe declarar el conteo
+    desconocido en vez de sustituirlo por el censo de tildes (que subcuenta si hubo scroll)."""
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return None
+    try:
+        from app.core.capturer import crop_roi
+        crop = crop_roi(frame, _HEADER_ROI)
+        if crop is None or getattr(crop, "size", 0) == 0:
+            return None
+        rows = ocr.text_with_bboxes(crop)
+        if not rows:
+            return None
+        return _counter_from_text(" ".join(t for t, _c, _b in rows))
+    except Exception:
+        return None
 
 
 # --- Scrollbar -----------------------------------------------------------------------------

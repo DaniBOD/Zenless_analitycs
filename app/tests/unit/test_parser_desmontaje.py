@@ -36,6 +36,8 @@ import pytest
 from app.core.parser_desmontaje import (
     GRID_COLS,
     GRID_ROWS,
+    _counter_from_text,
+    parse_header_counter,
     scroll_pos,
     tilde_cells,
     tilde_fracs,
@@ -160,6 +162,52 @@ def test_scroll_pos_distingue_arriba_de_scrolleado():
 
 def test_scroll_pos_devuelve_none_sin_grilla():
     assert scroll_pos(np.zeros((10, 10, 3), np.uint8)) is None
+
+
+# --- Contador del header: la ÚNICA autoridad del conteo -----------------------------------
+# El censo de tildes solo ve el viewport; el contador es global. Ejemplo_3 (7) y Ejemplo_4 (8)
+# lo prueban: declaran más de lo que se ve porque el resto quedó scrolleado.
+
+
+def _paddle():
+    try:
+        from app.core.ocr_paddle import PaddleBackend
+    except Exception:
+        pytest.skip("PaddleOCR no disponible")
+    return PaddleBackend()
+
+
+@pytest.mark.skipif(not _present("Ejemplo_1.png"), reason="fixtures no presentes")
+@pytest.mark.parametrize("name", list(_GT), ids=lambda n: n.replace(".png", ""))
+def test_contador_del_header(name):
+    _, esperado = _GT[name]
+    assert parse_header_counter(_load(_DIR / name), _paddle()) == esperado
+
+
+@pytest.mark.parametrize("name", _NO_GRILLA, ids=lambda n: n.split("_(")[0])
+def test_contador_devuelve_none_sin_header(name):
+    """RNF-02: sin header legible se declara desconocido, nunca un número inventado. En los
+    modales el header queda atenuado detrás del overlay."""
+    if not _present(name):
+        pytest.skip("fixture no presente")
+    assert parse_header_counter(_load(_DIR / name), _paddle()) is None
+
+
+def test_contador_exige_el_ancla_del_denominador():
+    """El rescate de dígitos solo puede correr anclado en `/300`. Sin esa ancla, un `8` suelto
+    en cualquier pantalla se leería como una selección de 8 discos."""
+    assert _counter_from_text("Desmontaje de pistas de disco 8/300") == 8
+    assert _counter_from_text("Nivel 8 / 15") is None
+    assert _counter_from_text("300") is None
+    assert _counter_from_text("") is None
+
+
+def test_contador_rescata_digitos_mal_leidos():
+    """El OCR confunde O/0, S/5, l/1 en la fuente estilizada del header. El rescate se permite
+    solo con el ancla presente."""
+    assert _counter_from_text("Desmontaje de pistas de disco S/300") == 5
+    assert _counter_from_text("Desmontaje de pistas de disco lO/300") == 10
+    assert _counter_from_text("desmontaje O/300") == 0
 
 
 @pytest.mark.skipif(not _present("Ejemplo_2.png"), reason="fixture no presente")
