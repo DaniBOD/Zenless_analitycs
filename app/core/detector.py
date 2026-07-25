@@ -62,6 +62,11 @@ THRESHOLD_BY_STATE: dict[str, float] = {
     "S8":  0.80,   # Vista agente — informativo
     "S11": 0.80,   # Desmontaje — anti-FP
     "S24": 0.85,   # "Obtenido" post-desmontaje — título genérico, exige _verify_s24
+    "S25": 0.85,   # Diálogo de confirmación del desmontaje ("...pistas de grado S. ¿Seguro que
+                   #   quieres desmontarlas?"). COMPARTE el template de S23 (la fila genérica
+                   #   "Cancelar/Confirmar", que matchea 0.996-0.998) y se distingue por el texto.
+                   #   No commitea nada: solo congela el conteo declarado antes de que el diálogo
+                   #   tape el header y el contador N/300 se vuelva ilegible (QA 2026-07-25).
     "S17": 0.75,   # Detalle disco PJ — informativo, más permisivo
     "S18": 0.75,   # Perfil agente (Atributos base) — informativo
     "S19": 0.75,   # Perfil agente (Habilidades) — informativo, sin extracción
@@ -110,10 +115,12 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     "S8":  {"S17", "S18", "S19", "S12", "S15", "S9", "S23"},   # equipar un disco de otro PJ → diálogo swap
     "S9":  {"S8", "S12", "S17", "S16", "S6", "S7"},   # "Ver" un disco del inventario → S6/S7
     "S10": {"S12", "S9", "S3", "S20", "S6", "S7"},    # volver de la mejora a la vista individual
-    # S24 = el "Obtenido" que confirma el desmontaje. El diálogo de grado S que va en el medio
-    # cae a S12 (decisión de diseño: no se detecta), así que el camino real es S11 → S12 → S24.
-    "S11": {"S12", "S9", "S3", "S24"},
+    # S24 = el "Obtenido" que confirma el desmontaje. S25 = el diálogo de grado S que va en el
+    # medio (se detecta desde 2026-07-25 para congelar el conteo; NO commitea). Camino real:
+    # S11 → S25 → S24 con grado S, o S11 → S12 → S24 sin él (sin grado S no hay diálogo).
+    "S11": {"S12", "S9", "S3", "S24", "S25"},
     "S24": {"S11", "S12", "S9"},
+    "S25": {"S11", "S12", "S24", "S9"},   # cancelar vuelve a la grilla; confirmar lleva al modal
     "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18", "S19", "S20", "S21", "S22", "S23", "S24"},
     "S13": {"S12", "S14", "S1", "S18", "S21", "S22"},
     "S14": {"S12", "S1", "S13", "S15", "S18"},
@@ -158,6 +165,7 @@ STATE_DESCRIPTIONS: dict[str, str] = {
     "S22": "Modal 'Obtenido' (drops del farmeo por baterías)",
     "S23": "Diálogo de sustitución de disco entre PJs (confirmar swap)",
     "S24": "Modal 'Obtenido' — confirmación del desmontaje",
+    "S25": "Diálogo de confirmación del desmontaje (selección con grado S)",
 }
 
 # Estados que SÍ tienen un disco visible para parsear
@@ -172,6 +180,8 @@ NON_CAPTURE_STATES: set[str] = {
     # S11 lo lee su propio handler (que además necesita el censo de tildes para saber a QUÉ
     # celda pertenece) y S24 solo muestra materiales.
     "S24",
+    # S25 es un diálogo: tapa la grilla y no expone nada parseable. Su único aporte es de flujo.
+    "S25",
 }
 
 # Estados donde hay stats de agente visibles (Atributos base)
@@ -1124,9 +1134,13 @@ _RE_S23_VERIFY = re.compile(r"sustituir|equipa\s+actualmente", re.I)
 _s23_verify_ocr = None
 
 
-def _get_s23_verify_ocr():
-    """Tesseract lazy solo para `_verify_s23`. Corre únicamente cuando el template de botones
-    matchea (diálogo de confirmación en pantalla), así que el costo es puntual. None si falta."""
+def _get_dialog_verify_ocr():
+    """Tesseract lazy para los verifies de diálogo (`_verify_s23`, `_verify_s25`). Corre solo
+    cuando el template de botones matchea (hay un diálogo en pantalla), así que el costo es
+    puntual. None si falta.
+
+    Lo comparten dos estados porque la fila "Cancelar/Confirmar" es genérica de ZZZ: el template
+    dice "hay un diálogo", y el TEXTO dice cuál."""
     global _s23_verify_ocr
     if _s23_verify_ocr is None:
         try:
@@ -1143,7 +1157,7 @@ def _verify_s23(frame: np.ndarray) -> tuple[bool, str | None]:
     template solo sería un FP a la espera. La firma exclusiva es el TEXTO del diálogo ("... equipa
     actualmente ... sustituirlo"). OCR de esa banda (anti-FP, RNF-02). Sin Tesseract → no bloquear
     (convención del repo: ante ausencia/excepción, no degradar)."""
-    ocr = _get_s23_verify_ocr()
+    ocr = _get_dialog_verify_ocr()
     if ocr is None:
         return (True, None)
     try:
@@ -1157,6 +1171,40 @@ def _verify_s23(frame: np.ndarray) -> tuple[bool, str | None]:
         return (ok, "txt=sustituir" if ok else "txt=no-match")
     except Exception:
         return (True, None)
+
+
+# El diálogo de confirmación del DESMONTAJE comparte con S23 la fila "Cancelar/Confirmar" (mismo
+# template, 0.996-0.998), así que lo único que los separa es el texto:
+#   S23 → "... equipa actualmente ... ¿Deseas sustituirlo?"
+#   S25 → "... pistas de grado S. ¿Seguro que quieres desmontarlas?"
+# "desmontar" cubre la conjugación que use el juego (desmontarla/desmontarlas/desmontarlos).
+_RE_S25_VERIFY = re.compile(r"desmontar|desmontaje", re.I)
+
+
+def _verify_s25(frame: np.ndarray) -> tuple[bool, str | None]:
+    """Verifica que S25 sea el diálogo de confirmación del DESMONTAJE.
+
+    **Falla cerrado a propósito** — al revés que `_verify_s23`, que ante ausencia de OCR deja
+    pasar. La convención del repo (no degradar ante ausencia) asume que el estado es el único
+    que reclama esa pantalla; acá no lo es. Sin OCR no hay forma de distinguir este diálogo del
+    de sustitución, y de los dos el que tiene consecuencias reales es S23: mueve un disco entre
+    PJs y **escribe la DB**. S25 solo congela un contador. Ante la duda, gana el que hace algo
+    (RNF-01/02: la decisión conservadora). En una máquina sin Tesseract S25 no existe y S23 queda
+    exactamente como estaba."""
+    ocr = _get_dialog_verify_ocr()
+    if ocr is None:
+        return (False, "sin-ocr")
+    try:
+        h, w = frame.shape[:2]
+        x, y, rw, rh = _S23_TEXT_ROI      # misma banda de texto: es el mismo diálogo genérico
+        crop = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
+        if crop.size == 0:
+            return (False, "roi-vacio")
+        text, _ = ocr.text(crop, psm=6, lang="spa")
+        ok = bool(_RE_S25_VERIFY.search(text or ""))
+        return (ok, "txt=desmontar" if ok else "txt=no-match")
+    except Exception:
+        return (False, "excepcion")
 
 
 # Pill "Confirmar" CENTRADO del modal post-desmontaje. Es lo que lo distingue de los otros
@@ -1254,6 +1302,7 @@ _VERIFICATION_REGISTRY: dict[str, callable] = {
     "S22": _verify_s22,
     "S23": _verify_s23,
     "S24": _verify_s24,
+    "S25": _verify_s25,
     "S3":  _verify_s3,
     "S10": _verify_s10,
     "S17": _verify_s17,
@@ -1370,6 +1419,11 @@ _STATE_TEMPLATES: list[dict] = [
     {"code": "S22", "template": "s22_obtenido.png",                 "desc": "Modal 'Obtenido' (drops del farmeo por baterías)"},
     {"code": "S23", "template": "s23_sustitucion.png",              "desc": "Diálogo de sustitución de disco entre PJs (Cancelar/Confirmar)"},
     {"code": "S24", "template": "s24_obtenido_desmontaje.png",      "desc": "Modal 'Obtenido' (confirmación post-desmontaje)"},
+    # S25 REUSA el template de S23 a propósito: la fila "Cancelar/Confirmar" es genérica de ZZZ y
+    # matchea los dos diálogos por igual (0.996-0.998). Lo que los separa es el verify de texto.
+    # Va DESPUÉS de S23 en la lista: ante scores empatados el orden decide quién se verifica
+    # primero, y el primer turno le toca al estado que escribe la DB.
+    {"code": "S25", "template": "s23_sustitucion.png",              "desc": "Diálogo de confirmación del desmontaje (grado S)"},
 ]
 
 
@@ -1683,6 +1737,8 @@ def polling_cadence_ms(state: ScreenState) -> int:
         "S13": 1000, "S14": 1000, "S15": 1000, "S16": 1500,
         "S17": 1000, "S18": 1500, "S19": 1500, "S21": 1000, "S22": 700,
         "S23": 1000,   # diálogo modal breve; el latch del destino se captura al detectarlo
+        "S25": 1000,   # diálogo de confirmación del desmontaje: una sola lectura alcanza (no lee
+                       #   nada de la pantalla, solo congela el conteo ya declarado)
         # S11: 5000 → 300. Antes solo hacía falta RECONOCERLA para no capturar; ahora se sigue
         # una selección que el usuario hace clickeando cada 1-2 s, y cada ciclo perdido es un
         # disco sin datos. El censo de tildes (lo que corre siempre) es < 3 ms sin OCR; el OCR

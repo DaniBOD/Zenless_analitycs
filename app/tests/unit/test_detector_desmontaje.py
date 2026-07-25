@@ -12,11 +12,10 @@ filtro de frame oscuro no lo va a tapar, porque corre únicamente cuando nada ma
 1. **S22** también se titula "Obtenido" (drops del farmeo por baterías). No colisionan por
    construcción: `_verify_s22` exige ≥6 franjas de rareza en su viewport y este modal muestra
    2-5 iconos de material centrados. Igual se verifica en ambos sentidos.
-2. **S23** (diálogo de sustitución) es el vecino que casi se cruza de verdad: el diálogo de
-   confirmación del desmontaje (`Ejemplo_8`) **matchea el template de S23 a 0.699** y solo lo
-   salva `_verify_s23` al no encontrar "sustituir" en el texto. Por eso la decisión de diseño es
-   **no detectar** ese diálogo: solo aparece cuando la selección incluye grado S (no es una señal
-   confiable) y el commit lo da el "Obtenido". `Ejemplo_8` DEBE seguir cayendo a S12.
+2. **S23** (diálogo de sustitución) comparte template con el diálogo de confirmación del
+   desmontaje: la fila "Cancelar/Confirmar" es genérica de ZZZ. Ese diálogo pasó a tener estado
+   propio (**S25**) el 2026-07-25 y sus pruebas viven en `test_detector_dialogo_desmontaje`.
+   Acá solo se comprueba que **no es S24**: el commit lo sigue dando el "Obtenido", no el diálogo.
 """
 from __future__ import annotations
 
@@ -86,12 +85,14 @@ def test_la_grilla_sigue_dando_s11(name, det):
 
 
 @pytest.mark.skipif(not (_DESM / "Ejemplo_8_(Confirmacion).png").exists(), reason="captura no presente")
-def test_el_dialogo_de_confirmacion_sigue_cayendo_a_s12(det):
-    """Regresión EXPLÍCITA de una decisión de diseño, no un bug tolerado. Ese diálogo matchea el
-    template de S23 y solo lo rechaza `_verify_s23`; darle estado propio arriesgaría S23 sin
-    ganancia, porque solo aparece cuando hay grado S en la selección."""
+def test_el_dialogo_de_confirmacion_no_es_el_commit(det):
+    """El diálogo de grado S ahora ES detectable (S25, desde el QA del 2026-07-25: tapa el header
+    y deja el contador ilegible, así que conviene verlo para congelar el conteo). Lo que NO
+    cambió es que **no confirma nada**: el desmontaje se da por hecho recién con el "Obtenido".
+    Confundirlos registraría discos que el usuario todavía puede cancelar."""
     st = det.classify(_load(_DESM / "Ejemplo_8_(Confirmacion).png"))
-    assert st.code == "S12", f"{st.code} conf={st.confidence:.3f} tmpl={st.template_name}"
+    assert st.code != "S24", f"el diálogo se hizo pasar por el commit: {st.template_name}"
+    assert st.code == "S25", f"{st.code} conf={st.confidence:.3f} tmpl={st.template_name}"
 
 
 @pytest.mark.skipif(not _BAT.exists(), reason="capturas de baterías no presentes")

@@ -15,6 +15,7 @@ from app.core.detector import ScreenState
 _S11 = ScreenState("S11", 1.0, "s11_desmontaje.png")
 _S24 = ScreenState("S24", 1.0, "s24_obtenido_desmontaje.png")
 _S12 = ScreenState("S12", 0.0, None)
+_S25 = ScreenState("S25", 0.99, "s23_sustitucion.png")
 _S9 = ScreenState("S9", 0.95, "s9_inventario_general.png")
 
 
@@ -99,13 +100,64 @@ def test_s24_repetido_no_commitea_dos_veces(mon):
 
 
 def test_la_tanda_sobrevive_un_s12_intermedio(mon):
-    """El diálogo de confirmación de grado S cae a S12 (decisión de diseño: no se detecta). Si un
+    """Sin grado S en la selección no hay diálogo y la transición pasa por un S12 suelto. Si un
     S12 matara la tanda, el desmontaje NUNCA se registraría en ese camino."""
     _paso(mon, _S11, tildes=frozenset(), counter=0)
     _paso(mon, _S11, tildes=frozenset({(0, 0)}), counter=1)
     _paso(mon, _S12)
     _paso(mon, _S24)
     assert len(mon._toasts) == 1, "la tanda no sobrevivió al S12"
+
+
+def test_la_tanda_sobrevive_al_dialogo_de_grado_s(mon):
+    """S25 es el camino REAL cuando la selección incluye grado S. Al darle estado propio dejó de
+    caer a S12, así que si no está en la lista blanca el diálogo mata la tanda justo antes del
+    commit — el peor momento posible, porque los discos ya se destruyeron."""
+    _paso(mon, _S11, tildes=frozenset(), counter=0)
+    _paso(mon, _S11, tildes=frozenset({(0, 0)}), counter=1)
+    _paso(mon, _S25)
+    _paso(mon, _S24)
+    assert len(mon._toasts) == 1, "la tanda no sobrevivió al diálogo de grado S"
+
+
+def test_el_dialogo_se_canta_una_sola_vez(mon):
+    """S25 se despacha en cada ciclo mientras el diálogo está en pantalla; el usuario no necesita
+    leer la misma línea diez veces."""
+    _paso(mon, _S11, tildes=frozenset(), counter=0)
+    _paso(mon, _S11, tildes=frozenset({(0, 0)}), counter=1)
+    for _ in range(5):
+        _paso(mon, _S25)
+    confirmaciones = [d for d in mon._diags if "confirmación" in d]
+    assert len(confirmaciones) == 1, confirmaciones
+    assert "1" in confirmaciones[0], f"no dice cuántos se van a desmontar: {confirmaciones[0]}"
+
+
+def test_el_registro_deja_constancia_de_la_confirmacion(mon):
+    """Que la tanda haya pasado por el diálogo es un dato del registro: distingue un desmontaje
+    con grado S (que el usuario confirmó a mano) de uno que salió derecho."""
+    import json
+    _paso(mon, _S11, tildes=frozenset(), counter=0)
+    _paso(mon, _S11, tildes=frozenset({(0, 0)}), counter=1)
+    _paso(mon, _S25)
+    _paso(mon, _S24)
+    archivo = next((mon._audit / "desmontajes").glob("*.json"))
+    registro = json.loads(archivo.read_text(encoding="utf-8"))
+    assert registro["confirmacion_grado_s"] is True
+
+
+def test_sin_confirmacion_el_registro_lo_dice(mon):
+    _paso(mon, _S11, tildes=frozenset(), counter=0)
+    _paso(mon, _S11, tildes=frozenset({(0, 0)}), counter=1)
+    _paso(mon, _S24)
+    import json
+    archivo = next((mon._audit / "desmontajes").glob("*.json"))
+    assert json.loads(archivo.read_text(encoding="utf-8"))["confirmacion_grado_s"] is False
+
+
+def test_el_dialogo_sin_tanda_no_explota(mon):
+    """Entrar al diálogo por otro camino (o tras un reinicio de la app) no debe romper nada."""
+    _paso(mon, _S25)
+    assert mon._toasts == []
 
 
 def test_salir_a_otra_pantalla_abandona_sin_registrar(mon):

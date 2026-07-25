@@ -89,6 +89,7 @@ class TeardownBatch:
         self._hubo_scroll = False
         self._modo = "manual"
         self._seq = 0
+        self._confirmacion_grado_s = False
 
     # --- estado ---------------------------------------------------------------------------
     @property
@@ -120,6 +121,22 @@ class TeardownBatch:
     @property
     def avisos(self) -> list[str]:
         return list(self._avisos)
+
+    @property
+    def confirmacion_grado_s(self) -> bool:
+        return self._confirmacion_grado_s
+
+    def marcar_confirmacion(self) -> bool:
+        """La tanda pasó por el diálogo de grado S (S25). Devuelve True la PRIMERA vez, para que
+        el llamador loguee por flanco: el diálogo es un estado continuo y se despacha en cada
+        ciclo mientras está en pantalla.
+
+        No cambia el conteo. El valor está en dejar constancia: un registro con esta marca es un
+        desmontaje que el usuario confirmó a mano sabiendo que incluía grado S."""
+        if not self._abierta or self._confirmacion_grado_s:
+            return False
+        self._confirmacion_grado_s = True
+        return True
 
     @property
     def huecos(self) -> list[dict]:
@@ -326,6 +343,8 @@ class TeardownBatch:
                                 else material_primero == self._declarado),
             },
             "modo": self._modo,
+            # La selección incluía grado S y el usuario atravesó el diálogo de confirmación.
+            "confirmacion_grado_s": self._confirmacion_grado_s,
             "avisos": list(self._avisos),
             "discos": [self._capturados[k] for k in sorted(self._capturados,
                                                            key=lambda c: self._capturados[c]["seq"])],
