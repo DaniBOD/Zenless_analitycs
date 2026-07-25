@@ -74,6 +74,7 @@ class MonitorController(QObject):
     disc_detected = Signal(dict)             # payload listo para LivePanel + Toast
     disc_replaced = Signal(dict)             # swap de disco entre PJs confirmado → toast REEMPLAZADO
     disc_equipped = Signal(dict)             # disco LIBRE equipado a un PJ → toast AHORA EN
+    discs_dismantled = Signal(dict)          # tanda de desmontaje cerrada → toast DESMONTADOS
     agent_stats_detected = Signal(dict)      # stats de agente desde S18
     error_occurred = Signal(str)
     # Mensaje informativo crudo para el log (estado, captura descartada, etc).
@@ -155,6 +156,7 @@ class MonitorController(QObject):
             on_agent_stats=self._on_agent_stats_from_monitor,
             on_diagnostic=self._on_diagnostic_from_monitor,
             on_replacement=self._on_replacement_from_monitor,
+            on_teardown=self._on_teardown_from_monitor,
             on_agent_detail=self._on_agent_detail_from_monitor,
             set_repo=self._disc_set_repo,
             on_ram_critical=self.ram_critical.emit,   # watchdog RNF-06 → main thread
@@ -672,6 +674,23 @@ class MonitorController(QObject):
                 self.disc_replaced.emit(payload)
         except Exception:
             log.exception("Error armando el toast de equipamiento")
+
+    def _on_teardown_from_monitor(self, ev: dict) -> None:
+        """El monitor OBSERVÓ una tanda de desmontaje cerrada → un solo toast con el conteo.
+
+        Señal propia y no `disc_replaced`/`disc_equipped`: `_build_replacement_payload` resuelve
+        logo del set y avatares de dos PJs, y acá no hay ninguno de los dos — es un lote de discos
+        destruidos. Igual que sus hermanos violeta, esto NO afirma nada sobre la DB: la bitácora
+        fue a un archivo y el toast solo reporta lo que se vio en pantalla."""
+        try:
+            self.discs_dismantled.emit({
+                "total": int(ev.get("total") or 0),
+                "con_datos": int(ev.get("con_datos") or 0),
+                "faltantes": int(ev.get("faltantes") or 0),
+                "modo": ev.get("modo") or "manual",
+            })
+        except Exception:
+            log.exception("Error armando el toast de desmontaje")
 
     def _build_replacement_payload(self, ev: dict) -> dict:
         """Evento {set_name, set_id, slot, from_name, to_name} → payload del toast (logo del set

@@ -32,8 +32,14 @@ del contador), nunca **apareos cruzados** (inaceptable, RNF-02).
 """
 from __future__ import annotations
 
+import json
+import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 # Movimiento del thumb del scrollbar que cuenta como scroll real (el centroide tiembla un poco
 # entre frames por el degradé del track).
@@ -328,3 +334,32 @@ class TeardownBatch:
         self._committed = True
         self._abierta = False
         return registro
+
+
+def write_teardown_record(registro: dict | None) -> Path | None:
+    """Escribe el registro de una tanda en `audit/desmontajes/`. Devuelve el path o `None`.
+
+    Un archivo POR TANDA, no un JSONL append-only: un registro de 300 discos ronda los 100 KB y
+    el append atómico no está garantizado en Windows; un archivo por tanda es atómico por
+    construcción (`tmp` + `os.replace`, mismo patrón que `FarmSession._persist`) y tiene
+    precedente en el repo (`audit/s23_parse_fallo/`).
+
+    **No toca la DB.** La bitácora es observacional: registra lo que se vio en pantalla, y la
+    baja real de las filas de `inventory_discs` es un paso futuro y separado, que además necesita
+    el censo de la cuenta hecho primero."""
+    if not registro:
+        return None
+    try:
+        from app.core.audit_paths import resolve_audit_dir
+        carpeta = resolve_audit_dir() / "desmontajes"
+        carpeta.mkdir(parents=True, exist_ok=True)
+        # Marca con microsegundos: dos tandas seguidas no pueden pisarse.
+        nombre = f"{datetime.now():%Y%m%d_%H%M%S_%f}_desmontaje.json"
+        destino = carpeta / nombre
+        tmp = destino.with_suffix(".tmp")
+        tmp.write_text(json.dumps(registro, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, destino)
+        return destino
+    except Exception as e:                                  # pragma: no cover - defensivo
+        log.warning("no se pudo escribir la bitácora de desmontaje: %s", e)
+        return None

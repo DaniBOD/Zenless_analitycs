@@ -62,6 +62,11 @@ class ToastData:
     # Variante "reemplazado" (swap origen→destino). El DESTINO reusa target_agent/target_avatar.
     from_agent:    str = "—"            # PJ que DEJA el disco (atenuado)
     from_avatar:   str | None = None
+    # Variante "desmontado" (tanda de desmontaje cerrada). No hay UN disco que mostrar: es un
+    # lote. `total` es el conteo autoritativo (contador N/300 del juego) y `known` cuántos de
+    # esos alcanzó a leer el OCR — el hueco se MUESTRA, no se esconde.
+    teardown_total: int = 0
+    teardown_known: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +246,15 @@ class DiscToast(QWidget):
         data.variant = "equipado"
         self._show_confirmation(data)
 
+    def show_teardown(self, data: ToastData) -> None:
+        """Toast de tanda de desmontaje cerrada (variante 'desmontado'): UNO por tanda.
+
+        Misma familia violeta que `show_equipped`/`show_replacement` — reporta algo que ya pasó.
+        El body no muestra un disco sino el conteo del lote, porque el usuario acaba de destruir
+        varios y lo que necesita saber es si el sistema los vio a todos."""
+        data.variant = "desmontado"
+        self._show_confirmation(data)
+
     def show_replacement(self, data: ToastData) -> None:
         """Toast de swap confirmado (variante 'reemplazado'): origen → disco → destino, sin score
         ni countdown. Reusa el marco/glow; el body lo pinta `_paint_body_replacement`. El thumb va
@@ -388,6 +402,10 @@ class DiscToast(QWidget):
         elif self._data.variant == "equipado":
             self._paint_body_equipped(p, ox, oy, accent, v)
             self._paint_footer_static(p, ox, oy, accent, "EQUIPAMIENTO OBSERVADO", "badge + botón ✓")
+        elif self._data.variant == "desmontado":
+            self._paint_body_teardown(p, ox, oy, accent, v)
+            self._paint_footer_static(p, ox, oy, accent, "DESMONTAJE OBSERVADO",
+                                      f"contador {self._data.teardown_total}/300 ✓")
         else:
             self._paint_body(p, ox, oy, accent, v)
             self._paint_footer(p, ox, oy, accent, v)
@@ -453,7 +471,7 @@ class DiscToast(QWidget):
 
         # Variantes de confirmación: micro-badge estático, sin countdown. Dice OBSERVADO (no
         # SINCRONIZADO): el toast afirma lo que se vio en pantalla, no lo que la DB guardó.
-        if self._data.variant in ("reemplazado", "equipado"):
+        if self._data.variant in ("reemplazado", "equipado", "desmontado"):
             badge_txt = "✓ OBSERVADO"
             p.setFont(T.font_caps(7))
             bw = p.fontMetrics().horizontalAdvance(badge_txt) + 14
@@ -714,6 +732,40 @@ class DiscToast(QWidget):
         p.setFont(T.font_ui(8)); p.setPen(T.color(T.TEXT_MUTED))
         p.drawText(QRect(ox + WIDTH // 2 - 62, name_y + 1, 124, 11),
                    int(Qt.AlignmentFlag.AlignCenter), f"Slot {self._data.slot}")
+
+    def _paint_body_teardown(self, p: QPainter, ox: int, oy: int, accent: QColor, v: dict):
+        """Body del toast 'desmontado': el conteo del LOTE, no un disco.
+
+        Se lee con el header: DESMONTADOS → "7 discos" → "5 con datos". El desglose está a la
+        vista a propósito: si el usuario clickeó más rápido que el OCR o usó selección masiva,
+        tiene que ver que faltan stats en vez de suponer que la bitácora quedó completa."""
+        total = self._data.teardown_total
+        known = self._data.teardown_known
+        col_top = oy + 58
+
+        # Número grande y centrado: es el dato autoritativo (el contador del juego).
+        p.setFont(T.font_ui(26, bold=True))
+        p.setPen(accent)
+        p.drawText(QRect(ox + PADDING_X, col_top - 6, WIDTH - 2 * PADDING_X, 34),
+                   int(Qt.AlignmentFlag.AlignCenter), str(total))
+
+        p.setFont(T.font_caps(8))
+        p.setPen(T.color(T.TEXT_PRIMARY))
+        p.drawText(QRect(ox + PADDING_X, col_top + 30, WIDTH - 2 * PADDING_X, 12),
+                   int(Qt.AlignmentFlag.AlignCenter),
+                   "DISCO DESMONTADO" if total == 1 else "DISCOS DESMONTADOS")
+
+        # Cobertura: verde si se leyeron todos, atenuado si faltan.
+        faltan = max(0, total - known)
+        p.setFont(T.font_ui(9))
+        if faltan == 0 and total:
+            p.setPen(T.color(T.POSITIVE))
+            detalle = f"{known} con datos"
+        else:
+            p.setPen(T.color(T.TEXT_MUTED))
+            detalle = f"{known} con datos · {faltan} sin leer"
+        p.drawText(QRect(ox + PADDING_X, col_top + 44, WIDTH - 2 * PADDING_X, 13),
+                   int(Qt.AlignmentFlag.AlignCenter), detalle)
 
     def _paint_footer_static(self, p: QPainter, ox: int, oy: int, accent: QColor,
                              left_txt: str, right_txt: str):

@@ -84,7 +84,7 @@ Estados relevantes que el clasificador debe identificar:
 | S8 | Vista agente — Equipamiento | Cualquiera | Trigger secundario: leer equipados |
 | S9 | Inventario discos — Grid + panel | Cualquiera | Trigger: escanear badges NEW! |
 | S10 | Modal de upgrade | Cualquiera | Trigger: capturar PRE/POST |
-| S11 | Pantalla de Desmontaje | Cualquiera | **Ignorar** — NO capturar aunque haya NEW! |
+| S11 | Pantalla de Desmontaje | Cualquiera | **Trigger** (desde 2026-07-25): seguir la selección y registrar los discos destruidos. Ver §9.2. |
 | S12 | Combate / diálogo / mapa / menú | Cualquiera | Negativos, ignorar |
 
 ### Anclas visuales para template matching
@@ -151,7 +151,7 @@ La captura no debe ser ni demasiado agresiva (costo de CPU) ni demasiado lenta (
 | Resultado de desafío / afinación (S2, S5) | 1 s | Ventana breve, el usuario puede pasar rápido |
 | Modal detalle (S3, S6, S7) | 500 ms | Crítico — Daniel revisa y decide en segundos |
 | Modal de upgrade (S10) | 500 ms | Crítico — captura PRE, animación, POST |
-| Desmontaje (S11) | 5 s | Ignorado pero debe detectarse para no capturar |
+| Desmontaje (S11) | 300 ms | Se sigue una selección que el usuario hace clickeando cada 1-2 s; cada ciclo perdido es un disco sin stats. El censo de tildes (lo que corre siempre) es < 3 ms sin OCR. |
 
 ### Triggers complementarios
 
@@ -337,7 +337,13 @@ Implementación: crop del bloque "Efecto de conjunto", OCR, y sampling de píxel
 Situaciones en las que el sistema debe deliberadamente **no** capturar o no registrar:
 
 1. **Discos de rareza A-rank con Desmontaje automático activado**: se descartan antes de entrar al inventario. El sistema puede leerlos en S2 pero no debe persistirlos (se perdería el dato pero no vale la pena — Daniel descarta A-rank siempre).
-2. **Pantalla de Desmontaje (S11)**: aunque los tiles muestren badge "NEW!", son discos ya existentes que Daniel está seleccionando para descartar. El sistema debe detectar S11 y cortar cualquier captura.
+2. **Pantalla de Desmontaje (S11)** — ⚠️ **regla revertida el 2026-07-25.** La versión original decía *"detectar S11 y cortar cualquier captura"*, con el razonamiento de que los tiles con badge "NEW!" son discos ya existentes y volver a registrarlos sería duplicar.
+
+   Eso sigue siendo cierto para el **pre-registro** (S11 no da de alta discos), pero se estaba descartando el dato **más valioso** de esa pantalla: es el único flujo del juego donde los discos **dejan de existir**, y no registrarlo garantiza que la DB se desincronice de la cuenta con cada limpieza.
+
+   Comportamiento actual: se sigue la selección del usuario y se registra qué destruyó, en un archivo de `audit/desmontajes/` — **nunca en la DB**. La baja real de las filas de `inventory_discs` es un paso futuro y separado que depende del censo de la cuenta. El commit lo da el modal "Obtenido" (**S24**): si el usuario cancela, no se registra nada.
+
+   Detalle: `Documentacion/Dev_IA/2026-07-25_IMPL_Bitacora_Desmontaje_S11_S24.md`.
 3. **Discos ya persistidos con el mismo hash**: el pipeline hace UPSERT por `(fecha_obtencion, set_id, slot, main_stat, main_valor)` para evitar duplicados. Si el hash existe, se actualiza en vez de insertar.
 4. **Capturas con OCR confianza < 0.7**: si el OCR no está seguro del valor, el disco se marca `notas='requiere revisión manual'` y no se evalúa automáticamente.
 

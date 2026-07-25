@@ -478,6 +478,7 @@ class MainWindow(QMainWindow):
         self._controller.disc_detected.connect(self._on_disc_show_toast)
         self._controller.disc_replaced.connect(self._on_disc_show_replacement_toast)
         self._controller.disc_equipped.connect(self._on_disc_show_equipped_toast)
+        self._controller.discs_dismantled.connect(self._on_show_teardown_toast)
 
         # Cableado controller.log_message → live_panel.append_log
         # (mensajes informativos: cambios de estado, capturas descartadas, etc)
@@ -646,6 +647,17 @@ class MainWindow(QMainWindow):
             timeout_secs=3.0,
         )
         self._toast.show_equipped(td)
+
+    def _on_show_teardown_toast(self, payload: dict):
+        """Slot: toast DESMONTADOS (tanda de desmontaje cerrada). UNO por tanda, no uno por disco.
+
+        No hay un disco que mostrar — es un lote — así que el body pinta el conteo. El timeout es
+        un poco más largo que en las otras confirmaciones porque el dato a leer son dos números."""
+        from app.ui.toast import ToastData
+        td = ToastData(variant="desmontado", set_name="—", slot=0, rarity="S", timeout_secs=4.0)
+        td.teardown_total = int(payload.get("total") or 0)
+        td.teardown_known = int(payload.get("con_datos") or 0)
+        self._toast.show_teardown(td)
 
     def closeEvent(self, event):
         """

@@ -312,6 +312,10 @@ class Monitor:
         on_agent_stats: Callable[[AgentStatsParsed, ScreenState], None] | None = None,
         on_diagnostic: Callable[[str], None] | None = None,
         on_replacement: Callable[[dict], None] | None = None,   # reemplazo S23 OBSERVADO (toast)
+        # Tanda de desmontaje cerrada (S24 OBSERVADO). Callback PROPIO y no `on_replacement`:
+        # el payload del reemplazo resuelve avatares y logo de dos PJs, que acá no existen — es
+        # un lote de discos destruidos, no un swap.
+        on_teardown: Callable[[dict], None] | None = None,
         on_agent_detail: Callable[[ScreenState, str | None, bool, str | None], None] | None = None,
         agent_identifier: AgentIdentifier | None = None,
         on_ram_critical: Callable[[], None] | None = None,
@@ -340,6 +344,9 @@ class Monitor:
         # independiente de la persistencia a propósito: el toast afirma lo que se vio, no lo que
         # la DB logró escribir — por eso sale también en read-only. Ver `_check_swap_owner`.
         self._on_replacement = on_replacement
+        self._on_teardown = on_teardown
+        # Tanda de desmontaje en curso (S11). Se crea perezosamente al entrar a la pantalla.
+        self._teardown = None
         # Tracking interno para el heartbeat
         self._last_diagnostic_msg: str | None = None
         self._loop_ticks: int = 0
@@ -808,7 +815,10 @@ class Monitor:
                 # S21/S22 (farmeo por baterías): CONTINUOS porque su contenido cambia SIN cambiar
                 # de pantalla — mover el slider en S21, scrollear la lista en S22. Sin re-despacho
                 # solo se vería el primer frame de cada uno. El gate por firma evita el re-trabajo.
-                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9", "S13", "S3", "S4", "S5", "S10", "S20", "S21", "S22")
+                # S11/S24 (desmontaje): CONTINUOS porque su contenido cambia SIN cambiar de
+                # pantalla — el usuario tilda discos uno a uno en S11, y S24 vive hasta que
+                # aprieta Confirmar. Sin re-despacho solo se vería el primer frame de cada uno.
+                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9", "S13", "S3", "S4", "S5", "S10", "S20", "S21", "S22", "S11", "S24")
                 should_dispatch = forced or (
                     elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
                 )
@@ -946,6 +956,17 @@ class Monitor:
             self._s4_last_sig = None
             self._s4_last_key = None
             self._s4_last_set = None
+        # Tanda de desmontaje: se abandona al llegar a CUALQUIER pantalla confirmada que no sea
+        # la propia grilla, el modal de commit, o un S12. Va acá arriba y no en el `else` final
+        # porque los estados con handler propio (S9, S17, S8…) nunca llegan al `else` — un bug
+        # que atrapó el test: salir a S9 dejaba la tanda viva y la commiteaba el S24 siguiente.
+        #
+        # S12 está exceptuado a propósito: el diálogo de confirmación de grado S cae ahí, y
+        # matar la tanda en ese punto haría que el desmontaje por ese camino NUNCA se registre.
+        if (self._teardown is not None and self._teardown.abierta
+                and state.code not in ("S11", "S12", "S24")
+                and state.confidence >= _DETAIL_RESET_MIN_CONF):
+            self._reset_teardown("salió de la pantalla")
         # Al RE-ENTRAR a S3 (abrir otro disco desde S2), empezar captura fresca: dos discos del
         # mismo set tienen firma parecida y el dedup por firma no siempre los separa. El dedup por
         # IDENTIDAD (_disc_emitted_ids: set+slot+stats) evita emitir dos veces el mismo disco →
@@ -1060,6 +1081,20 @@ class Monitor:
             self._processed_disc_state_code = None
             self._reported_agent_stats_state_code = None
             self._agent_stats_screen_logged = False
+        elif state.code == "S11":
+            # Pantalla de desmontaje: se SIGUE la selección del usuario (tildes + contador) y se
+            # anota cada disco que marca. Display-only — la bitácora va a un archivo en `audit/`,
+            # nunca a la DB (RNF-01).
+            self._process_s11_desmontaje(frame, state)
+            self._processed_disc_state_code = None
+            self._reported_agent_stats_state_code = None
+            self._agent_stats_screen_logged = False
+        elif state.code == "S24":
+            # Modal "Obtenido": la PRUEBA de que el desmontaje ocurrió → commit de la tanda.
+            self._process_s24_obtenido(frame, state)
+            self._processed_disc_state_code = None
+            self._reported_agent_stats_state_code = None
+            self._agent_stats_screen_logged = False
         elif state.code == "S4":
             # Selector de tienda de música (Orphie): OCR del género (=set) + slot preseleccionado
             # del hexágono → predecir el farmeo (display-only, alimenta FarmSession como S13).
@@ -1089,6 +1124,163 @@ class Monitor:
                 self._reset_detail_identity()
         # Cosecha de frames etiquetados (5R.3) — al final, con el latch ya actualizado.
         self._maybe_harvest(frame, state)
+
+    def _diag(self, msg: str) -> None:
+        """Emite una línea al panel de diagnóstico, si hay sink. Nunca propaga: un error del
+        consumidor de UI no puede tumbar el hilo del monitor."""
+        if not self._on_diagnostic:
+            return
+        try:
+            self._on_diagnostic(msg)
+        except Exception:
+            log.exception("Error en on_diagnostic")
+
+    # ---- Desmontaje: seguimiento de la selección (S11) y commit (S24) --------------------
+    def _teardown_batch(self):
+        """La tanda en curso, creándola si hace falta."""
+        if self._teardown is None:
+            from app.core.teardown_batch import TeardownBatch
+            self._teardown = TeardownBatch()
+        return self._teardown
+
+    def _process_s11_desmontaje(self, frame, state: ScreenState) -> None:
+        """Sigue la selección de discos a desmontar (S11), display-only.
+
+        Tres señales del MISMO frame, con autoridades distintas:
+          - contador `N/300` → cuántos (global, sobrevive al scroll);
+          - tildes por celda → cuál acaba de cambiar (barato, sin OCR);
+          - panel DETAIL → qué es ese disco (OCR, solo cuando hay algo que aparear).
+
+        Que el censo y el parseo salgan del mismo frame es lo que hace sólido el apareo: un delta
+        de una sola celda confirmado por el contador prueba que fue el único click de la ventana.
+        """
+        from app.core import parser_desmontaje as pd
+        from app.core.teardown_batch import TeardownBatch  # noqa: F401  (documenta la dependencia)
+
+        batch = self._teardown_batch()
+        if batch.ensure_open(ts=time.monotonic()):
+            log.info("[desmontaje] tanda abierta")
+
+        tildes = pd.tilde_cells(frame)
+        counter = pd.parse_header_counter(frame, self._ocr)
+        scroll = pd.scroll_pos(frame)
+
+        if counter is None:
+            # La autoridad del conteo no se pudo leer. Se sigue observando (el censo puede
+            # servir para el próximo ciclo) pero NO se atribuye nada, y el trabe se canta: este
+            # es justo el return que en otros handlers quedó mudo por minutos.
+            self._note_stall("S11/contador", "no se pudo leer el contador N/300")
+        else:
+            self._clear_stall("S11/contador")
+
+        decision = batch.observe(tildes=tildes, counter=counter, scroll=scroll,
+                                ts=time.monotonic())
+        for linea in decision.logs:
+            log.info("[desmontaje] %s", linea)
+            self._diag(f"[desmontaje] {linea}")
+
+        cell = decision.cell_a_capturar
+        if cell is None:
+            if counter:
+                self._note_stall("S11", f"sin cambios que aparear · {counter}/300")
+            return
+        self._clear_stall("S11")
+
+        from app.core.parser_disc_s3 import parse_disc_s11
+        disc = parse_disc_s11(frame, self._ocr)
+        if disc is None or (disc.confianza_global or 0.0) < 0.70:
+            conf = 0.0 if disc is None else (disc.confianza_global or 0.0)
+            self._note_stall("S11/detalle", f"panel ilegible (conf={conf:.2f})")
+            return
+        self._clear_stall("S11/detalle")
+
+        set_id = self._resolve_set_id_safe(disc.set_name_raw)
+        batch.attach(cell, disc, set_id=set_id)
+        log.info("[desmontaje] +1 → %s/300 · %s", counter, self._fmt_teardown_disc(disc))
+        self._diag(f"[desmontaje] +1 → {counter}/300 · {self._fmt_teardown_disc(disc)}")
+
+    @staticmethod
+    def _fmt_teardown_disc(disc) -> str:
+        """Una línea legible del disco anotado (mismo espíritu que el resto de los logs)."""
+        nombre = disc.set_name_canon or disc.set_name_raw or "?"
+        main = disc.main_stat_canon or disc.main_stat_raw or "?"
+        uni = "%" if disc.main_unidad == "%" else ""
+        subs = " / ".join(
+            f"{(s.nombre_canon or s.nombre_raw or '?')}"
+            f"{('+' + str(s.rolls)) if s.rolls else ''} {s.valor if s.valor is not None else '?'}"
+            for s in (disc.subs or [])
+        )
+        return f"{nombre} ({disc.slot}) Nv{disc.nivel} · {main} {disc.main_valor}{uni} · {subs}"
+
+    def _resolve_set_id_safe(self, raw: str | None) -> int | None:
+        """`set_id` del catálogo, o None. Lectura pura: la bitácora no escribe la DB (RNF-01)."""
+        if not raw:
+            return None
+        try:
+            from app.db.connection import get_connection
+            from app.db.repositories import DiscSetRepo
+            con = get_connection()
+            return DiscSetRepo(con).resolve_id(raw)
+        except Exception:
+            return None
+
+    def _process_s24_obtenido(self, frame, state: ScreenState) -> None:
+        """Commit de la tanda: el modal "Obtenido" es la prueba de que el desmontaje ocurrió.
+
+        Si el usuario cancela, este modal nunca aparece y la tanda muere por abandono sin dejar
+        registro. El modal es CONTINUO (vive hasta el Confirmar), así que el gate de idempotencia
+        de `commit()` corre en cada ciclo."""
+        batch = self._teardown
+        if batch is None or not batch.abierta or batch.committed:
+            self._note_stall("S24", "Obtenido sin tanda de desmontaje abierta")
+            return
+        self._clear_stall("S24")
+
+        from app.core import parser_desmontaje as pd
+        from app.core.teardown_batch import write_teardown_record
+
+        materiales = pd.parse_obtenido_materiales(frame, self._ocr)
+        registro = batch.commit(materiales=materiales, ts=time.monotonic())
+        if registro is None:
+            return
+
+        conteo = registro["conteo"]
+        destino = write_teardown_record(registro)
+        corrob = conteo.get("corroborado")
+        marca = " ✓" if corrob else (" ⚠ no coincide" if corrob is False else "")
+        resumen = (f"tanda cerrada · {conteo['declarado']} desmontados "
+                   f"({conteo['capturados']} con datos, {conteo['faltantes']} sin)"
+                   f"{' · material ×' + str(conteo['material_primero']) + marca if conteo['material_primero'] is not None else ''}")
+        log.info("[desmontaje] %s", resumen)
+        self._diag(f"[desmontaje] {resumen}")
+        if destino is not None:
+            log.info("[desmontaje] → %s", destino)
+            self._diag(f"[desmontaje] → {destino}")
+        for aviso in registro.get("avisos", []):
+            self._diag(f"[desmontaje] ⚠ {aviso}")
+
+        if self._on_teardown:
+            try:
+                self._on_teardown({
+                    "total": conteo["declarado"],
+                    "con_datos": conteo["capturados"],
+                    "faltantes": conteo["faltantes"],
+                    "modo": registro.get("modo"),
+                    "archivo": str(destino) if destino else None,
+                })
+            except Exception:
+                log.exception("Error en on_teardown (toast de desmontaje)")
+
+    def _reset_teardown(self, motivo: str) -> None:
+        """Cierra la tanda sin registrar (el usuario se fue de la pantalla sin desmontar)."""
+        batch = self._teardown
+        if batch is None or not batch.abierta:
+            return
+        declarado = batch.declarado or 0
+        batch.drop(motivo)
+        if declarado:
+            log.info("[desmontaje] tanda abandonada · %d tildados, sin desmontar", declarado)
+            self._diag(f"[desmontaje] tanda abandonada · {declarado} tildados, sin desmontar")
 
     def _maybe_harvest(self, frame, state: ScreenState) -> None:
         """Si DANIBOD_HARVEST está seteado, guarda el frame completo etiquetado por

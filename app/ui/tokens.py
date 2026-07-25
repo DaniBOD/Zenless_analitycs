@@ -63,6 +63,10 @@ VARIANTS: dict[str, dict] = {
     # "AHORA EN" + el avatar/nombre que ya pinta el body. Meterlo en el header desbordaba contra
     # el micro-badge con nombres largos ("AHORA EN ORFIA Y MAGAS" se come los ~87 px de holgura).
     "equipado":    {"label": "AHORA EN",    "color": PURPLE, "tone": "purple", "icon": "check"},
+    # Tanda de desmontaje cerrada. UNO por tanda, no uno por disco (pedido del usuario): en una
+    # limpieza de 50 discos, 50 toasts serían inusables. Ojo la distinción con `descartar`, que
+    # es la RECOMENDACIÓN ("te conviene tirarlo"); este es el HECHO ("ya los tiraste").
+    "desmontado":  {"label": "DESMONTADOS", "color": PURPLE, "tone": "purple", "icon": "trash"},
 }
 
 
