@@ -105,6 +105,19 @@ TEMPLATES = [
         "description": "S11 — header desmontaje",
     },
     {
+        "name": "s24_obtenido_desmontaje.png",
+        "source": "12_Desmontaje/Ejemplo_5_(Post_demontaje).png",
+        # Título "Obtenido" centrado del modal que CONFIRMA el desmontaje. Es el único punto de
+        # commit del feature: si el usuario cancela, este modal nunca aparece.
+        #
+        # El título es genérico en ZZZ (S22 usa el mismo, y también correo/login/pase), así que
+        # el template por sí solo sería un FP a la espera → `_verify_s24` es obligatorio.
+        # El ROI se queda SOLO con el texto sobre el fondo casi negro del overlay: no incluye los
+        # iconos de material, que cambian según lo que se desmonte.
+        "roi": [0.43, 0.370, 0.14, 0.048],
+        "description": "S24 — título 'Obtenido' (confirmación post-desmontaje)",
+    },
+    {
         "name": "s20_materiales_recuperados.png",
         "source": "07_Upgrade_POST_animacion_confirmacion/Ejemplo_1(vuelto_materiales).png",
         # Popup "Materiales recuperados" (vuelto de sobrantes al MAXEAR): título centrado
@@ -222,9 +235,11 @@ def _resolve_source(source_rel: str) -> Path:
     return (REFS / source_rel).resolve()
 
 
-def build(show: bool = False) -> int:
+def build(show: bool = False, only: str | None = None) -> int:
     ok = 0
     for t in TEMPLATES:
+        if only and only not in t["name"]:
+            continue
         src_path = _resolve_source(t["source"])
         out_path = OUT / t["name"]
 
@@ -260,10 +275,20 @@ def build(show: bool = False) -> int:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--show", action="store_true", help="Mostrar cada crop con cv2.imshow")
+    parser.add_argument(
+        "--only", metavar="SUBSTR",
+        help="Regenerar solo los templates cuyo nombre contenga SUBSTR. Agregar un estado nuevo "
+             "no debería reescribir los 20 templates ya calibrados y validados.",
+    )
     args = parser.parse_args()
 
     print(f"Generando templates en {OUT}...")
-    n = build(show=args.show)
+    n = build(show=args.show, only=args.only)
+    if args.only:
+        print(f"\n[{n}] template(s) generados (filtro: {args.only!r}).")
+        if n == 0:
+            sys.exit(1)
+        return
     print(f"\n[{n}/{len(TEMPLATES)}] templates generados.")
     if n < len([t for t in TEMPLATES if not t.get("optional")]):
         sys.exit(1)

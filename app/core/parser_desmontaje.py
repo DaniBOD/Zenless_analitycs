@@ -190,6 +190,87 @@ def parse_header_counter(frame: np.ndarray, ocr) -> int | None:
         return None
 
 
+# --- Materiales del modal "Obtenido" (post-desmontaje) --------------------------------------
+# Banda que cubre la cantidad de cada material y su nombre (que se envuelve a 2 líneas). Los
+# iconos quedan arriba, fuera: solo interesa el texto.
+_MATERIALES_ROI = (0.28, 0.535, 0.44, 0.085)
+
+# Ancho de columna para agrupar los fragmentos de un mismo material (los nombres largos se
+# envuelven y salen como 2 líneas casi alineadas en x).
+_MAT_COL_TOL = 0.055
+
+_RE_SOLO_DIGITOS = re.compile(r"^\d{1,6}$")
+
+
+def parse_obtenido_materiales(frame: np.ndarray, ocr) -> list[tuple[str, int | None]]:
+    """Materiales del modal que confirma el desmontaje: `[(nombre, cantidad|None), ...]`.
+
+    Es un oráculo **secundario**: sirve para corroborar el contador del header, nunca para
+    reemplazarlo. Más aún después de medir que la evidencia es contradictoria — la
+    previsualización de `Ejemplo_3` muestra 7 y el "Obtenido" de `Ejemplo_7` muestra 1.
+
+    **Límite conocido y asumido:** los nombres se leen bien, pero las cantidades de un solo
+    dígito las dropea el downscale del detector de PaddleOCR, y el rescate por upscale tampoco
+    las recupera (la banda es demasiado fina y el detector se pierde). En ese caso la cantidad
+    sale `None` — nunca se toma la de la columna vecina, que es el error que haría afirmar una
+    corroboración falsa (RNF-02).
+    """
+    if frame is None or getattr(frame, "size", 0) == 0 or ocr is None:
+        return []
+    try:
+        from app.core.capturer import crop_roi
+        crop = crop_roi(frame, _MATERIALES_ROI)
+        if crop is None or getattr(crop, "size", 0) == 0:
+            return []
+        rows = ocr.text_with_bboxes(crop)
+        if not rows:
+            return []
+        W = crop.shape[1]
+
+        cantidades: list[tuple[float, int]] = []      # (xn del centro, valor)
+        fragmentos: list[tuple[float, float, str]] = []   # (xn del centro, yn, texto)
+        for texto, _conf, (x1, y1, x2, _y2) in rows:
+            t = (texto or "").strip()
+            if not t:
+                continue
+            xc = ((x1 + x2) / 2) / W
+            if _RE_SOLO_DIGITOS.match(t):
+                cantidades.append((xc, int(t)))
+            else:
+                fragmentos.append((xc, y1, t))
+
+        # Agrupar los fragmentos de nombre por columna (el nombre se envuelve a 2 líneas).
+        columnas: list[list[tuple[float, float, str]]] = []
+        for frag in sorted(fragmentos, key=lambda f: f[0]):
+            if columnas and abs(frag[0] - columnas[-1][0][0]) <= _MAT_COL_TOL:
+                columnas[-1].append(frag)
+            else:
+                columnas.append([frag])
+
+        out: list[tuple[str, int | None]] = []
+        usadas: set[int] = set()
+        for col in columnas:
+            nombre = " ".join(t for _x, _y, t in sorted(col, key=lambda f: f[1])).strip()
+            xc = sum(x for x, _y, _t in col) / len(col)
+            # La cantidad DEBE venir de esta columna: se toma la más cercana en x y solo si cae
+            # dentro de la tolerancia de columna. Si no, `None`.
+            mejor, mejor_d = None, None
+            for i, (qx, qv) in enumerate(cantidades):
+                if i in usadas:
+                    continue
+                d = abs(qx - xc)
+                if d <= _MAT_COL_TOL and (mejor_d is None or d < mejor_d):
+                    mejor, mejor_d = i, d
+            if mejor is not None:
+                usadas.add(mejor)
+                out.append((nombre, cantidades[mejor][1]))
+            else:
+                out.append((nombre, None))
+        return out
+    except Exception:
+        return []
+
+
 # --- Scrollbar -----------------------------------------------------------------------------
 # Barra vertical al borde izquierdo de la grilla. Su thumb dice si el viewport se movió, que es
 # lo que permite (a) etiquetar un hueco como "fuera_de_viewport" y (b) invalidar el mapa

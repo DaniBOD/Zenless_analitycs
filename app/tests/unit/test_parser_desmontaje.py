@@ -38,6 +38,7 @@ from app.core.parser_desmontaje import (
     GRID_ROWS,
     _counter_from_text,
     parse_header_counter,
+    parse_obtenido_materiales,
     scroll_pos,
     tilde_cells,
     tilde_fracs,
@@ -208,6 +209,48 @@ def test_contador_rescata_digitos_mal_leidos():
     assert _counter_from_text("Desmontaje de pistas de disco S/300") == 5
     assert _counter_from_text("Desmontaje de pistas de disco lO/300") == 10
     assert _counter_from_text("desmontaje O/300") == 0
+
+
+# --- Materiales del modal "Obtenido": oráculo SECUNDARIO ------------------------------------
+# La cantidad del primer material se registra para CORROBORAR el contador, nunca para
+# reemplazarlo — y menos después de ver que la evidencia es contradictoria: la previsualización
+# de Ejemplo_3 muestra 7 y el "Obtenido" de Ejemplo_7 muestra 1.
+#
+# Los NOMBRES se leen bien; las CANTIDADES chicas (1 dígito) las dropea el downscale de Paddle y
+# el rescate con upscale no las recupera (la banda es muy fina y el detector se pierde). Por eso
+# el contrato es explícito: cantidad ilegible ⇒ `None`, jamás un número adivinado (RNF-02).
+
+
+@pytest.mark.skipif(not _present("Ejemplo_7_(Post_demontaje).png"), reason="fixture no presente")
+def test_materiales_lee_los_nombres_del_obtenido():
+    mats = parse_obtenido_materiales(_load(_DIR / "Ejemplo_7_(Post_demontaje).png"), _paddle())
+    nombres = [n for n, _q in mats]
+    assert len(mats) == 5, mats
+    assert nombres[0].lower().startswith("disco original"), nombres
+    assert any("cristalizado" in n.lower() for n in nombres), nombres
+
+
+@pytest.mark.skipif(not _present("Ejemplo_5_(Post_demontaje).png"), reason="fixture no presente")
+def test_materiales_dos_items():
+    mats = parse_obtenido_materiales(_load(_DIR / "Ejemplo_5_(Post_demontaje).png"), _paddle())
+    assert len(mats) == 2, mats
+    assert mats[0][0].lower().startswith("disco original"), mats
+
+
+@pytest.mark.skipif(not _present("Ejemplo_7_(Post_demontaje).png"), reason="fixture no presente")
+def test_materiales_cantidad_ilegible_es_none_no_un_numero_de_otra_columna():
+    """El riesgo real: si una cantidad no se lee y se toma la del vecino, la corroboración
+    afirmaría algo falso. Cada cantidad tiene que venir de SU columna o ser None."""
+    mats = parse_obtenido_materiales(_load(_DIR / "Ejemplo_7_(Post_demontaje).png"), _paddle())
+    cantidades = [q for _n, q in mats]
+    assert all(q is None or isinstance(q, int) for q in cantidades), mats
+    # 19 y 57600 son las dos que el OCR sí lee; ninguna puede aparecer duplicada en otra columna.
+    leidas = [q for q in cantidades if q is not None]
+    assert len(leidas) == len(set(leidas)), f"cantidad repetida entre columnas: {mats}"
+
+
+def test_materiales_sin_ocr_devuelve_lista_vacia():
+    assert parse_obtenido_materiales(np.zeros((10, 10, 3), np.uint8), None) == []
 
 
 @pytest.mark.skipif(not _present("Ejemplo_2.png"), reason="fixture no presente")

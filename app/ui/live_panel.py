@@ -365,7 +365,9 @@ class LivePanel(QWidget):
             color = T.POSITIVE  # estados de captura activa
         elif code == "S10":
             color = T.INFO
-        elif code in ("S11", "S12"):
+        elif code in ("S11", "S24"):
+            color = T.INFO      # desmontaje: se está siguiendo una selección / su confirmación
+        elif code == "S12":
             color = T.TEXT_MUTED
         else:
             color = T.TEXT_SECONDARY

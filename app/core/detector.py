@@ -61,6 +61,7 @@ THRESHOLD_BY_STATE: dict[str, float] = {
     "S5":  0.80,   # Resultado afinación — ventana breve
     "S8":  0.80,   # Vista agente — informativo
     "S11": 0.80,   # Desmontaje — anti-FP
+    "S24": 0.85,   # "Obtenido" post-desmontaje — título genérico, exige _verify_s24
     "S17": 0.75,   # Detalle disco PJ — informativo, más permisivo
     "S18": 0.75,   # Perfil agente (Atributos base) — informativo
     "S19": 0.75,   # Perfil agente (Habilidades) — informativo, sin extracción
@@ -109,8 +110,11 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     "S8":  {"S17", "S18", "S19", "S12", "S15", "S9", "S23"},   # equipar un disco de otro PJ → diálogo swap
     "S9":  {"S8", "S12", "S17", "S16", "S6", "S7"},   # "Ver" un disco del inventario → S6/S7
     "S10": {"S12", "S9", "S3", "S20", "S6", "S7"},    # volver de la mejora a la vista individual
-    "S11": {"S12", "S9", "S3"},
-    "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18", "S19", "S20", "S21", "S22", "S23"},
+    # S24 = el "Obtenido" que confirma el desmontaje. El diálogo de grado S que va en el medio
+    # cae a S12 (decisión de diseño: no se detecta), así que el camino real es S11 → S12 → S24.
+    "S11": {"S12", "S9", "S3", "S24"},
+    "S24": {"S11", "S12", "S9"},
+    "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18", "S19", "S20", "S21", "S22", "S23", "S24"},
     "S13": {"S12", "S14", "S1", "S18", "S21", "S22"},
     "S14": {"S12", "S1", "S13", "S15", "S18"},
     "S15": {"S8", "S18", "S19", "S12", "S14"},
@@ -153,6 +157,7 @@ STATE_DESCRIPTIONS: dict[str, str] = {
     "S21": "Modal selección de usos (baterías) — ANTELACIÓN A CAPTURA",
     "S22": "Modal 'Obtenido' (drops del farmeo por baterías)",
     "S23": "Diálogo de sustitución de disco entre PJs (confirmar swap)",
+    "S24": "Modal 'Obtenido' — confirmación del desmontaje",
 }
 
 # Estados que SÍ tienen un disco visible para parsear
@@ -163,6 +168,10 @@ UPGRADE_STATES: set[str] = {"S10"}
 NON_CAPTURE_STATES: set[str] = {
     "S1", "S2", "S4", "S8", "S9",
     "S11", "S12", "S13", "S14", "S15", "S16", "S19", "S20", "S21", "S22", "S23",
+    # S11 y S24 no exponen un disco por el camino de `CAPTURE_DISC_STATES`: el panel DETAIL de
+    # S11 lo lee su propio handler (que además necesita el censo de tildes para saber a QUÉ
+    # celda pertenece) y S24 solo muestra materiales.
+    "S24",
 }
 
 # Estados donde hay stats de agente visibles (Atributos base)
@@ -1150,6 +1159,54 @@ def _verify_s23(frame: np.ndarray) -> tuple[bool, str | None]:
         return (True, None)
 
 
+# Pill "Confirmar" CENTRADO del modal post-desmontaje. Es lo que lo distingue de los otros
+# "Obtenido" y de los diálogos de dos botones: acá hay un único botón, centrado y más abajo.
+# Medido sobre los fixtures: el modal post-desmontaje da 0.0222 de verde en este ROI, y TODOS
+# los vecinos dan 0.0000 — el diálogo de confirmación del propio desmontaje (Ejemplo_8, que
+# tiene Cancelar+Confirmar más arriba), los 4 de S22 y los 7 de S23.
+_S24_CONFIRMAR_ROI = (0.40, 0.640, 0.20, 0.075)   # x, y, w, h
+_S24_GREEN_LO = (35, 80, 80)
+_S24_GREEN_HI = (85, 255, 255)
+_S24_GREEN_MIN = 0.008                             # ~1/3 del objetivo, y el resto mide 0.0
+
+
+def _verify_s24(frame: np.ndarray) -> tuple[bool, str | None]:
+    """Verifica que S24 sea el "Obtenido" que CONFIRMA un desmontaje.
+
+    El título "Obtenido" es genérico en ZZZ — lo usan el correo, el login, el pase de batalla y
+    sobre todo **S22** (drops del farmeo por baterías) — así que el template solo sería un FP a
+    la espera. Dos condiciones independientes, ambas sin OCR (RNF-06):
+
+    1. **Pill verde "Confirmar" centrado.** Este modal tiene un único botón; los diálogos de
+       confirmación tienen dos (y más arriba), y S22 no tiene ninguno ahí.
+    2. **Pocas franjas de rareza.** S22 exige ≥6 en su viewport y muestra 12-14; este modal
+       muestra 2-3 iconos de material. Separa por estructura, no por texto.
+
+    La 2ª es la que impide que los dos "Obtenido" se roben la pantalla: cada uno falla el verify
+    del otro. Ante excepción no se bloquea (convención del repo)."""
+    try:
+        h, w = frame.shape[:2]
+        x, y, rw, rh = _S24_CONFIRMAR_ROI
+        crop = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
+        if crop.size == 0:
+            return (True, None)
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        green = float(cv2.inRange(hsv, _S24_GREEN_LO, _S24_GREEN_HI).mean()) / 255.0
+        if green < _S24_GREEN_MIN:
+            return (False, f"confirmar={green:.4f}")
+
+        from app.core.parser_extraccion import (
+            _EXTRACCION_STRIP_MIN,
+            count_rarity_strips_viewport,
+        )
+        n = count_rarity_strips_viewport(frame)
+        if n >= _EXTRACCION_STRIP_MIN:
+            return (False, f"strips={n} (es S22)")
+        return (True, f"confirmar={green:.4f} strips={n}")
+    except Exception:
+        return (True, None)
+
+
 def _verify_s2(frame: np.ndarray) -> tuple[bool, str | None]:
     """Verifica que S2 sea un FARMEO DE DISCOS real. El template 's2_resultado_desafio' matchea
     (a ≥0.80) tanto los resultados de farmeo de discos como OTRAS pantallas de "Resultados del
@@ -1196,6 +1253,7 @@ _VERIFICATION_REGISTRY: dict[str, callable] = {
     "S2":  _verify_s2,
     "S22": _verify_s22,
     "S23": _verify_s23,
+    "S24": _verify_s24,
     "S3":  _verify_s3,
     "S10": _verify_s10,
     "S17": _verify_s17,
@@ -1311,6 +1369,7 @@ _STATE_TEMPLATES: list[dict] = [
     {"code": "S21", "template": "s21_seleccion_usos.png",           "desc": "Modal selección número de usos (baterías)"},
     {"code": "S22", "template": "s22_obtenido.png",                 "desc": "Modal 'Obtenido' (drops del farmeo por baterías)"},
     {"code": "S23", "template": "s23_sustitucion.png",              "desc": "Diálogo de sustitución de disco entre PJs (Cancelar/Confirmar)"},
+    {"code": "S24", "template": "s24_obtenido_desmontaje.png",      "desc": "Modal 'Obtenido' (confirmación post-desmontaje)"},
 ]
 
 
@@ -1620,9 +1679,15 @@ def polling_cadence_ms(state: ScreenState) -> int:
     cadence = {
         "S1":  4000, "S2":  1000, "S3":   500, "S4":  4000,
         "S5":  1000, "S6":   500, "S7":   500, "S8":  1500,
-        "S9":  1500, "S10":  500, "S11": 5000, "S12": 2000,
+        "S9":  1500, "S10":  500, "S12": 2000,
         "S13": 1000, "S14": 1000, "S15": 1000, "S16": 1500,
         "S17": 1000, "S18": 1500, "S19": 1500, "S21": 1000, "S22": 700,
         "S23": 1000,   # diálogo modal breve; el latch del destino se captura al detectarlo
+        # S11: 5000 → 300. Antes solo hacía falta RECONOCERLA para no capturar; ahora se sigue
+        # una selección que el usuario hace clickeando cada 1-2 s, y cada ciclo perdido es un
+        # disco sin datos. El censo de tildes (lo que corre siempre) es < 3 ms sin OCR; el OCR
+        # del contador está gateado por firma y el del panel solo corre cuando hay apareo.
+        "S11": 300,
+        "S24": 500,    # modal de commit: vive hasta que el usuario aprieta Confirmar
     }
     return cadence.get(state.code, 2000)
