@@ -205,13 +205,29 @@ verlo en vez de suponer que la bitácora quedó completa.
    trabajo **diferido** de `2026-07-10_Futuro_Latencia_GPU_Distribucion.md`, que por su propia nota
    no se retoma hasta cerrar la cobertura de extracción — o sea, hasta después de este feature.
 
-### Lección de método: los benches no pueden medir la contención
+### Lección de método: el bench mentía dos veces, y la segunda tapaba un problema real
 
-El primer bench del censo promediaba 20 corridas y **falló en la suite completa (4.0 ms) mientras
-pasaba aislado**: estaba midiendo la CPU que se llevaban los otros 1100 tests, no el costo del
-censo. Ahora se toma el **mínimo de varias tandas**, que mide el costo propio. Mismo criterio en el
-bench del panel. Un test que falla según lo que más corra en la máquina erosiona la confianza en
-toda la suite.
+El bench del censo **falló dos veces en la suite completa pasando aislado**. La primera vez lo
+atribuí a contención y promedié 20 corridas; la segunda tomé el mínimo de varias tandas. Seguía
+fallando, porque el problema no era la estadística sino el **instrumento**: `perf_counter` mide
+reloj de pared, que incluye el tiempo en que el proceso está desalojado, así que estaba midiendo el
+CPU que se llevaban los otros 1100 tests.
+
+Con `thread_time` (CPU de este hilo) apareció lo que las dos versiones anteriores tapaban: el censo
+costaba **2.34 ms contra un presupuesto de 3 ms**. Un 30 % de margen es demasiado fino — de ahí que
+cualquier carga lo pasara. El síntoma "test flaky" era en realidad "el código está al límite".
+
+Y el costo no era el trabajo de píxeles (45 recortes de 46×46 px son nada) sino el **overhead de
+135 llamadas** al binding de OpenCV. Vectorizado (los 45 recortes apilados → un `cvtColor`, un
+`inRange`, medias por `reshape`): **2.34 → 1.56 ms**, 1.9× de margen.
+
+> Un bench que falla según lo que más corra en la máquina no es solo molesto: **oculta la señal que
+> debía dar**. Si hubiera subido el umbral —la tentación obvia— el censo se habría ido a producción
+> corriendo a 10 fps con un 30 % de margen y nadie se enteraba.
+
+El bench del **panel** sí usa reloj de pared a propósito: ahí interesa la latencia que el usuario
+percibe, y el OCR de Paddle es multi-hilo (`thread_time` sub-contaría). Su umbral es una guarda de
+regresión generosa, no un objetivo.
 
 ---
 
