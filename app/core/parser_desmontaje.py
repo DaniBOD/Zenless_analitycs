@@ -88,26 +88,48 @@ def _annulus_mask(box: int, rad: float) -> np.ndarray:
     return cached
 
 
-def _badge_annulus_frac(frame: np.ndarray, row: int, col: int) -> float:
-    """Fracción de amarillo en el annulus del badge de una celda. 0.0 si el recorte no entra."""
+def _all_badge_fracs(frame: np.ndarray) -> dict[tuple[int, int], float]:
+    """Fracción de amarillo del annulus de las 45 celdas, en DOS llamadas a OpenCV.
+
+    La versión ingenua (un `cvtColor` + un `inRange` por celda) costaba ~2.3 ms de CPU medidos con
+    `thread_time` — no por el trabajo de píxeles (45 recortes de 46×46 px son nada) sino por el
+    **overhead de 135 llamadas** a través del binding de OpenCV. Contra el presupuesto de 3 ms del
+    loop rápido eso deja un margen del 30 %, tan fino que la propia suite de tests lo hacía fallar.
+
+    Acá los 45 recortes se apilan en una sola imagen y se convierten/umbralizan de una vez, y las
+    medias por celda salen de un `reshape` + `mean` de numpy. Mismo resultado, ~1 llamada por
+    operación en vez de 45."""
     H, W = frame.shape[:2]
-    cx = (_COLS_CX[col] + _BADGE_DX) * W
-    cy = (_ROWS_CY[row] + _BADGE_DY) * H
     rad = _BADGE_RAD * W
     box = int(rad * 1.3)
     if box < 2:
-        return 0.0
-    x0, y0 = int(cx - box), int(cy - box)
-    if x0 < 0 or y0 < 0 or x0 + 2 * box > W or y0 + 2 * box > H:
-        return 0.0
-    sub = frame[y0:y0 + 2 * box, x0:x0 + 2 * box]
-    if sub.size == 0:
-        return 0.0
-    mask = cv2.inRange(cv2.cvtColor(sub, cv2.COLOR_BGR2HSV), _YELLOW_LO, _YELLOW_HI) > 0
+        return {}
+    lado = 2 * box
+
+    celdas: list[tuple[int, int]] = []
+    recortes: list[np.ndarray] = []
+    for r in range(GRID_ROWS):
+        for c in range(GRID_COLS):
+            cx = (_COLS_CX[c] + _BADGE_DX) * W
+            cy = (_ROWS_CY[r] + _BADGE_DY) * H
+            x0, y0 = int(cx - box), int(cy - box)
+            if x0 < 0 or y0 < 0 or x0 + lado > W or y0 + lado > H:
+                continue
+            celdas.append((r, c))
+            recortes.append(frame[y0:y0 + lado, x0:x0 + lado])
+    if not recortes:
+        return {}
+
+    # Una sola conversión + un solo umbral sobre los 45 recortes apilados.
+    lote = np.concatenate(recortes, axis=1)                     # (lado, n*lado, 3)
+    mask = cv2.inRange(cv2.cvtColor(lote, cv2.COLOR_BGR2HSV), _YELLOW_LO, _YELLOW_HI)
+    # (lado, n, lado) → cada celda es un plano; el annulus se aplica por broadcasting.
+    porcelda = mask.reshape(lado, len(recortes), lado).swapaxes(0, 1) > 0
     ann = _annulus_mask(box, rad)
-    if mask.shape != ann.shape or not ann.any():
-        return 0.0
-    return float(mask[ann].mean())
+    if ann.shape != (lado, lado) or not ann.any():
+        return {}
+    fracs = porcelda[:, ann].mean(axis=1)
+    return {celda: float(v) for celda, v in zip(celdas, fracs)}
 
 
 def _tile_strip_frac(frame: np.ndarray, row: int, col: int) -> float:
@@ -305,11 +327,7 @@ def tilde_fracs(frame: np.ndarray) -> dict[tuple[int, int], float]:
     """Fracción del annulus por celda `(fila, col)`. Para calibración y diagnóstico."""
     if frame is None or getattr(frame, "size", 0) == 0:
         return {}
-    return {
-        (r, c): _badge_annulus_frac(frame, r, c)
-        for r in range(GRID_ROWS)
-        for c in range(GRID_COLS)
-    }
+    return _all_badge_fracs(frame)
 
 
 def tilde_cells(frame: np.ndarray) -> frozenset[tuple[int, int]]:
@@ -323,13 +341,12 @@ def tilde_cells(frame: np.ndarray) -> frozenset[tuple[int, int]]:
     try:
         # El gate de la franja se evalúa DESPUÉS del amarillo (y solo sobre los candidatos):
         # los tildes son pocos, así que el caso común —una grilla sin nada marcado— paga
-        # únicamente los 45 annulus.
+        # únicamente el lote vectorizado y ni una llamada más.
         return frozenset(
-            (r, c)
-            for r in range(GRID_ROWS)
-            for c in range(GRID_COLS)
-            if _badge_annulus_frac(frame, r, c) >= _TILDE_FRAC_MIN
-            and _tile_strip_frac(frame, r, c) >= _STRIP_FRAC_MIN
+            celda
+            for celda, frac in _all_badge_fracs(frame).items()
+            if frac >= _TILDE_FRAC_MIN
+            and _tile_strip_frac(frame, celda[0], celda[1]) >= _STRIP_FRAC_MIN
         )
     except Exception:
         return frozenset()

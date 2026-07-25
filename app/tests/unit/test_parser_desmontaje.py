@@ -255,18 +255,22 @@ def test_materiales_sin_ocr_devuelve_lista_vacia():
 
 @pytest.mark.skipif(not _present("Ejemplo_2.png"), reason="fixture no presente")
 def test_bench_censo_bajo_3ms():
-    """Corre en el loop rápido a 10 fps ⇒ RNF-06. Sin OCR, solo máscaras HSV sobre 45 recortes.
+    """Corre en el loop rápido a 10 fps ⇒ RNF-06. Sin OCR, solo máscaras HSV.
 
-    Se mide el MÍNIMO de varias tandas, no el promedio: la primera versión promediaba y falló
-    en la suite completa (4.0 ms) mientras que aislada daba de sobra — estaba midiendo la
-    contención de CPU de los otros 1100 tests, no el costo del censo. El mínimo mide el costo
-    propio, que es lo que este test tiene que vigilar."""
+    **Se mide con `thread_time`, no con `perf_counter`.** Dos intentos anteriores fallaron en la
+    suite completa y pasaban aislados: el reloj de pared incluye el tiempo en que el proceso está
+    desalojado, así que estaban midiendo la contención de CPU de los otros 1100 tests. Ni
+    promediar ni tomar el mínimo lo arregla — el instrumento estaba mal. `thread_time` cuenta solo
+    el CPU de ESTE hilo, que es exactamente lo que este test tiene que vigilar.
+
+    Al medirlo bien apareció el problema real: la versión ingenua (un `cvtColor` + un `inRange`
+    por celda) costaba ~2.3 ms contra un presupuesto de 3 ms — 30 % de margen, demasiado fino. El
+    costo no era el trabajo de píxeles sino el overhead de 135 llamadas a OpenCV, así que el censo
+    se vectorizó a dos llamadas sobre los 45 recortes apilados."""
     fr = _load(_DIR / "Ejemplo_2.png")
     tilde_cells(fr)                      # warmup (cachea la máscara del annulus)
-    tandas = []
-    for _ in range(5):
-        t0 = time.perf_counter()
-        for _ in range(10):
-            tilde_cells(fr)
-        tandas.append((time.perf_counter() - t0) / 10 * 1000)
-    assert min(tandas) < 3.0, f"{min(tandas):.2f} ms por censo (tandas: {[f'{t:.2f}' for t in tandas]})"
+    t0 = time.thread_time()
+    for _ in range(20):
+        tilde_cells(fr)
+    ms = (time.thread_time() - t0) / 20 * 1000
+    assert ms < 3.0, f"{ms:.2f} ms de CPU por censo"
