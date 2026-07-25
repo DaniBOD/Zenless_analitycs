@@ -38,31 +38,57 @@ a una llamada de distancia.
 
 ---
 
-## 2. El silencio del loop (lo caro de la mañana)
+## 2. El "silencio del loop": una falsa alarma, y por qué igual dejó código
 
-**Síntoma:** entre 09:31:45 y 09:39:56 el monitor no escribió **una sola línea**, mientras el
-cosechador —un proceso aparte— registraba que la pantalla pasó por diálogo → grilla → S17 a
-confianza 1.000. `py-spy` mostraba el hilo `zzz-monitor` ausente y el proceso con CPU en 0.
+> **Resuelto el mismo día. No hubo defecto.** Se documenta completo porque el error de método
+> costó media mañana y es reincidente.
 
-**Lo que se descartó, uno por uno:**
+**Lo que parecía:** entre 09:31:45 y 09:39:56 el monitor no escribió una sola línea, mientras el
+cosechador —un proceso aparte— tenía frames de diálogo, grilla y S17 a confianza 1.000. `py-spy`
+mostraba el hilo `zzz-monitor` ausente y el proceso con CPU en 0. Se descartaron seis causas
+(gate de foco, watchdog de RAM, pausa por hotkey o botón, pérdida de ventana, y dos excepciones
+reproducidas offline con los frames reales) y ninguna cerraba.
 
-| Hipótesis | Cómo se descartó |
-|---|---|
-| Gate de foco | Estaba desactivado (`DANIBOD_NO_FOCUS_GATE=1`) |
-| Watchdog de RAM | Umbral 6000 MB, el proceso estaba en 1701 MB |
-| Pausa por F10 o botón | Ambas loguean; no hay línea |
-| Pérdida de ventana | Loguea por flanco; no hay línea |
-| Excepción en el despacho | Reproducido offline con los frames reales, OCR real y repo real: no lanza |
-| Excepción en `_deep_detect_s18` (corre en S12) | Reproducido sobre el frame del diálogo: devuelve `None` limpio |
+**Lo que era.** Los timestamps de los frames cosechados, que estaban en el nombre del archivo
+desde el principio:
 
-**Lo que sí se estableció:** a las 09:39:56 alguien apretó *"Detener captura"* — el log dice
-`Monitor detenido.` y ese botón es lo único cableado a esa ruta. Eso explica el hilo ausente en el
-dump, pero **no explica los 8 minutos previos**.
+| Frame | Hora | Pantalla |
+|---|---|---|
+| 001 | 09:37:05 | el diálogo de grado S |
+| 002 | **09:39:54** | la grilla (el usuario canceló) |
+| — | **09:39:56** | `Monitor detenido.` (botón del panel) |
+| 003-029 | 09:39:57 → 09:42:00 | S17 |
 
-**Conclusión honesta: la causa de esos 8 minutos no se determinó.** No porque no exista, sino
-porque el loop tiene caminos que no dejan rastro, y ninguna cantidad de razonamiento sobre un log
-mudo iba a cerrarlo. Por eso el arreglo no es una hipótesis más: es hacer que el próximo silencio
-sea imposible de confundir.
+De 09:31:45 a 09:39:54 **la misma pantalla, sin cambiar**. El logging es edge-triggered y S12 es
+un estado que no captura: no había nada que decir, y no decirlo era lo correcto. Los 27 frames de
+S17 que se habían tomado como prueba de "la pantalla cambió mientras la app callaba" son todos
+**posteriores al stop** — la app ya estaba apagada.
+
+**El error de método, que es lo que hay que no repetir:** se leyó "el cosechador vio tres
+pantallas" sin mirar *a qué hora vio cada una*, y se construyó un misterio encima. Es el mismo
+error de la sección 1 —deducir el estado en vez de verificarlo— repetido dos horas después, con
+la evidencia ya en la mano. El dato que lo cerraba estaba en el nombre del archivo.
+
+**Queda un cabo suelto menor, sin perseguir:** entre el cancelar (09:39:54) y el stop (09:39:56)
+el monitor tuvo ~2 s para loguear `S12 → S11` y no lo hizo. Dos segundos en plena secuencia de
+apagado no justifican investigación; si reaparece, ahora el latido lo va a mostrar.
+
+### Por qué el código se deja igual
+
+Nada de esto era un defecto, pero tres cosas que se escribieron para diagnosticarlo **sí arreglan
+problemas reales**, y por eso quedan:
+
+1. **El latido** habría cerrado esto en **una línea y treinta segundos** en vez de media mañana:
+   un loop vivo sobre pantalla quieta late con el estado puesto, uno muerto no late, y uno sin
+   frames late con `frames_nulos` alto. Las seis hipótesis descartadas a mano se distinguen de un
+   vistazo. El valor no es haber encontrado un bug: es que el próximo silencio sea legible.
+2. **`_safe_dispatch` sí tapa un agujero real e independiente de esto.** El cuerpo del loop no
+   tenía `try/except`: cualquier excepción de un handler mataba el hilo y dejaba la app viva y
+   ciega, con el traceback yéndose a un stderr bufferizado que en el `.exe` puede no vaciarse
+   nunca. Eso podía pasar hoy, ayer o mañana; que hoy no haya pasado no lo hace menos cierto — y
+   de hecho es justo por ese agujero que la hipótesis no se pudo descartar sin reproducir a mano.
+3. **`stop()` con origen** responde en el acto la pregunta que aquí se contestó por descarte
+   (¿usuario, watcher o cierre?).
 
 ### Lo que se agregó
 
