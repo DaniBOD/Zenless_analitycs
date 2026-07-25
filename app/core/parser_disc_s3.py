@@ -380,6 +380,58 @@ def parse_disc_s5(frame: np.ndarray, ocr) -> DiscParsed:
     return parsed
 
 
+# --- S11: panel DETAIL de la pantalla de Desmontaje ---------------------------------------
+# Estructuralmente igual a S5 (título "<set> (N)", pill de nivel, headers, main, substats,
+# "Efecto de conjunto") pero el panel vive a la DERECHA y es más ancho, así que los substats
+# entran en UNA sola línea cada uno: nombre + badge "+N" a la izquierda, valor a la derecha.
+#
+# El ROI se corta en y≈0.685 A PROPÓSITO: más abajo empieza la fila de **recompensas
+# previsualizadas**, cuyos slots vacíos dicen "EMPTY" y cuyos números (cantidades de material)
+# caerían dentro de la banda de valores del panel. Incluirlos generaría substats fantasma.
+# El corte deja adentro la línea "N pistas:" del peor caso (4 substats, Ejemplo_3).
+# Calibrado 2026-07-24 contra las 5 capturas de 12_Desmontaje.
+# El borde inferior corta también las 3 líneas largas de la DESCRIPCIÓN del set ("2 pistas: …",
+# "4 pistas: …"), que no aportan nada y son las más caras de reconocer. Queda adentro la línea
+# del nombre del set del peor caso (Ejemplo_3, 4 substats, nombre en yn≈0.625): es la que el
+# parser prefiere sobre el título. Sin línea "N pistas:" el extractor toma solo ese nombre.
+_S11_PANEL_ROI = (0.660, 0.170, 0.310, 0.475)   # ~793×683 px: lado mayor < 960 ⇒ sin downscale
+_S11_BAND = (0.66, 0.97)
+_S11_COL = PanelLayout(0.66, 0.97, 0.88)   # nombres+badge ≤0.83 | valores ≥0.92
+
+
+def _ocr_s11_lines(frame: np.ndarray, ocr):
+    """OCR del panel DETAIL de S11, re-offseteado a coords del frame completo (así el parser
+    espacial de S3 no cambia). Fallback al frame completo si el crop no sale."""
+    from app.core.capturer import crop_roi
+    x0 = int(_S11_PANEL_ROI[0] * frame.shape[1])
+    y0 = int(_S11_PANEL_ROI[1] * frame.shape[0])
+    crop = crop_roi(frame, _S11_PANEL_ROI)
+    if crop is None or getattr(crop, "size", 0) == 0:
+        return _ocr_s3_lines(frame, ocr)
+    raw = ocr.text_with_bboxes(crop)
+    if not raw:
+        return _ocr_s3_lines(frame, ocr)
+    return [(t, c, (b[0] + x0, b[1] + y0, b[2] + x0, b[3] + y0)) for (t, c, b) in raw]
+
+
+def parse_disc_s11(frame: np.ndarray, ocr) -> DiscParsed:
+    """Parsea el disco mostrado en el panel DETAIL de la pantalla de Desmontaje (S11).
+
+    Motor de S3 con UNA columna, igual que `parse_disc_s5`. Display-only: quien lo consume es la
+    bitácora de desmontaje, que escribe un archivo en `audit/`, nunca la DB."""
+    lines = _ocr_s11_lines(frame, ocr)
+    H, W = frame.shape[:2]
+    parsed = _parse_s3_from_lines(lines, W, H, frame=frame, ocr=ocr,
+                                  band=_S11_BAND, cols=(_S11_COL,))
+    # Mismo fallback que S5: el "(1)" fino del título se dropea y deja slot=0. Regla fija de ZZZ
+    # — los slots 1/2/3 tienen SIEMPRE main plano HP/ATK/DEF y los 4/5/6 nunca.
+    if not (1 <= parsed.slot <= 6):
+        _by_main = {"HP": 1, "ATK": 2, "DEF": 3}.get(parsed.main_stat_canon or "")
+        if _by_main is not None and parsed.main_unidad == "flat":
+            parsed.slot = _by_main
+    return parsed
+
+
 # Grilla de resultado (2 filas × 5 columnas = hasta 10 discos; la cantidad depende de la moneda:
 # Afinar ×1/×4/×6/×10…). Cada tile tiene debajo un label "<set> (N)" (envuelto a 2 líneas). Se lee
 # el SET y el SLOT del texto del label (el slot "(N)" es más fiable que el badge estilizado del tile,
