@@ -265,6 +265,15 @@ _S12_SIG_MAX = 2.0
 # OCR funcionan, pero corta antes del cuelgue (~12 GB). Desactivable con DANIBOD_NO_RAM_GUARD=1.
 _RAM_RESTART_MB = 6000
 _RAM_CHECK_INTERVAL_S = 15.0
+# Latido del loop (QA 2026-07-25): el monitor estuvo 8 minutos sin escribir una línea mientras la
+# pantalla cambiaba tres veces, y descartar causas llevó media mañana porque desde afuera un loop
+# muerto, uno girando en vacío y una pantalla quieta se ven idénticos. `_note_stall` cubre los
+# returns de los HANDLERS; esto cubre el loop mismo.
+#   - Si la app estuvo callada _HEARTBEAT_SILENCIO_S, late (prueba de vida).
+#   - Cada _HEARTBEAT_BASE_S late igual, aunque haya actividad: da la regla para medir ciclos/s
+#     cuando después hay que diagnosticar rendimiento.
+_HEARTBEAT_SILENCIO_S = 60.0
+_HEARTBEAT_BASE_S = 600.0
 # Voto/presencia del dueño (5R.L.3 → L.8): la maquinaria vive en el módulo REUSABLE
 # `app/core/owner_vote.py` (OwnerVoteAccumulator + decide_owner) para que futuras
 # pantallas (S9 inventario global, S23 reemplazo) la instancien sin re-implementar la
@@ -434,6 +443,16 @@ class Monitor:
         self._on_ram_critical = on_ram_critical
         self._ram_restart_fired = False
         self._last_ram_check_t = 0.0
+        # Latido del loop: contadores de la ventana en curso. `_hb_last_log_t` lo estampa el
+        # handler `_LogClock` con CADA línea de la app, así el latido sabe si hubo silencio real
+        # (y no solo silencio del propio monitor).
+        self._hb_ticks = 0
+        self._hb_nulls = 0
+        self._hb_excepciones = 0
+        self._hb_ultimo_error: str | None = None
+        self._hb_last_t = 0.0
+        self._hb_last_log_t = 0.0
+        self._log_clock: "logging.Handler | None" = None
         # Último estado confirmado por votación. Persiste aunque el buffer
         # dedupee (devuelva None por mismo estado), para permitir
         # re-extracción CONTINUA de S18 sin requerir cambio de estado ni re-scan.
@@ -606,17 +625,42 @@ class Monitor:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
+        self._install_log_clock()
         self._thread = threading.Thread(target=self._run, name="zzz-monitor", daemon=True)
         self._thread.start()
         self._hook_foreground()
         self._register_hotkeys()
         log.info("Monitor arrancado.")
 
+    def _install_log_clock(self) -> None:
+        """Estampa la hora de la última línea de log de la app, para que el latido distinga
+        "nadie logueó nada" de "el monitor no logueó pero el resto sí"."""
+        if self._log_clock is not None:
+            return
+        monitor = self
+
+        class _LogClock(logging.Handler):
+            def emit(self, record):        # sin formatear: solo la marca de tiempo
+                monitor._hb_last_log_t = time.monotonic()
+
+        self._log_clock = _LogClock(level=logging.INFO)
+        logging.getLogger("app").addHandler(self._log_clock)
+        self._hb_last_log_t = time.monotonic()
+
     def stop(self) -> None:
+        # Quién pidió la parada. El 2026-07-25 el log decía "Monitor detenido." y no había forma
+        # de saber si fue el usuario, el watcher de ventana o un cierre de la app — y esa duda
+        # cambió por completo el diagnóstico.
+        import traceback as _tb
+        quien = "".join(_tb.format_stack(limit=3)[:-1]).strip().splitlines()
+        origen = quien[-2].strip() if len(quien) >= 2 else "?"
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=5)
-        log.info("Monitor detenido.")
+        if self._log_clock is not None:
+            logging.getLogger("app").removeHandler(self._log_clock)
+            self._log_clock = None
+        log.info("Monitor detenido · pedido desde: %s", origen)
 
     def toggle_pause(self) -> bool:
         """Alterna pausa/reanuda. Devuelve True si ahora está pausado."""
@@ -687,13 +731,19 @@ class Monitor:
         buffer = self._buffer  # alias local para el loop
 
         while not self._stop.is_set():
+            # El latido va en los TRES caminos del loop, incluidos los dos que hacen `continue`.
+            # Justamente esos dos eran los mudos: pausado y frame-nulo no dejaban rastro alguno.
+            self._hb_ticks += 1
             if not self._paused.is_set():
+                self._heartbeat(time.monotonic(), "pausado")
                 time.sleep(0.5)
                 buffer.reset()
                 continue
 
             frame = self._get_frame()
             if frame is None:
+                self._hb_nulls += 1
+                self._heartbeat(time.monotonic(), "sin-frame")
                 buffer.reset()
                 continue
 
@@ -708,6 +758,8 @@ class Monitor:
             mem_diag.heartbeat({"ticks": self._loop_ticks, "st": raw_state.code})
             # Watchdog de RAM (RNF-06): cota dura con auto-restart. Throttle interno ~15s.
             self._ram_watchdog(now)
+            # Latido: throttle interno, seguro llamarlo en cada iteración.
+            self._heartbeat(now, raw_state.code)
 
             # Muestreo RÁPIDO de identidad en S8/S19 (10 fps, no cadencia): el
             # avatar-row es deslizante y se auto-oculta; muestrear en cada frame
@@ -818,19 +870,57 @@ class Monitor:
                 # S11/S24 (desmontaje): CONTINUOS porque su contenido cambia SIN cambiar de
                 # pantalla — el usuario tilda discos uno a uno en S11, y S24 vive hasta que
                 # aprieta Confirmar. Sin re-despacho solo se vería el primer frame de cada uno.
-                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9", "S13", "S3", "S4", "S5", "S10", "S20", "S21", "S22", "S11", "S24")
+                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9", "S13", "S3", "S4", "S5", "S10", "S20", "S21", "S22", "S11", "S24", "S25")
                 should_dispatch = forced or (
                     elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
                 )
                 if should_dispatch:
                     last_process_time = now
-                    self._dispatch_state(frame, active_state)
+                    self._safe_dispatch(frame, active_state)
 
             # ---- Espera corta entre capturas (fast polling) ----
             # (Sin heartbeat periódico: el logging es edge-triggered. El cambio de
             #  estado se loguea en _notify_state_change; los stats/detalle, en sus
             #  handlers, solo cuando el dato cambia.)
             self._wait_fast()
+
+    def _heartbeat(self, now: float, state_code: str | None) -> None:
+        """Prueba de vida del loop. Late solo cuando hace falta: tras un tramo de silencio de la
+        app, o cada `_HEARTBEAT_BASE_S` como línea de base.
+
+        Reporta lo que el 2026-07-25 no se pudo saber del log: cuántos ciclos giró el loop (¿está
+        vivo?), cuántos frames vinieron nulos (¿llega imagen?), en qué estado está, y si algún
+        handler viene lanzando excepciones."""
+        silencio = now - self._hb_last_log_t
+        if silencio < _HEARTBEAT_SILENCIO_S and (now - self._hb_last_t) < _HEARTBEAT_BASE_S:
+            return
+        tanda = "-"
+        if self._teardown is not None and self._teardown.abierta:
+            tanda = f"abierta({self._teardown.declarado})"
+        log.info("[hb] %d ciclos · frames_nulos=%d · estado=%s · tanda=%s · excepciones=%d",
+                 self._hb_ticks, self._hb_nulls, state_code or "-", tanda, self._hb_excepciones)
+        self._hb_last_t = now
+        self._hb_ticks = 0
+        self._hb_nulls = 0
+
+    def _safe_dispatch(self, frame, state: ScreenState) -> None:
+        """Despacha atrapando cualquier excepción del handler.
+
+        Sin esto, un `raise` en un `_process_*` termina el thread del monitor: la app queda VIVA
+        y CIEGA, sin toast, sin log y sin forma de notarlo desde adentro. Peor en el .exe, donde
+        el traceback va a un stderr bufferizado que puede no vaciarse nunca.
+
+        El traceback se loguea una vez por firma de fallo — una pantalla que rompe el handler se
+        queda en pantalla y el log se llenaría de tracebacks idénticos. El contador sí sigue
+        subiendo y lo canta el latido, para que el problema no desaparezca del registro."""
+        try:
+            self._dispatch_state(frame, state)
+        except Exception as exc:
+            self._hb_excepciones += 1
+            firma = f"{state.code}:{type(exc).__name__}:{exc}"
+            if firma != self._hb_ultimo_error:
+                self._hb_ultimo_error = firma
+                log.exception("handler de %s falló — el loop sigue vivo", state.code)
 
     def _emit_diagnostic(self, msg: str) -> None:
         """Emite mensaje de diagnóstico solo si cambió respecto al anterior (evita spam)."""
@@ -961,10 +1051,12 @@ class Monitor:
         # porque los estados con handler propio (S9, S17, S8…) nunca llegan al `else` — un bug
         # que atrapó el test: salir a S9 dejaba la tanda viva y la commiteaba el S24 siguiente.
         #
-        # S12 está exceptuado a propósito: el diálogo de confirmación de grado S cae ahí, y
-        # matar la tanda en ese punto haría que el desmontaje por ese camino NUNCA se registre.
+        # S12 y S25 están exceptuados a propósito. S25 es el diálogo de confirmación de grado S
+        # (antes caía a S12); S12 sigue siendo la transición cuando la selección NO tiene grado S
+        # y no hay diálogo. Matar la tanda en cualquiera de los dos haría que el desmontaje por
+        # ese camino NUNCA se registre — y para cuando se detecta, los discos ya no existen.
         if (self._teardown is not None and self._teardown.abierta
-                and state.code not in ("S11", "S12", "S24")
+                and state.code not in ("S11", "S12", "S24", "S25")
                 and state.confidence >= _DETAIL_RESET_MIN_CONF):
             self._reset_teardown("salió de la pantalla")
         # Al RE-ENTRAR a S3 (abrir otro disco desde S2), empezar captura fresca: dos discos del
@@ -1086,6 +1178,15 @@ class Monitor:
             # anota cada disco que marca. Display-only — la bitácora va a un archivo en `audit/`,
             # nunca a la DB (RNF-01).
             self._process_s11_desmontaje(frame, state)
+            self._processed_disc_state_code = None
+            self._reported_agent_stats_state_code = None
+            self._agent_stats_screen_logged = False
+        elif state.code == "S25":
+            # Diálogo de confirmación del desmontaje. NO commitea: el usuario todavía puede
+            # cancelar. Solo deja constancia y avisa, porque acá el header queda tapado y el
+            # contador ilegible (QA 2026-07-25) — sin esta línea el sistema parece mudo justo
+            # en el momento de mayor tensión del flujo.
+            self._process_s25_confirmacion(frame, state)
             self._processed_disc_state_code = None
             self._reported_agent_stats_state_code = None
             self._agent_stats_screen_logged = False
@@ -1223,6 +1324,30 @@ class Monitor:
             return DiscSetRepo(con).resolve_id(raw)
         except Exception:
             return None
+
+    def _process_s25_confirmacion(self, frame, state: ScreenState) -> None:
+        """Diálogo de confirmación del desmontaje (selección con grado S).
+
+        No lee nada de la pantalla y no commitea: el usuario todavía puede cancelar, y darlo por
+        hecho registraría discos que siguen existiendo. Lo único que hace es dejar constancia en
+        la tanda y cantar una línea por flanco.
+
+        Vale la pena igual porque es el punto ciego del flujo: el diálogo tapa el header, el
+        contador `N/300` se vuelve ilegible y el handler de S11 deja de tener autoridad de conteo.
+        El conteo declarado ya está congelado por construcción (sin S11 no hay `observe`), así que
+        acá alcanza con decírselo al usuario."""
+        batch = self._teardown
+        if batch is None or not batch.abierta or batch.committed:
+            self._note_stall("S25", "diálogo de desmontaje sin tanda abierta")
+            return
+        self._clear_stall("S25")
+        if not batch.marcar_confirmacion():
+            return          # ya se cantó: el diálogo es continuo
+        n = batch.declarado
+        cuantos = "conteo desconocido" if n is None else f"{n} declarados"
+        linea = f"confirmación de grado S · {cuantos} · esperando el Obtenido"
+        log.info("[desmontaje] %s", linea)
+        self._diag(f"[desmontaje] {linea}")
 
     def _process_s24_obtenido(self, frame, state: ScreenState) -> None:
         """Commit de la tanda: el modal "Obtenido" es la prueba de que el desmontaje ocurrió.

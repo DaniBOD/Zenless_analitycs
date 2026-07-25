@@ -268,10 +268,18 @@ class MonitorController(QObject):
                 log.info("ZZZ detectado, arrancando monitor automaticamente")
                 self.start()
         elif not present and self._was_window_present:
-            # Ventana desapareció — detener monitor
+            # Ventana desapareció. Por DEFECTO ya NO se detiene el monitor (pedido de Daniel
+            # 2026-07-25: la captura no debe cortarse sola en segundo plano). `_get_frame` maneja
+            # la ausencia —avisa una vez, duerme 4 s y re-busca—, así que seguir vivo es barato;
+            # en cambio un stop() deja la app abierta y ciega, y un solo ciclo de falso negativo
+            # del watcher basta para perder lo que estuviera en curso.
             if self._monitor is not None:
-                log.info("ZZZ cerrado, deteniendo monitor")
-                self.stop()
+                if os.environ.get("DANIBOD_AUTO_STOP_ON_WINDOW_LOST"):
+                    log.info("ZZZ cerrado, deteniendo monitor (auto-stop pedido por entorno)")
+                    self.stop()
+                else:
+                    log.info("ventana de ZZZ no encontrada — el monitor sigue activo "
+                             "(reanuda solo al volver; auto-stop desactivado)")
         self._was_window_present = present
 
     # ---- Init de dependencias --------------------------------------------------
