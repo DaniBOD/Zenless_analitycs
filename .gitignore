@@ -106,6 +106,10 @@ Documentacion/Screenshots_Triggers/Discos_Triggers/16_discos_pj_grilla/
 # Mapa disco→dueño (verdad de tierra del flujo-ancla, Fase 5R.C) — regenerable con un
 # pase de cosecha, específico de la cuenta del usuario.
 audit/equip_map_*.json
+# Cosecha de frames del QA en vivo (tools/grab_desmontaje_frames.py) — ~100 MB por sesión,
+# regenerable. Los frames que resultan verdad de tierra se promueven a mano a
+# Documentacion/Screenshots_Triggers/, no se versiona la cosecha entera.
+audit/frames_desmontaje_qa/
 # Videos de flujo (capturas del juego para tests del pipeline) — cientos de MB. El .mp4
 # crudo queda LOCAL; la doc de verdad de tierra (.md/.txt) SÍ se versiona como fixture.
 Documentacion/Videos_flujo/*.mp4

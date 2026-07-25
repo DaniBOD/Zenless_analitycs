@@ -343,7 +343,9 @@ Situaciones en las que el sistema debe deliberadamente **no** capturar o no regi
 
    Comportamiento actual: se sigue la selección del usuario y se registra qué destruyó, en un archivo de `audit/desmontajes/` — **nunca en la DB**. La baja real de las filas de `inventory_discs` es un paso futuro y separado que depende del censo de la cuenta. El commit lo da el modal "Obtenido" (**S24**): si el usuario cancela, no se registra nada.
 
-   Detalle: `Documentacion/Dev_IA/2026-07-25_IMPL_Bitacora_Desmontaje_S11_S24.md`.
+   El diálogo de confirmación de grado S es **S25** (desde el QA en vivo del 2026-07-25). No commitea: solo deja constancia y avisa, porque ahí el diálogo tapa el header y el contador `N/300` queda ilegible. Comparte el template con S23 y se distingue por el texto; su verify **falla cerrado sin OCR** para no tapar a S23, que sí escribe la DB.
+
+   Detalle: `Documentacion/Dev_IA/2026-07-25_IMPL_Bitacora_Desmontaje_S11_S24.md` y `Documentacion/Dev_IA/2026-07-25_QA_Desmontaje_en_vivo_y_el_silencio_del_loop.md`.
 3. **Discos ya persistidos con el mismo hash**: el pipeline hace UPSERT por `(fecha_obtencion, set_id, slot, main_stat, main_valor)` para evitar duplicados. Si el hash existe, se actualiza en vez de insertar.
 4. **Capturas con OCR confianza < 0.7**: si el OCR no está seguro del valor, el disco se marca `notas='requiere revisión manual'` y no se evalúa automáticamente.
 
