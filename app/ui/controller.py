@@ -107,6 +107,9 @@ class MonitorController(QObject):
         # Firma del último log de stats S18 emitido (edge-triggered): re-loguea solo
         # cuando el resultado cambia. Se resetea en _on_state_from_monitor.
         self._last_stats_sig: tuple | None = None
+        # Dedup del aviso de extracción incompleta: una línea por combinación de faltantes,
+        # no una por ciclo mientras el aggregator madura.
+        self._last_partial_sig: tuple | None = None
 
         # Watcher de proceso ZZZ — arranca/detiene el monitor automáticamente
         # según la presencia de la ventana del juego.
@@ -405,6 +408,7 @@ class MonitorController(QObject):
         # Edge: cualquier cambio de estado resetea la firma del log de stats S18, de
         # modo que re-entrar a Atributos base loguee el resultado 1 vez.
         self._last_stats_sig = None
+        self._last_partial_sig = None
         self.state_changed.emit(state.code, state.confidence)
         desc = describe_state(state.code)
 
@@ -503,37 +507,44 @@ class MonitorController(QObject):
         def _pct(x):
             return "-" if x is None else f"{x * 100:.1f}%"
 
-        # ---- Determinar stats requeridos según rol ----
-        rol_norm = (stats.rol or "").lower()
-        is_disruptivo = "disruptiv" in rol_norm
-        # Los dos slots inferiores son role-specific y mutuamente excluyentes:
-        #   Disruptivos:  Fuerza Bruta (FB)        + Acumulación Adrenalina (AD)
-        #   Resto:        Tasa de Perforación (TP) + Recuperación de Energía (ER)
-        required_keys = [
-            "nivel", "pv", "ataque", "defensa", "impacto",
-            "prob_crit", "dano_crit",
-            "tasa_anomalia", "maestria_anomalia",
-        ]
-        if is_disruptivo:
-            required_keys += ["fuerza_bruta", "acumulacion_adrenalina"]
-        else:
-            required_keys += ["tasa_perforacion", "recuperacion_energia"]
+        # ---- Completitud role-aware (lógica de dominio: `parser_agent_stats`) ----
+        from app.core.parser_agent_stats import (
+            missing_stat_labels, required_stat_keys, stats_completos,
+        )
+        required_keys = required_stat_keys(stats)
+        missing_labels = missing_stat_labels(stats)
+        missing = missing_labels          # ya son etiquetas; se usa solo para contar
 
-        # Mapeo a etiquetas legibles para mostrar al usuario
-        _LABELS = {
-            "nivel": "Nv", "pv": "PV", "ataque": "ATK", "defensa": "DEF",
-            "impacto": "IMP", "prob_crit": "CR", "dano_crit": "CD",
-            "tasa_anomalia": "TA", "maestria_anomalia": "MA",
-            "tasa_perforacion": "TP", "fuerza_bruta": "FB",
-            "recuperacion_energia": "ER", "acumulacion_adrenalina": "AD",
-        }
-        missing = [k for k in required_keys if getattr(stats, k) is None]
-        missing_labels = [_LABELS.get(k, k) for k in missing]
-
-        # El panel de stats es un binding de datos: se actualiza siempre.
+        # El panel de stats es un binding de datos: se actualiza siempre, completo o no.
         payload = asdict(stats)
         payload["state_code"] = state.code
         self.agent_stats_detected.emit(payload)
+
+        # ---- GATE de completitud (pedido de Daniel, 2026-07-26) ----
+        # Ni se loguea ni se persiste hasta tener **nombre + los 11 stats del rol**. Antes un
+        # parcial de 2 stats leído en una pantalla ajena (una guía rápida muestra Nv y PV) se
+        # veía como un reconocimiento de perfil y, peor, `AgentStatsSyncer` escribía esos dos
+        # campos en `agents` con update parcial. Abstenerse es la conducta correcta (RNF-02).
+        #
+        # Medido antes de poner el gate: 13 de los 14 fixtures reales de S18 completan en UN
+        # frame (los dos Disruptivos incluidos), y ningún negativo del corpus llega a 11/11 —
+        # así que el gate no apaga el log de nadie. Ver `test_agent_stats_completitud`.
+        #
+        # NO es un return mudo: se canta una línea por cada combinación NUEVA de faltantes, para
+        # que se vea que el sistema está mirando y qué le falta (la extracción de S18 es continua
+        # y el aggregator los completa en los ciclos siguientes).
+        if not stats_completos(stats):
+            partial_sig = (stats.agente_nombre, tuple(missing_labels))
+            if partial_sig != self._last_partial_sig:
+                self._last_partial_sig = partial_sig
+                detalle = ", ".join(missing_labels) if missing_labels else "el nombre del agente"
+                self.log_message.emit(
+                    f"[parcial] stats sin registrar — falta {detalle} "
+                    f"({len(required_keys) - len(missing_labels)}/{len(required_keys)} leídos; "
+                    f"el aggregator completa en los próximos ciclos)"
+                )
+            return
+        self._last_partial_sig = None
 
         # Logging EDGE-triggered: emitir el log (archivo + 3 líneas UI) solo cuando
         # el RESULTADO cambia. La firma incluye los 11 stats + missing → un parcial
@@ -593,17 +604,12 @@ class MonitorController(QObject):
             f"ER={_v(stats.recuperacion_energia)} AD={_v(stats.acumulacion_adrenalina)}"
         )
 
-        # Línea 3: estado de la extracción
-        if not missing:
-            self.log_message.emit(
-                f"[completo] extracción exitosa - {len(required_keys)}/{len(required_keys)} stats capturados"
-            )
-        else:
-            self.log_message.emit(
-                f"[parcial] extracción incompleta - faltan {len(missing)}/"
-                f"{len(required_keys)}: {', '.join(missing_labels)} "
-                f"- el aggregator completa en los próximos ciclos (extracción continua)"
-            )
+        # Línea 3: cierre. Llegar acá ya implica completitud (el gate de arriba devolvió antes
+        # en cualquier otro caso), así que no hay rama parcial: el aviso de faltantes lo emite
+        # el propio gate, que es el único que sabe qué falta.
+        self.log_message.emit(
+            f"[completo] extracción exitosa - {len(required_keys)}/{len(required_keys)} stats capturados"
+        )
 
     def _backup_db_session(self, db_path) -> None:
         """

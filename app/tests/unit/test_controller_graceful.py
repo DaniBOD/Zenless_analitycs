@@ -77,9 +77,14 @@ def test_controller_toggle_pause_when_not_started_is_noop(qapp):
 def test_agent_stats_log_edge_triggered(qapp):
     """
     El log de stats S18 es EDGE-triggered (2026-06-07): un resultado idéntico no
-    re-emite las líneas de log; un cambio de valor (o parcial→completo) sí;
-    `conf` NO gatilla; un cambio de estado resetea (re-entrar loguea 1 vez). El
-    binding del panel (agent_stats_detected) se emite SIEMPRE.
+    re-emite las líneas de log; un cambio de valor sí; `conf` NO gatilla; un
+    cambio de estado resetea (re-entrar loguea 1 vez). El binding del panel
+    (agent_stats_detected) se emite SIEMPRE.
+
+    Actualizado 2026-07-26: el fixture pasó de parcial a COMPLETO. Un parcial ya
+    no loguea las líneas de stats (gate de completitud, pedido de Daniel) — esa
+    conducta se prueba en `test_controller_stats_gate`. Lo que este test cubre
+    —edge-triggering, conf inocua, reset por estado— no cambió.
     """
     from dataclasses import replace
     from app.ui.controller import MonitorController
@@ -94,14 +99,16 @@ def test_agent_stats_log_edge_triggered(qapp):
 
     st = ScreenState("S18", 1.0, "tmpl")
     s1 = AgentStatsParsed(
-        nivel=60, pv=10000, ataque=2500, defensa=900,
+        nivel=60, pv=10000, ataque=2500, defensa=900, impacto=86,
+        prob_crit=0.242, dano_crit=0.50, tasa_anomalia=112, maestria_anomalia=330,
+        tasa_perforacion=0.0, recuperacion_energia=2.16,
         agente_nombre="Nangong Yu", rol="Aturdimiento", elemento="Éter",
         confianza_global=0.9,
     )
 
     ctrl._on_agent_stats_from_monitor(s1, st)
     n1 = len(logs)
-    assert n1 >= 3 and len(binds) == 1       # [reconocido]+[stats]+[parcial]
+    assert n1 == 3 and len(binds) == 1       # [reconocido]+[stats]+[completo]
 
     # Idéntico → no re-loguea; el panel sí se actualiza.
     ctrl._on_agent_stats_from_monitor(s1, st)

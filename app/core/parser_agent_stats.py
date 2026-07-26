@@ -264,6 +264,64 @@ _AGGREGATABLE_FIELDS: tuple[str, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Completitud de la extracción (role-aware)
+# ---------------------------------------------------------------------------
+# Vive acá y no en el controller porque es lógica de DOMINIO: qué stats tiene un agente según su
+# rol lo dicta el juego, no la UI. Y porque el gate que la usa decide una ESCRITURA a la DB
+# (`AgentStatsSyncer`), así que tiene que poder probarse sin Qt.
+#
+# Los dos slots inferiores del panel son role-specific y mutuamente excluyentes:
+#   Disruptivos:  Fuerza Bruta (FB)        + Acumulación Automática de Adrenalina (AD)
+#   Resto:        Tasa de Perforación (TP) + Recuperación de Energía (ER)
+# Pedir los cuatro haría que NINGÚN rol complete nunca.
+_STATS_COMUNES: tuple[str, ...] = (
+    "nivel", "pv", "ataque", "defensa", "impacto",
+    "prob_crit", "dano_crit",
+    "tasa_anomalia", "maestria_anomalia",
+)
+_STATS_DISRUPTIVO: tuple[str, ...] = ("fuerza_bruta", "acumulacion_adrenalina")
+_STATS_RESTO: tuple[str, ...] = ("tasa_perforacion", "recuperacion_energia")
+
+STAT_LABELS: dict[str, str] = {
+    "nivel": "Nv", "pv": "PV", "ataque": "ATK", "defensa": "DEF",
+    "impacto": "IMP", "prob_crit": "CR", "dano_crit": "CD",
+    "tasa_anomalia": "TA", "maestria_anomalia": "MA",
+    "tasa_perforacion": "TP", "fuerza_bruta": "FB",
+    "recuperacion_energia": "ER", "acumulacion_adrenalina": "AD",
+}
+
+
+def required_stat_keys(stats: AgentStatsParsed) -> tuple[str, ...]:
+    """Los 11 stats que este agente debe tener, según su rol.
+
+    Sin rol identificado se asume NO-disruptivo: es el caso mayoritario del roster, y asumir lo
+    contrario dejaría a casi todos los PJs permanentemente incompletos."""
+    disruptivo = "disruptiv" in (stats.rol or "").lower()
+    return _STATS_COMUNES + (_STATS_DISRUPTIVO if disruptivo else _STATS_RESTO)
+
+
+def missing_stat_labels(stats: AgentStatsParsed) -> list[str]:
+    """Etiquetas (las mismas que muestra el log) de los stats requeridos que faltan.
+
+    Compara contra `None`, NO por falsedad: `TP = 0.0` e `IMP = 0` son valores reales y frecuentes
+    (la mayoría del roster tiene TP en 0). Tratarlos como ausentes dejaría a esos PJs sin
+    completar nunca."""
+    return [STAT_LABELS.get(k, k) for k in required_stat_keys(stats)
+            if getattr(stats, k) is None]
+
+
+def stats_completos(stats: AgentStatsParsed) -> bool:
+    """True solo si la extracción está lista para loguearse y persistirse: **nombre del agente**
+    identificado y **los 11 stats** de su rol presentes.
+
+    El nombre es requisito y no un extra: sin identidad los stats no se pueden atribuir, y es la
+    misma regla que ya rige para los discos (sin PJ confiable no se persiste, RNF-02). El pedido
+    original —"que salte el log cuando ya tenga todos los datos"— es también lo que evita que un
+    parcial escriba campos sueltos en `agents`."""
+    return bool(stats.agente_nombre) and not missing_stat_labels(stats)
+
+
 class AgentStatsAggregator:
     """
     Acumula stats por agente entre capturas consecutivas para madurar la
