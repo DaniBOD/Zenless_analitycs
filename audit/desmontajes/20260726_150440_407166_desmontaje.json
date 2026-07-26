@@ -1,0 +1,211 @@
+{
+  "schema": "desmontaje/1",
+  "ts_apertura": "2026-07-26T15:03:14",
+  "ts_commit": "2026-07-26T15:04:40",
+  "conteo": {
+    "declarado": 3,
+    "capturados": 3,
+    "faltantes": 0,
+    "fuente_declarado": "contador_header",
+    "material_primero": null,
+    "corroborado": null
+  },
+  "modo": "manual",
+  "confirmacion_grado_s": true,
+  "avisos": [
+    "scroll durante la tanda",
+    "contador del header ilegible"
+  ],
+  "discos": [
+    {
+      "seq": 1,
+      "celda": {
+        "fila": 0,
+        "col": 0
+      },
+      "set_raw": "Firmamentollameante",
+      "set_canon": null,
+      "set_id": 53,
+      "slot": 2,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "ATK",
+        "raw": "Ataque",
+        "valor": 79.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "DEF%",
+          "raw": "Defensa",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 15.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Prob. Crítica",
+          "raw": "Probabilidad de Critico",
+          "valor": 2.4,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.992,
+      "identidad": {
+        "set_id": 53,
+        "slot": 2,
+        "nivel": 0,
+        "main": "atk",
+        "subs": [
+          [
+            "def",
+            0
+          ],
+          [
+            "def%",
+            0
+          ],
+          [
+            "prob.critica",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 2,
+      "celda": {
+        "fila": 4,
+        "col": 3
+      },
+      "set_raw": "Salón huracanado",
+      "set_canon": null,
+      "set_id": 52,
+      "slot": 2,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "ATK",
+        "raw": "Ataque",
+        "valor": 79.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "HP",
+          "raw": "PV",
+          "valor": 112.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK%",
+          "raw": "Ataque",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.895,
+      "identidad": {
+        "set_id": 52,
+        "slot": 2,
+        "nivel": 0,
+        "main": "atk",
+        "subs": [
+          [
+            "atk%",
+            0
+          ],
+          [
+            "hp",
+            0
+          ],
+          [
+            "maestriadeanomalia",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 4,
+      "celda": {
+        "fila": 4,
+        "col": 5
+      },
+      "set_raw": "Salón huracanado",
+      "set_canon": null,
+      "set_id": 52,
+      "slot": 2,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "ATK",
+        "raw": "Ataque",
+        "valor": 79.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "Perforación",
+          "raw": "Perforaciön",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF%",
+          "raw": "Defensa",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 15.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.937,
+      "identidad": {
+        "set_id": 52,
+        "slot": 2,
+        "nivel": 0,
+        "main": "atk",
+        "subs": [
+          [
+            "def",
+            0
+          ],
+          [
+            "def%",
+            0
+          ],
+          [
+            "perforacion",
+            0
+          ]
+        ]
+      }
+    }
+  ],
+  "huecos": []
+}
