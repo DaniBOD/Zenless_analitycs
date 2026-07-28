@@ -1,0 +1,45 @@
+﻿
+archivo          nombre (ES)                        nivel   atk   rareza  atributo avanzado
+----------------------------------------------------------------------------------------------------------------------
+Ejemplo_1.png    Ecos bulliciosos                   60/60   594   A       Maestria de Anomalia 75
+Ejemplo_2.png    Fósil preciado                     60/60   594   A       Impacto 15 %
+Ejemplo_3.png    Canon bombastica                   60/60   624   A       Recuperación de Energia 50 %
+Ejemplo_4.png    Repercusión- Modelo lll            0/10    32    -       PV 8%
+Ejemplo_5.png    camara acorazada                   0/10    42    -       Recuperación de Energia 20 %
+Ejemplo_6.png    Sol exuvia                         60/60   713   S       Ataque 30 %
+Ejemplo_7.png    Templo a la granizada estelifera   60/60   743   S       Probabilidad de Critico 24 %
+Ejemplo_8.png    Coctelera ncandescente             60/60   713   S       Ataque 30 %
+Ejemplo_9.png    Compilador quimérico               60/60   684   S       Tasa de Perforacion 24 %
+Ejemplo_10.png   Aguijón agudo                      60/60   713   S       Maestria de Anomalia 90
+Ejemplo_11.png   Gastrónomo selvatico               60/60   594   A       Maestria de Anomalia 75
+Ejemplo_12.png   Llanto mielgo                      60/60   594   A       Ataque 25 %
+Ejemplo_13.png   Viaje estruendoso                  60/60   624   A       Ataque 25 %
+Ejemplo_14.png   Tormenta magnética - Charlie       0/10    32    -       Tasa de Perforación 6.4 %
+Ejemplo_15.png   Engranaje infernal                 60/60   684   S       Impacto 18 %
+Ejemplo_16.png   Almohadillas férreas               60/60   684   S       Probabilidad de Critico 24 %
+Ejemplo_17.png   Petrazufre                         60/60   684   S       Ataque 30 %
+Ejemplo_18.png   Visitante de altamar               60/60   713   S       Probabilidad de Critico 24 %
+Ejemplo_19.png   Esplendor surcanimbos              60/60   743   S       Dano Critico 48 %
+Ejemplo_20.png   Estrella callejera                 60/60   594   A       Ataque 25 %
+Ejemplo_21.png   Motor estelar                      60/60   594   A       Ataque 25 %
+Ejemplo_22.png   Florescencia aurifera              60/60   594   A       Ataque 25 %
+Ejemplo_23.png   Anhelo marcato                     60/60   594   A       Probabilidad de Critico 20 %
+Ejemplo_24.png   Amo de llaves                      60/60   624   A       Ataque 25 %
+Ejemplo_25.png   Réplica de motor estelar           60/60   624   A       Ataque 25 %
+Ejemplo_26.png   Taladradora giratoria - Eje rojo   60/60   624   A       Recuperacion de Energia 50 %
+Ejemplo_27.png   Rotor de canon                     60/60   594   A       Probabilidad de Critico 20 %
+Ejemplo_28.png   Fase lunar Plenilunio              0/10    32    -       Ataque 8 %
+Ejemplo_29.png   Ultima cena                        60/60   594   A       Recuperación de Energia 50 %
+Ejemplo_30.png   Caldero arciente                   60/60   594   A       Impacto 15 %
+Ejemplo_31.png   Cuter                              60/60   624   A       Impacto 15 %
+Ejemplo_32.png   Turbulencia - Flecha               0/10    32    -       Impacto 4.8 %
+Ejemplo_33.png   Turbulencia - Hacha                0/10    32    -       Recuperación de Energic 16 %
+Ejemplo_34.png   Lapso de tiempo                    60/60   594   A       Tasa de Perforacion 20 %
+Ejemplo_35.png   Repercusión - Modelo ll            0/10    32    -       Recuperación de Energia 16 %
+Ejemplo_36.png   Repercusiön - Modelo lll           0/10    32    -       PV 8 %
+Ejemplo_37.png   Proyector de celuloide             60/60   594   A       Impacto 15 %
+Ejemplo_38.png   Transmorfer original               60/60   594   A       PV 25 %
+Ejemplo_39.png   Pacificador especializado          60/60   624   A       Ataque 25 %
+Ejemplo_40.png   Primavera termal                   60/60   594   A       Ataque 25 %
+
+
