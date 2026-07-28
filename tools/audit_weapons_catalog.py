@@ -84,11 +84,16 @@ def main() -> int:
         "select id, nombre, nombre_en, rareza, tipo_especialidad, atk_base from weapons order by id"))
     ref = {norm(en): (en, rar, tipo) for en, rar, tipo in REFERENCIA}
 
-    rotos, rareza_mal, tipo_mal, ok = [], [], [], []
+    rotos, sin_mapeo, rareza_mal, tipo_mal, ok = [], [], [], [], []
     usados: set[str] = set()
 
     for wid, es, en, rar, tipo, atk in filas:
         if es == "Sin arma":
+            continue
+        if en is None:
+            # NULL deliberado: el mapeo ES↔EN no está confirmado (RNF-02). No es un
+            # error del catálogo, es una laguna declarada — se resuelve capturando.
+            sin_mapeo.append((wid, es, rar, tipo))
             continue
         k = norm(en)
         if k not in ref:
@@ -132,6 +137,14 @@ def main() -> int:
     print("|---|---|---|---|---|")
     for wid, es, en, rar, tipo in rotos:
         print(f"| {wid} | {es} | `{en}` | {rar} | {tipo} |")
+
+    print(f"\n## ⏳ Sin mapeo EN declarado (`nombre_en IS NULL`) — {len(sin_mapeo)}\n")
+    print("Laguna a propósito: el nombre inglés no está confirmado y se dejó en NULL en vez de\n"
+          "inventarlo (RNF-02). Se resuelve capturando la pantalla de detalle en el juego.\n")
+    print("| id | nombre (ES) | rareza | tipo |")
+    print("|---|---|---|---|")
+    for wid, es, rar, tipo in sin_mapeo:
+        print(f"| {wid} | {es} | {rar or '—'} | {tipo or '—'} |")
 
     print(f"\n## 🔍 En la referencia pero NO en el catálogo — {len(faltan)}\n")
     print("Ojo: algunas pueden estar presentes bajo un `nombre_en` roto de la tabla de arriba.\n")
