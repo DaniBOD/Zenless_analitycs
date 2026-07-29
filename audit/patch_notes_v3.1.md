@@ -218,16 +218,27 @@ mal. Corregido.
 
 ## Bloqueado / pendiente
 
-### ⏸ B2 — El main de disco de daño Lumen sigue sin confirmarse
+### ✅ B2 — CERRADO: el main de daño Lumen **no existe**
 
-Se resolvió la mitad del vocabulario (el elemento del agente). Falta la otra: el
-**main de daño elemental de slot 5** en `app/core/stats_vocab.py`
-(`CANONICAL_MAINS_VARIABLE[5]` + alias). No se tocó a propósito — el precedente
-manda: el main de Viento **no** se llama "Bono Daño Viento" en el cliente ES sino
-**"Bono de daño aéreo"**. Con "Lumiflujo" ya confirmado como rótulo del elemento,
-el del main podría ser cualquier cosa.
+Confirmado in-game por DaniBOD el 2026-07-29: **no hay disco con main "Bono Daño
+Lumen"** ni equivalente. Lumen es el **único de los 7 elementos sin bono de daño
+elemental en slot 5**.
 
-**Lo que se necesita:** una captura de un disco con main de daño Lumen.
+No es un no-hallazgo, es un dato con consecuencia: un agente Lumen (hoy Remielle
+Dan) no puede sacar bono de daño elemental del slot 5 — sus mains posibles ahí
+son solo HP% / ATK% / DEF% / Tasa de Perforación. Cuando RF-06 puntúe discos para
+ella, no hay que buscarle un main que no existe.
+
+Y como en la lista de slot 5 la ausencia *parece* un hueco a completar, quedó
+fijada en dos lados para que nadie la "arregle" adivinando:
+
+- Comentario explícito en `CANONICAL_MAINS_VARIABLE[5]` (`app/core/stats_vocab.py`).
+- Contrato en test: `test_slot5_no_tiene_bono_de_dano_lumen`
+  (`app/tests/unit/test_stats_vocab.py`) — 22 passed.
+
+Si algún día ZZZ lo agrega, hace falta una **captura** del disco para saber el
+rótulo: el del elemento resultó ser "Lumiflujo" y el main de Viento es "Bono de
+daño aéreo", así que el nombre no se deduce.
 
 ### ⏸ B3 — Resistencias a viento/lumen de los 12 enemigos
 

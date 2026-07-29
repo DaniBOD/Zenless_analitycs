@@ -30,6 +30,13 @@ CANONICAL_MAINS_VARIABLE: dict[int, frozenset[str]] = {
     5: frozenset({
         "Bono Daño Físico", "Bono Daño Fuego", "Bono Daño Hielo",
         "Bono Daño Eléctrico", "Bono Daño Éter", "Bono Daño Viento",
+        # NO falta "Bono Daño Lumen": ese main NO EXISTE en el juego.
+        # Confirmado in-game por DaniBOD el 2026-07-29 (patch v3.1). Lumen es el
+        # único elemento sin bono de daño elemental en slot 5, así que un agente
+        # Lumen (Remielle Dan) solo puede llevar acá HP%/ATK%/DEF%/Perforación.
+        # Está fijado como contrato en test_stats_vocab.py — no lo agregues
+        # "para completar la lista": si algún día ZZZ lo suma, hace falta una
+        # captura para saber el rótulo (el de Viento es "Bono de daño aéreo").
         "HP%", "ATK%", "DEF%", "Tasa de Perforación",
     }),
     6: frozenset({

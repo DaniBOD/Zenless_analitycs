@@ -139,6 +139,25 @@ class TestIsValidMainForSlot:
         assert is_valid_main_for_slot(5, "Bono Daño Glacial") is True
         assert is_valid_main_for_slot(5, "Bono Daño Ígneo") is True
 
+    def test_slot5_no_tiene_bono_de_dano_lumen(self):
+        """CONTRATO: Lumen es el único elemento SIN main de daño elemental.
+
+        Confirmado in-game por DaniBOD el 2026-07-29 (patch v3.1): no existe un
+        disco con main "Bono Daño Lumen" ni equivalente. Los demás 6 elementos sí
+        tienen el suyo, así que la ausencia parece un hueco a completar — este
+        test está para que nadie lo "arregle" inventando el nombre.
+
+        Consecuencia real: un agente Lumen (hoy Remielle Dan) no puede sacar bono
+        de daño elemental del slot 5; sus mains posibles ahí son solo HP%/ATK%/
+        DEF%/Tasa de Perforación. Si algún día ZZZ lo agrega, hace falta una
+        CAPTURA del disco para saber el rótulo — el del elemento resultó ser
+        "Lumiflujo" y el main de Viento es "Bono de daño aéreo", así que el
+        nombre no se deduce.
+        """
+        assert is_valid_main_for_slot(5, "Bono Daño Lumen") is False
+        assert is_valid_main_for_slot(5, "Bono Daño Lumiflujo") is False
+        assert "Bono Daño Lumen" not in ALL_CANONICAL
+
     def test_slot6_valid(self):
         assert is_valid_main_for_slot(6, "HP%") is True
         # Slot VI lleva la variante % ("Tasa de Anomalía"), no la flat "Maestría".
