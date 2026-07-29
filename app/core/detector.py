@@ -68,6 +68,10 @@ THRESHOLD_BY_STATE: dict[str, float] = {
                    #   No commitea nada: solo congela el conteo declarado antes de que el diálogo
                    #   tape el header y el contador N/300 se vuelva ilegible (QA 2026-07-25).
     "S17": 0.75,   # Detalle disco PJ — informativo, más permisivo
+    "S26": 0.75,   # Detalle de W-Engine equipado. COMPARTE el template de S17: la pantalla del
+                   #   arma y la del disco son la misma salvo por el contenido del panel, y
+                   #   matchean las dos a 1.000. Mismo umbral por eso mismo — lo que separa es
+                   #   `_verify_s26` (texto "avanzados"/"amplificador").
     "S18": 0.75,   # Perfil agente (Atributos base) — informativo
     "S19": 0.75,   # Perfil agente (Habilidades) — informativo, sin extracción
     "S9":  0.80,   # Inventario discos — informativo
@@ -126,7 +130,11 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     "S14": {"S12", "S1", "S13", "S15", "S18"},
     "S15": {"S8", "S18", "S19", "S12", "S14"},
     "S16": {"S12", "S9", "S8", "S18"},
-    "S17": {"S8", "S18", "S19", "S12", "S15", "S9", "S23"},   # desde el detalle, sustituir un disco de otro PJ
+    "S17": {"S8", "S18", "S19", "S12", "S15", "S9", "S23", "S26"},   # desde el detalle, sustituir un disco de otro PJ
+    # S26 (detalle de W-Engine): misma familia de equipamiento que S17. Se llega desde la vista
+    # del agente y se sale a los mismos lugares; el tab de armas y el de discos son vecinos, así
+    # que S17↔S26 es una transición normal (el usuario alterna entre las dos).
+    "S26": {"S8", "S18", "S19", "S12", "S15", "S9", "S23", "S17"},
     "S18": {"S8", "S19", "S12", "S15", "S17"},
     "S19": {"S8", "S18", "S12", "S15", "S17"},
     "S20": {"S12", "S17", "S9", "S8", "S15", "S10"},   # tras confirmar el vuelto → inventario
@@ -166,6 +174,7 @@ STATE_DESCRIPTIONS: dict[str, str] = {
     "S23": "Diálogo de sustitución de disco entre PJs (confirmar swap)",
     "S24": "Modal 'Obtenido' — confirmación del desmontaje",
     "S25": "Diálogo de confirmación del desmontaje (selección con grado S)",
+    "S26": "Equipamiento PJ — vista detalle W-Engine",
 }
 
 # Estados que SÍ tienen un disco visible para parsear
@@ -182,6 +191,10 @@ NON_CAPTURE_STATES: set[str] = {
     "S24",
     # S25 es un diálogo: tapa la grilla y no expone nada parseable. Su único aporte es de flujo.
     "S25",
+    # S26 muestra un W-Engine, no un disco. Está acá justamente para que el pipeline de discos
+    # ni lo mire: la contaminación que `test_armas_no_contaminan_discos` documenta se evitaba
+    # hasta ahora por la abstención de los parsers, y ahora además por ruteo.
+    "S26",
 }
 
 # Estados donde hay stats de agente visibles (Atributos base)
@@ -1207,6 +1220,134 @@ def _verify_s25(frame: np.ndarray) -> tuple[bool, str | None]:
         return (False, "excepcion")
 
 
+# --- S26: detalle de W-Engine, que comparte template con el detalle de disco ------------------
+# La pantalla del arma y la del disco son la MISMA salvo por el contenido del panel central:
+# las dos matchean `s17_personalizacion_pistas.png` a 1.000. Se midieron y descartaron todos los
+# discriminantes baratos:
+#   · la fila de 5 estrellas (exclusiva del arma) NO sirve: un arma P1 tiene 1 estrella blanca y
+#     4 grises, así que el llenado de esa banda ES la señal de refinamiento, no una constante.
+#     Separación medida 0.58×, solapada.
+#   · `_detect_s17_slot_by_hexagon` da None también para los 30 frames de disco de
+#     `14_Slots_equipamiento`.
+#   · `read_s17_action_button` devuelve 'reemplazar'/'desequipar' en las dos.
+# Lo único que separa es el texto del panel (40/40 armas, 0/42 discos, con Paddle y con
+# Tesseract):
+#     disco → "Atributos secundarios" · "Efecto de conjunto"
+#     arma  → "Atributos avanzados"   · "Efecto de amplificador"
+_S26_PANEL_ROI = (0.31, 0.29, 0.20, 0.12)   # x, y, w, h — banda del panel con el header
+_RE_S26_VERIFY = re.compile(r"avanzados|amplificador", re.I)
+
+# Pre-gate de UNA SOLA DIRECCIÓN sobre la fila de estrellas. No sirve para afirmar "es un arma"
+# (el llenado varía con el refinamiento: un P1 tiene 1 estrella blanca de 5), pero sí para
+# descartar barato la mayoría de los discos y ahorrarles el OCR. Medido sobre 40 armas + 42
+# discos, la distribución del disco es casi binaria:
+#     armas   min 0.0229
+#     discos  0.0000 (×32) · 0.0006 · 0.0609 (×10)
+# Con el corte en 0.010 hay 2.3× de margen contra el arma más floja y 16× contra el grupo denso
+# de discos, y **32/42 frames de disco evitan el OCR**. Importa porque este verify corre sobre
+# TODA pantalla que matchee el template de S17, y sin el gate le agregaría ~334 ms por cambio de
+# panel a un flujo de discos que hoy ya funciona.
+#
+# Si alguna vez fallara para un arma (variante sin fila de estrellas), el efecto es que esa
+# pantalla vuelve a caer en S17 — el comportamiento previo a este hito, que es seguro.
+_S26_STARS_BAND = (0.320, 0.212, 0.155, 0.040)
+_S26_STARS_MIN = 0.010
+
+
+def _s26_star_row_frac(frame: np.ndarray) -> float:
+    """Fracción de blanco brillante en la banda de la fila de estrellas (~0.3 ms)."""
+    h, w = frame.shape[:2]
+    x, y, rw, rh = _S26_STARS_BAND
+    roi = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
+    if roi.size == 0:
+        return 0.0
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    return float(((hsv[:, :, 2] > 200) & (hsv[:, :, 1] < 60)).mean())
+_s26_verify_ocr = None
+_s26_sig_cache: tuple[bytes, bool, str] | None = None
+
+
+def _get_panel_verify_ocr():
+    """OCR para el verify del panel. Prefiere Paddle y cae a Tesseract.
+
+    NO reusa `_get_dialog_verify_ocr` (Tesseract) porque acá el costo importa: este verify corre
+    sobre TODA pantalla que matchee el template de S17, discos incluidos. Medido sobre la banda:
+    Paddle p50 124-235 ms contra Tesseract ~500 ms, y los dos aciertan 40/40 y 0/42. La banda
+    angosta de una sola línea se probó y es peor en las dos dimensiones (25/40, mismo tiempo):
+    el header no está a un `y` fijo porque los nombres largos envuelven y corren el panel.
+    """
+    global _s26_verify_ocr
+    if _s26_verify_ocr is None:
+        for mod, cls in (("app.core.ocr_paddle", "PaddleBackend"),
+                         ("app.core.ocr_tesseract", "TesseractBackend")):
+            try:
+                _s26_verify_ocr = getattr(__import__(mod, fromlist=[cls]), cls)()
+                break
+            except Exception:
+                continue
+        else:
+            _s26_verify_ocr = False
+    return _s26_verify_ocr or None
+
+
+# ROI de la FIRMA. Es la unión del ROI del OCR y de la banda de estrellas, no solo el primero:
+# el veredicto depende de los dos (el pre-gate mira las estrellas), así que cachearlo bajo una
+# firma que ignore la banda de estrellas dejaría el cache pudiendo devolver un veredicto que sus
+# propias entradas ya no justifican.
+_S26_SIG_ROI = (0.31, 0.20, 0.20, 0.21)
+
+
+def _s26_panel_signature(frame: np.ndarray) -> bytes:
+    """Firma barata (~0.3 ms) del panel: el ROI reducido a 24×12 en gris.
+
+    El panel está QUIETO mientras el usuario lo mira, así que sin esto se pagaría un OCR por
+    ciclo (cadencia 1000 ms ⇒ >12 % de duty cycle solo en verificar, contra el RNF-06 de < 3 %
+    de CPU). Con la firma, el OCR corre una vez por CAMBIO de panel: medido, 0.31 ms con cache
+    contra 168-334 ms sin él."""
+    h, w = frame.shape[:2]
+    x, y, rw, rh = _S26_SIG_ROI
+    crop = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
+    if crop.size == 0:
+        return b""
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
+    return cv2.resize(gray, (24, 12), interpolation=cv2.INTER_AREA).tobytes()
+
+
+def _verify_s26(frame: np.ndarray) -> tuple[bool, str | None]:
+    """Verifica que la pantalla sea el detalle de un W-ENGINE y no el de un disco.
+
+    **Falla cerrado**, igual que `_verify_s25` y por el mismo motivo invertido: sin OCR no hay
+    forma de separar las dos pantallas, y de las dos la que tiene consecuencias es la de disco
+    (S17 es donde se confirma el swap pendiente de S23, que escribe la DB). Sin OCR, S26 no
+    dispara, el arma vuelve a caer en S17 y todo queda como antes de este hito — que era seguro,
+    porque los parsers de disco se abstienen sobre frames de arma
+    (`test_armas_no_contaminan_discos`).
+    """
+    global _s26_sig_cache
+    try:
+        sig = _s26_panel_signature(frame)
+        if not sig:
+            return (False, "roi-vacio")
+        if _s26_sig_cache is not None and _s26_sig_cache[0] == sig:
+            return (_s26_sig_cache[1], _s26_sig_cache[2])
+        if _s26_star_row_frac(frame) < _S26_STARS_MIN:
+            _s26_sig_cache = (sig, False, "sin-estrellas")
+            return (False, "sin-estrellas")
+        ocr = _get_panel_verify_ocr()
+        if ocr is None:
+            return (False, "sin-ocr")      # no se cachea: el OCR puede aparecer después
+        h, w = frame.shape[:2]
+        x, y, rw, rh = _S26_PANEL_ROI
+        crop = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
+        text, _ = ocr.text(crop)
+        ok = bool(_RE_S26_VERIFY.search(text or ""))
+        motivo = "txt=avanzados" if ok else "txt=no-match"
+        _s26_sig_cache = (sig, ok, motivo)
+        return (ok, motivo)
+    except Exception:
+        return (False, "excepcion")
+
+
 # Pill "Confirmar" CENTRADO del modal post-desmontaje. Es lo que lo distingue de los otros
 # "Obtenido" y de los diálogos de dos botones: acá hay un único botón, centrado y más abajo.
 # Medido sobre los fixtures: el modal post-desmontaje da 0.0222 de verde en este ROI, y TODOS
@@ -1307,6 +1448,7 @@ _VERIFICATION_REGISTRY: dict[str, callable] = {
     "S10": _verify_s10,
     "S17": _verify_s17,
     "S18": _verify_s18,
+    "S26": _verify_s26,
 }
 
 
@@ -1395,6 +1537,15 @@ def extract_s9_slot(frame: np.ndarray, ocr) -> int | None:
 
 _STATE_TEMPLATES: list[dict] = [
     {"code": "S16", "template": "s16_detalle_set_disco.png",        "desc": "Detalle set de discos (modal Información de conjunto)"},
+    # S26 REUSA el template de S17: la pantalla del arma y la del disco son la misma salvo por el
+    # panel, y matchean las dos a 1.000. Va ANTES que S17 a propósito — `passing.sort` es estable,
+    # así que ante el empate el primer turno de verificación le toca al que aparece primero, y acá
+    # el estricto es S26. Si S17 fuera primero, su verify genérico (Hough de líneas en el panel)
+    # pasaría sobre un frame de arma y S26 no llegaría a probarse nunca.
+    # (Es el mecanismo de S23/S25 con los roles invertidos: allá el primer turno es del que
+    # escribe la DB; acá el que escribe la DB es el fallback, y el que se adelanta es el que se
+    # niega a sí mismo cuando no está seguro.)
+    {"code": "S26", "template": "s17_personalizacion_pistas.png",   "desc": "Equipamiento PJ vista detalle W-Engine"},
     {"code": "S17", "template": "s17_personalizacion_pistas.png",   "desc": "Equipamiento PJ vista detalle (Personalización pistas)"},
     {"code": "S18", "template": "s18a_perfil_agente_recomendacion.png", "desc": "Perfil agente Atributos base (recomendación equipo)"},
     {"code": "S18", "template": "s18b_perfil_agente_completo.png",      "desc": "Perfil agente Atributos base (equipamiento completo)"},
@@ -1736,6 +1887,7 @@ def polling_cadence_ms(state: ScreenState) -> int:
         "S9":  1500, "S10":  500, "S12": 2000,
         "S13": 1000, "S14": 1000, "S15": 1000, "S16": 1500,
         "S17": 1000, "S18": 1500, "S19": 1500, "S21": 1000, "S22": 700,
+        "S26": 1000,   # misma cadencia que S17: es la misma pantalla con otro panel
         "S23": 1000,   # diálogo modal breve; el latch del destino se captura al detectarlo
         "S25": 1000,   # diálogo de confirmación del desmontaje: una sola lectura alcanza (no lee
                        #   nada de la pantalla, solo congela el conteo ya declarado)
