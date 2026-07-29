@@ -240,7 +240,45 @@ Si algún día ZZZ lo agrega, hace falta una **captura** del disco para saber el
 rótulo: el del elemento resultó ser "Lumiflujo" y el main de Viento es "Bono de
 daño aéreo", así que el nombre no se deduce.
 
-### ⏸ B7 — Despertares v3.1: 5 filas nuevas, todas sin texto
+### ✅ B7b — Niveles de despertar confirmados (migración 17)
+
+DaniBOD confirmó in-game el 2026-07-29 el estado de su tienda Silueta Potencial,
+lo que cerró los 5 `nivel IS NULL` de la migración 16:
+
+| Nivel | PJs |
+|-------|-----|
+| **6/6** | Burnice · Ellen · Grace · Jane · Lycaon · N.º 0: Anby · Rina (7) |
+| **1/6** | N.º 11 (1) — ⚠️ parcial |
+| **0/6** | Billy Estelar · Cissia · Harumasa · Nekomata · Pyrois · Remielle Dan · Velina (7) |
+
+Mapeo de nombres — los del reporte no son los de la DB: "Jane Doe" → `Jane`,
+"Ellen Joe" → `Ellen`, "N°0 Anby" → `N.º 0: Anby`. **No se renombró nada**: el
+resolver de assets y el latch de identidad keyean por `agents.nombre` (hay
+overrides tipo `Jane` → `Jane-Doe-*.webp`), así que tocarlo rompería la cosecha
+de badges.
+
+Nekomata y Harumasa pasaron a `placeholder` (no a `pending_capture`): con 0
+niveles comprados no hay texto que capturar. La diferencia con los otros
+placeholder —que para estos dos el despertar **sí existe y es comprable** desde
+v3.1— quedó en `descripcion`.
+
+Solo UPDATEs: el diff de counts no movió una sola fila. Invariante nuevo
+verificado: `activo=1` ⟺ `nivel>0` (0 filas incoherentes).
+
+**Ellen quedó explicada:** estaba en DB y no en la lista de "nuevos" porque su
+despertar es de una tanda anterior; el reporte la confirma en 6/6.
+
+### ⏸ B7c — La deuda que queda: 7 textos de efecto
+
+Los niveles ya están. Lo que falta es el **efecto**: de las 15 filas, **una sola
+(Burnice) tiene texto real**. Las otras 7 con nivel > 0 están en
+`pending_capture` — la tabla hoy inventaria la deuda, no alimenta scoring.
+
+⚠️ **Al capturar N.º 11 hay que anotar a qué nivel corresponde el texto.** Está
+en 1/6 y el despertar es progresivo: si se carga el texto sin el nivel, el
+scoring va a asumir el efecto completo.
+
+### ✅ B7a — Despertares v3.1: las 5 filas que faltaban
 
 Migración 16 (`db/migrations/2026-07-29_16_awakenings_v31_pendientes.sql`).
 DaniBOD reportó despertares nuevos para 8 PJs; **3 ya tenían fila** (Lycaon,
