@@ -116,6 +116,13 @@ audit/frames_desmontaje_qa/
 # el commit del catálogo de armas). Si alguna se promueve a fixture de test, agregar una
 # excepción explícita con `!ruta/al/archivo.png` en vez de destapar la carpeta entera.
 Documentacion/Screenshots_Triggers/Engines_Triggers/
+# Fixtures de la pantalla de gacha/sintonización (banners + grillas de resultados) — mismo
+# criterio: son verdad de tierra de la detección S27/S28 y viven LOCALES. La carpeta CRECE con
+# cada patch (Daniel agrega los banners nuevos), así que ignorarla entera es lo correcto; el
+# test de regresión que la consume es skip-if-absent.
+Documentacion/Screenshots_Triggers/Gacha_Sintonizacion/
+# Volcado crudo de frames del gacha (~1,5 GB por pasada) — regenerable, nunca al repo.
+audit/frames_gacha/
 # Videos de flujo (capturas del juego para tests del pipeline) — cientos de MB. El .mp4
 # crudo queda LOCAL; la doc de verdad de tierra (.md/.txt) SÍ se versiona como fixture.
 Documentacion/Videos_flujo/*.mp4
