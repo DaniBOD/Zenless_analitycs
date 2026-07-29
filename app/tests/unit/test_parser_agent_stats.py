@@ -52,6 +52,42 @@ def tesseract_ocr():
         pytest.skip(f"Tesseract no disponible: {e}")
 
 
+def test_remielle_dan_frame_real_campo_por_campo(paddle_ocr):
+    """Ground truth del primer agente Lumen, leído del frame real (patch v3.1).
+
+    El glob de arriba solo exige "11 stats no nulos"; esto fija los VALORES y,
+    sobre todo, que el elemento salga `Lumen` a partir del "Lumiflujo" que
+    imprime la pantalla — que es lo único que prueba que PaddleOCR lee bien esa
+    palabra desde píxeles (los tests de `_canon_elemento` operan sobre strings
+    ya limpias, así que no cubren ese riesgo).
+
+    Stats de Nivel 01 SIN discos equipados ⇒ son los base puros y no cambian
+    salvo que HoYoverse rebalancee a Remielle.
+    """
+    path = FIXTURES / "atributos_base_ejemplo_15.png"
+    if not path.exists():
+        pytest.skip("fixture atributos_base_ejemplo_15.png no disponible")
+    frame = cv2.imdecode(np.fromfile(str(path), dtype=np.uint8), cv2.IMREAD_COLOR)
+    r = parse_agent_stats(frame, paddle_ocr)
+
+    if r.confianza_global == 0.0 and r.pv is None:
+        pytest.skip("PaddleOCR no extrajo nada en este entorno")
+
+    assert r.agente_nombre == "Remielle Dan"   # nombre completo, no "Remielle"
+    assert r.elemento == "Lumen"               # pantalla dice "Lumiflujo"
+    assert r.rol == "Anomalía"                 # pantalla dice "Anómalo"
+    assert r.nivel == 1
+    assert (r.pv, r.ataque, r.defensa, r.impacto) == (602, 124, 48, 83)
+    assert (r.tasa_anomalia, r.maestria_anomalia) == (115, 116)
+    assert r.prob_crit == pytest.approx(0.05)
+    assert r.dano_crit == pytest.approx(0.50)
+    # Rol Anomalía usa el par TP + ER, NO Fuerza Bruta (eso es solo Disruptivos).
+    assert r.tasa_perforacion == pytest.approx(0.0)
+    assert r.recuperacion_energia == pytest.approx(1.2)
+    assert r.fuerza_bruta is None
+    assert r.acumulacion_adrenalina is None
+
+
 @pytest.mark.parametrize("screenshot_path", SCREENSHOTS, ids=lambda p: p.stem)
 def test_extracts_all_11_stats(screenshot_path, paddle_ocr):
     """Cada screenshot debe producir 11 stats con valores > 0."""
@@ -486,6 +522,32 @@ class TestRolElementoDesdePantalla:
         assert _canon_elemento("Escarcha Anomalia") == "Hielo"   # Frost ≡ Hielo
         assert _canon_elemento("Viento Ataque") == "Viento"      # Wind estándar nuevo
         assert _canon_elemento("nada aqui") is None
+
+    def test_canon_elemento_lumiflujo_es_lumen(self):
+        """v3.1: la pantalla rotula el elemento nuevo 'Lumiflujo', la DB guarda 'Lumen'.
+
+        Confirmado con Remielle Dan (Perfil_agente/atributos_base_ejemplo_15.png,
+        2026-07-28): el pill dice "Lumiflujo / Anómalo". Es el mismo patrón que
+        Ígneo→Fuego y Etéreo→Éter: el nombre de pantalla NUNCA es el canónico.
+        """
+        from app.core.parser_agent_stats import _ELEMENTOS_DB, _canon_elemento
+        assert _canon_elemento("Lumiflujo Anomalo") == "Lumen"
+        assert _canon_elemento("Lumiflujo") == "Lumen"
+        # Sin tildes ni mayúsculas: el OCR entrega cualquier forma.
+        assert _canon_elemento("LUMIFLUJO ANÓMALO") == "Lumen"
+        # El cross-check contra DB compara en minúscula sin tilde.
+        assert "lumen" in _ELEMENTOS_DB
+
+    def test_lumiflujo_no_le_roba_el_match_a_otro_elemento(self):
+        """`_canon_elemento` devuelve al PRIMER key que matchee por substring.
+
+        Blinda contra que agregar 'lumiflujo' al mapa altere el resultado de los
+        elementos que ya andaban (el orden del dict es significativo).
+        """
+        from app.core.parser_agent_stats import _canon_elemento
+        assert _canon_elemento("Etereo Ataque") == "Éter"
+        assert _canon_elemento("Igneo Anomalia") == "Fuego"
+        assert _canon_elemento("Tinta aurica Ataque") == "Éter"
 
     def test_pantalla_gana_sobre_db_rol_sucio(self):
         """Pantalla gana sobre DB cuando difieren + emite nota de discrepancia.

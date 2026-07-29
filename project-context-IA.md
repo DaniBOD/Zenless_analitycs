@@ -44,15 +44,15 @@ Sistema de análisis y optimización de cuenta para ZZZ porque el juego carece d
 
 | Capa | Tabla | Filas | Notas |
 |------|-------|------:|-------|
-| 1 Catálogos | `agents` | **49** | 45 originales + Cissia v2.7 + Billy Estelar v2.x + Velina v3.x + **Pyrois v3.x** (2026-06-21, **rango ∞ "infinito" + facción Faetón nuevos**, Éter/Ataque/M0, onboarding PARCIAL: identidad+stats Nv1 provisorios+synergy+score_thr+awakening; pendiente agent_thresholds Prydwen + splash + IA) |
+| 1 Catálogos | `agents` | **50** | 45 originales + Cissia v2.7 + Billy Estelar v2.x + Velina v3.x + **Pyrois v3.x** (2026-06-21, **rango ∞ "infinito" + facción Faetón nuevos**, Éter/Ataque/M0, onboarding PARCIAL: identidad+stats Nv1 provisorios+synergy+score_thr+awakening; pendiente agent_thresholds Prydwen + splash + IA) + **Remielle Dan v3.1** (2026-07-28, mig 15, **elemento Lumen + facción Covenant of Dayat nuevos**, S/Anomalía/M0, onboarding PARCIAL igual que Pyrois pero con stats Nv1 **sin discos** = base puros; pendiente agent_thresholds + splash + avatar_ref + IA) |
 | 1 | `weapons` | **59** | Saneada 2026-07-27/28 (migraciones `_10`, `_11`, `_13` + `audit/weapons_catalog_20260728.md`): el catálogo se había cargado emparejando ES↔EN **por parecido**, así que rareza/tipo/`atk_base` venían heredados de otra arma. Corregido contra las 40 capturas del juego (**ATK a Nivel 60/60 discrimina la rareza: S ∈ {684,713,743}, A ∈ {594,624}**). +8 altas, −2 duplicados fusionados. Estado: **53 verificadas + 5 con `nombre_en IS NULL`** (laguna declarada, se cierra capturando). Faltan 42 de la lista canónica: no se pueden agregar offline, `nombre` es el nombre ESPAÑOL in-game y no hay fuente. Ya tiene `pasiva_modelada` + `sensibilidad_contexto` |
 | 1 | `disc_sets` | 28 | +Firmamento llameante (The Sky Ablaze, id 53, v3.0, Éter, set firma Pyrois) 2026-06-27; +Salón huracanado (Wuthering Salon, id 52, v3.x, set firma Velina) 2026-06-26 |
-| 1 | `agent_awakenings` | **9** | 1 verificado (Burnice nv6) + 4 placeholder `pending_capture` (Lycaon, Ellen, Grace, N.°0:Anby) + 1 placeholder Cissia + 1 Billy Estelar + 1 Velina + 1 Pyrois. Harumasa y N.°11 sin insertar hasta confirmar nivel |
+| 1 | `agent_awakenings` | **10** | 1 verificado (Burnice nv6) + 4 placeholder `pending_capture` (Lycaon, Ellen, Grace, N.°0:Anby) + 1 placeholder Cissia + 1 Billy Estelar + 1 Velina + 1 Pyrois + 1 Remielle Dan. Harumasa y N.°11 sin insertar hasta confirmar nivel |
 | 2 Inventarios | `agent_discs` | 270 | 45 PJs × 6 slots; incluye EMPTY (Antón, Ben, builds 3+3). Cissia usa inventory_discs directamente hasta sync RF-04 |
 | 2 | `inventory_discs` | **334** | 263 equipados + 71 sueltos (+ 2 nuevos Cissia slot 4/6) |
 | 2 | `inventory_weapons` | 50 | 40 equipadas + 10 sueltas |
 | 3 Thresholds | `agent_thresholds` | **111** | 47/49 PJs con ≥1 stat · Velina y Pyrois PENDIENTE (objetivos Prydwen, RNF-02) |
-| 3 | `agent_score_thresholds` | **49** | Defaults equip 0.75 / stock 0.50, overridable (todos los 49 PJs) |
+| 3 | `agent_score_thresholds` | **50** | Defaults equip 0.75 / stock 0.50, overridable (todos los 50 PJs) |
 | 3 | `agent_substat_preferences` | 0 | Cae al arquetipo del rol hasta que se cargue |
 | 4 Scoring | `disc_archetypes` | 6 | ATK_DPS, HP_DISRUPT, ANOMALY, STUN, SUPPORT_ER, DEFENSE |
 | 4 | `disc_set_archetype` | 34 | N:M con prioridad 1=primario, 2=secundario |
@@ -72,7 +72,7 @@ Sistema de análisis y optimización de cuenta para ZZZ porque el juego carece d
 | 8 | `content_profiles` | 4 | seed: shiyu_critical, da, hollow_zero, general |
 | 8 | `weapon_evaluations` | 0 | Cache scores (PJ × weapon × refinamiento × contenido) |
 | 8 | `prydwen_weapon_recommendations_snapshots` | 0 | Snapshot semanal scraper |
-| 8 | `pj_weapon_synergy` | **282** | 47 PJs × 6 categorías (+ Pyrois matriz Ataque) · Billy Estelar PENDIENTE (rol Disruptivos/Rupture sin matriz confirmada — RNF-02) |
+| 8 | `pj_weapon_synergy` | **288** | 48 PJs × 6 categorías (+ Pyrois matriz Ataque, + Remielle Dan matriz Anomalía) · Billy Estelar PENDIENTE (rol Disruptivos/Rupture sin matriz confirmada — RNF-02) |
 
 **Migraciones aplicadas:** 9/9 (`01_archetypes_and_scoring`, `02_optimizer_pending`, `03_team_synergies`, `04_lategame_validation`, `05_weapon_optimizer`, `06_onboarding_cissia`, `07_re_estandarizacion`, `08_fix_archetypes_mains`, `09_add_protected_build`). Integrity OK, 0 FK violations.
 
@@ -140,9 +140,9 @@ RF-14 coordina con RF-06 (build full = arma + 6 discos)
 
 ## 6. Roster (rápido)
 
-**49 PJs** · Distribución elemento: Físico 14 · Eléctrico 12 · Fuego 9 · Éter 8 · Hielo 5 · Viento 1 (Velina)
-> **Lumen** (atributo nuevo del patch v3.1, 2026-07-28): la DB ya lo admite, pero **todavía no hay ningún agente Lumen cargado** y el código de OCR no conoce su rótulo en pantalla. Ver `audit/patch_notes_v3.1.md` §B2.
-**Distribución rol:** Ataque 14 · Aturdimiento 9 · Anomalía 8 · Soporte 8 · Defensa 5 · Disruptivos 3
+**50 PJs** · Distribución elemento: Físico 14 · Eléctrico 12 · Fuego 9 · Éter 8 · Hielo 5 · Viento 1 (Velina) · **Lumen 1 (Remielle Dan)**
+> **Lumen** = atributo estándar nuevo del patch v3.1 (2026-07-28). Ojo con los nombres: la **pantalla lo rotula "Lumiflujo"**, la DB guarda `'Lumen'` y el CHECK de `enemy_resistances` usa `'lumen'`. El mapeo vive en `parser_agent_stats.py::_ELEMENTO_SCREEN_MAP`. Mismo patrón que Ígneo→Fuego y Etéreo→Éter: **el rótulo de pantalla nunca es el canónico**.
+**Distribución rol:** Ataque 15 · Anomalía 10 · Aturdimiento 9 · Soporte 8 · Defensa 5 · Disruptivos 3
 
 > Corrección rol/elemento mig 07+08 (2026-06-01): se reasignaron 6 roles mal seedeados
 > (Pulchra→Aturdimiento, Lucía→Soporte, Ye Shunguang→Ataque, Yuzuha→Soporte, Dialyn→

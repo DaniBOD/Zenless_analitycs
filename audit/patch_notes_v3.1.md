@@ -14,13 +14,13 @@
 |------------|--------|
 | A — preparación (backup + baseline + smoke L1) | ✅ cerrada |
 | B — lectura del patch | 🟡 parcial (este doc) |
-| C — onboarding de assets nuevos | ⛔ **bloqueada**: falta saber qué PJs consiguió Daniel |
+| C — onboarding de assets nuevos | ✅ Remielle Dan cargada (PARCIAL). Sigrid y Aria: Daniel no las sacó |
 | D — UPDATE stats existentes | ⏸ sin cambios reportados |
 | E — re-scrape | ⏸ pendiente |
 | F — recálculos derivados | ⏸ pendiente |
-| G — validación L1 final | 🟡 parcial (post-migración 14: ✅) |
-| H — validación L4 con frames | ⛔ pendiente (requiere sesión en vivo) |
-| I — docs | 🟡 este doc + `project-context-IA.md` pendiente |
+| G — validación L1 final | ✅ post-mig 14 y 15: `integrity_check ok`, `foreign_key_check` 0, diff de counts explicado fila por fila |
+| H — validación L4 con frames | 🟡 parcial: el frame de S18 del PJ nuevo parsea perfecto (ver §Vocabulario). Falta la sesión en vivo (toasts, F11) |
+| I — docs | ✅ este doc + `project-context-IA.md` + `Modelo_Relacional/README.md` |
 | J — auto-encolado RF-12/RF-13 | ⏸ pendiente |
 
 ---
@@ -40,13 +40,23 @@ la resistencia a Viento de cualquier enemigo. Se arreglaron los dos de una.
 
 ### PJs nuevos
 
-| PJ | En `agents` hoy | Notas |
-|----|-----------------|-------|
-| Remielle | ❌ no | pendiente de confirmación de obtención |
-| Sigrid | ❌ no | segunda fase del banner |
-| Aria | ❌ no | Daniel va a intentar sacarla |
+| PJ | En `agents` | Notas |
+|----|-------------|-------|
+| **Remielle Dan** | ✅ id 50 | Obtenida. Onboarding PARCIAL — ver §Acciones |
+| Sigrid | ❌ no | Daniel no la sacó |
+| Aria | ❌ no | Daniel no la sacó |
 
-Ninguno tiene fila. Roster actual: **49 agentes** (ids 1–49, último = Pyrois).
+Roster: **49 → 50 agentes**.
+
+**Nombre completo:** la pantalla dice **"Remielle Dan"**, no "Remielle". Se guarda
+entero, como `Jane Doe` / `Zhu Yuan` / `Ju Fufu` / `Pan Yinhu`.
+
+### Facción nueva: Covenant of Dayat
+
+El texto ES en pantalla dice **"Alianza de Dayat"**; el logo dorado dice
+**"COVENANT OF DAYAT"**. Se guardó el nombre del logo (decisión DaniBOD): 13 de
+las 15 facciones de la tabla están en inglés, así que manda la convención
+mayoritaria. Falta el asset del logo en `Documentacion/Interfaz/Facciones_Logos/`.
 
 ### W-Engines nuevas
 
@@ -124,35 +134,142 @@ instalado** en la máquina. Se crearon las dos piezas:
 
 ---
 
+### ✅ Migración 15 — onboarding PARCIAL de Remielle Dan
+
+Archivo: `db/migrations/2026-07-28_15_onboarding_remielle_dan.sql`
+Backup previo: `db/danibod_zzz_v2.backup_premig_20260729_021703.db`
+Fuente única (RNF-02): `Screenshots_Triggers/Triggers_Generales/Perfil_agente/atributos_base_ejemplo_15.png`
+
+**S · Lumen · Anomalía · Covenant of Dayat · M0 (CINEMA 0/6) · Nivel 01.**
+El rango sale del badge dorado del header — verificado contra el mismo badge de
+Pyrois, que muestra `∞` y coincide con su `agents.rango`.
+
+Stats cargados (Nivel 01, **sin discos equipados** → base puros; más limpios que
+los de Pyrois, que tenía discos al azar):
+
+| | | | |
+|---|---|---|---|
+| PV 602 | Ataque 124 | Defensa 48 | Impacto 83 |
+| Prob. Crítico 5 % | Daño Crítico 50 % | Tasa de Anomalía 115 | Maestría de Anomalía 116 |
+| Tasa de Perforación 0 % | Recup. Energía 1.2 | | |
+
+`perforacion` plana y `bono_dano_elemento` no se exponen en pantalla → NULL.
+`agent_thresholds` no se cargan: son objetivos de build y Prydwen todavía no
+publicó a Remielle a <24 h del release (RNF-02).
+
+Se cargaron además: `agent_score_thresholds` (0.75/0.50 default),
+`agent_awakenings` (placeholder v3.1) y las 6 filas de `pj_weapon_synergy` con la
+BONUS_MATRIX del rol Anomalía (bonus y razones espejo de los PJs Anomalía ya
+cargados, modelo Burnice).
+
+**Verificación:** 9/9 smoke checks, `integrity_check ok`, `foreign_key_check` 0.
+Diff de counts pre-patch → post-patch, exactamente 4 deltas y nada más:
+
+```
+agents                 49 -> 50  (+1)
+agent_score_thresholds 49 -> 50  (+1)
+agent_awakenings        9 -> 10  (+1)
+pj_weapon_synergy     282 -> 288 (+6)
+```
+
+### ✅ Vocabulario de código para Lumen — la pantalla dice "Lumiflujo"
+
+El riesgo marcado en la sesión anterior se confirmó: **el elemento NO se rotula
+"Lumen" en pantalla, se rotula "Lumiflujo"**. Adivinarlo habría fallado, y en
+silencio.
+
+`app/core/parser_agent_stats.py`:
+- `_ELEMENTOS_DB` += `"lumen"`
+- `_ELEMENTO_SCREEN_MAP` += `"lumiflujo" → "Lumen"`, igual que Ígneo→Fuego y
+  Etéreo→Éter.
+
+Tests nuevos en `test_parser_agent_stats.py` (escritos primero, en rojo):
+`test_canon_elemento_lumiflujo_es_lumen` y
+`test_lumiflujo_no_le_roba_el_match_a_otro_elemento` (blinda el orden del dict,
+que es significativo porque `_canon_elemento` corta en el primer substring).
+
+**Prueba end-to-end sobre el frame real** (no solo unit test) — `parse_agent_stats`
++ PaddleOCR sobre `atributos_base_ejemplo_15.png` devuelve:
+
+```
+agente_nombre        = 'Remielle Dan'
+elemento             = 'Lumen'
+rol                  = 'Anomalía'
+pv/ataque/defensa/impacto = 602 / 124 / 48 / 83
+prob_crit/dano_crit  = 0.05 / 0.5
+tasa_anomalia/maestria = 115 / 116
+tasa_perforacion/rec_energia = 0.0 / 1.2
+confianza_global     = 0.977
+notas                = ['identificado_por_stats_Remielle Dan', 'agente_Remielle Dan_rol_Anomalía']
+```
+
+Los 10 stats coinciden con lo cargado en DB, y el `identificado_por_stats` cierra
+el lazo: el reconocimiento en S18 ya funciona contra la fila nueva.
+
+### 🐛 Corrección de un docstring que mentía
+
+`parser_agent_stats.py` decía que el slot bottom-left de S18 muestra *Fuerza
+Bruta* para **Anomalía/Disruptivos**. Remielle es Anomalía y muestra **"Tasa de
+Perforación 0 %"**. El código siempre estuvo bien (`_STATS_DISRUPTIVO` aplica solo
+a Disruptivos; `_STATS_RESTO` cubre a Anomalía); era el docstring el que estaba
+mal. Corregido.
+
+---
+
 ## Bloqueado / pendiente
 
-### ⛔ B1 — Onboarding de PJs: falta saber qué consiguió Daniel
+### ⏸ B2 — El main de disco de daño Lumen sigue sin confirmarse
 
-No se insertó ninguna fila en `agents`. Precedente del proyecto (Velina, Pyrois):
-se puede hacer **onboarding parcial** con rareza/elemento/rol/facción confirmados
-in-game y stats en NULL (`pending_capture`), lo que ya habilita el
-reconocimiento por S18 y la cosecha del badge.
+Se resolvió la mitad del vocabulario (el elemento del agente). Falta la otra: el
+**main de daño elemental de slot 5** en `app/core/stats_vocab.py`
+(`CANONICAL_MAINS_VARIABLE[5]` + alias). No se tocó a propósito — el precedente
+manda: el main de Viento **no** se llama "Bono Daño Viento" en el cliente ES sino
+**"Bono de daño aéreo"**. Con "Lumiflujo" ya confirmado como rótulo del elemento,
+el del main podría ser cualquier cosa.
 
-### ⛔ B2 — Vocabulario de código para Lumen (requiere UNA captura in-game)
-
-La migración deja la DB lista, pero el **código todavía no conoce Lumen**. Dos
-lugares, y ninguno se puede completar sin ver la pantalla (RNF-02):
-
-| Archivo | Qué falta | Por qué no se puede inventar |
-|---------|-----------|------------------------------|
-| `app/core/parser_agent_stats.py` | `_ELEMENTOS_DB` + `_ELEMENTO_SCREEN_MAP` | El cliente ES rotula los elementos con nombres propios, no traducciones literales: Fuego se muestra **"Ígneo"**, Hielo **"Gélido"**, Éter de Yixuan **"Tinta áurica"**. No sabemos con qué palabra rotula Lumen. |
-| `app/core/stats_vocab.py` | `CANONICAL_MAINS_VARIABLE[5]` + un alias en `ALIASES` | Precedente directo: el main de Viento **no** se llama "Bono Daño Viento" en el cliente ES sino **"Bono de daño aéreo"**. El de Lumen es igual de impredecible. |
-
-**Lo que se necesita:** un screenshot de S18 (perfil de un agente Lumen, pestaña
-Atributos base) y, si aparece, un disco con main de daño Lumen.
-
-Mientras tanto, un agente Lumen sería reconocido por nombre pero su elemento
-caería a `None` en el parser.
+**Lo que se necesita:** una captura de un disco con main de daño Lumen.
 
 ### ⏸ B3 — Resistencias a viento/lumen de los 12 enemigos
 
 El `CHECK` ya las admite; las filas entran cuando haya datos de Hakush.in.
 Hoy `enemy_resistances` tiene 72 filas = 12 × 6; el completo sería 12 × 8 = 96.
+
+### 🔴 B5 — Assets de Remielle Dan: **hay un test en rojo por esto**
+
+`test_asset_resolver.py::test_full_coverage_against_db` falla desde que entró la
+fila 50:
+
+```
+AssertionError: Agentes sin -extend.webp: ['Remielle Dan']
+```
+
+**El test tiene razón y no se tocó.** Es el guard que exige que todo agente de la
+DB tenga sus splash; el comentario del propio test dice que `-extend`/`-ico`
+nunca se difieren (a diferencia de `Pj_stats`, que sí tiene su
+`_PJ_STATS_DEFERIDO` para onboardings parciales). Ese guard ya atajó un bug real
+antes — sin él, a Jane se le disimulaba el faltante cayendo al JPEG de Pj_stats.
+Meter a Remielle en una lista de excepción lo dejaría mudo, así que se prefirió
+dejar la falla visible.
+
+**Se destraba dejando dos archivos** en `Documentacion/Interfaz/splash_arts/`,
+con estos nombres exactos (los deriva `_normalize_for_splash('Remielle Dan')`):
+
+- `Remielle-Dan-extend.webp`
+- `Remielle-Dan-ico.webp`
+
+Sin código de por medio: en cuanto estén, el test pasa solo.
+
+También faltan, sin test que los exija todavía:
+- `app/resources/avatar_refs/Remielle Dan.png` — **sin esto no se la reconoce
+  como dueña de discos** (hoy hay 54 refs y ninguna es suya).
+- El logo de Covenant of Dayat en `Documentacion/Interfaz/Facciones_Logos/`
+  (Faetón, de Pyrois, arrastra el mismo faltante).
+
+### ⏸ B6 — Catalogación IA: 49 pares nuevos
+
+Remielle Dan agrega 49 pares a `team_synergies` (1 contra cada PJ del roster).
+`team_synergies` está en 0 filas — el sistema RF-12 todavía no corrió nunca, así
+que esto no es deuda específica del patch.
 
 ### ⏸ B4 — Splash arts sin trackear
 
@@ -167,11 +284,29 @@ en el mismo commit que las introduce, salvo que sean assets chicos de UI).
 ## Validación
 
 - [x] Smoke test L1 pre-patch ok (`integrity_check=ok`, `foreign_key_check=0`)
-- [x] Smoke test L1 post-migración 14 ok
-- [x] Diff de counts pre vs post = sin cambios de filas
+- [x] Smoke test L1 post-migración 14 y post-migración 15 ok
+- [x] Diff de counts: mig 14 sin cambios de filas; mig 15 con exactamente los 4 deltas esperados
+- [x] Prueba funcional del CHECK ampliado (insert + rollback)
+- [x] Prueba end-to-end del parser sobre el frame real del PJ nuevo
 - [x] Suite de tests (ver §Cierre)
 - [ ] Casos canónicos QA-07 §5 (8/8) — pendiente
 - [ ] L4 toast disparado correctamente — pendiente sesión en vivo
+
+## Suite de tests
+
+| Corrida | Resultado |
+|---------|-----------|
+| Pre-patch (baseline) | 1141 passed · 21 failed |
+| Post-mig 14 y 15 | **1178 passed · 22 failed** |
+| `test_parser_agent_stats.py` (archivo tocado, corrida aparte con el fixture nuevo) | **78 passed** |
+
+De los 22 rojos, **21 son preexistentes**: `FileNotFoundError` de las fixtures de
+desmontaje (`12_Desmontaje/Ejemplo_2/3/4/6.png`), que están *untracked* en el
+working dir principal y por eso no existen en el worktree. No son regresión.
+
+El rojo **nº 22 es nuevo y es mío**: `test_asset_resolver::test_full_coverage_against_db`,
+por los splash de Remielle Dan que faltan. Ver §B5 — se resuelve dejando dos
+`.webp`, sin tocar código.
 
 ## Cierre
 

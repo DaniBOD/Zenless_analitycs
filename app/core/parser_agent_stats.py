@@ -13,8 +13,11 @@ Layout de columnas (confirmado por DaniBOD):
   Columna derecha:    (vacio) | Ataque | Impacto | Dano CRIT | Maestria Anomalia | Recup. Energia
 
   El slot bottom-left varia segun el rol:
-  - Atacante/Aturdimiento/Defensa/Soporte: Tasa de Perforacion
-  - Anomalia/Disruptivos: Fuerza Bruta (ignorada por el parser actual)
+  - Disruptivos: Fuerza Bruta + Acumulacion de Adrenalina (ver _STATS_DISRUPTIVO)
+  - Todos los demas, Anomalia incluida: Tasa de Perforacion + Recup. Energia
+    (ver _STATS_RESTO). Confirmado con Remielle Dan (rol Anomalia), que muestra
+    "Tasa de Perforacion 0 %" — este docstring decia lo contrario hasta 2026-07-28,
+    pero el codigo siempre estuvo bien.
 """
 from __future__ import annotations
 
@@ -42,8 +45,11 @@ _ROLES_DB: set[str] = {
 _ELEMENTOS_DB: set[str] = {
     "fisico", "fuego", "hielo", "electrico", "eter",
     # Viento (Wind): elemento estándar nuevo, incorporado proactivamente al
-    # dominio para PJs futuros (decisión DaniBOD 2026-06-01). Aún sin agentes.
+    # dominio para PJs futuros (decisión DaniBOD 2026-06-01). Velina desde v3.0.
     "viento",
+    # Lumen: elemento estándar nuevo del patch v3.1 (2026-07-28). La PANTALLA lo
+    # rotula "Lumiflujo" — ver _ELEMENTO_SCREEN_MAP. Primer agente: Remielle Dan.
+    "lumen",
 }
 # Mapping OCR noise -> roles canonicales (legacy, lowercase)
 _ROL_OCR_MAP: dict[str, str] = {
@@ -70,6 +76,11 @@ _ROL_OCR_MAP: dict[str, str] = {
 #   Honed Edge (Ye Shunguang)          -> Físico
 # Viento (Wind) SÍ es un estándar nuevo (no equivalente a otro) y tiene su propia
 # entrada para PJs futuros.
+#
+# LUMEN (v3.1, DaniBOD 2026-07-28): también es un estándar nuevo, y el caso más
+# claro de por qué el nombre de pantalla no se puede adivinar — la pantalla dice
+# "Lumiflujo", no "Lumen". Confirmado con Remielle Dan (S · Anomalía ·
+# Covenant of Dayat) en Perfil_agente/atributos_base_ejemplo_15.png.
 # ---------------------------------------------------------------------------
 _ELEMENTO_SCREEN_MAP: dict[str, str] = {
     "fisico":       "Físico",
@@ -80,7 +91,8 @@ _ELEMENTO_SCREEN_MAP: dict[str, str] = {
     "eter":         "Éter",
     "tinta aurica": "Éter",       # Auric Ink (Yixuan) ≡ Éter
     "aurica":       "Éter",
-    "viento":       "Viento",     # Wind (PJs futuros) — estándar nuevo
+    "viento":       "Viento",     # Wind (Velina) — estándar nuevo v3.0
+    "lumiflujo":    "Lumen",      # Lumen (Remielle Dan) — estándar nuevo v3.1
 }
 _ROL_SCREEN_MAP: dict[str, str] = {
     "ataque":       "Ataque",
