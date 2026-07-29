@@ -114,7 +114,7 @@ Este documento describe el modelo relacional completo de la base, post-aplicaci�
 | Tabla | Filas esperadas | Descripción |
 |-------|-----------------|-------------|
 | `enemies` | ~80 iniciales | Catálogo de bosses/notorious con `escalado_dificultad` JSON. Fuente Hakush.in + Prydwen |
-| `enemy_resistances` | ~480 (80 × 6 elementos) | Multiplicador de daño por elemento + `breakdown_status` |
+| `enemy_resistances` | ~640 (80 × 8 elementos) | Multiplicador de daño por elemento + `breakdown_status`. 8 elementos desde la migración 14 (se sumaron `viento` y `lumen`) |
 | `shiyu_cycles` | 1 inicial, +1 cada 2 sem | Ciclo activo de Shiyu Critical con `frentes` JSON |
 | `da_cycles` | 1 inicial, +1 cada 2 sem | Ciclo activo de Deadly Assault con `entidades` JSON |
 | `lategame_runs` | 0 al inicio, ~5-15/sem | Captura manual con F11. Equipo + estrellas + tiempo + breakdown DMG |
@@ -184,6 +184,7 @@ Lista canónica de las 30+ relaciones FK del modelo:
 | `lategame_run_damage` | `dmg_porcentaje BETWEEN 0 AND 100` | Validación numérica |
 | `optimizer_pending_actions` | `estado IN (TODO, APLICADO, DESCARTADO, OBSOLETO)` | Estado machine cerrada |
 | `enemy_resistances` | `multiplicador REAL` | Cota implícita: 0=inmune, <1=resistente, >1=débil |
+| `enemy_resistances` | `elemento IN ('fisico','fuego','hielo','electrico','eter','frost','viento','lumen')` | Enum cerrado de atributos de daño. **Minúscula sin tilde** — NO unificar con `agents.elemento`, que usa capitalizado con tilde (`Físico`, `Eléctrico`): son vocabularios de consumidores distintos. `frost` se modela aparte acá aunque el parser de agentes lo colapse a Hielo. Ampliado en la migración 14 (`viento` + `lumen`); en SQLite esto exigió reconstruir la tabla |
 
 ---
 
