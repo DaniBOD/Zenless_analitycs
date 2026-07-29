@@ -62,7 +62,7 @@ Sistema de análisis y optimización de cuenta para ZZZ porque el juego carece d
 | 6 | `team_compositions` | 0 | top-N por PJ principal |
 | 6 | `ai_catalog_runs` | 0 | Auditoría llamadas Claude API |
 | 7 RF-13 | `enemies` | 12 | 5 notorious + 3 bosses + 3 elites + 1 dummy |
-| 7 | `enemy_resistances` | 72 | 12 × 6 elementos |
+| 7 | `enemy_resistances` | 72 | 12 × 6 elementos. Mig 14 (2026-07-28) amplió el CHECK a **8** (`viento` + `lumen`) sin insertar filas: los multiplicadores son datos a observar (RNF-02). Completo = 12 × 8 = 96 |
 | 7 | `shiyu_cycles` / `da_cycles` | 0 / 0 | Esperan scraper |
 | 7 | `lategame_runs` / `lategame_run_damage` | 0 / 0 | Captura F11 |
 | 7 | `tier_list_personal` | 0 | Snapshots atómicos (no UPDATE) |
@@ -140,7 +140,8 @@ RF-14 coordina con RF-06 (build full = arma + 6 discos)
 
 ## 6. Roster (rápido)
 
-**48 PJs** · Distribución elemento: Físico 14 · Eléctrico 12 · Fuego 9 · Éter 7 · Hielo 5 · Viento 1 (Velina)
+**49 PJs** · Distribución elemento: Físico 14 · Eléctrico 12 · Fuego 9 · Éter 8 · Hielo 5 · Viento 1 (Velina)
+> **Lumen** (atributo nuevo del patch v3.1, 2026-07-28): la DB ya lo admite, pero **todavía no hay ningún agente Lumen cargado** y el código de OCR no conoce su rótulo en pantalla. Ver `audit/patch_notes_v3.1.md` §B2.
 **Distribución rol:** Ataque 14 · Aturdimiento 9 · Anomalía 8 · Soporte 8 · Defensa 5 · Disruptivos 3
 
 > Corrección rol/elemento mig 07+08 (2026-06-01): se reasignaron 6 roles mal seedeados
