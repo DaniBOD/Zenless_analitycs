@@ -110,6 +110,12 @@ audit/equip_map_*.json
 # regenerable. Los frames que resultan verdad de tierra se promueven a mano a
 # Documentacion/Screenshots_Triggers/, no se versiona la cosecha entera.
 audit/frames_desmontaje_qa/
+# Capturas full-res de W-Engines (~150 MB) — mismo criterio que 16_discos_pj_grilla: son
+# la verdad de tierra de la extracción RF-15 y viven LOCALES en la máquina del usuario.
+# Se sacaron del historial con git-filter-repo el 2026-07-28 (habían entrado por error en
+# el commit del catálogo de armas). Si alguna se promueve a fixture de test, agregar una
+# excepción explícita con `!ruta/al/archivo.png` en vez de destapar la carpeta entera.
+Documentacion/Screenshots_Triggers/Engines_Triggers/
 # Videos de flujo (capturas del juego para tests del pipeline) — cientos de MB. El .mp4
 # crudo queda LOCAL; la doc de verdad de tierra (.md/.txt) SÍ se versiona como fixture.
 Documentacion/Videos_flujo/*.mp4
