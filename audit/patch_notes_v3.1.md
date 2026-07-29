@@ -240,6 +240,36 @@ Si algún día ZZZ lo agrega, hace falta una **captura** del disco para saber el
 rótulo: el del elemento resultó ser "Lumiflujo" y el main de Viento es "Bono de
 daño aéreo", así que el nombre no se deduce.
 
+### ⏸ B7 — Despertares v3.1: 5 filas nuevas, todas sin texto
+
+Migración 16 (`db/migrations/2026-07-29_16_awakenings_v31_pendientes.sql`).
+DaniBOD reportó despertares nuevos para 8 PJs; **3 ya tenían fila** (Lycaon,
+N.º 0: Anby, Grace, en nv6 `pending_capture`) y **no se tocaron** — sobrescribir
+datos confirmados a partir de un "creo que" es lo que prohíbe RNF-02. Se
+insertaron las 5 que faltaban: N.º 11, Harumasa, Nekomata, Rina, Jane.
+
+**`nivel` va en NULL a propósito.** El modelo venía usando dos estados
+(`nivel=6/activo=1/pending_capture` = lo tiene full; `nivel=0/activo=0/placeholder`
+= no tiene) y ninguno describe la situación real: el despertar **existe en el
+juego**, pero no está confirmado si Daniel lo compró ni a qué nivel. Poner 0 o 6
+sería afirmar algo que no sabemos. `activo=0` por conservador — el scoring no
+debe asumir un buff que puede no existir.
+
+Precedente: estas dos ya se habían dejado deliberadamente sin insertar por lo
+mismo (la nota vieja decía *"Harumasa y N.°11 sin insertar hasta confirmar nivel"*).
+
+`agent_awakenings`: 10 → 15. **Deuda real: 9 filas en `pending_capture`** — de las
+15, solo **una** (Burnice) tiene texto de efecto de verdad. Sin ese texto la tabla
+sirve para inventariar la deuda, no para alimentar scoring.
+
+**Lo que se necesita:** capturas de la tienda Silueta Potencial por PJ. El nivel
+se lee ahí mismo ("Agotado" = nv6, "Límite ×N" = parcial). Ojo: el sistema de
+despertares **no tiene captura implementada** (cero referencias a
+`awakening`/`silueta`/`despertar` en `app/core`), así que la carga es manual.
+
+Sin verificar: la lista vino con un *"creo que esos eran los nuevos"*. Además
+**Ellen** tiene despertar en DB y no estaba en la lista.
+
 ### ⏸ B3 — Resistencias a viento/lumen de los 12 enemigos
 
 El `CHECK` ya las admite; las filas entran cuando haya datos de Hakush.in.
