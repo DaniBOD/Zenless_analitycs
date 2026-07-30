@@ -1,8 +1,9 @@
 # Detección de la pantalla de gacha — S27 (banner) y S28 (resultados)
 
 **Fecha:** 2026-07-29
-**Estado:** spec aprobado, sin implementar
-**Alcance:** Fase 1 — **detección pura, sin extracción**
+**Estado:** implementado — ver §8 para lo que quedó andando y lo que no
+**Alcance:** Fase 1 — detección **+ extracción de canal y de rareza** (ampliado el mismo día;
+el alcance original era detección pura, ver §8.0)
 **RNF aplicables:** RNF-03 (solo píxeles), RNF-02 (nada inventado), RNF-06 (cadencia)
 
 ---
@@ -288,3 +289,74 @@ NULL (RNF-02).
 texto los nombres de lo ya tirado. Cruzado con las grillas cosechadas da un set
 etiquetado **sin gastar una sola tirada**, o sea que permite *medir* la tasa de
 acierto del descriptor en vez de estimarla.
+
+---
+
+## 8. Resultado de la implementación
+
+### 8.0 El alcance se amplió
+
+El spec se cerró en "detección sin extracción" y Daniel lo amplió el mismo día: quería
+reconocer el canal seleccionado y las recompensas **con nombre propio**, priorizando S y A.
+Esta sección documenta qué de eso quedó funcionando.
+
+### 8.1 Lo que funciona, con su medición
+
+| Qué | Resultado |
+|-----|-----------|
+| Detección `S27` / `S28` | **15/15** fixtures. Confianzas 0.958–1.000 |
+| Falsos positivos | **0** sobre 198 imágenes del repo (triggers + fixtures de tests) |
+| Splash y animación | caen a `S12`, que es lo correcto |
+| Canal seleccionado | **6/6** banners |
+| Rareza por tile | **70/70**, cero abstenciones |
+| Etiqueta `NEW!` | detectada solo en el tile que corresponde |
+| W-Engines rango B | **90 %** nombrados (54/60), 10 % abstenidos |
+
+Umbrales elegidos midiendo el hueco, no a ojo: `S27` = 0.80 (positivos ≥0.958 vs negativos
+≤0.527) y `S28` = 0.85 (positivos ≥0.992 vs negativos ≤0.464).
+
+### 8.2 Lo que NO funciona: identidad de agentes
+
+Se probaron tres caminos y **ninguno identifica**:
+
+1. descriptor contra `avatar_refs/` (recortes circulares de cara) → márgenes 0.02–0.05;
+2. descriptor contra `splash_arts/*-ico.webp` (busto completo) → ídem;
+3. NCC multi-escala contra los `-ico` → gaps de 0.002–0.029.
+
+Caso de control: un tile que a ojo es **Piper** (rubia, ojos verdes, guiñando). Ninguno de los
+tres la pone primera, y el nombre **cambia según el encuadre del recorte** — firma inequívoca
+de que se está midiendo ruido, no identidad.
+
+Trampa en la que caí y que conviene no repetir: usé "consistencia de grupo" (que tres tiles del
+mismo agente reciban el mismo nombre) como evidencia de acierto. **No lo es**: tres imágenes
+casi idénticas coinciden entre sí aunque el nombre esté mal.
+
+**Decisión:** un tile A o S se reporta por rareza, sin nombre. El disparador fue un error real
+sobre los fixtures — el pool de engines A/S nombró `Precious_Fossilized_Core` a un tile que es
+la agente Piper. Nombrar un agente con nombre de arma es peor que no decir nada (RNF-02).
+
+Esto se apoya en una regla dura del juego: **en ZZZ no hay agentes rango B** (el mínimo es A).
+Por eso el tile B siempre es un W-Engine y ahí el pool es cerrado y chico — es justo el caso
+que sí funciona.
+
+**Camino para cerrarlo:** cosechar recortes de tiles reales durante el x10, etiquetarlos contra
+el historial de sintonización y usarlos como referencia vía `AvatarMatcher.add_reference`. No
+es una idea nueva: el propio `AvatarMatcher` documenta que su librería es *"HÍBRIDA: se siembra
+con los `-ico` y se puede pisar con recortes in-game cosechados"* — el arte oficial como única
+semilla ya había resultado insuficiente antes, para los badges de S17.
+
+### 8.3 Archivos
+
+**Nuevos:** `app/core/parser_gacha_banner.py`, `app/core/parser_gacha_result.py`,
+`app/core/gacha_identity.py`, `tools/build_engine_refs.py`, `tools/grab_gacha_frames.py`,
+`app/resources/templates/s27_*.png` y `s28_*.png`, `app/resources/engine_refs/` (53),
+`app/tests/unit/test_parser_gacha.py`, `app/tests/regressions/test_gacha_deteccion.py`.
+
+**Modificados:** `app/core/detector.py` (7 puntos + 2 verifies), `app/core/monitor.py`
+(2 handlers + despacho + reseteo).
+
+### 8.4 Nota de ramas
+
+`S26` está tomado por el detalle de W-Engine en `feature/desmontaje-bitacora`, que **no está
+mergeada a main**. Por eso el gacha numera desde `S27` y en `main` queda un hueco en `S26`:
+es deliberado, para que las dos ramas se junten sin chocar.

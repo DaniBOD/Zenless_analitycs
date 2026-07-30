@@ -72,6 +72,16 @@ THRESHOLD_BY_STATE: dict[str, float] = {
                    #   arma y la del disco son la misma salvo por el contenido del panel, y
                    #   matchean las dos a 1.000. Mismo umbral por eso mismo — lo que separa es
                    #   `_verify_s26` (texto "avanzados"/"amplificador").
+    "S27": 0.80,   # Canal de sintonización (banner) — ANTELACIÓN A CAPTURA. Template = franja de
+                   #   botones "1 sintonización / 10 sintonizaciones", que es cromo FIJO. El arte
+                   #   central del banner cambia ENTERO cada patch (mapa de desvío sobre los 6
+                   #   banners de 3.1): anclarse ahí sería morir en 3.2. Medido contra 7 grillas +
+                   #   splash + animación + 30 negativos: positivos ≥0.958, negativos ≤0.527 ⇒
+                   #   0.80 deja ~0.27 de margen bajo el peor positivo y ~0.27 sobre el peor FP.
+    "S28": 0.85,   # Resultados de sintonización (grilla 5×2). Template = el título, que da el
+                   #   hueco más ancho de todos los recortes probados: positivos ≥0.992 vs
+                   #   negativos ≤0.464. Umbral alto igual, porque de esta pantalla salen las
+                   #   recompensas y un FP mentiría sobre lo que salió; va con `_verify_s28`.
     "S18": 0.75,   # Perfil agente (Atributos base) — informativo
     "S19": 0.75,   # Perfil agente (Habilidades) — informativo, sin extracción
     "S9":  0.80,   # Inventario discos — informativo
@@ -100,8 +110,8 @@ THRESHOLD_BY_STATE: dict[str, float] = {
 # Máquina de estados: transiciones válidas desde cada estado previo.
 # Si un estado detectado no está en las transiciones válidas → FP → S12.
 _VALID_TRANSITIONS: dict[str, set[str]] = {
-    None:  {"S1", "S4", "S12", "S13", "S14", "S15"},
-    "S1":  {"S2", "S12", "S13", "S14", "S15", "S4"},
+    None:  {"S1", "S4", "S12", "S13", "S14", "S15", "S27"},
+    "S1":  {"S2", "S12", "S13", "S14", "S15", "S4", "S27"},
     "S2":  {"S3", "S12", "S11"},
     "S3":  {"S12", "S2", "S11"},
     "S4":  {"S5", "S6", "S7", "S12"},
@@ -125,7 +135,7 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     "S11": {"S12", "S9", "S3", "S24", "S25"},
     "S24": {"S11", "S12", "S9"},
     "S25": {"S11", "S12", "S24", "S9"},   # cancelar vuelve a la grilla; confirmar lleva al modal
-    "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18", "S19", "S20", "S21", "S22", "S23", "S24"},
+    "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18", "S19", "S20", "S21", "S22", "S23", "S24", "S27", "S28"},
     "S13": {"S12", "S14", "S1", "S18", "S21", "S22"},
     "S14": {"S12", "S1", "S13", "S15", "S18"},
     "S15": {"S8", "S18", "S19", "S12", "S14"},
@@ -146,6 +156,12 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     # S23 (diálogo de sustitución): modal sobre el flujo de equipamiento. Se abre desde S8/S17 (o
     # la grilla de selección de disco, que cae a S12) y al confirmar/cancelar vuelve a ese flujo.
     "S23": {"S12", "S17", "S8", "S9"},
+    # Gacha. El camino real del x10 es S27 → S12 → S28: entre el banner y la grilla va la
+    # animación de recolección (la pila de televisores), que NO se modela porque es salteable y
+    # no tiene datos. Que ahí diga "pantalla no reconocida" es correcto, no un bug. Se aceptan
+    # igual S27↔S28 directas por si la animación se saltea tan rápido que no cae ningún frame.
+    "S27": {"S12", "S28", "S1", "S15"},
+    "S28": {"S12", "S27", "S1"},
 }
 
 STATE_DESCRIPTIONS: dict[str, str] = {
@@ -175,6 +191,8 @@ STATE_DESCRIPTIONS: dict[str, str] = {
     "S24": "Modal 'Obtenido' — confirmación del desmontaje",
     "S25": "Diálogo de confirmación del desmontaje (selección con grado S)",
     "S26": "Equipamiento PJ — vista detalle W-Engine",
+    "S27": "Canal de sintonización (banner) — ANTELACIÓN A CAPTURA",
+    "S28": "Resultados de sintonización (grilla 5×2 del x10)",
 }
 
 # Estados que SÍ tienen un disco visible para parsear
@@ -195,6 +213,9 @@ NON_CAPTURE_STATES: set[str] = {
     # ni lo mire: la contaminación que `test_armas_no_contaminan_discos` documenta se evitaba
     # hasta ahora por la abstención de los parsers, y ahora además por ruteo.
     "S26",
+    # Gacha: ninguna de las dos pantallas expone DISCOS, que es de lo que habla este set. S28 sí
+    # tiene recompensas, pero son agentes y W-Engines y las lee su propio handler.
+    "S27", "S28",
 }
 
 # Estados donde hay stats de agente visibles (Atributos base)
@@ -1139,6 +1160,42 @@ def _verify_s22(frame: np.ndarray) -> tuple[bool, str | None]:
         return (True, None)   # convención del repo: ante excepción, no bloquear
 
 
+def _verify_s27(frame: np.ndarray) -> tuple[bool, str | None]:
+    """Verifica que S27 sea el banner de sintonización: el riel de canales con uno realzado.
+
+    La franja de botones ×1/×10 ya es bastante específica, pero el riel es la firma que ninguna
+    otra pantalla tiene: 6 pastillas en posiciones fijas, exactamente una con marco amarillo.
+    Los 6 banners de 3.1 dan realce 0.036–0.076 contra ≤0.005 de las pastillas no seleccionadas.
+    Sin OCR (RNF-06)."""
+    try:
+        from app.core.parser_gacha_banner import selected_channel
+        sel = selected_channel(frame)
+        return (sel is not None, f"canal={sel.idx}" if sel else "sin_realce")
+    except Exception:
+        return (True, None)
+
+
+# Mínimo de badges de rareza para aceptar la grilla de S28. Medido sobre los fixtures: una
+# grilla real da SIEMPRE 10; la animación de recolección (los televisores azules con las letras
+# A/B) cae en la misma geometría y llega a 6; el splash del agente contratado da 1. El umbral va
+# en el medio del hueco 6↔10, con margen para que un badge ilegible en captura viva no lo tumbe.
+_S28_BADGE_MIN = 9
+
+
+def _verify_s28(frame: np.ndarray) -> tuple[bool, str | None]:
+    """Verifica que S28 sea la grilla de resultados y no la animación que la precede.
+
+    El título matchea altísimo (≥0.992), pero durante la animación el título ya está en pantalla
+    con la grilla todavía sin revelar. Lo que separa las dos es la grilla en sí: 10 badges de
+    rareza en posiciones fijas. Mismo criterio que `_verify_s2` y `_verify_s22`. Sin OCR."""
+    try:
+        from app.core.parser_gacha_result import count_rarity_badges
+        n = count_rarity_badges(frame)
+        return (n >= _S28_BADGE_MIN, f"badges={n}")
+    except Exception:
+        return (True, None)
+
+
 # Banda del texto del diálogo de sustitución ("{PJ} equipa actualmente {set} ({slot}). ¿Deseas
 # sustituirlo?") — 1 o 2 líneas, centrado. Generosa para cubrir ambos casos (medido sobre los 7
 # fixtures). La usan `_verify_s23` (anti-FP) y el parser (parser_sustitucion).
@@ -1449,6 +1506,8 @@ _VERIFICATION_REGISTRY: dict[str, callable] = {
     "S17": _verify_s17,
     "S18": _verify_s18,
     "S26": _verify_s26,
+    "S27": _verify_s27,
+    "S28": _verify_s28,
 }
 
 
@@ -1550,6 +1609,12 @@ _STATE_TEMPLATES: list[dict] = [
     {"code": "S18", "template": "s18a_perfil_agente_recomendacion.png", "desc": "Perfil agente Atributos base (recomendación equipo)"},
     {"code": "S18", "template": "s18b_perfil_agente_completo.png",      "desc": "Perfil agente Atributos base (equipamiento completo)"},
     {"code": "S18", "template": "s18c_perfil_agente_tab_atributos.png",  "desc": "Perfil agente — tab 'Atributos base' subrayado amarillo"},
+    # Gacha ANTES que S2, a propósito: gana el primero cuya verificación pasa, y el template de
+    # S2 (banda superior oscura) sobre-matchea pantallas oscuras. Medido 2026-07-29: el banner
+    # `Aria.png` da 0.773 contra `s2_resultado_desafio` con umbral S2 = 0.80 — margen de 0.027
+    # contra un estado que CAPTURA DISCOS. Con el gacha primero, un banner nunca llega a probar S2.
+    {"code": "S28", "template": "s28_resultados_sintonizacion.png", "desc": "Resultados de sintonización (grilla del x10)"},
+    {"code": "S27", "template": "s27_banner_sintonizacion.png",    "desc": "Canal de sintonización (banner)"},
     {"code": "S2",  "template": "s2_resultado_desafio.png",        "desc": "Resultado del Desafio"},
     {"code": "S2",  "template": "s2_resultado_desafio_evento.png", "desc": "Resultado del Desafio (evento doble recompensa x2)"},
     {"code": "S5",  "template": "s5_resultado_afinacion.png",       "desc": "Resultado de afinacion"},
@@ -1897,5 +1962,10 @@ def polling_cadence_ms(state: ScreenState) -> int:
         # del contador está gateado por firma y el del panel solo corre cuando hay apareo.
         "S11": 300,
         "S24": 500,    # modal de commit: vive hasta que el usuario aprieta Confirmar
+        # Gacha. S27 es la antesala del evento y hay que estar despierto cuando arranca: es
+        # quien arma el volcado de frames. S28 es estática y espera input (botón "Confirmar" +
+        # "Pulsa un espacio en blanco para cerrar"), así que no hace falta apurarla.
+        "S27": 400,
+        "S28": 1000,
     }
     return cadence.get(state.code, 2000)

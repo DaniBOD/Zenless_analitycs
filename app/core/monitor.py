@@ -582,6 +582,16 @@ class Monitor:
         # Se re-emite al mover el slider (sigue siendo S21). Sin gate de firma (ver nota en
         # `_S21_USOS_ROI`): `_s21_last_usos` deduplica la emisión por valor.
         self._s21_last_usos: int | None = None
+        # S27 (banner de sintonización): canal seleccionado, display-only EDGE-triggered por
+        # índice. Se re-emite al moverse por el riel (se sigue en S27), no 1× por entrada.
+        self._s27_last_canal: int | None = None
+        # S28 (grilla de resultados): resumen display-only, deduplicado por la firma de las 10
+        # rarezas. La pantalla es estática y espera input, así que sin dedup se re-emitiría en
+        # cada ciclo de polling.
+        self._s28_last_sig: str | None = None
+        # Identificador de recompensas: se construye perezosamente (carga librerías de
+        # referencia desde disco) y solo si se llega a ver una grilla.
+        self._gacha_identifier = None
         # S23 (sustitución de disco): swap PENDIENTE de confirmar. Se arma al ver el diálogo y se
         # consume cuando S17 muestra ese disco en manos del destino. NO expira por reloj. Persiste
         # al SALIR de S23 (la confirmación llega después, en S17). `_s23_last_key` deduplica el log
@@ -870,7 +880,12 @@ class Monitor:
                 # S11/S24 (desmontaje): CONTINUOS porque su contenido cambia SIN cambiar de
                 # pantalla — el usuario tilda discos uno a uno en S11, y S24 vive hasta que
                 # aprieta Confirmar. Sin re-despacho solo se vería el primer frame de cada uno.
-                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9", "S13", "S3", "S4", "S5", "S10", "S20", "S21", "S22", "S11", "S24", "S25")
+                # S27 (banner): CONTINUO porque el canal seleccionado cambia SIN cambiar de
+                # pantalla — el usuario navega el riel. S28 (grilla) también, porque la pantalla
+                # es estática y espera input: si el primer frame llega en plena transición, sin
+                # re-despacho no habría segunda oportunidad. En ambos el dedup (por índice de
+                # canal / por firma de rarezas) evita re-emitir lo mismo.
+                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9", "S13", "S3", "S4", "S5", "S10", "S20", "S21", "S22", "S11", "S24", "S25", "S27", "S28")
                 should_dispatch = forced or (
                     elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
                 )
@@ -1035,6 +1050,13 @@ class Monitor:
             self._s13_last_node = None
         if state.code != "S21":
             self._s21_last_usos = None
+        # Gacha: el canal se resetea al salir del banner. La firma de la grilla NO se resetea en
+        # S12: entre S28 y volver al banner pasa la animación, y resetear ahí haría re-emitir el
+        # mismo resultado al re-entrar. Solo se limpia al volver a ver el banner.
+        if state.code != "S27":
+            self._s27_last_canal = None
+        if state.code == "S27":
+            self._s28_last_sig = None
         if state.code != "S23":
             self._s23_last_key = None   # el pending_swap PERSISTE (se confirma en S17); solo el dedup del log resetea
         if state.code != "S22":
@@ -1146,6 +1168,19 @@ class Monitor:
             # dropea (display-only). La predicción se guarda en FarmSession para restringir
             # el matcher de badges en S2. No persiste ni puntúa.
             self._process_s13_node_title(frame, state)
+            self._processed_disc_state_code = None
+            self._reported_agent_stats_state_code = None
+            self._agent_stats_screen_logged = False
+        elif state.code == "S27":
+            # Banner de sintonización: reportar el canal seleccionado (display-only). Es además
+            # la ANTELACIÓN a la captura: ver S27 significa que puede venir una tirada.
+            self._process_s27_banner(frame, state)
+            self._processed_disc_state_code = None
+            self._reported_agent_stats_state_code = None
+            self._agent_stats_screen_logged = False
+        elif state.code == "S28":
+            # Grilla de resultados del x10: las 10 recompensas. Display-only, no persiste.
+            self._process_s28_resultados(frame, state)
             self._processed_disc_state_code = None
             self._reported_agent_stats_state_code = None
             self._agent_stats_screen_logged = False
@@ -1624,6 +1659,82 @@ class Monitor:
                 self._on_diagnostic(msg)
             except Exception:
                 log.debug("on_diagnostic S4 falló", exc_info=True)
+
+    def _process_s27_banner(self, frame, state: ScreenState) -> None:
+        """Banner de sintonización (S27): qué canal está seleccionado. Display-only.
+
+        EDGE-triggered por índice de canal: mientras se navega el riel el estado sigue siendo
+        S27, así que se re-emite al cambiar de canal. Sin OCR — el canal sale del realce
+        amarillo del marco de la pastilla, medido 6/6 sobre los banners de 3.1."""
+        try:
+            from app.core.parser_gacha_banner import selected_channel
+            sel = selected_channel(frame)
+        except Exception:
+            log.exception("Error leyendo el canal del banner (S27)")
+            return
+        if sel is None or sel.idx == self._s27_last_canal:
+            return
+        self._s27_last_canal = sel.idx
+        msg = f"[gacha] canal #{sel.idx} · {sel.tipo}"
+        log.info("Gacha S27: canal #%d (%s) realce=%.4f", sel.idx, sel.tipo, sel.score)
+        if self._on_diagnostic:
+            try:
+                self._on_diagnostic(msg)
+            except Exception:
+                log.exception("on_diagnostic S27")
+
+    def _process_s28_resultados(self, frame, state: ScreenState) -> None:
+        """Grilla de resultados (S28): las 10 recompensas del x10. Display-only.
+
+        Se reporta SIEMPRE lo que es verdad y barato: rareza de cada tile, la etiqueta `NEW!` y
+        el nombre del ítem cuando el matcher puede afirmarlo. Hoy eso alcanza a los W-Engines
+        rango B; agentes y engines A/S se reportan por rareza sin nombre, porque el matcher
+        todavía no los identifica (ver `app/core/gacha_identity`). Preferimos "sin identificar"
+        antes que un nombre inventado (RNF-02)."""
+        try:
+            from app.core.parser_gacha_result import parse_grid
+            tiles = parse_grid(frame)
+        except Exception:
+            log.exception("Error parseando la grilla de sintonización (S28)")
+            return
+        if not tiles:
+            return
+        sig = "".join((t.rarity or "?") + ("*" if t.is_new else "") for t in tiles)
+        if sig == self._s28_last_sig:
+            return
+        self._s28_last_sig = sig
+
+        if self._gacha_identifier is None:
+            try:
+                from app.core.gacha_identity import GachaIdentifier
+                self._gacha_identifier = GachaIdentifier()
+            except Exception:
+                log.exception("No pude construir el identificador de recompensas")
+
+        partes: list[str] = []
+        for t in tiles:
+            nombre = None
+            if self._gacha_identifier is not None:
+                try:
+                    nombre = self._gacha_identifier.identify(frame, t).name
+                except Exception:
+                    log.exception("Error identificando el tile %d", t.idx)
+            etiqueta = nombre or "?"
+            partes.append(f"{t.rarity or '?'}{'*' if t.is_new else ''}:{etiqueta}")
+
+        n_s = sum(1 for t in tiles if t.rarity == "S")
+        n_a = sum(1 for t in tiles if t.rarity == "A")
+        nuevos = sum(1 for t in tiles if t.is_new)
+        cabecera = f"[gacha] {len(tiles)} recompensas · {n_s} S · {n_a} A"
+        if nuevos:
+            cabecera += f" · {nuevos} nuevo(s)"
+        msg = cabecera + " → " + " ".join(partes)
+        log.info("Gacha S28: %s", msg)
+        if self._on_diagnostic:
+            try:
+                self._on_diagnostic(msg)
+            except Exception:
+                log.exception("on_diagnostic S28")
 
     def _process_s13_node_title(self, frame, state: ScreenState) -> None:
         """Selección de set a farmear (S13): OCR del título del nodo → predecir los 2 sets
