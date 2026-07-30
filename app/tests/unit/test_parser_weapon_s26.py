@@ -19,11 +19,14 @@ import cv2
 import numpy as np
 import pytest
 
+from app.core import parser_weapon_s26 as W
 from app.core.parser_weapon_s26 import (
     WeaponParsed,
     match_catalogo,
     parse_weapon_s26,
     parse_weapon_s26_from_lines,
+    read_rareza,
+    read_refinamiento,
 )
 
 _DIR = (Path(__file__).resolve().parents[3] / "Documentacion" / "Screenshots_Triggers"
@@ -75,6 +78,35 @@ _GT: dict[str, tuple] = {
 
 _CATALOGO = sorted({v[0] for v in _GT.values()})
 
+# --- Rareza y refinamiento (H3) --------------------------------------------------------------
+# La rareza sale de dos señales independientes que coinciden en los 40: el hue del badge y, para
+# las 32 que están a nivel máximo, el ATK base (S ∈ {684,713,743}, A ∈ {594,624}). Las 8 que están
+# a 0/10 no tienen esa corroboración, así que se apoyan en el nombre: las Repercusión, Tormenta
+# magnética, Fase lunar y Turbulencia son de rango B, y Cámara acorazada es A.
+_GT_RAREZA = {
+    "S": {"Ejemplo_6", "Ejemplo_7", "Ejemplo_8", "Ejemplo_9", "Ejemplo_10", "Ejemplo_15",
+          "Ejemplo_16", "Ejemplo_17", "Ejemplo_18", "Ejemplo_19"},
+    "B": {"Ejemplo_4", "Ejemplo_14", "Ejemplo_28", "Ejemplo_32", "Ejemplo_33", "Ejemplo_35",
+          "Ejemplo_36"},
+}
+_GT_RAREZA["A"] = set(_GT) - _GT_RAREZA["S"] - _GT_RAREZA["B"]
+_RAREZA_POR_FIXTURE = {st: r for r, ss in _GT_RAREZA.items() for st in ss}
+
+# Refinamiento leído contando estrellas blancas contra grises, verificado a ojo en Ejemplo_17
+# (Petrazufre, 1 blanca + 4 grises) y Ejemplo_31 (Cúter, 4 blancas + 1 gris).
+_GT_REFIN = {
+    1: {"Ejemplo_4", "Ejemplo_6", "Ejemplo_7", "Ejemplo_8", "Ejemplo_9", "Ejemplo_10",
+        "Ejemplo_14", "Ejemplo_16", "Ejemplo_17", "Ejemplo_18", "Ejemplo_19", "Ejemplo_32",
+        "Ejemplo_33", "Ejemplo_35", "Ejemplo_36"},
+    2: {"Ejemplo_15", "Ejemplo_28", "Ejemplo_40"},
+    4: {"Ejemplo_31"},
+}
+_GT_REFIN[5] = set(_GT) - _GT_REFIN[1] - _GT_REFIN[2] - _GT_REFIN[4]
+_REFIN_POR_FIXTURE = {st: n for n, ss in _GT_REFIN.items() for st in ss}
+
+_DISCOS = sorted((Path(__file__).resolve().parents[3] / "Documentacion" / "Screenshots_Triggers"
+                  / "Discos_Triggers" / "14_Slots_equipamiento").glob("Ejemplo_*.png"))
+
 
 def _present(stem: str) -> bool:
     return (_DIR / f"{stem}.png").exists()
@@ -98,6 +130,15 @@ def _paddle():
 def _parsed(stem: str) -> WeaponParsed:
     """Una pasada de OCR por fixture, compartida entre los tests de campo."""
     return parse_weapon_s26(_load(stem), _paddle(), catalogo=_CATALOGO)
+
+
+@lru_cache(maxsize=64)
+def _pill_bbox(stem: str):
+    """Bbox del pill "Nivel N/M" — el ancla de la rareza y del refinamiento."""
+    for t, _c, bb in W._ocr_detail_lines(_load(stem), _paddle()):
+        if W._RE_NIVEL_ARMA.search(t):
+            return bb
+    return None
 
 
 # --- Campo por campo ------------------------------------------------------------------------
@@ -147,6 +188,119 @@ def test_nombre_canonico(stem):
     esperado = _GT[stem][0]
     d = _parsed(stem)
     assert d.nombre_canon == esperado, f"raw={d.nombre_raw!r} → {d.nombre_canon!r}"
+
+
+@pytest.mark.skipif(not _present("Ejemplo_1"), reason="capturas no presentes")
+@pytest.mark.parametrize("stem", list(_GT), ids=lambda s: s)
+def test_rareza(stem):
+    """La rareza sale de la PANTALLA, no del catálogo — decisión de Daniel: el catálogo tiene 42
+    armas de menos y 5 sin mapeo, así que como fuente única fallaría en silencio."""
+    if not _present(stem):
+        pytest.skip("fixture no presente")
+    assert _parsed(stem).rareza == _RAREZA_POR_FIXTURE[stem]
+
+
+@pytest.mark.skipif(not _present("Ejemplo_1"), reason="capturas no presentes")
+@pytest.mark.parametrize("stem", list(_GT), ids=lambda s: s)
+def test_refinamiento(stem):
+    if not _present(stem):
+        pytest.skip("fixture no presente")
+    assert _parsed(stem).refinamiento == _REFIN_POR_FIXTURE[stem]
+
+
+@pytest.mark.skipif(not _present("Ejemplo_1"), reason="capturas no presentes")
+def test_ninguna_rareza_discrepa_del_atk():
+    """La verificación cruzada: en las 32 que están al máximo, el badge y el ATK base tienen que
+    decir lo mismo. Si esto cae, una de las dos calibraciones se movió."""
+    malos = [s for s in _GT if _present(s)
+             for d in [_parsed(s)]
+             if any(n.startswith("rareza_discrepa_atk") for n in d.notas)]
+    assert not malos, malos
+
+
+@pytest.mark.skipif(not _present("Ejemplo_1"), reason="capturas no presentes")
+def test_tabla_de_separacion_de_las_estrellas():
+    """Separación medida entre estrella llena y gris, que es lo que sostiene el conteo.
+
+    La convención del proyecto pide ≥2×; acá es **absoluta**: las grises no tienen un solo píxel
+    sobre V=200. Si el margen se degradara a algo finito, este test lo muestra antes de que se
+    traduzca en un refinamiento equivocado.
+    """
+    llenas, vacias = [], []
+    for stem in _GT:
+        if not _present(stem):
+            continue
+        frame = _load(stem)
+        d = _parsed(stem)
+        bbox = _pill_bbox(stem)
+        assert bbox is not None, f"{stem}: sin pill de nivel"
+        x1, _, _, y2 = bbox
+        band = frame[y2 + W._STARS_DY[0]:y2 + W._STARS_DY[1],
+                     x1 + W._STARS_DX[0]:x1 + W._STARS_DX[1]]
+        hsv = cv2.cvtColor(band, cv2.COLOR_BGR2HSV)
+        poco_sat = hsv[:, :, 1] < 60
+        runs = W._star_runs((hsv[:, :, 2] > 90) & poco_sat)
+        assert len(runs) == 5, f"{stem}: {len(runs)} estrellas detectadas"
+        blanco = (hsv[:, :, 2] > 200) & poco_sat
+        fracs = [float(blanco[:, a:b].mean()) for a, b in runs]
+        n = d.refinamiento
+        llenas.extend(sorted(fracs, reverse=True)[:n])
+        vacias.extend(sorted(fracs, reverse=True)[n:])
+    assert llenas and vacias
+    assert min(llenas) > W._STAR_LLENA_MIN > max(vacias), (
+        f"llenas min={min(llenas):.4f} · umbral={W._STAR_LLENA_MIN} · vacías max={max(vacias):.4f}")
+    assert min(llenas) / W._STAR_LLENA_MIN >= 2.0
+
+
+@lru_cache(maxsize=16)
+def _pill_bbox_disco(path_str: str):
+    frame = cv2.imdecode(np.fromfile(path_str, np.uint8), cv2.IMREAD_COLOR)
+    for t, _c, bb in W._ocr_detail_lines(frame, _paddle()):
+        if W._RE_NIVEL_ARMA.search(t):
+            return frame, bb
+    return frame, None
+
+
+@pytest.mark.skipif(not _DISCOS, reason="capturas de disco no presentes")
+@pytest.mark.parametrize("p", _DISCOS[:8], ids=lambda p: p.stem)
+def test_el_refinamiento_se_abstiene_sobre_un_disco(p):
+    """Defensa en profundidad, y el lector que SÍ discrimina.
+
+    El panel de un disco también dice "Nivel 15/15", así que el ancla existe y el recorte cae en
+    algún lado — pero ahí no hay fila de estrellas. Tiene que devolver None, no un número.
+
+    S26 nunca dispara sobre un disco (`test_detector_weapon_detail`), así que esto es una segunda
+    línea: si alguien llamara al lector desde la ruta de discos, no inventa.
+    """
+    frame, bbox = _pill_bbox_disco(str(p))
+    if bbox is None:
+        pytest.skip("el disco no expuso un pill de nivel legible")
+    assert read_refinamiento(frame, bbox) is None
+
+
+@pytest.mark.skipif(not _DISCOS, reason="capturas de disco no presentes")
+@pytest.mark.parametrize("p", _DISCOS[:8], ids=lambda p: p.stem)
+def test_el_badge_de_rareza_es_un_widget_COMPARTIDO(p):
+    """`read_rareza` NO se abstiene sobre un disco, y está bien que no lo haga.
+
+    El badge circular a la izquierda del pill de nivel es el mismo widget en las dos pantallas,
+    con el mismo código de color: en el detalle de un disco informa la rareza DEL DISCO. Leerlo
+    correctamente ahí no es contaminación — no produce ningún dato de arma.
+
+    Se afirma que devuelve una rareza VÁLIDA y no basura, que es lo verificable: no se fija el
+    valor porque depende de qué disco esté seleccionado en cada captura.
+    """
+    frame, bbox = _pill_bbox_disco(str(p))
+    if bbox is None:
+        pytest.skip("el disco no expuso un pill de nivel legible")
+    assert read_rareza(frame, bbox) in {"S", "A", "B"}
+
+
+def test_los_lectores_no_revientan_con_un_bbox_absurdo():
+    """Fuera de la imagen no hay que adivinar: None, sin excepción."""
+    frame = np.zeros((100, 100, 3), np.uint8)
+    assert read_refinamiento(frame, (5000, 5000, 5100, 5040)) is None
+    assert read_rareza(frame, (5000, 5000, 5100, 5040)) is None
 
 
 # --- Abstención y pureza --------------------------------------------------------------------

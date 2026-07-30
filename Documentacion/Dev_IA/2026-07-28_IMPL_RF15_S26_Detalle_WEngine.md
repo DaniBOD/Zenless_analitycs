@@ -1,6 +1,7 @@
-# RF-15 · S26 — separar el detalle de W-Engine del detalle de disco
+# RF-15 · S26 — el detalle de W-Engine
 
-**Fecha:** 2026-07-28 · **Hitos:** H0 (contrato de abstención) + H1 (estado S26)
+**Fecha:** 2026-07-28/29 · **Hitos:** H0 (contrato de abstención) · H1 (estado S26) ·
+H2 (parser del panel) · H3 (rareza y refinamiento)
 **Modo:** observación pura — cero escrituras a la DB.
 
 ---
@@ -136,14 +137,130 @@ Se reescribió como **invarianza**: cada frame de disco se clasifica dos veces, 
 y otra con su verify forzado a `False` (que reproduce el pipeline anterior), y los dos resultados
 deben coincidir. Es más fuerte que esperar un código concreto, y no miente.
 
+---
+
+# H2 — el parser del panel
+
+`app/core/parser_weapon_s26.py`, módulo puro que reusa la maquinaria del panel de una columna de
+`parser_disc_s17`. El catálogo se **inyecta por parámetro** en vez de consultarse: mantiene el
+módulo testeable sin DB y deja la decisión en el llamador.
+
+## Tres cosas salieron mal
+
+### 1 · El ATK base no se puede leer por ORDEN de líneas
+
+Rompía **20 de los 40 fixtures**. PaddleOCR devuelve la línea del número con un `y1` unos píxeles
+**menor** que la de su etiqueta:
+
+```
+y1= 448  xn=0.479  '594'          ← el valor
+y1= 451  xn=0.329  'Ataque Base'  ← la etiqueta
+```
+
+Al ordenar por `y1` el número cae **antes**, el texto unido queda `"594 Ataque Base"` y una regex
+direccional (`ataque base \D{0,6}(\d+)`) no matchea. Y si el orden se da vuelta o no depende de
+tres píxeles, así que fallaba en aproximadamente la mitad de los casos.
+
+Se lee por **columna** (`xn >= col_split`), que es estable, con fallback bidireccional para cuando
+el OCR funde etiqueta y valor en una línea. **El atributo avanzado nunca falló** porque ya
+separaba por columna — la misma trampa del fix v3.0 de S18.
+
+### 2 · El fuzzy cruzaba los Modelos de Repercusión
+
+Encontrado revisando en frío, no corriendo. El OCR lee `III` como `lll`, y normalizado:
+
+```
+"...modelo lll" vs "...modelo ii"   → 0.8837   ← gana el EQUIVOCADO
+"...modelo lll" vs "...modelo iii"  → 0.8636
+```
+
+Dos armas distintas se habrían reportado como la misma. Las dos superan el corte de 0.84, así que
+subir el umbral no arregla nada. Se colapsan a `i` los tokens compuestos **solo** por caracteres
+que el OCR confunde (`i`, `l`, `1`, `|`), aplicado a tokens **enteros** para no tocar palabras
+reales: en "Llanto mielgo" ningún token califica.
+
+### 3 · La sección del atributo avanzado se tragaba la pasiva
+
+Si el OCR no lee el header "Efecto de amplificador", el piso queda en infinito y entra el texto de
+la pasiva — que está lleno de números ("aumenta el Ataque en un 3.5 % durante 8 s") y habría
+producido un stat inventado. Las dos secciones se acotan ahora a su **primera fila**, con
+tolerancia en Y porque "misma fila" no significa "mismo `y1`".
+
+---
+
+# H3 — rareza y refinamiento por píxeles
+
+## El recorte fijo no sirve, y el primer intento lo escondía
+
+La fila de estrellas **se corre verticalmente ~42 px** entre un arma de nombre corto y una de
+nombre largo, porque el nombre envuelve a dos líneas y empuja el panel entero:
+
+| | pill de nivel `y1` |
+|---|---|
+| nombre de 1 línea (Petrazufre) | 251 |
+| nombre de 2 líneas (Templo a la granizada estelífera) | 293 |
+
+Con una banda fija, los valores mezclaban **cuántas estrellas están blancas** con **cuánto de la
+fila entró en la banda**: un arma de nombre largo daba ~30 % de lo que daba una corta. Las celdas
+1 y 5 salían siempre en 0.0000, que fue la pista.
+
+**Tampoco se hardcodean los centros de las 5 estrellas.** Los offsets se corren ~12 px entre los
+dos regímenes de nivel, porque el bbox del OCR arranca en la "N" y "Nivel 60/60" es más ancho que
+"Nivel 0/10". Se **detectan los blobs** por frame: 5/5 en los 40 fixtures, espaciado ~42.5 px,
+ancho 24-28 px.
+
+## Separación de las estrellas: absoluta
+
+| | fracción de blanco (V>200, S<60) |
+|---|---|
+| llenas | 0.342 – 0.363 |
+| **vacías** | **exactamente 0.000** |
+
+Las grises no tienen **un solo píxel** sobre V=200. La convención del proyecto pide ≥2× de
+margen; acá no hay margen finito que medir. El test lo afirma igual, para que un cambio de
+calibración se vea antes de traducirse en un refinamiento equivocado.
+
+Verificado a ojo contra las capturas en los dos casos que más importaban: Petrazufre (1 blanca +
+4 grises) y Cúter (4 blancas + 1 gris, el único refinamiento 4 del set).
+
+## Rareza: hue del badge, varianza cero
+
+| rareza | hue medido | n |
+|---|---|---|
+| S | **22.0** | 10 |
+| A | **155.0** | 23 |
+| B | **98.0** | 7 |
+
+Ni un solo frame se desvía: son colores planos de UI, así que la mediana del hue es exacta. Los
+rangos aceptados son ±10 y no se solapan ni de cerca.
+
+**Doble señal.** En las 32 armas que están a nivel máximo, el ATK base determina la rareza de
+forma independiente (S ∈ {684,713,743}, A ∈ {594,624} — auditoría del catálogo). Las dos
+coinciden en las 32. Una discrepancia se **anota** en `notas` en vez de resolverse: el badge es
+una lectura directa y el ATK una inferencia, así que no hay motivo para que la inferencia gane;
+pero callarla sería perder la única verificación cruzada que hay.
+
+## Un test propio que estaba mal (otro)
+
+Asumí que `read_rareza` debía **abstenerse** sobre un frame de disco. Falla: devuelve `'S'`. Y
+está bien que lo haga — el badge circular a la izquierda del pill es **el mismo widget en las dos
+pantallas**, con el mismo código de color; en el detalle de un disco informa la rareza *del
+disco*. Leerlo correctamente ahí no produce ningún dato de arma.
+
+El lector que sí discrimina es el del refinamiento, y ese devuelve `None` sobre discos porque no
+hay fila de estrellas. El test quedó partido en dos: la abstención se le exige al que discrimina,
+y del otro se documenta que es un widget compartido.
+
+---
+
 ## Estado
 
 | | |
 |---|---|
 | `test_armas_no_contaminan_discos.py` | 54 casos |
 | `test_detector_weapon_detail.py` | 98 casos |
-| Regresión (`fp_negative_qa`, `sustitucion`, `desmontaje`) | verde |
+| `test_parser_weapon_s26.py` | 264 casos |
+| Regresión (`fp_negative_qa`, `sustitucion`, `desmontaje`, `parser_disc`) | verde |
 
-**Falta:** el parser del panel (H2), rareza y refinamiento por píxeles (H3), dueño por badge
-(H4), cableado y toast (H5). Y en tramos posteriores, una pantalla por vez: inventario de armas
-(S9), diálogo de reemplazo (S23), Mejora y Refinar.
+**Falta:** dueño por badge (H4), cableado y toast (H5). Y en tramos posteriores, una pantalla por
+vez: inventario de armas (S9), diálogo de reemplazo (S23), Mejora y Refinar.

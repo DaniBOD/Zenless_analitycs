@@ -33,6 +33,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Sequence
 
+import cv2
 import numpy as np
 
 from app.core.parser_disc_s17 import (
@@ -71,6 +72,35 @@ _RE_ATK_BASE_FUNDIDA = re.compile(
 _RE_STAT_VALOR = re.compile(r"^(?P<nombre>[^\d]+?)\s*(?P<valor>[\d]+(?:[.,]\d+)?\s*%?)\s*$")
 
 _FUZZY_CUTOFF = 0.84   # mismo corte que el resto del repo para nombres OCReados
+
+# --- Rareza y refinamiento: píxeles ANCLADOS al pill de nivel ----------------------------------
+# Un recorte de coordenadas FIJAS no sirve: la fila de estrellas se corre verticalmente ~42 px
+# entre un arma de nombre corto y una de nombre largo, porque el nombre envuelve a dos líneas y
+# empuja todo el panel (medido: pill.y1 = 251 con una línea, 293/294 con dos). El primer intento
+# usaba una banda fija y mezclaba "cuántas estrellas están blancas" con "cuánto de la fila entró
+# en la banda" — los valores de un arma de nombre largo caían al 30 % de los de una corta.
+#
+# Tampoco se hardcodean los centros de las 5 estrellas: los offsets se corren ~12 px entre los dos
+# regímenes de nivel, porque el bbox del OCR arranca en la "N" y "Nivel 60/60" es más ancho que
+# "Nivel 0/10". Se DETECTAN los 5 blobs por frame (40/40 en los fixtures, espaciado ~42.5 px).
+_STARS_DY = (28, 80)       # banda vertical, relativa a pill.y2
+_STARS_DX = (-60, 260)     # banda horizontal, relativa a pill.x1
+_STAR_COL_MIN = 0.12       # fracción de columna con píxel de estrella para considerarla ocupada
+_STAR_RUN_MIN = 8          # ancho mínimo de un blob (los reales miden 24-28 px)
+# Llenas 0.342-0.363, vacías EXACTAMENTE 0.000: las grises no tienen un solo píxel sobre V=200.
+# La separación no es "≥2×", es absoluta.
+_STAR_LLENA_MIN = 0.15
+
+_BADGE_DX = -64            # centro del badge de rareza, relativo a pill.x1
+_BADGE_R = 18
+_BADGE_PX_MIN = 20         # píxeles saturados mínimos para creerle al hue
+# Hue exacto medido en los 40 fixtures, con varianza CERO (son colores planos de UI):
+#     S = 22.0    A = 155.0    B = 98.0
+# Los rangos son ±10 alrededor de cada uno; no se solapan ni de cerca.
+_BADGE_HUE = {"S": (12, 32), "A": (145, 165), "B": (88, 108)}
+# ATK base a nivel 60 por rareza — segunda señal INDEPENDIENTE (auditoría del catálogo 2026-07-28,
+# 32 muestras a máximo, sin solapes). Solo aplica al máximo: fuera de ahí el ATK no dice nada.
+_ATK_MAX_POR_RAREZA = {684: "S", 713: "S", 743: "S", 594: "A", 624: "A"}
 
 
 @dataclass
@@ -139,6 +169,70 @@ def match_catalogo(nombre_raw: str, catalogo: Sequence[str] | None) -> str | Non
     return normalizados[cerca[0]] if cerca else None
 
 
+def _star_runs(band_mask: np.ndarray) -> list[tuple[int, int]]:
+    """Blobs horizontales de la fila de estrellas, como pares (col_inicio, col_fin)."""
+    ocupada = band_mask.mean(axis=0) > _STAR_COL_MIN
+    runs: list[tuple[int, int]] = []
+    i = 0
+    while i < len(ocupada):
+        if not ocupada[i]:
+            i += 1
+            continue
+        j = i
+        while j < len(ocupada) and ocupada[j]:
+            j += 1
+        if j - i >= _STAR_RUN_MIN:
+            runs.append((i, j))
+        i = j
+    return runs
+
+
+def read_refinamiento(frame: np.ndarray, pill_bbox: tuple[int, int, int, int]) -> int | None:
+    """Refinamiento 1-5 contando estrellas BLANCAS entre las 5 de la fila, o None.
+
+    Devuelve None si no se detectan exactamente 5 estrellas. Es deliberado: sin las 5 no se sabe
+    si falta una gris (y el conteo de blancas sigue siendo válido) o si el recorte quedó mal
+    ubicado (y entonces cualquier número sería inventado). RNF-02.
+    """
+    try:
+        _, _, _, y2 = pill_bbox
+        x1 = pill_bbox[0]
+        band = frame[y2 + _STARS_DY[0]:y2 + _STARS_DY[1], x1 + _STARS_DX[0]:x1 + _STARS_DX[1]]
+        if band.size == 0:
+            return None
+        hsv = cv2.cvtColor(band, cv2.COLOR_BGR2HSV)
+        poco_sat = hsv[:, :, 1] < 60
+        runs = _star_runs((hsv[:, :, 2] > 90) & poco_sat)
+        if len(runs) != 5:
+            return None
+        blanco = (hsv[:, :, 2] > 200) & poco_sat
+        llenas = sum(1 for a, b in runs if float(blanco[:, a:b].mean()) > _STAR_LLENA_MIN)
+        return llenas if 1 <= llenas <= 5 else None
+    except Exception:
+        return None
+
+
+def read_rareza(frame: np.ndarray, pill_bbox: tuple[int, int, int, int]) -> str | None:
+    """Rareza S/A/B por el hue del badge circular a la izquierda del pill de nivel, o None."""
+    try:
+        x1, y1, _, y2 = pill_bbox
+        cx, cy = x1 + _BADGE_DX, (y1 + y2) // 2
+        roi = frame[cy - _BADGE_R:cy + _BADGE_R, cx - _BADGE_R:cx + _BADGE_R]
+        if roi.size == 0:
+            return None
+        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        m = (hsv[:, :, 1] > 90) & (hsv[:, :, 2] > 90)
+        if int(m.sum()) < _BADGE_PX_MIN:
+            return None
+        hue = float(np.median(hsv[:, :, 0][m]))
+        for rar, (lo, hi) in _BADGE_HUE.items():
+            if lo <= hue <= hi:
+                return rar
+        return None
+    except Exception:
+        return None
+
+
 def _primera_fila(candidatas: list[_Line]) -> list[_Line]:
     """Recorta una sección a su PRIMERA fila visual (etiqueta + valor, que van a la misma altura).
 
@@ -166,11 +260,15 @@ def parse_weapon_s26_from_lines(
     H: int,
     catalogo: Sequence[str] | None = None,
     layout: PanelLayout = _S26_LAYOUT,
+    frame: np.ndarray | None = None,
 ) -> WeaponParsed:
     """Core testeable: parsea el panel a partir de las líneas OCR con bbox.
 
     Separado del OCR a propósito, igual que `_parse_s17_from_lines`: permite testear con líneas
     cacheadas sin re-correr Paddle (que es lo caro).
+
+    `frame` opcional: si se pasa, se leen además rareza y refinamiento por píxeles (necesitan la
+    imagen). Los tests del core puro lo omiten y esos dos campos quedan en None.
     """
     out = WeaponParsed()
     L = [_Line(t, c, bb, W) for (t, c, bb) in lines]
@@ -203,12 +301,16 @@ def parse_weapon_s26_from_lines(
     confs: list[float] = []
 
     # --- Nivel / máximo ---
+    # El bbox del pill se guarda porque es el ANCLA de la rareza y del refinamiento: las dos se
+    # leen por píxeles en posiciones relativas a él, no en coordenadas fijas.
     linea_nivel_y: int | None = None
+    pill_bbox: tuple[int, int, int, int] | None = None
     for ln in detail:
         m = _RE_NIVEL_ARMA.search(_strip(ln.txt))
         if m:
             out.nivel, out.nivel_max = int(m.group(1)), int(m.group(2))
             linea_nivel_y = ln.y1
+            pill_bbox = (ln.x1, ln.y1, ln.x2, ln.y2)
             confs.append(ln.conf)
             break
     if out.nivel is None:
@@ -272,6 +374,23 @@ def parse_weapon_s26_from_lines(
     if out.stat_avanzado_canon is None or out.stat_avanzado_valor is None:
         out.notas.append("stat_avanzado_incompleto")
 
+    # --- Rareza y refinamiento (píxeles, anclados al pill) ---
+    if frame is not None and pill_bbox is not None:
+        out.rareza = read_rareza(frame, pill_bbox)
+        out.refinamiento = read_refinamiento(frame, pill_bbox)
+        if out.rareza is None:
+            out.notas.append("rareza_no_leida")
+        if out.refinamiento is None:
+            out.notas.append("refinamiento_no_leido")
+        # Corroboración independiente: al máximo, el ATK base determina la rareza por sí solo. Se
+        # ANOTA la discrepancia en vez de resolverla — el badge es una lectura directa y el ATK
+        # una inferencia, así que no hay motivo para que la inferencia gane; pero callarla sería
+        # perder la única verificación cruzada que tenemos.
+        if out.rareza and out.al_maximo and out.atk_base in _ATK_MAX_POR_RAREZA:
+            por_atk = _ATK_MAX_POR_RAREZA[out.atk_base]
+            if por_atk != out.rareza:
+                out.notas.append(f"rareza_discrepa_atk:badge={out.rareza},atk={por_atk}")
+
     out.confianza = round(sum(confs) / len(confs), 3) if confs else 0.0
     return out
 
@@ -281,6 +400,7 @@ def parse_weapon_s26(
     ocr: "OcrBackend",
     catalogo: Sequence[str] | None = None,
 ) -> WeaponParsed:
-    """OCRea el panel de S26 y lo parsea."""
+    """OCRea el panel de S26 y lo parsea (incluye rareza y refinamiento)."""
     H, W = frame.shape[:2]
-    return parse_weapon_s26_from_lines(_ocr_detail_lines(frame, ocr), W, H, catalogo=catalogo)
+    return parse_weapon_s26_from_lines(
+        _ocr_detail_lines(frame, ocr), W, H, catalogo=catalogo, frame=frame)
