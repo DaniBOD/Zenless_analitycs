@@ -67,6 +67,13 @@ class ToastData:
     # esos alcanzó a leer el OCR — el hueco se MUESTRA, no se esconde.
     teardown_total: int = 0
     teardown_known: int = 0
+    # Variante "arma_vista" (W-Engine abierto, RF-15). No hay disco ni score: se reporta lo que
+    # dice el panel. `weapon_name` puede venir del catálogo o CRUDO del OCR — el catálogo tiene 42
+    # armas de menos, así que un nombre sin canonizar es normal y se muestra igual.
+    weapon_name:   str = "—"
+    weapon_level:  str = ""             # "60/60" listo para mostrar
+    weapon_refine: int = 0              # 1-5, 0 = no leído
+    weapon_stat:   str = ""             # "ATK% 30 %" listo para mostrar
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +262,16 @@ class DiscToast(QWidget):
         data.variant = "desmontado"
         self._show_confirmation(data)
 
+    def show_weapon(self, data: ToastData) -> None:
+        """Toast de W-Engine observado (variante 'arma_vista', RF-15).
+
+        Misma familia violeta que sus hermanos: reporta lo que se vio en pantalla y **no afirma
+        nada sobre la DB** — este hito es observación pura. El body muestra nombre, rareza, nivel,
+        refinamiento y el atributo avanzado, que es todo lo que el panel expone y nos interesa (la
+        pasiva ya está en la DB)."""
+        data.variant = "arma_vista"
+        self._show_confirmation(data)
+
     def show_replacement(self, data: ToastData) -> None:
         """Toast de swap confirmado (variante 'reemplazado'): origen → disco → destino, sin score
         ni countdown. Reusa el marco/glow; el body lo pinta `_paint_body_replacement`. El thumb va
@@ -406,6 +423,10 @@ class DiscToast(QWidget):
             self._paint_body_teardown(p, ox, oy, accent, v)
             self._paint_footer_static(p, ox, oy, accent, "DESMONTAJE OBSERVADO",
                                       f"contador {self._data.teardown_total}/300 ✓")
+        elif self._data.variant == "arma_vista":
+            self._paint_body_weapon(p, ox, oy, accent, v)
+            self._paint_footer_static(p, ox, oy, accent, "SOLO LECTURA",
+                                      "sin escribir DB")
         else:
             self._paint_body(p, ox, oy, accent, v)
             self._paint_footer(p, ox, oy, accent, v)
@@ -471,7 +492,7 @@ class DiscToast(QWidget):
 
         # Variantes de confirmación: micro-badge estático, sin countdown. Dice OBSERVADO (no
         # SINCRONIZADO): el toast afirma lo que se vio en pantalla, no lo que la DB guardó.
-        if self._data.variant in ("reemplazado", "equipado", "desmontado"):
+        if self._data.variant in ("reemplazado", "equipado", "desmontado", "arma_vista"):
             badge_txt = "✓ OBSERVADO"
             p.setFont(T.font_caps(7))
             bw = p.fontMetrics().horizontalAdvance(badge_txt) + 14
@@ -766,6 +787,43 @@ class DiscToast(QWidget):
             detalle = f"{known} con datos · {faltan} sin leer"
         p.drawText(QRect(ox + PADDING_X, col_top + 44, WIDTH - 2 * PADDING_X, 13),
                    int(Qt.AlignmentFlag.AlignCenter), detalle)
+
+    def _paint_body_weapon(self, p: QPainter, ox: int, oy: int, accent: QColor, v: dict):
+        """Body del toast 'arma_vista': nombre, rareza+nivel, refinamiento y atributo avanzado.
+
+        El refinamiento se pinta como estrellas y no como "P4", que es la notación del juego pero
+        no la que el usuario ve en esta pantalla — ahí ve exactamente cinco estrellas con algunas
+        llenas. Si no se pudo leer (0) no se dibuja ninguna, en vez de mostrar cinco vacías, que
+        se leería como refinamiento 0 y no existe (el mínimo es 1)."""
+        d = self._data
+        col_x = ox + PADDING_X
+        col_w = WIDTH - 2 * PADDING_X
+        top = oy + 54
+
+        p.setFont(T.font_display(15, bold=True))
+        p.setPen(T.color(T.TEXT_PRIMARY))
+        p.drawText(QRect(col_x, top, col_w, 20),
+                   int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), d.weapon_name)
+
+        linea = " · ".join(x for x in (d.rarity, d.weapon_level and f"Nv {d.weapon_level}") if x)
+        p.setFont(T.font_ui(9))
+        p.setPen(T.color(T.TEXT_MUTED))
+        p.drawText(QRect(col_x, top + 21, col_w, 14),
+                   int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), linea)
+
+        if d.weapon_refine:
+            p.setFont(T.font_ui(10))
+            p.setPen(accent)
+            p.drawText(QRect(col_x, top + 36, col_w, 14),
+                       int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                       "★" * d.weapon_refine + "☆" * (5 - d.weapon_refine))
+
+        if d.weapon_stat:
+            p.setFont(T.font_mono(9))
+            p.setPen(T.color(T.TEXT_PRIMARY))
+            p.drawText(QRect(col_x, top + 52, col_w, 14),
+                       int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                       d.weapon_stat)
 
     def _paint_footer_static(self, p: QPainter, ox: int, oy: int, accent: QColor,
                              left_txt: str, right_txt: str):

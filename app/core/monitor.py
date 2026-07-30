@@ -325,6 +325,7 @@ class Monitor:
         # el payload del reemplazo resuelve avatares y logo de dos PJs, que acá no existen — es
         # un lote de discos destruidos, no un swap.
         on_teardown: Callable[[dict], None] | None = None,
+        on_weapon_seen: Callable[[dict], None] | None = None,
         on_agent_detail: Callable[[ScreenState, str | None, bool, str | None], None] | None = None,
         agent_identifier: AgentIdentifier | None = None,
         on_ram_critical: Callable[[], None] | None = None,
@@ -354,6 +355,11 @@ class Monitor:
         # la DB logró escribir — por eso sale también en read-only. Ver `_check_swap_owner`.
         self._on_replacement = on_replacement
         self._on_teardown = on_teardown
+        self._on_weapon_seen = on_weapon_seen
+        # S26 (detalle de W-Engine, RF-15): firma del panel para no re-OCRear un panel quieto, y
+        # firma del último log para no repetir la misma línea. Observación pura: no escribe DB.
+        self._s26_panel_sig: bytes | None = None
+        self._s26_last_log_sig: tuple | None = None
         # Tanda de desmontaje en curso (S11). Se crea perezosamente al entrar a la pantalla.
         self._teardown = None
         # Tracking interno para el heartbeat
@@ -885,7 +891,7 @@ class Monitor:
                 # es estática y espera input: si el primer frame llega en plena transición, sin
                 # re-despacho no habría segunda oportunidad. En ambos el dedup (por índice de
                 # canal / por firma de rarezas) evita re-emitir lo mismo.
-                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9", "S13", "S3", "S4", "S5", "S10", "S20", "S21", "S22", "S11", "S24", "S25", "S27", "S28")
+                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9", "S13", "S3", "S4", "S5", "S10", "S20", "S21", "S22", "S11", "S24", "S25", "S26", "S27", "S28")
                 should_dispatch = forced or (
                     elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
                 )
@@ -1068,6 +1074,9 @@ class Monitor:
             self._s4_last_sig = None
             self._s4_last_key = None
             self._s4_last_set = None
+        if state.code != "S26":
+            # Fuera de S26 → olvidar el arma mirada, así al volver se re-emite.
+            self._reset_s26_tracking()
         # Tanda de desmontaje: se abandona al llegar a CUALQUIER pantalla confirmada que no sea
         # la propia grilla, el modal de commit, o un S12. Va acá arriba y no en el `else` final
         # porque los estados con handler propio (S9, S17, S8…) nunca llegan al `else` — un bug
@@ -1153,6 +1162,12 @@ class Monitor:
             # Inventario global de discos: capturar el disco SELECCIONADO (panel derecho,
             # reusa parse_disc_s17 vía parse_disc_s9) + dueño por badge del tile → sync.
             self._process_disc_s9_continuous(frame, state)
+            self._processed_disc_state_code = None
+            self._reported_agent_stats_state_code = None
+            self._agent_stats_screen_logged = False
+        elif state.code == "S26":
+            # Detalle de W-Engine (RF-15). Observación pura: log + toast, cero escrituras a la DB.
+            self._process_s26_weapon_detail(frame, state)
             self._processed_disc_state_code = None
             self._reported_agent_stats_state_code = None
             self._agent_stats_screen_logged = False
@@ -3684,6 +3699,109 @@ class Monitor:
         # ([reconocido]/[stats]/[completo]) EDGE-triggered (solo cuando el resultado
         # cambia). El procesamiento sí corre cada ciclo (madura parciales); el
         # post-merge interno quedó en debug.
+
+    def _reset_s26_tracking(self) -> None:
+        """Al salir de S26, olvidar el arma mirada (así al volver se re-emite)."""
+        self._s26_panel_sig = None
+        self._s26_last_log_sig = None
+
+    def _process_s26_weapon_detail(self, frame, state: ScreenState) -> None:
+        """Detalle de W-Engine (S26, RF-15): nombre, nivel, rareza, refinamiento, ATK y stat.
+
+        **Observación pura: no escribe la DB.** Ni acá ni en el catálogo — un arma que no está en
+        `weapons` se muestra con el nombre CRUDO y no se da de alta (decisión de Daniel: la tabla
+        tiene 42 armas de menos y completarla es una pasada aparte).
+
+        Gate RNF-06: el OCR del panel cuesta ~500 ms y la cadencia es 1000 ms, así que solo corre
+        cuando la firma del panel cambió (cambió de arma). Sin eso, mirar un arma diez segundos
+        serían diez OCRs idénticos.
+        """
+        from app.core.parser_weapon_s26 import parse_weapon_s26, weapon_panel_signature
+
+        sig = weapon_panel_signature(frame)
+        if sig and sig == self._s26_panel_sig:
+            return                      # panel quieto: ni stall ni OCR, es el camino normal
+        self._s26_panel_sig = sig
+
+        d = parse_weapon_s26(frame, self._ocr, catalogo=self._weapon_catalog())
+        if not d.nombre_raw or d.nivel is None:
+            self._note_stall("S26/detalle", f"panel ilegible (notas={','.join(d.notas) or '-'})")
+            return
+        self._clear_stall("S26/detalle")
+
+        # Dueño: superficie de badge COMPARTIDA con el detalle de disco (`crop_detail_badge` +
+        # librería avatar_detbadge_v2). No se recorta nada nuevo — el avatar está en el mismo lugar
+        # de la pantalla. Abstiene bajo guard, así que un dueño incierto sale None y no equivocado.
+        if self._identifier is not None:
+            try:
+                crudo = self._identifier.surfaces["detail"].sample(frame).name
+                # Se CANONICALIZA contra el roster antes de reportar. La librería compartida tiene
+                # al menos un label con mojibake ('n.Âº11' = N.º 11 guardado con UTF-8 leído como
+                # latin-1), y sin este paso ese texto corrupto llegaría al log y al toast como si
+                # fuera el nombre del PJ. Un nombre que no resuelve se descarta: preferimos
+                # "incierto" antes que basura (RNF-02).
+                d.dueno = self._identifier._canonical_name(crudo) if crudo else None
+                if crudo and d.dueno is None:
+                    log.debug("S26: dueño %r no resuelve al roster → incierto", crudo)
+            except Exception:
+                log.debug("S26: fallo al muestrear el badge del dueño", exc_info=True)
+
+        logsig = (d.nombre_canon or d.nombre_raw, d.nivel, d.rareza, d.refinamiento, d.dueno)
+        if logsig == self._s26_last_log_sig:
+            self._note_stall("S26", "misma arma ya reportada")
+            return
+        self._clear_stall("S26")
+        self._s26_last_log_sig = logsig
+
+        nombre = d.nombre_canon or f"{d.nombre_raw} (sin catálogo)"
+        stat = ""
+        if d.stat_avanzado_canon and d.stat_avanzado_valor is not None:
+            unidad = " %" if d.stat_avanzado_unidad == "%" else ""
+            stat = f"{d.stat_avanzado_canon} {d.stat_avanzado_valor:g}{unidad}"
+        linea = (f"[S26] W-Engine — {nombre} · {d.rareza or '?'} · Nv {d.nivel}/{d.nivel_max} · "
+                 f"P{d.refinamiento or '?'} · ATK base {d.atk_base or '?'} · {stat or 'stat ?'}"
+                 f" · dueño={d.dueno or 'incierto'}")
+        log.info(linea)
+        self._diag(linea)
+        for n in d.notas:
+            if n.startswith("rareza_discrepa_atk"):
+                log.warning("[S26] ⚠ %s", n)
+                self._diag(f"[S26] ⚠ {n}")
+
+        if self._on_weapon_seen:
+            try:
+                self._on_weapon_seen({
+                    "nombre": nombre,
+                    "en_catalogo": d.nombre_canon is not None,
+                    "rareza": d.rareza,
+                    "nivel": d.nivel,
+                    "nivel_max": d.nivel_max,
+                    "refinamiento": d.refinamiento,
+                    "atk_base": d.atk_base,
+                    "stat": stat,
+                    "dueno": d.dueno,
+                })
+            except Exception:
+                log.exception("Error en on_weapon_seen (toast de W-Engine)")
+
+    def _weapon_catalog(self) -> list[str] | None:
+        """Nombres ESPAÑOLES de `weapons`, cacheados. None si la DB no está disponible.
+
+        Read-only: es un SELECT. Si falla, el parser sigue funcionando y devuelve el nombre crudo
+        — la canonización es una mejora, no un requisito."""
+        cache = getattr(self, "_weapon_catalog_cache", None)
+        if cache is not None:
+            return cache or None
+        nombres: list[str] = []
+        try:
+            from app.db.connection import get_connection
+            con = get_connection()
+            nombres = [r[0] for r in con.execute(
+                "select nombre from weapons where nombre is not null and nombre != 'Sin arma'")]
+        except Exception:
+            log.debug("S26: no se pudo leer el catálogo de weapons", exc_info=True)
+        self._weapon_catalog_cache = nombres
+        return nombres or None
 
     def _process_agent_menu(self, frame, state: ScreenState) -> None:
         """Menú de personajes (S15, Fase M.1): reconoce al PJ SELECCIONADO leyendo su

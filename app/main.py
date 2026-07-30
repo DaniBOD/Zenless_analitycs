@@ -484,6 +484,7 @@ class MainWindow(QMainWindow):
         self._controller.disc_replaced.connect(self._on_disc_show_replacement_toast)
         self._controller.disc_equipped.connect(self._on_disc_show_equipped_toast)
         self._controller.discs_dismantled.connect(self._on_show_teardown_toast)
+        self._controller.weapon_seen.connect(self._on_show_weapon_toast)
 
         # Cableado controller.log_message → live_panel.append_log
         # (mensajes informativos: cambios de estado, capturas descartadas, etc)
@@ -663,6 +664,21 @@ class MainWindow(QMainWindow):
         td.teardown_total = int(payload.get("total") or 0)
         td.teardown_known = int(payload.get("con_datos") or 0)
         self._toast.show_teardown(td)
+
+    def _on_show_weapon_toast(self, payload: dict):
+        """Slot: toast W-ENGINE VISTO (RF-15). Uno por arma abierta, no uno por ciclo.
+
+        El nombre puede venir crudo del OCR (el catálogo tiene armas de menos); se muestra igual
+        porque el usuario reconoce el arma que acaba de abrir. Nada de esto escribe la DB."""
+        from app.ui.toast import ToastData
+        td = ToastData(variant="arma_vista", set_name="—", slot=0,
+                       rarity=str(payload.get("rareza") or "?"), timeout_secs=4.0)
+        td.weapon_name = str(payload.get("nombre") or "—")
+        nivel, nivel_max = payload.get("nivel"), payload.get("nivel_max")
+        td.weapon_level = f"{nivel}/{nivel_max}" if nivel is not None and nivel_max else ""
+        td.weapon_refine = int(payload.get("refinamiento") or 0)
+        td.weapon_stat = str(payload.get("stat") or "")
+        self._toast.show_weapon(td)
 
     def closeEvent(self, event):
         """

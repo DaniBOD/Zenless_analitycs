@@ -75,6 +75,7 @@ class MonitorController(QObject):
     disc_replaced = Signal(dict)             # swap de disco entre PJs confirmado → toast REEMPLAZADO
     disc_equipped = Signal(dict)             # disco LIBRE equipado a un PJ → toast AHORA EN
     discs_dismantled = Signal(dict)          # tanda de desmontaje cerrada → toast DESMONTADOS
+    weapon_seen = Signal(dict)               # W-Engine observado (RF-15) → toast W-ENGINE VISTO
     agent_stats_detected = Signal(dict)      # stats de agente desde S18
     error_occurred = Signal(str)
     # Mensaje informativo crudo para el log (estado, captura descartada, etc).
@@ -160,6 +161,7 @@ class MonitorController(QObject):
             on_diagnostic=self._on_diagnostic_from_monitor,
             on_replacement=self._on_replacement_from_monitor,
             on_teardown=self._on_teardown_from_monitor,
+            on_weapon_seen=self._on_weapon_seen_from_monitor,
             on_agent_detail=self._on_agent_detail_from_monitor,
             set_repo=self._disc_set_repo,
             on_ram_critical=self.ram_critical.emit,   # watchdog RNF-06 → main thread
@@ -705,6 +707,29 @@ class MonitorController(QObject):
             })
         except Exception:
             log.exception("Error armando el toast de desmontaje")
+
+    def _on_weapon_seen_from_monitor(self, ev: dict) -> None:
+        """El monitor OBSERVÓ el detalle de un W-Engine → un toast por arma (RF-15).
+
+        Señal propia y no `disc_replaced`/`discs_dismantled`: acá no hay disco ni set ni lote, y
+        `_build_replacement_payload` resolvería avatares que no existen en este flujo.
+
+        Igual que sus hermanos violeta, **no afirma nada sobre la DB**: este hito es observación
+        pura. Si el arma no está en el catálogo, el nombre viene crudo del OCR y se muestra así —
+        `weapons` tiene 42 armas de menos y darlas de alta es una pasada aparte."""
+        try:
+            self.weapon_seen.emit({
+                "nombre": str(ev.get("nombre") or "—"),
+                "en_catalogo": bool(ev.get("en_catalogo")),
+                "rareza": ev.get("rareza") or "?",
+                "nivel": ev.get("nivel"),
+                "nivel_max": ev.get("nivel_max"),
+                "refinamiento": int(ev.get("refinamiento") or 0),
+                "stat": ev.get("stat") or "",
+                "dueno": ev.get("dueno"),
+            })
+        except Exception:
+            log.exception("Error armando el toast de W-Engine")
 
     def _build_replacement_payload(self, ev: dict) -> dict:
         """Evento {set_name, set_id, slot, from_name, to_name} → payload del toast (logo del set

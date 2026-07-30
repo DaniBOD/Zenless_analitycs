@@ -53,6 +53,10 @@ log = logging.getLogger(__name__)
 
 # Mismo panel central que el detalle de disco (verificado sobre los 40 fixtures).
 _S26_LAYOUT = PanelLayout(0.30, 0.52, 0.42)
+# ROI de la firma del handler: el panel entero (nombre, nivel, estrellas y stats). Más ancho que
+# el del verify del detector a propósito — acá interesa detectar que cambió el ARMA, no solo que
+# la pantalla sigue siendo de arma.
+_PANEL_SIG_ROI = (0.30, 0.11, 0.23, 0.40)
 
 # "Nivel 60/60" (armas) — el denominador es 60 al máximo y 10 en las de rango B sin promocionar,
 # así que NO se ancla a un valor fijo. Es lo que distingue esta línea de los "Nivel 60" sueltos
@@ -115,6 +119,9 @@ class WeaponParsed:
     stat_avanzado_canon: str | None = None
     stat_avanzado_valor: float | None = None
     stat_avanzado_unidad: str | None = None
+    # PJ que la tiene equipada. NO lo llena este módulo: lo resuelve el monitor con la superficie
+    # de badge compartida (`crop_detail_badge` + `avatar_detbadge_v2`), que es stateful y vive ahí.
+    dueno: str | None = None
     confianza: float = 0.0
     notas: list[str] = field(default_factory=list)
 
@@ -167,6 +174,22 @@ def match_catalogo(nombre_raw: str, catalogo: Sequence[str] | None) -> str | Non
         return normalizados[clave]
     cerca = difflib.get_close_matches(clave, list(normalizados), n=1, cutoff=_FUZZY_CUTOFF)
     return normalizados[cerca[0]] if cerca else None
+
+
+def weapon_panel_signature(frame: np.ndarray) -> bytes:
+    """Firma barata (~0.3 ms) del panel, para que el handler no re-OCRee un panel quieto.
+
+    El OCR del panel cuesta ~500 ms y la cadencia de S26 es 1000 ms: sin gate, mirar un arma
+    durante diez segundos serían diez OCRs idénticos (RNF-06, CPU < 3 %). Es la misma idea que el
+    cache del verify en el detector, pero con ROI propio y otro dueño: acá gatea el handler.
+    """
+    h, w = frame.shape[:2]
+    x, y, rw, rh = _PANEL_SIG_ROI
+    crop = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
+    if crop.size == 0:
+        return b""
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
+    return cv2.resize(gray, (32, 24), interpolation=cv2.INTER_AREA).tobytes()
 
 
 def _star_runs(band_mask: np.ndarray) -> list[tuple[int, int]]:

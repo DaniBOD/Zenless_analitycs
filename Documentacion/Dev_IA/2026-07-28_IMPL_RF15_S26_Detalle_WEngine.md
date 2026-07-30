@@ -253,6 +253,80 @@ y del otro se documenta que es un widget compartido.
 
 ---
 
+# H4 — el dueño por el badge del avatar
+
+**No hizo falta código nuevo de recorte.** El avatar del PJ que tiene el arma equipada está en el
+mismo lugar de la pantalla que el del detalle de disco, y `crop_detail_badge` lo localiza con una
+región fija + Hough, **sin depender del texto del nivel**. S26 reusa la superficie `detail` tal
+cual: mismo crop, mismo matcher, misma librería `avatar_detbadge_v2`.
+
+Lo que **no** se pudo reusar es `crop_s17_assigned_avatar`, que el plan nombraba: exige
+literalmente `"/15"` en el texto del nivel —el denominador de un disco— así que devuelve `None`
+para un arma, que dice `60/60` o `0/10`.
+
+## La cobertura no llega a lo que pedía el plan, y el techo no lo pone el arma
+
+El plan pedía **≥35/40** con dueño resuelto. Medido:
+
+| | crops localizados | nombrados |
+|---|---|---|
+| armas (40 fixtures) | **26/40** | **13/40** |
+| discos (10 de control) | 10/10 | 6/10 |
+
+La tasa de nombrado *entre los que tienen crop* es 13/26 = **50 %** en armas y 6/10 = **60 %** en
+discos. El matcher no anda peor con armas. Los dos límites son preexistentes y compartidos:
+
+1. **La librería está parcialmente entrenada:** 39 labels para un roster de 50 PJs. Y en la ruta de
+   runtime (`%LOCALAPPDATA%\DaniBOD_ZZZ_Analytics\avatar_detbadge_v2.npz`) **el archivo no
+   existe** — sin el snapshot de `audit/`, el matcher tiene 0 referencias y nombra 0/40, igual que
+   0/10 en discos. Una instalación nueva no tiene dueños en ninguna pantalla.
+2. **La localización falla en 14 de 40:** verificado a ojo que en `Ejemplo_34` el avatar **sí
+   está**, así que son misses de Hough, no abstenciones correctas.
+
+No se forzó el número. Lo que sí se garantiza es lo que importa: **nunca un dueño equivocado**.
+
+## Un defecto preexistente que apareció al testear
+
+La librería devuelve `'n.Âº11'` para **N.º 11** — el nombre guardado con UTF-8 leído como latin-1
+en algún punto de la cosecha. Es un defecto **compartido con la ruta de discos**, no algo que traiga
+S26, pero sin filtro ese texto corrupto llegaría al log y al toast como si fuera el nombre del PJ.
+
+El handler ahora **canonicaliza contra el roster** antes de reportar (`_canonical_name`), y un
+nombre que no resuelve se descarta: preferimos "incierto" antes que basura. Queda un test que
+afirma la existencia del mojibake, para que si alguien re-cosecha la librería y lo arregla, el test
+caiga y se pueda borrar.
+
+---
+
+# H5 — cableado y toast
+
+Cadena completa, calcada de la del desmontaje:
+`monitor._process_s26_weapon_detail` → `on_weapon_seen` → `controller.weapon_seen` →
+`main._on_show_weapon_toast` → `toast.show_weapon`.
+
+- **Gate de firma (RNF-06):** el OCR del panel cuesta ~500 ms y la cadencia de S26 es 1000 ms. Sin
+  gate, mirar un arma diez segundos serían diez OCRs idénticos. El handler solo parsea cuando la
+  firma del panel cambió.
+- **Los dos scopes de `_note_stall`** (`S26` y `S26/detalle`): requisito no negociable del
+  proyecto — hubo dos trabes de 6-8 minutos por handlers mudos. Ojo la distinción: el panel
+  *quieto* es el camino normal y **no** declara trabe; el que lo declara es el panel ilegible o el
+  arma ya reportada.
+- **Reset al salir de S26**, así volver a la misma arma re-emite en vez de quedar mudo.
+- **Catálogo cacheado:** un solo `SELECT nombre FROM weapons`. Si la DB no está disponible, el
+  parser sigue y devuelve el nombre crudo — canonizar es una mejora, no un requisito.
+- **Variante `arma_vista`**, violeta como sus hermanas pasivas. El label dice **VISTO**, no
+  "REGISTRADO": el hito no escribe la DB y un toast que insinuara lo contrario haría creer que el
+  arma ya quedó sincronizada. Hay un test que prohíbe las palabras `REGISTRAD/SINCRONIZ/GUARDAD/
+  IMPORTAD` en ese label.
+- El refinamiento se pinta con estrellas y no como "P4": es lo que el usuario ve en la pantalla. Si
+  no se pudo leer (0) **no se dibuja ninguna**, porque cinco vacías se leerían como refinamiento 0,
+  que no existe (el mínimo es 1).
+
+**El test que importa:** `test_el_handler_no_toca_la_db` compara el sha256 de la DB real antes y
+después de correr el handler. Si alguien agrega un INSERT, cae.
+
+---
+
 ## Estado
 
 | | |
@@ -260,7 +334,10 @@ y del otro se documenta que es un widget compartido.
 | `test_armas_no_contaminan_discos.py` | 54 casos |
 | `test_detector_weapon_detail.py` | 98 casos |
 | `test_parser_weapon_s26.py` | 264 casos |
-| Regresión (`fp_negative_qa`, `sustitucion`, `desmontaje`, `parser_disc`) | verde |
+| `test_monitor_weapon_s26.py` | 13 casos |
+| `test_weapon_owner_badge.py` | 5 casos |
+| `test_toast_arma_vista.py` | 6 casos |
 
-**Falta:** dueño por badge (H4), cableado y toast (H5). Y en tramos posteriores, una pantalla por
-vez: inventario de armas (S9), diálogo de reemplazo (S23), Mejora y Refinar.
+**Falta:** QA en vivo. Y en tramos posteriores, una pantalla por vez: inventario de armas (S9),
+diálogo de reemplazo (S23), Mejora y Refinar, desmontaje/reciclaje de armas, completar el catálogo,
+y el sync a la DB atado al censo inicial.

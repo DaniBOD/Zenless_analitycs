@@ -67,6 +67,11 @@ VARIANTS: dict[str, dict] = {
     # limpieza de 50 discos, 50 toasts serían inusables. Ojo la distinción con `descartar`, que
     # es la RECOMENDACIÓN ("te conviene tirarlo"); este es el HECHO ("ya los tiraste").
     "desmontado":  {"label": "DESMONTADOS", "color": PURPLE, "tone": "purple", "icon": "trash"},
+    # W-Engine que el usuario acaba de abrir (RF-15, observación pura). Violeta como sus hermanos:
+    # no recomienda nada, reporta lo que se vio. El label dice "VISTO" y no "REGISTRADO" a
+    # propósito — este hito NO escribe la DB, y un toast que insinúe lo contrario haría creer que
+    # el arma ya quedó sincronizada.
+    "arma_vista":  {"label": "W-ENGINE VISTO", "color": PURPLE, "tone": "purple", "icon": "stack"},
 }
 
 
