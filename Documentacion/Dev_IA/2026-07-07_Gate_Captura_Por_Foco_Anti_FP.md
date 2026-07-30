@@ -1,5 +1,22 @@
 # Gate de captura por foco de ventana (anti-FP Explorador) · 2026-07-07
 
+> ## ⚠️ REVERTIDO COMO DEFAULT — 2026-07-30
+>
+> El gate **ya no viene activado**. `[monitor].solo_capturar_si_enfocado = false` y el fallback del
+> helper también es `False`. Pedido de Daniel, repetido dos veces: **la captura no debe cortarse
+> sola en segundo plano**. Este era el segundo de los dos mecanismos que la interrumpían; el otro
+> —el auto-stop del watcher de ventana— se apagó el 2026-07-25.
+>
+> El gate no detenía el monitor, pero **pausaba la captura**, y desde afuera se ve igual de mudo.
+>
+> **Lo que se resigna es exactamente el FP que este documento describe:** con el juego tapado por
+> otra ventana, `mss.grab()` toma los píxeles ajenos y el detector los clasifica. Se acepta a
+> cambio de que la sesión no se interrumpa sola.
+>
+> **Para volver al comportamiento de acá:** `DANIBOD_FOCUS_GATE=1`, o `qa_launch.ps1 -FocusGate`,
+> o poner `true` en `defaults.toml`. El código del gate sigue intacto — solo cambió su default.
+> Fijado en `app/tests/unit/test_controller_focus_gate_off.py`.
+
 **Estado:** CERRADO (commit local `fd7e1fe`, sin push). Falta verificación en vivo del usuario.
 **Severidad:** menor (calidad de log) — elimina una clase de FP causada por ventanas ajenas superpuestas.
 **Alcance:** cambio de comportamiento de **captura** únicamente. No toca DB, scoring, OCR ni parsers. RNF-03 OK.

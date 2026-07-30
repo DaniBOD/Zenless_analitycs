@@ -33,9 +33,12 @@ param(
     [switch]$NoRamGuard,     # QA: apaga el watchdog de RAM (DANIBOD_NO_RAM_GUARD) para no
                              # interrumpir sesiones largas. La RAM crece (fuga residual RNF-06):
                              # usar en QA acotado, cerrar la app al terminar.
-    [switch]$NoFocusGate,    # QA: desactiva el gate anti-FP por foco (DANIBOD_NO_FOCUS_GATE) →
-                             # sigue capturando aunque el juego no esté al frente (para poder
-                             # inspeccionar/loguear sin que el alt-tab pause la captura).
+    [switch]$NoFocusGate,    # REDUNDANTE desde 2026-07-30: el gate por foco ya viene OFF por
+                             # defecto (defaults.toml). Se mantiene por compatibilidad.
+    [switch]$FocusGate,      # QA: ACTIVA el gate anti-FP por foco (DANIBOD_FOCUS_GATE) → la
+                             # captura se pausa cuando el juego pasa a segundo plano. Sirve para
+                             # reproducir el comportamiento viejo si se sospecha de un FP por
+                             # ventana ajena tapando el juego.
     [switch]$NoAutoStart,    # QA: arranca la app en REPOSO (DANIBOD_NO_AUTOSTART) → el watcher
                              # de ZZZ queda OFF y la captura NO empieza sola aunque el juego esté
                              # abierto. El usuario la activa a mano con "Iniciar captura".
@@ -130,11 +133,20 @@ if ($NoRamGuard) {
 } else {
     Remove-Item Env:\DANIBOD_NO_RAM_GUARD -ErrorAction SilentlyContinue
 }
+# El gate por foco ya viene OFF por defecto desde 2026-07-30 (defaults.toml), asi que -NoFocusGate
+# quedo redundante: se mantiene por compatibilidad con scripts y con la costumbre de tipearlo.
+# Para volver al comportamiento anti-FP en una sesion puntual: -FocusGate.
 if ($NoFocusGate) {
     $env:DANIBOD_NO_FOCUS_GATE = "1"
-    Write-Host "[qa_launch] DANIBOD_NO_FOCUS_GATE = 1 (captura sigue aunque el juego no esté al frente)"
+    Write-Host "[qa_launch] DANIBOD_NO_FOCUS_GATE = 1 (redundante: el gate ya viene OFF por defecto)"
 } else {
     Remove-Item Env:\DANIBOD_NO_FOCUS_GATE -ErrorAction SilentlyContinue
+}
+if ($FocusGate) {
+    $env:DANIBOD_FOCUS_GATE = "1"
+    Write-Host "[qa_launch] DANIBOD_FOCUS_GATE = 1 (gate anti-FP por foco ACTIVADO: pausa en segundo plano)"
+} else {
+    Remove-Item Env:\DANIBOD_FOCUS_GATE -ErrorAction SilentlyContinue
 }
 # Breadcrumb del contexto de farmeo: SIEMPRE se deja en QA (barato, un JSON chico) para que un
 # relance posterior con -RestoreFarm pueda recargar la última predicción S13. Ruta estable en el

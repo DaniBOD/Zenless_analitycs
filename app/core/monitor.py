@@ -333,7 +333,7 @@ class Monitor:
         farm_session=None,                                      # FarmSession opcional (gate S2)
         farm_node_catalog=None,                                 # FarmNodeCatalog opcional (predicción S13)
         set_badge_matcher=None,                                 # SetBadgeMatcher opcional (set por badge S2)
-        capture_only_focused: bool = True,                      # gate anti-FP por foco de ventana
+        capture_only_focused: bool = False,                     # gate anti-FP por foco: OFF por defecto
     ):
         self._ocr = ocr
         self._detector = detector

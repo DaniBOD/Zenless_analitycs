@@ -37,12 +37,24 @@ def _find_tesseract() -> str | None:
 
 
 def _capture_only_focused() -> bool:
-    """Lee [monitor].solo_capturar_si_enfocado de defaults.toml (fallback True).
+    """Lee [monitor].solo_capturar_si_enfocado de defaults.toml. **Fallback False.**
 
-    Override de QA: `DANIBOD_NO_FOCUS_GATE=1` desactiva el gate (sigue capturando aunque el
-    juego no esté al frente) — útil para inspeccionar/loguear sin que el alt-tab pause la
-    captura. No cambia el default anti-FP; es solo para la sesión de QA."""
+    El gate por foco PAUSA la captura cuando el juego pasa a segundo plano. Desde 2026-07-30 va
+    **apagado por defecto** (pedido de Daniel): la captura no debe cortarse sola. Es el segundo
+    mecanismo de auto-pausa que se apaga; el otro fue el auto-stop del watcher de ventana.
+
+    Lo que se resigna: con el juego tapado por otra ventana, `mss.grab()` toma los píxeles de esa
+    ventana ajena y el detector los clasifica → FP en el log
+    (`Dev_IA/2026-07-07_Gate_Captura_Por_Foco_Anti_FP.md`).
+
+    Overrides de entorno, en orden de precedencia:
+      · `DANIBOD_FOCUS_GATE=1`    → fuerza el gate ON (volver al comportamiento anti-FP).
+      · `DANIBOD_NO_FOCUS_GATE=1` → fuerza el gate OFF. Ya es el default; se mantiene para no
+                                    romper `qa_launch.ps1 -NoFocusGate` ni scripts existentes.
+    """
     import os
+    if os.environ.get("DANIBOD_FOCUS_GATE"):
+        return True
     if os.environ.get("DANIBOD_NO_FOCUS_GATE"):
         return False
     try:
@@ -53,9 +65,9 @@ def _capture_only_focused() -> bool:
         cfg_path = Path(__file__).parent.parent / "config" / "defaults.toml"
         with open(cfg_path, "rb") as f:
             cfg = tomllib.load(f)
-        return bool(cfg.get("monitor", {}).get("solo_capturar_si_enfocado", True))
+        return bool(cfg.get("monitor", {}).get("solo_capturar_si_enfocado", False))
     except Exception:
-        return True
+        return False
 
 
 class MonitorController(QObject):
