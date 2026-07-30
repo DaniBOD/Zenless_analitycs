@@ -678,6 +678,14 @@ class MainWindow(QMainWindow):
         td.weapon_level = f"{nivel}/{nivel_max}" if nivel is not None and nivel_max else ""
         td.weapon_refine = int(payload.get("refinamiento") or 0)
         td.weapon_stat = str(payload.get("stat") or "")
+        # Redacción para el toast. "incierto" se muestra VACÍO a propósito: en una línea de tres
+        # campos, "tenencia incierta" ocupa el mismo lugar que un dato y se lee como si lo fuera.
+        dueno = payload.get("dueno")
+        td.weapon_tenencia = {
+            "equipada": f"la usa {dueno}" if dueno else "equipada",
+            "otro_pj": f"la tiene {dueno}" if dueno else "la tiene otro PJ",
+            "libre": "LIBRE",
+        }.get(str(payload.get("tenencia") or ""), "")
         self._toast.show_weapon(td)
 
     def closeEvent(self, event):

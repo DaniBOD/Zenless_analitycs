@@ -3716,7 +3716,13 @@ class Monitor:
         cuando la firma del panel cambió (cambió de arma). Sin eso, mirar un arma diez segundos
         serían diez OCRs idénticos.
         """
-        from app.core.parser_weapon_s26 import parse_weapon_s26, weapon_panel_signature
+        from app.core.parser_disc_s17 import read_s17_action_button
+        from app.core.parser_weapon_s26 import (
+            clasificar_tenencia,
+            parse_weapon_s26,
+            read_weapon_owner_badge,
+            weapon_panel_signature,
+        )
 
         sig = weapon_panel_signature(frame)
         if sig and sig == self._s26_panel_sig:
@@ -3729,24 +3735,39 @@ class Monitor:
             return
         self._clear_stall("S26/detalle")
 
-        # Dueño: superficie de badge COMPARTIDA con el detalle de disco (`crop_detail_badge` +
-        # librería avatar_detbadge_v2). No se recorta nada nuevo — el avatar está en el mismo lugar
-        # de la pantalla. Abstiene bajo guard, así que un dueño incierto sale None y no equivocado.
-        if self._identifier is not None:
+        # --- Tenencia: ¿la lleva el PJ en pantalla, otro, o está libre? ---
+        # Dos señales independientes (ver `clasificar_tenencia`). El badge va ANCLADO al pill,
+        # no a la franja fija de `crop_detail_badge`: esa franja da falso LIBRE cuando el nombre
+        # del arma envuelve a dos líneas y corre el panel.
+        badge = read_weapon_owner_badge(frame, d.pill_bbox)
+        badge_nombre = None
+        if badge is not None and badge.crop is not None and self._identifier is not None:
             try:
-                crudo = self._identifier.surfaces["detail"].sample(frame).name
+                crudo = self._identifier.surfaces["detail"].match(badge.crop)
+                crudo = crudo.name if crudo else None
                 # Se CANONICALIZA contra el roster antes de reportar. La librería compartida tiene
                 # al menos un label con mojibake ('n.Âº11' = N.º 11 guardado con UTF-8 leído como
                 # latin-1), y sin este paso ese texto corrupto llegaría al log y al toast como si
                 # fuera el nombre del PJ. Un nombre que no resuelve se descarta: preferimos
                 # "incierto" antes que basura (RNF-02).
-                d.dueno = self._identifier._canonical_name(crudo) if crudo else None
-                if crudo and d.dueno is None:
+                badge_nombre = self._identifier._canonical_name(crudo) if crudo else None
+                if crudo and badge_nombre is None:
                     log.debug("S26: dueño %r no resuelve al roster → incierto", crudo)
             except Exception:
-                log.debug("S26: fallo al muestrear el badge del dueño", exc_info=True)
+                log.debug("S26: fallo al nombrar el badge del dueño", exc_info=True)
+        # El botón se lee derecho, sin el gate de caché de S17: ese gate está armado sobre la
+        # identidad de un DISCO. Acá no hace falta — este handler ya corre solo cuando cambió la
+        # firma del panel, así que es un OCR por arma mirada, no por ciclo.
+        try:
+            boton = read_s17_action_button(frame, self._ocr)
+        except Exception:
+            log.debug("S26: lectura del botón de acción falló", exc_info=True)
+            boton = None
+        d.tenencia, d.dueno = clasificar_tenencia(
+            boton, badge, badge_nombre, self._last_agent_name)
 
-        logsig = (d.nombre_canon or d.nombre_raw, d.nivel, d.rareza, d.refinamiento, d.dueno)
+        logsig = (d.nombre_canon or d.nombre_raw, d.nivel, d.rareza, d.refinamiento,
+                  d.tenencia, d.dueno)
         if logsig == self._s26_last_log_sig:
             self._note_stall("S26", "misma arma ya reportada")
             return
@@ -3758,9 +3779,15 @@ class Monitor:
         if d.stat_avanzado_canon and d.stat_avanzado_valor is not None:
             unidad = " %" if d.stat_avanzado_unidad == "%" else ""
             stat = f"{d.stat_avanzado_canon} {d.stat_avanzado_valor:g}{unidad}"
+        tenencia = {
+            "equipada": f"EQUIPADA por {d.dueno}" if d.dueno else "EQUIPADA (PJ sin identificar)",
+            "otro_pj": f"la tiene {d.dueno}" if d.dueno else "la tiene otro PJ (sin identificar)",
+            "libre": "LIBRE",
+            "incierto": "tenencia incierta",
+        }[d.tenencia]
         linea = (f"[S26] W-Engine — {nombre} · {d.rareza or '?'} · Nv {d.nivel}/{d.nivel_max} · "
                  f"P{d.refinamiento or '?'} · ATK base {d.atk_base or '?'} · {stat or 'stat ?'}"
-                 f" · dueño={d.dueno or 'incierto'}")
+                 f" · {tenencia}")
         log.info(linea)
         self._diag(linea)
         for n in d.notas:
@@ -3780,6 +3807,7 @@ class Monitor:
                     "atk_base": d.atk_base,
                     "stat": stat,
                     "dueno": d.dueno,
+                    "tenencia": d.tenencia,
                 })
             except Exception:
                 log.exception("Error en on_weapon_seen (toast de W-Engine)")

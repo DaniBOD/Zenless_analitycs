@@ -56,12 +56,27 @@ def test_filename_parse_a_nombre_en():
     assert en_from_badge_filename("Drive_Disc_Astral_Voice_B") == "Astral Voice"
 
 
-def test_from_package_badges_carga_27_sets():
+def test_from_package_badges_carga_un_set_por_carpeta():
+    """Una clase multi-ref por set con badges en disco.
+
+    El conteo se DERIVA de los archivos en vez de hardcodearse. La versión anterior fijaba 27 y
+    excluía a *Branch & Blade Song* (el endpoint estaba caído cuando se bajaron los assets); al
+    aparecer sus tres badges el test se puso rojo sin que hubiera ningún defecto. Un número
+    literal acá solo mide cuántos assets había el día que se escribió el test.
+    """
+    from app.core.asset_resolver import SET_BADGES_DIR
+
+    en_en_disco = {en_from_badge_filename(p.stem) for p in SET_BADGES_DIR.glob("*.webp")}
     m = SetBadgeMatcher.from_package_badges()
-    # 27 sets × 3 tiers (Branch & Blade Song sin badge). Cada set = 1 clase multi-ref.
-    assert len(m.names) == 27
+    assert set(m.names) == en_en_disco
     assert "Dawn's Bloom" in m.names
-    assert "Branch & Blade Song" not in m.names
+
+
+def test_branch_and_blade_song_ya_tiene_badges():
+    """Regresión del hueco que tapaba el conteo viejo: sus 3 tiers ya están, y el `&` viaja
+    url-encodeado en el archivo (`%26`), que es donde falla un parseo ingenuo del nombre."""
+    m = SetBadgeMatcher.from_package_badges()
+    assert "Branch & Blade Song" in m.names
 
 
 def _matcher_excluding(descs, held_en, held_tier) -> SetBadgeMatcher:

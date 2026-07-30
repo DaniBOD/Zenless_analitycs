@@ -35,6 +35,9 @@ class FakeWeapon:
         self.stat_avanzado_canon, self.stat_avanzado_valor = "ATK%", 30.0
         self.stat_avanzado_unidad = "%"
         self.dueno = None
+        self.tenencia = "incierto"
+        # El ancla de todo lo posicional del panel. Con None el handler no consulta el badge.
+        self.pill_bbox = (915, 253, 1107, 280)
         self.confianza, self.notas = 0.99, []
 
 
@@ -48,11 +51,20 @@ def mon(monkeypatch):
     m = mon_mod.Monitor(ocr=object(), detector=None, on_diagnostic=diags.append,
                         set_badge_matcher=object(), on_weapon_seen=toasts.append)
     m._diags, m._toasts = diags, toasts
-    m._stub = {"weapon": FakeWeapon(), "sig": b"A"}
+    import app.core.parser_disc_s17 as pds
+
+    # `badge` y `boton` son las dos señales de tenencia; por defecto van en el caso conservador
+    # (badge presente y sin botón ⇒ "incierto"), así que los tests que no hablan de tenencia no
+    # se ven afectados por ella.
+    m._stub = {"weapon": FakeWeapon(), "sig": b"A",
+               "badge": pw_mod.OwnerBadge(present=True, nitidez=70.0, crop=_frame(200)),
+               "boton": None}
 
     monkeypatch.setattr(pw_mod, "parse_weapon_s26",
                         lambda fr, ocr, catalogo=None: m._stub["weapon"])
     monkeypatch.setattr(pw_mod, "weapon_panel_signature", lambda fr: m._stub["sig"])
+    monkeypatch.setattr(pw_mod, "read_weapon_owner_badge", lambda fr, pb: m._stub["badge"])
+    monkeypatch.setattr(pds, "read_s17_action_button", lambda fr, ocr: m._stub["boton"])
     # El catálogo se lee de la DB; acá se fija para que el test no dependa de ella.
     monkeypatch.setattr(m, "_weapon_catalog", lambda: ["Petrazufre", "Sol exuvia"])
     # Sin librería de badges no hay dueño; los tests que lo necesitan lo stubbean.
@@ -160,13 +172,16 @@ def test_arma_fuera_del_catalogo_se_reporta_igual(mon):
 
 def _fake_identifier(nombre, roster=("Jane", "Ellen")):
     """Identificador de mentira con el contrato mínimo que usa el handler: una superficie que
-    devuelve un nombre, y la canonicalización contra el roster."""
+    nombra un RECORTE, y la canonicalización contra el roster.
+
+    Es `match(crop)` y no `sample(frame)` porque el recorte ya no lo elige la superficie: viene
+    de `read_weapon_owner_badge`, anclado al pill. La superficie solo pone la librería."""
     class FakeOut:
         name = nombre
 
     class FakeSurf:
-        def sample(self, frame):
-            return FakeOut()
+        def match(self, crop):
+            return FakeOut() if nombre is not None else None
 
     return type("I", (), {
         "surfaces": {"detail": FakeSurf()},
@@ -175,18 +190,24 @@ def _fake_identifier(nombre, roster=("Jane", "Ellen")):
 
 
 def test_el_dueno_sale_del_badge_compartido(mon):
-    """El dueño se resuelve con la MISMA superficie de badge que el detalle de disco: el avatar
-    está en el mismo lugar de la pantalla, así que no hace falta recorte nuevo."""
+    """El dueño se nombra con la MISMA librería que el detalle de disco (`avatar_detbadge_v2`);
+    lo que cambia respecto de los discos es de dónde sale el recorte."""
     mon._identifier = _fake_identifier("Jane")
-    _paso(mon, _S26)
+    _paso(mon, _S26, boton="reemplazar")
     assert mon._toasts[0]["dueno"] == "Jane"
+    assert mon._toasts[0]["tenencia"] == "otro_pj"
 
 
 def test_dueno_incierto_no_inventa(mon):
-    """La superficie abstiene bajo guard: un dueño incierto sale None, nunca uno equivocado."""
+    """La superficie abstiene bajo guard: un dueño incierto sale None, nunca uno equivocado.
+
+    Ojo con lo que NO cambia: el arma sigue teniendo dueño (`otro_pj`). No saber quién es no la
+    vuelve libre — y esa distinción es justamente la que decide si al equiparla salta el diálogo.
+    """
     mon._identifier = _fake_identifier(None)
-    _paso(mon, _S26)
+    _paso(mon, _S26, boton="reemplazar")
     assert mon._toasts[0]["dueno"] is None
+    assert mon._toasts[0]["tenencia"] == "otro_pj"
 
 
 def test_un_nombre_que_no_resuelve_al_roster_se_descarta(mon):
@@ -196,7 +217,7 @@ def test_un_nombre_que_no_resuelve_al_roster_se_descarta(mon):
     PJ. Preferimos "incierto" antes que basura.
     """
     mon._identifier = _fake_identifier("n.Âº11")
-    _paso(mon, _S26)
+    _paso(mon, _S26, boton="reemplazar")
     assert mon._toasts[0]["dueno"] is None
 
 
@@ -214,15 +235,18 @@ def test_el_handler_no_toca_la_db():
 
     import app.core.monitor as mon_mod
     import app.core.parser_weapon_s26 as pw_mod
-    orig_parse, orig_sig = pw_mod.parse_weapon_s26, pw_mod.weapon_panel_signature
+    orig = (pw_mod.parse_weapon_s26, pw_mod.weapon_panel_signature,
+            pw_mod.read_weapon_owner_badge)
     try:
         pw_mod.parse_weapon_s26 = lambda fr, ocr, catalogo=None: FakeWeapon()
         pw_mod.weapon_panel_signature = lambda fr: b"X"
+        pw_mod.read_weapon_owner_badge = lambda fr, pb: None
         m = mon_mod.Monitor(ocr=object(), detector=None, set_badge_matcher=object())
         m._identifier = None
         m._dispatch_state(_frame(), _S26)
     finally:
-        pw_mod.parse_weapon_s26, pw_mod.weapon_panel_signature = orig_parse, orig_sig
+        (pw_mod.parse_weapon_s26, pw_mod.weapon_panel_signature,
+         pw_mod.read_weapon_owner_badge) = orig
 
     assert hashlib.sha256(db.read_bytes()).hexdigest() == antes, "¡S26 escribió la DB!"
 
@@ -241,3 +265,54 @@ def test_el_catalogo_se_lee_una_sola_vez(monkeypatch):
     monkeypatch.setattr("app.db.connection.get_connection", _boom)
     assert m._weapon_catalog() == primera
     assert llamadas["n"] == 0
+
+
+# --- Tenencia: libre / de otro / equipada ----------------------------------------------------
+
+
+def test_arma_libre_se_reporta_como_libre(mon):
+    """El caso que el sistema no podía ver. Importa porque el juego se comporta distinto: un arma
+    libre se equipa sin diálogo de confirmación, la de otro PJ abre S23."""
+    import app.core.parser_weapon_s26 as pw_mod
+    mon._identifier = _fake_identifier(None)
+    _paso(mon, _S26, boton="reemplazar",
+          badge=pw_mod.OwnerBadge(present=False, nitidez=2.0))
+    assert mon._toasts[0]["tenencia"] == "libre"
+    assert mon._toasts[0]["dueno"] is None
+
+
+def test_desequipar_da_dueno_certero_sin_libreria(mon):
+    """La vía de dueño que NO depende de `avatar_detbadge_v2` (que hoy no cubre el roster).
+
+    Si el juego ofrece 'Desequipar', la lleva puesta el PJ que estás mirando; ese nombre sale del
+    latch de identidad, que se resuelve por OCR en S18 y funciona para cualquier PJ — incluidos
+    los que no tienen ref de avatar."""
+    mon._identifier = _fake_identifier(None)
+    mon._last_agent_name = "Velina"
+    _paso(mon, _S26, boton="desequipar")
+    assert mon._toasts[0]["tenencia"] == "equipada"
+    assert mon._toasts[0]["dueno"] == "Velina"
+
+
+def test_sin_ancla_la_tenencia_queda_incierta(mon):
+    """Panel sin pill ⇒ no hay dónde mirar el badge. Tiene que salir "incierto" y no "libre":
+    confundir "no pude ver" con "no hay dueño" es exactamente el falso LIBRE."""
+    mon._identifier = _fake_identifier(None)
+    _paso(mon, _S26, boton="reemplazar", badge=None)
+    assert mon._toasts[0]["tenencia"] == "incierto"
+
+
+def test_cambiar_de_tenencia_vuelve_a_emitir(mon):
+    """La tenencia entra en la firma del log. Equipar el arma que estabas mirando cambia el estado
+    sin cambiar el arma, y ese es justo el evento que hay que reportar."""
+    import app.core.parser_weapon_s26 as pw_mod
+    mon._identifier = _fake_identifier(None)
+    mon._last_agent_name = "Velina"
+    _paso(mon, _S26, boton="reemplazar",
+          badge=pw_mod.OwnerBadge(present=False, nitidez=2.0))
+    assert mon._toasts[0]["tenencia"] == "libre"
+    # Mismo arma, misma firma de panel salvo el badge: ahora la tiene puesta.
+    _paso(mon, _S26, sig=b"A2", boton="desequipar",
+          badge=pw_mod.OwnerBadge(present=True, nitidez=70.0))
+    assert len(mon._toasts) == 2
+    assert mon._toasts[1]["tenencia"] == "equipada"

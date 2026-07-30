@@ -36,6 +36,11 @@ from typing import TYPE_CHECKING, Sequence
 import cv2
 import numpy as np
 
+from app.core.detector import (
+    _DET_HOUGH_PAD,
+    _DET_HOUGH_RMAX_F,
+    _DET_HOUGH_RMIN_F,
+)
 from app.core.parser_disc_s17 import (
     PanelLayout,
     _canon_with_unit,
@@ -102,6 +107,32 @@ _BADGE_PX_MIN = 20         # píxeles saturados mínimos para creerle al hue
 #     S = 22.0    A = 155.0    B = 98.0
 # Los rangos son ±10 alrededor de cada uno; no se solapan ni de cerca.
 _BADGE_HUE = {"S": (12, 32), "A": (145, 165), "B": (88, 108)}
+
+# --- Badge del DUEÑO: mismo ancla, otro lado del pill ------------------------------------------
+# Offsets medidos sobre los 28 fixtures que tienen avatar visible (ver `read_weapon_owner_badge`):
+#     dx = cx - pill.x2 ∈ [163, 165]     dy = cy - pill.cy ∈ [-2, 0]     radio ∈ [23, 30]
+_OWNER_DX = 164
+_OWNER_DY = -1
+# Media ROI de búsqueda. Con 45 px el círculo más grande (r=30) entra entero y sobran 15 px de
+# margen para el corrimiento de ±2 px, sin llegar a tocar el texto del nivel ni el arte del arma.
+_OWNER_SEARCH = 45
+_OWNER_DISCO_R = 20        # disco interior donde se mide la nitidez (bien dentro del avatar)
+
+# Presencia por NITIDEZ (|Laplaciano| medio dentro del disco), no por saturación ni por brillo.
+# Medido sobre los 40 fixtures (28 con dueño / 12 libres), separación total:
+#
+#     métrica            DUEÑO            LIBRE          gap
+#     |Laplaciano|    51.98 – 90.43     1.54 – 4.75      11×      ← se usa esta
+#     std_in          42.29 – 85.58     2.58 – 13.15      3.2×
+#     V_in - V_out    68.20 – 189.46   -5.77 – 13.32      5×
+#     área saturada     103 – 7157         0 – 8002    SE SOLAPA  ← la que fallaba
+#
+# El área saturada —que es lo que usa `crop_detail_badge`— NO discrimina acá: cuatro armas libres
+# (Ejemplo_32/33/4/5) tienen un resplandor de color del ARTE DEL ARMA justo detrás del hueco del
+# badge, y eso da blobs de hasta 8002 px², más que varios avatares reales. Brillo y saturación
+# miden lo mismo que el resplandor; la nitidez no: una cara tiene detalle, un degradé no tiene
+# ninguno. Por eso el gap se abre a 11× en vez de solaparse.
+_OWNER_NITIDEZ_MIN = 20.0  # 4.2× sobre el libre más alto, 2.6× bajo el dueño más bajo
 # ATK base a nivel 60 por rareza — segunda señal INDEPENDIENTE (auditoría del catálogo 2026-07-28,
 # 32 muestras a máximo, sin solapes). Solo aplica al máximo: fuera de ahí el ATK no dice nada.
 _ATK_MAX_POR_RAREZA = {684: "S", 713: "S", 743: "S", 594: "A", 624: "A"}
@@ -122,6 +153,13 @@ class WeaponParsed:
     # PJ que la tiene equipada. NO lo llena este módulo: lo resuelve el monitor con la superficie
     # de badge compartida (`crop_detail_badge` + `avatar_detbadge_v2`), que es stateful y vive ahí.
     dueno: str | None = None
+    # "equipada" (la lleva el PJ en pantalla) | "otro_pj" | "libre" | "incierto". Lo llena el
+    # monitor con `clasificar_tenencia`, que necesita el latch de identidad y el botón de acción.
+    tenencia: str = "incierto"
+    # Bbox del pill "Nivel N/M". Se expone porque es el ANCLA de todo lo posicional del panel
+    # (rareza, refinamiento y el badge del dueño): el monitor lo necesita para recortar el avatar
+    # sin volver a OCRizar. None si el pill no se leyó — ahí no se ancla nada.
+    pill_bbox: tuple[int, int, int, int] | None = None
     confianza: float = 0.0
     notas: list[str] = field(default_factory=list)
 
@@ -256,6 +294,128 @@ def read_rareza(frame: np.ndarray, pill_bbox: tuple[int, int, int, int]) -> str 
         return None
 
 
+@dataclass
+class OwnerBadge:
+    """Badge del dueño en el panel de arma. Presencia y nombrado van SEPARADOS a propósito
+    (la lección del falso-LIBRE, ver `badge_surface`): decir "hay una cara" es mucho más fácil
+    que decir de quién es, y el feature que pidió esto solo necesita lo primero."""
+
+    present: bool
+    nitidez: float                      # |Laplaciano| medio dentro del disco (la evidencia)
+    crop: np.ndarray | None = None      # recorte para nombrar; None si Hough no cerró el círculo
+
+
+def read_weapon_owner_badge(frame: np.ndarray,
+                            pill_bbox: tuple[int, int, int, int] | None) -> OwnerBadge | None:
+    """¿Tiene dueño el arma del panel? Anclado al pill de nivel. None si no hay ancla.
+
+    `present=False` en este panel significa **arma libre**: nadie la tiene equipada, y por eso el
+    juego no pide confirmación al equiparla (a diferencia del arma de otro PJ, que abre el diálogo
+    S23). Ese era el agujero: sin esta señal no se puede distinguir "libre" de "la tiene otro".
+
+    El `crop` conserva el encuadre de `crop_detail_badge` (Hough + `_DET_HOUGH_PAD`) a propósito:
+    la librería `avatar_detbadge_v2` se cosechó así y un recorte distinto la volvería inútil para
+    nombrar. Lo que cambia es **dónde se busca** y **cómo se decide que hay algo**.
+
+    ## Por qué anclado y no una franja fija
+
+    `crop_detail_badge` busca en `_DET_REGION`, una franja de coordenadas normalizadas FIJAS —
+    la misma trampa que ya costó cara con la fila de estrellas: el panel se corre verticalmente
+    cuando el nombre del arma envuelve a dos líneas. Con la franja fija, Ejemplo_34 y Ejemplo_39
+    dan **falso LIBRE** teniendo avatar: el círculo entra cortado por el borde del recuadro, así
+    que lo que se mide no es el avatar. Anclado al pill entran los 28 enteros, con un offset
+    rígido de ±2 px en cada eje (de ahí que la ROI de búsqueda sea chica y aun así holgada).
+
+    ## Por qué nitidez y no saturación
+
+    Ver `_OWNER_NITIDEZ_MIN`: cuatro armas libres tienen un resplandor del arte del arma detrás
+    del hueco del badge que produce blobs saturados más grandes que los de varios avatares
+    reales. Brillo y saturación miden ese resplandor; la nitidez lo ignora.
+    """
+    if frame is None or getattr(frame, "size", 0) == 0 or not pill_bbox:
+        return None
+    try:
+        H, W = frame.shape[:2]
+        _, y1, x2, y2 = pill_bbox
+        cx, cy = x2 + _OWNER_DX, (y1 + y2) // 2 + _OWNER_DY
+        x0, x1 = cx - _OWNER_SEARCH, cx + _OWNER_SEARCH
+        ry0, ry1 = cy - _OWNER_SEARCH, cy + _OWNER_SEARCH
+        if x0 < 0 or ry0 < 0 or x1 > W or ry1 > H:
+            return None
+        sub = frame[ry0:ry1, x0:x1]
+        if sub.size == 0:
+            return None
+        gray = cv2.cvtColor(sub, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        n = 2 * _OWNER_SEARCH
+        yy, xx = np.mgrid[0:n, 0:n]
+        disco = ((xx - _OWNER_SEARCH) ** 2 + (yy - _OWNER_SEARCH) ** 2) < _OWNER_DISCO_R ** 2
+        nitidez = float(np.abs(cv2.Laplacian(gray, cv2.CV_32F))[disco].mean())
+        if nitidez < _OWNER_NITIDEZ_MIN:
+            return OwnerBadge(present=False, nitidez=nitidez)
+        # Hay cara. El crop para nombrar es un extra: si Hough no cierra el círculo se devuelve
+        # `present=True` igual — perder el nombre no debe convertir un arma con dueño en libre.
+        blur = cv2.medianBlur(cv2.cvtColor(sub, cv2.COLOR_BGR2GRAY), 3)
+        circles = cv2.HoughCircles(
+            blur, cv2.HOUGH_GRADIENT, dp=1.2, minDist=int(0.05 * W),
+            param1=120, param2=22,
+            minRadius=int(_DET_HOUGH_RMIN_F * W), maxRadius=int(_DET_HOUGH_RMAX_F * W),
+        )
+        crop = None
+        if circles is not None:
+            c0 = circles[0][0]
+            ccx, ccy = int(x0 + c0[0]), int(ry0 + c0[1])
+            r = int(c0[2] * _DET_HOUGH_PAD)
+            if r >= 8:
+                c = frame[max(0, ccy - r):min(H, ccy + r), max(0, ccx - r):min(W, ccx + r)]
+                crop = c if c.size else None
+        return OwnerBadge(present=True, nitidez=nitidez, crop=crop)
+    except Exception:
+        return None
+
+
+# Tenencia del arma del panel. Habla del ARMA, no del slot destino (que es lo que dice el botón).
+TENENCIA = ("equipada", "otro_pj", "libre", "incierto")
+
+
+def clasificar_tenencia(boton: str | None,
+                        badge: OwnerBadge | None,
+                        badge_nombre: str | None,
+                        pj_en_pantalla: str | None) -> tuple[str, str | None]:
+    """Cruza las DOS señales independientes y devuelve `(tenencia, dueño)`.
+
+    Mismo diseño de pinza que el disco libre (`_check_libre_equipado`): cada señal tapa el
+    agujero de la otra, y ninguna alcanza sola.
+
+      · **El botón** (`read_s17_action_button`) habla del SLOT DESTINO, no del arma: dice si el
+        PJ que estás mirando tiene algo puesto ahí. Es texto en posición fija — la lectura más
+        robusta que hay en este panel (40/40 en los fixtures) — pero no sabe de quién es el arma.
+      · **El badge** (`read_weapon_owner_badge`) dice si el arma tiene dueño, pero no quién,
+        salvo que la librería lo resuelva (hoy casi nunca: le faltan PJs).
+
+    Cruzadas dan lo que ninguna da sola. La clave es que 'Desequipar' **identifica al dueño con
+    certeza y sin librería**: si el juego te ofrece desequiparla, la lleva puesta el PJ que estás
+    mirando, y a ese lo sabemos por el latch de identidad. Es la única vía de dueño certero
+    mientras `avatar_detbadge_v2` siga incompleta.
+
+    'Equipar'/'Reemplazar' dicen lo contrario —no la tiene este PJ— y ahí decide el badge:
+    con avatar es de otro, sin avatar está libre. Esa distinción es la que importa río abajo,
+    porque **equipar un arma libre no abre diálogo de confirmación** y la de otro PJ sí (S23).
+    """
+    presente = None if badge is None else badge.present
+    if boton == "desequipar":
+        # El badge no se consulta: 'Desequipar' es prueba directa. Si además hubiera un badge
+        # ausente sería un falso LIBRE, y este orden lo neutraliza (presencia gana a libre).
+        return "equipada", pj_en_pantalla
+    if presente is None:
+        return "incierto", None
+    if not presente:
+        return "libre", None
+    if boton in ("equipar", "reemplazar"):
+        return "otro_pj", badge_nombre
+    # Hay dueño pero sin botón no se puede saber si es el PJ en pantalla u otro.
+    return "incierto", badge_nombre
+
+
 def _primera_fila(candidatas: list[_Line]) -> list[_Line]:
     """Recorta una sección a su PRIMERA fila visual (etiqueta + valor, que van a la misma altura).
 
@@ -334,6 +494,7 @@ def parse_weapon_s26_from_lines(
             out.nivel, out.nivel_max = int(m.group(1)), int(m.group(2))
             linea_nivel_y = ln.y1
             pill_bbox = (ln.x1, ln.y1, ln.x2, ln.y2)
+            out.pill_bbox = pill_bbox
             confs.append(ln.conf)
             break
     if out.nivel is None:

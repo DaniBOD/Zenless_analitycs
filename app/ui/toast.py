@@ -74,6 +74,10 @@ class ToastData:
     weapon_level:  str = ""             # "60/60" listo para mostrar
     weapon_refine: int = 0              # 1-5, 0 = no leído
     weapon_stat:   str = ""             # "ATK% 30 %" listo para mostrar
+    # Tenencia ya redactada ("LIBRE", "la tiene Lucia", …) o "" si no se pudo determinar. Va
+    # junto a rareza y nivel porque es lo que decide qué pasa al equiparla: un arma libre entra
+    # sin confirmación, la de otro PJ abre diálogo.
+    weapon_tenencia: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -805,7 +809,8 @@ class DiscToast(QWidget):
         p.drawText(QRect(col_x, top, col_w, 20),
                    int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), d.weapon_name)
 
-        linea = " · ".join(x for x in (d.rarity, d.weapon_level and f"Nv {d.weapon_level}") if x)
+        linea = " · ".join(x for x in (d.rarity, d.weapon_level and f"Nv {d.weapon_level}",
+                                       d.weapon_tenencia) if x)
         p.setFont(T.font_ui(9))
         p.setPen(T.color(T.TEXT_MUTED))
         p.drawText(QRect(col_x, top + 21, col_w, 14),

@@ -739,6 +739,7 @@ class MonitorController(QObject):
                 "refinamiento": int(ev.get("refinamiento") or 0),
                 "stat": ev.get("stat") or "",
                 "dueno": ev.get("dueno"),
+                "tenencia": ev.get("tenencia") or "incierto",
             })
         except Exception:
             log.exception("Error armando el toast de W-Engine")

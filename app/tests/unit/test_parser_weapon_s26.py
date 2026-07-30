@@ -355,3 +355,114 @@ def test_el_fuzzy_no_cruza_los_modelos_de_repercusion():
     cat = ["Repercusión - Modelo I", "Repercusión - Modelo II", "Repercusión - Modelo III"]
     assert match_catalogo("Repercusion - Modelo ll", cat) == "Repercusión - Modelo II"
     assert match_catalogo("Repercusión- Modelo lll", cat) == "Repercusión - Modelo III"
+
+
+# --- Tenencia: ¿la lleva el PJ en pantalla, otro, o está libre? -------------------------------
+#
+# Verdad de tierra a ojo sobre los 40 fixtures (montaje de la ROI anclada, 2026-07-30). LIBRE es
+# la lista corta a propósito: es el caso que el sistema NO podía ver y el que el feature agrega.
+#
+# Ojo con cuatro de ellas — Ejemplo_32/33/4/5 tienen un resplandor de color del ARTE DEL ARMA
+# justo detrás del hueco del badge. Por brillo o por saturación pasan por avatar (blobs de hasta
+# 8002 px², más que varios avatares reales); son el motivo de que la presencia se mida por
+# nitidez y no por color.
+_GT_LIBRES = {
+    "Ejemplo_11", "Ejemplo_14", "Ejemplo_16", "Ejemplo_20", "Ejemplo_22", "Ejemplo_28",
+    "Ejemplo_32", "Ejemplo_33", "Ejemplo_35", "Ejemplo_36", "Ejemplo_4", "Ejemplo_5",
+}
+
+
+@pytest.mark.parametrize("stem", sorted(_GT))
+def test_presencia_del_badge_de_dueno(stem):
+    """40/40. El caso que importa es el negativo: sin esta señal, un arma libre y una de otro PJ
+    son indistinguibles, y son las dos que se comportan distinto al equiparlas."""
+    if not _present(stem):
+        pytest.skip("fixture ausente")
+    b = W.read_weapon_owner_badge(_load(stem), _pill_bbox(stem))
+    assert b is not None, "el pill está, así que el ancla tiene que resolver"
+    assert b.present is (stem not in _GT_LIBRES), f"nitidez={b.nitidez:.1f}"
+
+
+@pytest.mark.parametrize("stem", sorted(_GT))
+def test_la_nitidez_separa_con_margen(stem):
+    """No alcanza con acertar: el margen es lo que dice si aguanta un arma nueva.
+
+    Medido: libres ≤ 4.75, con dueño ≥ 51.98 — 11× de separación. Se exige la mitad de ese
+    margen para que el test avise si un fixture nuevo lo empieza a cerrar, en vez de esperar a
+    que un día cruce el umbral y aparezca como un dueño inventado."""
+    if not _present(stem):
+        pytest.skip("fixture ausente")
+    b = W.read_weapon_owner_badge(_load(stem), _pill_bbox(stem))
+    if stem in _GT_LIBRES:
+        assert b.nitidez < W._OWNER_NITIDEZ_MIN / 2, f"libre demasiado nítida: {b.nitidez:.1f}"
+    else:
+        assert b.nitidez > W._OWNER_NITIDEZ_MIN * 2, f"dueño demasiado liso: {b.nitidez:.1f}"
+
+
+@pytest.mark.parametrize("stem", sorted(set(_GT) - _GT_LIBRES))
+def test_con_dueno_siempre_hay_recorte_para_nombrar(stem):
+    """28/28. La franja fija daba 26 y —peor— confundía "no encontré el círculo" con "no hay
+    dueño". Acá son dos salidas distintas: `present` sin `crop` es "hay alguien, no sé quién"."""
+    if not _present(stem):
+        pytest.skip("fixture ausente")
+    b = W.read_weapon_owner_badge(_load(stem), _pill_bbox(stem))
+    assert b.crop is not None and b.crop.size > 0
+
+
+def test_el_ancla_sobrevive_al_nombre_de_dos_lineas():
+    """La regresión concreta que motivó el ancla.
+
+    Ejemplo_34 y Ejemplo_39 TIENEN avatar y la franja fija de `crop_detail_badge` los daba por
+    libres: el nombre del arma envuelve a dos líneas, empuja el panel hacia abajo y el círculo
+    entra cortado por el borde del recuadro. Es la misma trampa de coordenadas fijas que ya había
+    aparecido con la fila de estrellas."""
+    from app.core.detector import crop_detail_badge
+    for stem in ("Ejemplo_34", "Ejemplo_39"):
+        if not _present(stem):
+            pytest.skip("fixture ausente")
+        assert crop_detail_badge(_load(stem)) is None, "cambió el comportamiento viejo"
+        b = W.read_weapon_owner_badge(_load(stem), _pill_bbox(stem))
+        assert b.present, f"{stem}: el avatar está y el ancla lo tiene que ver"
+
+
+def test_sin_ancla_no_se_inventa_tenencia():
+    """Sin pill no hay dónde mirar. Devolver None (y no `present=False`) es lo que evita que un
+    panel ilegible se reporte como arma libre."""
+    frame = np.zeros((1440, 2560, 3), np.uint8)
+    assert W.read_weapon_owner_badge(frame, None) is None
+    assert W.clasificar_tenencia("reemplazar", None, None, "Velina") == ("incierto", None)
+
+
+def test_desequipar_identifica_al_dueno_sin_libreria():
+    """La vía de dueño CERTERO mientras `avatar_detbadge_v2` siga incompleta: si el juego ofrece
+    'Desequipar', la lleva puesta el PJ que estás mirando. No hace falta reconocer la cara."""
+    badge = W.OwnerBadge(present=True, nitidez=80.0)
+    assert W.clasificar_tenencia("desequipar", badge, None, "Velina") == ("equipada", "Velina")
+
+
+def test_desequipar_le_gana_a_un_badge_ausente():
+    """Presencia gana a libre, la regla que ya rige en la ruta de discos. Un falso LIBRE del badge
+    no debe poder contradecir al botón, que es la lectura más robusta del panel."""
+    badge = W.OwnerBadge(present=False, nitidez=1.0)
+    assert W.clasificar_tenencia("desequipar", badge, None, "Velina") == ("equipada", "Velina")
+
+
+def test_libre_solo_cuando_el_boton_dice_que_no_es_de_este_pj():
+    badge = W.OwnerBadge(present=False, nitidez=2.0)
+    for boton in ("equipar", "reemplazar"):
+        assert W.clasificar_tenencia(boton, badge, None, "Velina") == ("libre", None)
+
+
+def test_otro_pj_sin_nombre_sigue_siendo_otro_pj():
+    """Que la librería no sepa quién es no lo vuelve libre — es la distinción que decide si al
+    equiparla salta el diálogo de confirmación."""
+    badge = W.OwnerBadge(present=True, nitidez=70.0)
+    assert W.clasificar_tenencia("reemplazar", badge, None, "Velina") == ("otro_pj", None)
+    assert W.clasificar_tenencia("reemplazar", badge, "Lucia", "Velina") == ("otro_pj", "Lucia")
+
+
+def test_sin_boton_no_se_afirma_de_quien_es():
+    """Con badge presente y sin botón falta la segunda señal: hay dueño, pero no se puede saber
+    si es el PJ en pantalla u otro. Se reporta incierto en vez de elegir."""
+    badge = W.OwnerBadge(present=True, nitidez=70.0)
+    assert W.clasificar_tenencia(None, badge, "Lucia", "Velina") == ("incierto", "Lucia")

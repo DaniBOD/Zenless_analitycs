@@ -54,6 +54,7 @@ _AGENT_SPLASH_OVERRIDES: dict[str, str] = {
     "Billy Estelar":  "Billy-starlight",  # Billy Kid (v2.x); archivo EN. -extend usa "_"
                                           # → lo resuelve el fallback de separador.
     "Jane":           "Jane-Doe",      # DB usa el nombre corto; los archivos, el completo
+    "Remielle Dan":   "Remielle",      # al revés que Jane: la DB usa el completo, el archivo el corto
 }
 
 # Algunos archivos cissia usan "_" en lugar de "-" como separador

@@ -107,10 +107,20 @@ def test_set_package_badge_paths_apostrofe_y_espacios():
 
 
 def test_set_package_badge_paths_sin_badge_devuelve_vacio():
-    # Branch & Blade Song: endpoint caído al descargar → sin package badge (§5 del plan).
-    assert set_package_badge_paths("Branch & Blade Song") == []
+    """Un set sin badges descargados devuelve [], no revienta ni inventa una ruta.
+
+    El ejemplo era *Branch & Blade Song* (el endpoint estaba caído cuando se bajaron los
+    assets); sus tres badges ya están, así que ahora el caso sin cubrir es **Hado emplumado**,
+    set nuevo del patch 3.1 que todavía no tiene ni fila en `disc_sets` ni logos."""
+    assert set_package_badge_paths("Feathered Fate") == []
     assert set_package_badge_paths(None) == []
     assert set_package_badge_paths("") == []
+
+
+def test_branch_and_blade_song_ya_tiene_sus_badges():
+    """Regresión del hueco que tapaba el test anterior: se descargaron los 3, y el `&` del
+    nombre viaja url-encodeado en el archivo (`%26`), que es donde falla un resolver ingenuo."""
+    assert len(set_package_badge_paths("Branch & Blade Song")) == 3
 
 
 # Agentes con overrides irregulares (los más sensibles)
@@ -191,7 +201,7 @@ def test_ico_no_cae_al_cuadrado_de_hoyolab():
 # existen y se verifican normalmente.
 # Velina (id 48) y Pyrois (id 49): onboarding parcial vigente — faltan thresholds/splash/IA
 # y su Pj_stats.jpeg HoYoLAB. Ver memoria project_velina_onboarding / project_pyrois_onboarding.
-_PJ_STATS_DEFERIDO = {"Billy Estelar", "Velina", "Pyrois"}
+_PJ_STATS_DEFERIDO = {"Billy Estelar", "Velina", "Pyrois", "Remielle Dan"}
 
 
 def test_full_coverage_against_db():
