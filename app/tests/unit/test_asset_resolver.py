@@ -213,12 +213,17 @@ def test_full_coverage_against_db():
 
     con = get_connection()
     try:
-        # Sets
+        # Sets. Un set SIN `nombre_en` no puede resolver logo y eso es correcto por diseño:
+        # los dos sets del 3.1 ('Hado emplumado', 'Rosa espinosa') entraron con nombre_en NULL
+        # a propósito porque la wiki todavía no los publicó (RNF-02 — inventar el inglés
+        # apuntaría al ícono equivocado). Ver db/migrations/2026-07-30_18_sets_31_y_nombres_es.sql.
+        # El guard sigue filoso donde importa: en cuanto alguien cargue el nombre inglés, el
+        # logo TIENE que existir.
         set_misses = []
         for s in DiscSetRepo(con).get_all():
-            if set_logo_path(s.nombre_en) is None:
+            if s.nombre_en and set_logo_path(s.nombre_en) is None:
                 set_misses.append(f"{s.nombre} ({s.nombre_en})")
-        assert not set_misses, f"Sets sin logo: {set_misses}"
+        assert not set_misses, f"Sets con nombre_en pero sin logo: {set_misses}"
 
         # Agents
         agent_misses_extend = []

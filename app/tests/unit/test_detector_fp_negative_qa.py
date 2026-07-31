@@ -46,7 +46,12 @@ GROUPS: dict[str, set[str]] = {
     "Modo_foto": {"S12"},
     "Menu_Pausa": {"S12"},
     "Pase_batalla": {"S12"},
-    "Banners": {"S12"},
+    # Los banners se archivaron como FP ANTES de que existiera S27 (banner de sintonización,
+    # gacha). Hoy 3 de 4 matchean s27_banner_sintonizacion.png con conf≈0.99 y canal verificado
+    # (1/3/5): ya no son falsos positivos, son la pantalla que S27 justamente extrae. El 4º
+    # (Banners_2) da S12 por 'sin_realce' — banner sin el realce que S27 exige, cobertura
+    # pendiente del lado de gacha, no una regresión de FP.
+    "Banners": {"S27", "S12"},
 }
 
 

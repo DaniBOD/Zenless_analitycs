@@ -353,7 +353,9 @@ class _StubIdent:
     """Identificador controlado para testear la lógica de `_assign_s17_pj` (5R.5)
     sin depender de fixtures: define la similitud al latch y el dueño identificado."""
     def __init__(self, sim=None, owner=None, free=False, det_owner=None,
-                 det_conf=0.66, det_margin=0.5, det_rej=False):
+                 det_conf=0.66, det_margin=0.5, det_rej=False, det_conocidos=()):
+        # `det_conocidos` = PJs con refs en la librería del DETALLE (la que se cosecha).
+        self._det_conocidos = set(det_conocidos)
         self._sim = sim; self._owner = owner; self.learned = []
         self._roster_norm = {}; self._free = free
         self._det_owner = det_owner; self.learned_detail = []
@@ -383,6 +385,9 @@ class _StubIdent:
     def s17_detail_is_face(self, badge):
         # Presencia estructural (5R.L.8): det_rej=True modela un crop de TEXTO '(N)'.
         return not self._det_rej
+
+    def knows_detail_badge(self, name):
+        return name in self._det_conocidos
 
     def learn_s17(self, badge, name):
         self.learned.append(name); return True
@@ -421,6 +426,125 @@ def test_monitor_equipado_por_flujo_asigna_y_cosecha(monkeypatch):
     assert disc.agente_asignado_nombre == "Zhu Yuan"
     assert disc.agente_asignado_conf == 1.0
     assert "Zhu Yuan" in m._identifier.learned  # cosecha con label certero
+
+
+# ---- rescate de la cosecha del DETALLE bajo veto del grid (QA 2026-07-31) ---
+#
+# Medición en vivo sobre la página de Velina, con el veto puesto:
+#     voted=Remielle Dan · grid_votes=[Remielle Dan:0.90] · det_loc=2 det_match=0 det_votes=[-]
+# El detalle localizó dos veces y se abstuvo las dos (no tiene refs de Velina); el veto lo
+# produjo el GRID, que discrepa desde otro recorte y otra librería.
+
+def _monitor_cross_check(monkeypatch, latch, voted, origen="menu", boton="desequipar",
+                         det_voto=None, det_conocidos=()):
+    """Monitor parado en el cruce ancla-vs-badge: el badge vota `voted`, el ancla dice `latch`."""
+    import numpy as np
+    import app.core.monitor as mon
+    from app.core.monitor import _S17_OWNER_MIN_SAMPLES
+    from app.core.owner_vote import DETAIL
+    m = _monitor_badge(monkeypatch, sim=None, owner=None)
+    # Sin este stub el recorte del detalle sale None sobre un frame sintético y el test miraría
+    # la mitad del efecto (las dos cosechas son paralelas y de librerías distintas).
+    monkeypatch.setattr(mon, "crop_detail_badge", lambda f: np.zeros((40, 40, 3), np.uint8))
+    m._identifier = _StubIdent(det_conocidos=det_conocidos)
+    m._last_agent_name = latch
+    m._latch_origen = origen
+    # `_assign_s17_pj` RELEE el botón por OCR y pisa lo que le pongamos, así que se neutraliza
+    # la relectura: acá el botón es una entrada del test, no algo a medir.
+    monkeypatch.setattr(type(m), "_refresh_action_button", lambda self, d, f, badge_present: None)
+    m._s17_action_btn = boton
+    if det_voto:
+        m._s17_vote.vote(DETAIL, det_voto, 0.9)
+    m._s17_last_slot = 0                          # slot nuevo → el ancla dice "equipado"
+    m._s17_owner_passes = _S17_OWNER_MIN_SAMPLES
+    monkeypatch.setattr(type(m), "_s17_voted_owner", lambda self, f: voted)
+    return m
+
+
+def test_el_veto_del_grid_no_bloquea_la_cosecha_del_detalle(monkeypatch):
+    """El detalle SIN refs del latch no puede opinar sobre él, así que su librería crece igual.
+
+    Sin esto un PJ sin refs de detalle no entra nunca: no puede entrar a la librería porque no
+    está en la librería. Pasó con Velina, Pyrois, N.º 0, Lycaon y Rina.
+    """
+    m = _monitor_cross_check(monkeypatch, latch="Velina", voted="Remielle Dan",
+                             det_conocidos={"Remielle Dan"})
+    disc = _disc(slot=1)
+    m._assign_s17_pj(disc, _frame())
+    assert m._identifier.learned_detail == ["Velina"]   # el detalle SÍ creció
+    assert m._identifier.learned == []                  # el grid NO (es el que discrepa)
+    # El veredicto del disco NO cambia: el dueño observado sigue siendo el que votó el badge.
+    assert disc.equip_pj_visual == "Remielle Dan"
+    assert disc.agente_asignado_nombre is None
+
+
+def test_un_voto_del_detalle_sin_refs_del_latch_no_bloquea(monkeypatch):
+    """Regresión del guard que era demasiado estricto (QA 2026-07-31, Rina).
+
+    La primera versión exigía que el detalle se ABSTUVIERA. Sobre Rina —0 refs de detalle— la
+    superficie no se abstuvo: votó `Lucía:1.72`, dos matches confiados a un PJ equivocado. Pero
+    abstenerse y nombrar a otro son la MISMA situación (librería sin el PJ verdadero); solo la
+    segunda bloqueaba. Lo que importa es si la superficie PUEDE opinar, no si opinó.
+    """
+    m = _monitor_cross_check(monkeypatch, latch="Rina", voted="Cissia", det_voto="Lucía",
+                             det_conocidos={"Cissia", "Lucía"})
+    disc = _disc(slot=1)
+    m._assign_s17_pj(disc, _frame())
+    assert m._identifier.learned_detail == ["Rina"]
+
+
+def test_si_el_detalle_conoce_al_latch_su_desacuerdo_sigue_vetando(monkeypatch):
+    """El contrapeso. Con refs del latch, el detalle SÍ puede opinar y su desacuerdo es evidencia
+    real: no se cosecha. Es la protección del patrón Ben=Soukaku."""
+    m = _monitor_cross_check(monkeypatch, latch="Velina", voted="Jane", det_voto="Jane",
+                             det_conocidos={"Velina", "Jane"})
+    disc = _disc(slot=1)
+    m._assign_s17_pj(disc, _frame())
+    assert m._identifier.learned_detail == []
+    assert disc.equip_pj_visual == "Jane"
+
+
+def test_no_se_rescata_con_latch_sostenido_por_matcher(monkeypatch):
+    """Solo con un nombre LEÍDO en pantalla (menú o S18). Un latch del matcher de avatar puede
+    ser justo el latch viejo que el cross-check cubre."""
+    m = _monitor_cross_check(monkeypatch, latch="Velina", voted="Remielle Dan", origen="avatar")
+    disc = _disc(slot=1)
+    m._assign_s17_pj(disc, _frame())
+    assert m._identifier.learned_detail == []
+
+
+def test_el_rescate_declara_cuando_el_recorte_falla(monkeypatch, caplog):
+    """Los 3 checks pasan pero Hough no cierra el círculo en ESE frame (se ve como `det_loc`
+    bajando en el id_diag). Sin esta línea el caso se lee como "la regla no dispara" en vez de
+    "el recorte falló, reintentá" — que fue justo lo que confundió el diagnóstico de Rina."""
+    import logging
+    import numpy as np  # noqa: F401  (lo usa el stub que reemplazamos abajo)
+    import app.core.monitor as mon
+    m = _monitor_cross_check(monkeypatch, latch="Rina", voted="Cissia")
+    monkeypatch.setattr(mon, "crop_detail_badge", lambda f: None)
+    disc = _disc(slot=1)
+    with caplog.at_level(logging.INFO, logger="app.core.monitor"):
+        m._assign_s17_pj(disc, _frame())
+    assert m._identifier.learned_detail == []
+    assert any("el recorte del badge no salió" in r.getMessage() for r in caplog.records), \
+        [r.getMessage() for r in caplog.records]
+
+
+def test_no_se_rescata_si_el_boton_no_confirma(monkeypatch, caplog):
+    """Tercera confirmación: 'desequipar' es el juego afirmando que ESE PJ lo lleva puesto. Sin
+    esa afirmación podríamos estar mirando un CANDIDATO de otro PJ — y ahí el grid tendría razón,
+    que es justo el caso en que cosechar arruina la librería.
+
+    Además se exige que DIGA por qué no rescató: una regla que no dispara en silencio es
+    indistinguible de una que no existe (la lección de los returns mudos)."""
+    import logging
+    m = _monitor_cross_check(monkeypatch, latch="Velina", voted="Remielle Dan", boton=None)
+    disc = _disc(slot=1)
+    with caplog.at_level(logging.INFO, logger="app.core.monitor"):
+        m._assign_s17_pj(disc, _frame())
+    assert m._identifier.learned_detail == []
+    assert any("no rescato la cosecha del detalle" in r.getMessage() for r in caplog.records), \
+        [r.getMessage() for r in caplog.records]
 
 
 def test_monitor_equipado_sin_badge_igual_asigna(monkeypatch):

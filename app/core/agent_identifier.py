@@ -325,6 +325,24 @@ class AgentIdentifier:
 
     # ---- API: DETALLE-badge (panel de detalle S17, librería propia) ----------
 
+    def knows_detail_badge(self, name: str | None) -> bool:
+        """¿La librería del DETALLE tiene refs de `name`?
+
+        Es la pregunta "¿puede esta superficie opinar sobre este PJ?". Un matcher contesta
+        eligiendo entre las clases que tiene: sin refs del PJ verdadero, su respuesta no es una
+        opinión sobre él sino lo más parecido que encontró en un conjunto que no lo contiene.
+
+        Medido en vivo (QA 2026-07-31) sobre la página de Rina, que tiene 0 refs de detalle:
+        `det_votes=[Lucía:1.72]` — dos matches confiados a un PJ equivocado. Por eso "se
+        abstuvo" NO sirve como proxy de "no tiene opinión": a veces se abstiene (Velina, Pyrois,
+        N.º 0) y a veces nombra a otro, y las dos cosas significan lo mismo.
+
+        Es SOLO el detalle a propósito: el grid tiene refs de todo el roster (sembradas de
+        `-ico` + cosecha vieja), así que preguntarle a él da siempre que sí y no discrimina nada.
+        """
+        canon = self._canonical_name(name) if name else None
+        return bool(canon) and bool(self._detbadge._refs.get(canon))
+
     def learn_s17_detail(self, face, name: str) -> bool:
         """Cosecha el detalle-badge de `name` (ground-truth del latch) a su librería
         PROPIA. Mismo gating que learn_s17: en readonly NO persiste salvo en cosecha

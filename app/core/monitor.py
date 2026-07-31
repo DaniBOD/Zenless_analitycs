@@ -488,6 +488,12 @@ class Monitor:
         # mientras el avatar esté oculto (interfaz deslizante) — solo cambia al ver
         # positivamente otro avatar. Da robustez frente al auto-hide del row.
         self._detail_source: str | None = None
+        # ORIGEN del latch actual: "menu" | "s18" | "avatar" | None. Distinto de `_detail_source`,
+        # que dice cómo se sostiene AHORA y se degrada a "sostenido" apenas el matcher no confirma
+        # un frame. Acá interesa de dónde SALIÓ el nombre: "menu"/"s18" son un nombre LEÍDO de la
+        # pantalla (la evidencia más fuerte que hay), "avatar" es un matcher. Sobrevive al
+        # carry-forward y solo se limpia al resetear la identidad.
+        self._latch_origen: str | None = None
         # Votación multi-frame del descriptor de fila (S8/S19): confianza acumulada por PJ
         # + nº de muestras confiables, para la ranura de avatar actual. Se reinicia al mover
         # el avatar (otro PJ) o al salir de la familia detalle. Ver _DETAIL_MIN_SAMPLES.
@@ -3005,6 +3011,73 @@ class Monitor:
             return
         self._emit_s17_disc(merged, state, mature)
 
+    def _maybe_harvest_detail_despite_veto(self, frame, latch: str, voted: str) -> None:
+        """Cosecha SOLO la librería del detalle cuando el veto del cross-check lo produjo el grid
+        y el detalle no tuvo nada que decir.
+
+        El QA del 2026-07-31 midió el veto que dejó a 6 PJs sin cosechar. Sobre la página de
+        Velina: `grid_votes=[Remielle Dan:0.90]`, `det_loc=2 det_match=0 det_votes=[-]`. El veto
+        salió del GRID, que discrepa desde otro recorte y otra librería; el detalle ni opinó.
+        Bloquear con eso la cosecha del detalle la deja sin poder crecer nunca: un PJ no entra a
+        la librería porque no está en la librería.
+
+        Se exigen TRES confirmaciones independientes antes de aprender, porque el riesgo real es
+        el inverso (que el grid tenga razón, el disco sea de otro PJ y guardemos su cara bajo el
+        nombre equivocado — el patrón Ben=Soukaku):
+
+          1. la librería del DETALLE no tiene refs del latch ⇒ no puede opinar sobre él;
+          2. el latch es un nombre LEÍDO en pantalla (menú o S18), no sostenido por matcher;
+          3. el botón dice 'desequipar' — o sea el juego afirma que ESE PJ lo lleva puesto.
+
+        La (1) fue primero "el detalle se abstuvo", y el QA mostró que ese proxy es demasiado
+        estricto: sobre Rina (0 refs de detalle) la superficie NO se abstuvo, votó `Lucía:1.72`.
+        Abstenerse y nombrar a otro son la misma situación —una librería sin el PJ verdadero— y
+        solo la segunda bloqueaba. Lo que importa es si la superficie PUEDE opinar, no si opinó.
+
+        Si alguna falla no se cosecha, y se deja dicho cuál: sin esa línea, la regla que no
+        dispara es indistinguible de la que no existe.
+        """
+        faltan = []
+        if self._identifier.knows_detail_badge(latch):
+            faltan.append("el detalle SÍ tiene refs suyas (puede opinar, y discrepa)")
+        if self._latch_origen not in ("menu", "s18"):
+            faltan.append(f"latch de origen '{self._latch_origen}' (no leído en pantalla)")
+        if self._s17_action_btn != "desequipar":
+            faltan.append(f"botón={self._s17_action_btn!r} (no confirma que lo lleve puesto)")
+        if faltan:
+            self._log_s17_assign(
+                ("veto_detalle_no_rescatado", latch),
+                "[badge] no rescato la cosecha del detalle para '%s': %s.",
+                latch, " · ".join(faltan),
+            )
+            return
+        det = crop_detail_badge(frame) if frame is not None else None
+        if det is None:
+            # Las 3 confirmaciones dieron OK y aun así no se cosecha: Hough no cerró el círculo en
+            # ESTE frame (se ve como `det_loc` bajando en el id_diag). Se declara — un rescate que
+            # no ocurre en silencio es indistinguible de uno que no existe, y sin esta línea el
+            # caso se lee como "la regla no dispara" en vez de "el recorte falló, probá de nuevo".
+            self._log_s17_assign(
+                ("veto_detalle_sin_recorte", latch),
+                "[badge] iba a rescatar la cosecha del detalle de '%s' pero el recorte del badge "
+                "no salió en este frame (Hough no cerró) — reintenta al re-abrir el disco.",
+                latch,
+            )
+            return
+        if self._identifier.learn_s17_detail(det, latch):
+            self._log_s17_assign(
+                ("cosecha_detalle_pese_al_veto", latch),
+                "[cosecha] detalle de '%s' PESE al veto del grid (que votó '%s'): el detalle no "
+                "tiene refs suyas, el nombre se leyó en pantalla y el botón dice desequipar.",
+                latch, voted,
+            )
+        else:
+            self._log_s17_assign(
+                ("veto_detalle_no_aprendido", latch),
+                "[badge] el rescate de '%s' pasó los 3 checks pero la librería NO aceptó la ref.",
+                latch,
+            )
+
     def _s17_owner_resolved(self, disc) -> bool:
         """True si el dueño del disco ya quedó DECIDIDO (no hace falta seguir calentando):
         asignado por latch, dueño visual votado, o declarado LIBRE. False = 'incierto'."""
@@ -3570,6 +3643,7 @@ class Monitor:
                     self._last_agent_name, nombre,
                 )
             self._last_agent_name = nombre
+            self._latch_origen = "s18"     # nombre LEÍDO por OCR del panel, no matcheado
             # Anclar la posición del avatar resaltado para identificar al mismo PJ
             # luego en S8/S19 (donde no hay nombre en pantalla).
             ax = selected_avatar_x(frame)
@@ -3645,6 +3719,7 @@ class Monitor:
             if self._detail_samples >= _DETAIL_MIN_SAMPLES:
                 self._last_agent_name = max(self._detail_votes, key=self._detail_votes.get)
                 self._detail_source = "avatar"
+                self._latch_origen = "avatar"
                 self._detail_confirmed_source = "avatar"
                 self._agent_anchor_x = cur_x      # identidad confirmada en esta ranura
             return
@@ -3683,12 +3758,14 @@ class Monitor:
             self._last_detail_sig = None
         self._last_agent_name = nombre
         self._detail_source = "menu"
+        self._latch_origen = "menu"
 
     def _reset_detail_identity(self) -> None:
         """Limpia el latch de identidad (al salir de la familia detalle de agente)."""
         self._last_agent_name = None
         self._agent_anchor_x = None
         self._detail_source = None
+        self._latch_origen = None
         self._detail_votes = {}
         self._detail_samples = 0
         self._detail_vote_x = None
@@ -4311,6 +4388,7 @@ class Monitor:
                     "[badge] ancla decía '%s' pero el badge dice '%s' → badge (sin cosechar).",
                     latch, voted,
                 )
+                self._maybe_harvest_detail_despite_veto(frame, latch, voted)
                 return
             if badge is not None:                      # cosecha con label CERTERO (badge concuerda)
                 if self._identifier.learn_s17(badge, latch) and self._on_diagnostic:
