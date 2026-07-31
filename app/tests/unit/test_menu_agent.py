@@ -116,6 +116,57 @@ def test_monitor_s15_emite_edge_triggered(monkeypatch):
     assert emitted == [("Nangong Yu", "menu"), ("Jane", "menu")]
 
 
+def test_monitor_s15_siembra_el_latch_de_identidad(monkeypatch):
+    """El PJ del menú queda LATCHEADO (QA 2026-07-30).
+
+    Antes S15 era puramente informativo: reconocía al PJ, lo logueaba y lo tiraba. Al ir
+    del menú directo a Equipamiento el latch venía vacío y S8 salía `PJ=?` hasta pasar por
+    S18. El nombre del menú está ESCRITO en pantalla y ya viene canonicalizado contra el
+    roster, así que es la evidencia más barata y certera que hay: se siembra.
+    """
+    import app.core.parser_agent_stats as p
+    from app.core.detector import ScreenState
+    monkeypatch.setattr(p, "_match_agent", lambda t, *a, **k: (t.strip(), "rol", "elem"))
+    m = _monitor(_StubOcr("Nangong Yu"))
+    m._dispatch_state(np.zeros((1439, 2559, 3), np.uint8), ScreenState("S15", 1.0, "t"))
+    assert m._last_agent_name == "Nangong Yu"
+    assert m._detail_source == "menu"
+    # Siembra ≠ confirmación: sin ancla, el matcher de avatar todavía puede CORREGIRLA
+    # cuando aparezca la barra (el usuario pudo deslizar de PJ al entrar).
+    assert m._agent_anchor_x is None
+
+
+def test_monitor_s15_abstencion_no_borra_el_latch(monkeypatch):
+    """Un frame de transición del menú (OCR abstiene) NO debe borrar al PJ ya sembrado.
+
+    Regresión del log real: el último `[S15]` antes de salir a Equipamiento decía
+    `PJ=incierto` — justo el frame del click. Si la abstención borrara el latch, la siembra
+    no serviría de nada exactamente en el caso que la motiva.
+    """
+    import app.core.parser_agent_stats as p
+    from app.core.detector import ScreenState
+    monkeypatch.setattr(p, "_match_agent", lambda t, *a, **k: (None, None, None))
+    m = _monitor(_StubOcr("basura ilegible"))
+    m._last_agent_name = "Remielle Dan"
+    m._detail_source = "menu"
+    m._dispatch_state(np.zeros((1439, 2559, 3), np.uint8), ScreenState("S15", 1.0, "t"))
+    assert m._last_agent_name == "Remielle Dan"
+
+
+def test_monitor_menu_a_equipamiento_hereda_el_pj(monkeypatch):
+    """S15 → S8: Equipamiento reporta al PJ del menú en vez de `PJ=?` (el caso de Daniel)."""
+    import app.core.parser_agent_stats as p
+    from app.core.detector import ScreenState
+    monkeypatch.setattr(p, "_match_agent", lambda t, *a, **k: (t.strip(), "rol", "elem"))
+    emitted = []
+    m = _monitor(_StubOcr("Remielle Dan"),
+                 on_agent_detail=lambda st, name, ident, src: emitted.append((name, ident, src)))
+    frame = np.zeros((1439, 2559, 3), np.uint8)
+    m._dispatch_state(frame, ScreenState("S15", 1.0, "t"))
+    m._dispatch_state(frame, ScreenState("S8", 0.90, "t"))
+    assert emitted[-1] == ("Remielle Dan", True, "menu")
+
+
 def test_monitor_salir_de_s15_resetea_gate(monkeypatch):
     """Al pasar por un estado != S15 se olvida la firma → re-entrar re-identifica."""
     from app.core.detector import ScreenState

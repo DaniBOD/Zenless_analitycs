@@ -3648,6 +3648,33 @@ class Monitor:
         self._last_agent_name = None
         self._detail_source = None
 
+    def _seed_identity_from_menu(self, nombre: str) -> None:
+        """Siembra el latch de identidad con el PJ SELECCIONADO en el menú (S15).
+
+        El nombre del menú está ESCRITO en pantalla y ya viene canonicalizado contra el
+        roster (`identify_menu_agent` abstiene si no matchea, RNF-02), así que es la
+        evidencia más barata y más certera de identidad que ve el sistema. Hasta el QA del
+        2026-07-30 se logueaba y se tiraba: entrando al Equipamiento desde el menú, S8 salía
+        `PJ=?` y había que desviarse por S18 (que lee el nombre por OCR) para que apareciera.
+
+        NO se ancla en `_agent_anchor_x`: la siembra es un punto de partida, no una
+        confirmación. Al aparecer la barra de avatares, `_update_detail_identity` vota como
+        siempre y el avatar puede CORREGIR al menú — que es lo que corresponde si el usuario
+        deslizó de PJ al entrar. Y como el latch queda en None sólo por reset explícito, un
+        frame de transición del menú (OCR abstiene) no lo borra.
+        """
+        if nombre != self._last_agent_name:
+            # PJ distinto → la votación acumulada es de otro; empezar limpio y forzar que
+            # S8/S19 re-emita la línea de identidad (la firma edge no cambiaría sola).
+            self._detail_votes = {}
+            self._detail_samples = 0
+            self._detail_vote_x = None
+            self._detail_confirmed_source = None
+            self._agent_anchor_x = None
+            self._last_detail_sig = None
+        self._last_agent_name = nombre
+        self._detail_source = "menu"
+
     def _reset_detail_identity(self) -> None:
         """Limpia el latch de identidad (al salir de la familia detalle de agente)."""
         self._last_agent_name = None
@@ -3842,6 +3869,8 @@ class Monitor:
             return                          # mismo PJ seleccionado → no re-OCR
         self._menu_last_sig = sig
         nombre, rol, elemento = identify_menu_agent(frame, self._ocr)
+        if nombre:
+            self._seed_identity_from_menu(nombre)
         logsig = (nombre, rol, elemento)
         if logsig == self._last_menu_log_sig:
             return                          # mismo resultado → no re-loguear
