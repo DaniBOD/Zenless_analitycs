@@ -55,7 +55,7 @@ def evaluate(ident, guard, cx_f, cy_f, r_f):
 
 
 def main() -> int:
-    ident = AgentIdentifier()
+    ident = AgentIdentifier(prune=False)
     print(f"Refs: {len(ident._badge._refs)} PJs · offset base=({det._BADGE_CX_F},{det._BADGE_CY_F},{det._BADGE_R_F})")
     base = (det._BADGE_CX_F, det._BADGE_CY_F, det._BADGE_R_F)
 

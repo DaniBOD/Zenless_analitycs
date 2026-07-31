@@ -33,7 +33,7 @@ def numkey(p):
 
 
 def main() -> int:
-    ident = AgentIdentifier()
+    ident = AgentIdentifier(prune=False)
     groups = defaultdict(list)
     for p in sorted(glob.glob(str(FOLDER / "*.png"))):
         g = re.match(r"(Ejemplo\d+)_", Path(p).stem).group(1)

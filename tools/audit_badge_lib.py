@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Auditoría de SALUD de las librerías de badges (5R.L.8/B3). READ-ONLY.
+Auditoría de SALUD de las librerías de badges (5R.L.8/B3). READ-ONLY — y esta vez de
+verdad: `app/tests/unit/test_audit_badge_lib.py` compara el sha256 de los .npz antes y
+después de correr `main()`. Hasta 2026-07-31 el "READ-ONLY" era solo un comentario y el
+audit se comió 4 refs de un PJ (ver ahí el detalle).
 
 Para cada superficie (row / grid / detail) reporta:
   1. COBERTURA: refs por PJ vs el roster de la DB — gaps (0 refs) y flacos (<3).
@@ -37,7 +40,8 @@ def _flatten(matcher) -> list[tuple[str, object]]:
 
 
 def _audit_surface(name: str, matcher, roster: set[str],
-                   ico_names: set[str] | None = None) -> list[str]:
+                   ico_names: set[str] | None = None,
+                   resolve=None) -> list[str]:
     lines = [f"## Superficie `{name}`", ""]
     refs = matcher._refs
     ico_names = ico_names or set()
@@ -55,8 +59,17 @@ def _audit_surface(name: str, matcher, roster: set[str],
         lines.append(f"- ⚠️ **Cobertura flaca (<{_LOW_REFS}):** "
                      + ", ".join(f"{r} ({n})" for r, n in flacos))
     if fuera:
-        lines.append(f"- ⚠️ **Nombres fuera del roster:** {', '.join(fuera)} "
-                     "(prune_to_roster los borraría — revisar canonicalización)")
+        # Separar lo RECUPERABLE (prune_to_roster lo renombra al canónico) de lo que
+        # sí se borra: no es lo mismo una etiqueta mal escrita que basura de OCR.
+        pares = [(r, resolve(r) if resolve else None) for r in fuera]
+        renom = [(r, c) for r, c in pares if c]
+        borra = [r for r, c in pares if not c]
+        if renom:
+            lines.append("- ⚠️ **Claves no canónicas (prune_to_roster las RENOMBRA):** "
+                         + ", ".join(f"`{r}` → `{c}`" for r, c in renom))
+        if borra:
+            lines.append("- ⚠️ **Nombres fuera del roster (prune_to_roster los BORRA):** "
+                         + ", ".join(f"`{r}`" for r in borra))
     if seeded:
         lines.append(f"- ℹ️ Sembrados de -ico no poseídos (protegidos, esperado): "
                      f"{', '.join(seeded)}")
@@ -108,7 +121,10 @@ def main() -> None:
     ap.add_argument("--out", default=None, help="path del reporte MD (default audit/)")
     args = ap.parse_args()
 
-    ident = AgentIdentifier()          # carga librerías runtime + roster de la DB (read-only)
+    # prune=False es OBLIGATORIO acá: con el default, __init__ corre prune_to_roster(),
+    # que PERSISTE las librerías si tocó algo — el audit mutaba su objeto de estudio
+    # (2026-07-31: se comió las 4 refs de 'N.º 11' y después las reportó como faltantes).
+    ident = AgentIdentifier(prune=False)   # carga librerías runtime + roster (read-only)
     ident._load_roster()
     roster = set((ident._roster_norm or {}).values())
 
@@ -122,7 +138,8 @@ def main() -> None:
     ]
     for name in ("row", "grid", "detail"):
         out_lines += _audit_surface(name, ident.surfaces[name].matcher, roster,
-                                    ico_names=ident._ico_names)
+                                    ico_names=ident._ico_names,
+                                    resolve=ident.resolve_to_roster)
 
     out = Path(args.out) if args.out else (
         Path(__file__).resolve().parents[1] / "audit" / f"badge_lib_audit_{date.today():%Y%m%d}.md")

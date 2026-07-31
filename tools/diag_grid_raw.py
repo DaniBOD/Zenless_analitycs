@@ -31,7 +31,7 @@ def numkey(p):
 
 
 def main() -> int:
-    ident = AgentIdentifier()
+    ident = AgentIdentifier(prune=False)
     m = ident._badge
     print(f"min_conf={m.min_conf} min_margin={m.min_margin} · refs={len(m._refs)} PJs "
           f"· rejects={len(getattr(m, '_rejects', []))}")

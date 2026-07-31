@@ -25,7 +25,7 @@ from pathlib import Path
 
 import numpy as np  # noqa: F401  (compat: tests/otros importan np de acá indirectamente)
 
-from app.core.avatar_descriptor import AvatarMatcher, build_name_map
+from app.core.avatar_descriptor import _MAX_REFS_PER_NAME, AvatarMatcher, build_name_map
 from app.core.badge_surface import BadgeSurface
 from app.core.detector import crop_detail_badge, crop_grid_selected_badge, crop_selected_avatar
 from app.core.stats_vocab import _norm_key
@@ -66,6 +66,18 @@ def _badge_harvest_enabled() -> bool:
     return os.environ.get("DANIBOD_BADGE_HARVEST", "").strip() not in ("", "0", "false")
 
 
+def _demojibake(s: str) -> str | None:
+    """Re-decodifica una clave DOBLE-CODIFICADA (bytes UTF-8 leídos como latin-1):
+    'n.\\xc2\\xba11' → 'n.º11'. Devuelve None si `s` no era mojibake (o no se puede
+    re-decodificar). Canonicalizar solo no alcanza: `_norm_key` normaliza 'Â' a 'a',
+    así que la clave rota nunca matchea el roster."""
+    try:
+        fixed = s.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return None
+    return fixed if fixed != s else None
+
+
 def _default_library_path() -> Path:
     override = os.environ.get("DANIBOD_AVATAR_LIB")
     if override:
@@ -79,7 +91,10 @@ class AgentIdentifier:
     matching robusto. Dos matchers especializados (fila / badge), persistidos."""
 
     def __init__(self, library_path: Path | None = None, autoload: bool = True,
-                 roster: set[str] | None = None):
+                 roster: set[str] | None = None, prune: bool = True):
+        """`prune=False` carga las librerías SIN podarlas ni persistirlas: para
+        herramientas de INSPECCIÓN (tools/audit_badge_lib.py) — un audit no debe
+        modificar su objeto de estudio (regresión 2026-07-31)."""
         base = Path(library_path) if library_path else _default_library_path()
         self._row_path = base.with_name("avatar_row_v2.npz")
         self._badge_path = base.with_name("avatar_badge_v2.npz")
@@ -122,7 +137,8 @@ class AgentIdentifier:
             self.load()
             self.load_s17()
             self.load_s17_detail()
-            self.prune_to_roster()
+            if prune:
+                self.prune_to_roster()
 
     # ---- semilla -ico (badge) -----------------------------------------------
 
@@ -200,19 +216,53 @@ class AgentIdentifier:
             return name
         return self._roster_norm.get(_norm_key(name))
 
+    def resolve_to_roster(self, name: str) -> str | None:
+        """Canónico del roster para `name`, tolerando OCR sin tilde / espaciado
+        distinto Y claves DOBLE-CODIFICADAS. None = el roster no lo resuelve, que es
+        exactamente lo que `prune_to_roster` poda. Única fuente de esa decisión: las
+        herramientas de inspección la consultan para no describir mal lo que la poda
+        va a hacer."""
+        self._load_roster()
+        if not self._roster_norm:
+            return None
+        canon = self._canonical_name(name)
+        if canon is not None:
+            return canon
+        fixed = _demojibake(name)
+        return self._canonical_name(fixed) if fixed else None
+
     def prune_to_roster(self) -> int:
         """Quita refs cuyo nombre no esté en el roster (OCR espurio como 'Permiso'),
-        PROTEGIENDO las sembradas de -ico (PJs válidos no obtenidos)."""
+        PROTEGIENDO las sembradas de -ico (PJs válidos no obtenidos).
+
+        RECUPERA antes de podar: si el roster resuelve la clave canonicalizándola
+        (OCR sin tilde, espaciado distinto) o re-decodificando su mojibake, la clave
+        se RENOMBRA al canónico y conserva sus refs. Podar es para basura
+        irrecuperable, no para cosecha buena con la etiqueta mal escrita —
+        regresión 2026-07-31: se tiraron las 4 refs de 'n.\\xc2\\xba11' (= 'N.º 11').
+
+        Devuelve cuántas claves se BORRARON (los renombres no cuentan: no se perdió
+        nada). Persiste si hubo cualquiera de las dos cosas."""
         self._load_roster()
         if not self._roster_norm:
             return 0
         valid = set(self._roster_norm.values()) | self._ico_names
-        removed = 0
+        removed = renamed = 0
         for matcher in (self._row, self._badge, self._detbadge):
             for n in [k for k in matcher._refs if k not in valid]:
-                del matcher._refs[n]; removed += 1
-        if removed and not is_readonly():
-            log.info("AgentIdentifier: podadas %d refs fuera del roster", removed)
+                canon = self.resolve_to_roster(n)
+                if canon is None:
+                    del matcher._refs[n]; removed += 1
+                    continue
+                lst = matcher._refs.setdefault(canon, [])
+                lst.extend(matcher._refs.pop(n))
+                del lst[:-_MAX_REFS_PER_NAME]     # FIFO, igual que add_reference
+                log.info("AgentIdentifier: '%s' renombrada a '%s' (%d refs rescatadas)",
+                         n, canon, len(lst))
+                renamed += 1
+        if (removed or renamed) and not is_readonly():
+            if removed:
+                log.info("AgentIdentifier: podadas %d refs fuera del roster", removed)
             self.save(); self.save_s17(); self.save_s17_detail()
         return removed
 

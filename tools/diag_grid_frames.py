@@ -39,7 +39,7 @@ def group_of(stem):
 
 
 def main() -> int:
-    ident = AgentIdentifier()
+    ident = AgentIdentifier(prune=False)
     print(f"Librería badge cargada · refs={len(ident.names_s17)} PJs")
     groups = defaultdict(list)
     for p in sorted(glob.glob(str(FOLDER / "*.png"))):
