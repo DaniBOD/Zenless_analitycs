@@ -666,10 +666,16 @@ class MainWindow(QMainWindow):
         self._toast.show_teardown(td)
 
     def _on_show_weapon_toast(self, payload: dict):
-        """Slot: toast W-ENGINE VISTO (RF-15). Uno por arma abierta, no uno por ciclo.
+        """Slot: toast de W-Engine (RF-15). Solo ante un CAMBIO, no por cada arma mirada.
+
+        Un toast interrumpe, así que tiene que traer noticia. Abrir un engine para verlo no lo es
+        —el usuario lo está mirando—, y un toast por lectura además tapa a los que sí importan.
+        El panel en vivo sigue recibiendo cada observación: ahí es donde se busca el detalle.
 
         El nombre puede venir crudo del OCR (el catálogo tiene armas de menos); se muestra igual
         porque el usuario reconoce el arma que acaba de abrir. Nada de esto escribe la DB."""
+        if not payload.get("cambio"):
+            return
         from app.ui.toast import ToastData
         td = ToastData(variant="arma_vista", set_name="—", slot=0,
                        rarity=str(payload.get("rareza") or "?"), timeout_secs=4.0)
@@ -685,6 +691,13 @@ class MainWindow(QMainWindow):
             "equipada": f"la usa {dueno}" if dueno else "equipada",
             "otro_pj": f"la tiene {dueno}" if dueno else "la tiene otro PJ",
             "libre": "LIBRE",
+        }.get(str(payload.get("tenencia") or ""), "")
+        # El header nombra el EVENTO, no la pantalla. Se conservan el "✓ OBSERVADO" y el footer
+        # "SOLO LECTURA": son los que separan a este toast de los de disco, que sí escriben la DB.
+        td.label_override = {
+            "equipada": "W-ENGINE EQUIPADO",
+            "libre":    "W-ENGINE DESEQUIPADO",
+            "otro_pj":  "W-ENGINE REASIGNADO",
         }.get(str(payload.get("tenencia") or ""), "")
         self._toast.show_weapon(td)
 

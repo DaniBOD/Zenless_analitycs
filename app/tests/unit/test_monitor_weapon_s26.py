@@ -178,10 +178,30 @@ def _fake_identifier(nombre, roster=("Jane", "Ellen")):
     de `read_weapon_owner_badge`, anclado al pill. La superficie solo pone la librería."""
     class FakeOut:
         name = nombre
+        conf = 0.90
 
     class FakeSurf:
         def match(self, crop):
             return FakeOut() if nombre is not None else None
+
+    return type("I", (), {
+        "surfaces": {"detail": FakeSurf()},
+        "_canonical_name": lambda self, n: n if n in roster else None,
+    })()
+
+
+def _identifier_que_oscila(nombres, roster=("Grace", "Miyabi")):
+    """Superficie que devuelve un nombre DISTINTO por llamada — el badge inestable del QA."""
+    seq = list(nombres)
+
+    class FakeSurf:
+        def __init__(self):
+            self.i = 0
+
+        def match(self, crop):
+            n = seq[min(self.i, len(seq) - 1)]
+            self.i += 1
+            return type("R", (), {"name": n, "conf": 0.90})()
 
     return type("I", (), {
         "surfaces": {"detail": FakeSurf()},
@@ -219,6 +239,99 @@ def test_un_nombre_que_no_resuelve_al_roster_se_descarta(mon):
     mon._identifier = _fake_identifier("n.Âº11")
     _paso(mon, _S26, boton="reemplazar")
     assert mon._toasts[0]["dueno"] is None
+
+
+def test_badge_que_oscila_entre_dos_pjs_termina_en_incierto(mon):
+    """QA en vivo 2026-07-31: con el panel QUIETO, el dueño alternaba `Grace` ↔ `Miyabi` cada
+    ciclo sobre la misma arma (el Templo, que es de Miyabi). El recorte lo produce un Hough por
+    frame: si el círculo se corre unos píxeles, un match ajustado se da vuelta.
+
+    Un arma tiene UN dueño ⇒ si el badge nombró a dos PJs distintos para la misma arma, el
+    matcher no es fiable acá y hay que abstenerse (RNF-02: incierto > equivocado). La abstención
+    es PEGAJOSA: no alcanza con que uno de los dos vuelva a puntear más alto, porque el log no
+    tiene forma de saber cuál de los dos es el bueno.
+    """
+    mon._identifier = _identifier_que_oscila(["Grace", "Miyabi", "Grace", "Miyabi"])
+    _paso(mon, _S26, boton="reemplazar")
+    assert mon._toasts[0]["dueno"] == "Grace"        # 1er frame: un solo candidato
+    for sig in (b"B", b"C", b"D"):
+        _paso(mon, _S26, sig=sig, boton="reemplazar")
+    assert mon._toasts[-1]["dueno"] is None
+    # Lo que NO cambia: el arma sigue teniendo dueño. No saber quién es no la vuelve libre.
+    assert mon._toasts[-1]["tenencia"] == "otro_pj"
+
+
+def test_la_votacion_del_dueno_se_reinicia_al_cambiar_de_arma(mon):
+    """La abstención pegajosa es POR ARMA: pasar a otra arma arranca la votación limpia, o un
+    badge malo contaminaría todo lo que mires después."""
+    mon._identifier = _identifier_que_oscila(["Grace", "Miyabi", "Grace"])
+    _paso(mon, _S26, boton="reemplazar")
+    _paso(mon, _S26, sig=b"B", boton="reemplazar")
+    assert mon._toasts[-1]["dueno"] is None
+    _paso(mon, _S26, sig=b"C", boton="reemplazar",
+          weapon=FakeWeapon(nombre="Sol exuvia", canon="Sol exuvia"))
+    assert mon._toasts[-1]["nombre"] == "Sol exuvia"
+    assert mon._toasts[-1]["dueno"] == "Grace"
+
+
+def test_un_dueno_estable_se_sigue_nombrando(mon):
+    """El contrapeso: la abstención no debe comerse el caso bueno. Varios ciclos con el mismo
+    nombre siguen nombrando (es el `la tiene Vivian` que el QA validó contra la verdad)."""
+    mon._identifier = _fake_identifier("Jane")
+    _paso(mon, _S26, boton="reemplazar")
+    for sig in (b"B", b"C"):
+        _paso(mon, _S26, sig=sig, boton="reemplazar")
+    assert mon._toasts[-1]["dueno"] == "Jane"
+
+
+# --- ¿Cuándo hay NOTICIA? (el flag que decide si la UI interrumpe) --------------------------
+
+
+def test_mirar_un_arma_no_es_noticia(mon):
+    """Abrir un engine para verlo NO amerita toast: el usuario lo está mirando.
+
+    Pedido de Daniel (2026-07-31): *"no aporta valor al usuario, la idea es que avise de CAMBIOS
+    (...) ahora salta un toast por cada lectura de un engine y puede ser una obviedad"*. El evento
+    se emite igual —alimenta el panel en vivo— pero marcado `cambio=False`.
+    """
+    _paso(mon, _S26, boton="reemplazar")
+    assert len(mon._toasts) == 1                 # el dato viaja
+    assert mon._toasts[0]["cambio"] is False     # pero no interrumpe
+
+
+def test_equipar_un_arma_libre_si_es_noticia(mon):
+    """El caso 3 del QA: la misma arma pasa de LIBRE a equipada. Eso sí es un cambio."""
+    import app.core.parser_weapon_s26 as pw_mod
+    mon._last_agent_name = "Velina"
+    _paso(mon, _S26, boton="equipar", badge=pw_mod.OwnerBadge(present=False, nitidez=2.0))
+    assert mon._toasts[0]["tenencia"] == "libre" and mon._toasts[0]["cambio"] is False
+    _paso(mon, _S26, sig=b"B", boton="desequipar",
+          badge=pw_mod.OwnerBadge(present=True, nitidez=70.0))
+    assert mon._toasts[-1]["tenencia"] == "equipada"
+    assert mon._toasts[-1]["cambio"] is True
+    assert mon._toasts[-1]["tenencia_previa"] == "libre"
+
+
+def test_no_saber_no_es_una_novedad(mon):
+    """`incierto` no cuenta como cambio en ninguna de las dos puntas.
+
+    Si contara, un frame en el que no se pudo leer el botón dispararía un toast al entrar y otro
+    al salir de la incertidumbre — dos interrupciones por CERO información nueva."""
+    _paso(mon, _S26, boton=None)                       # incierto
+    _paso(mon, _S26, sig=b"B", boton="reemplazar")     # incierto → otro_pj
+    assert all(t["cambio"] is False for t in mon._toasts), mon._toasts
+
+
+def test_salir_de_s26_no_borra_la_tenencia_conocida(mon):
+    """Equipar un arma te saca de la pantalla y te devuelve. Si al salir se olvidara la tenencia
+    previa, el único cambio que hay para avisar se perdería justo cuando ocurre."""
+    import app.core.parser_weapon_s26 as pw_mod
+    mon._last_agent_name = "Velina"
+    _paso(mon, _S26, boton="equipar", badge=pw_mod.OwnerBadge(present=False, nitidez=2.0))
+    _paso(mon, _S12)                                   # salida y vuelta
+    _paso(mon, _S26, sig=b"B", boton="desequipar",
+          badge=pw_mod.OwnerBadge(present=True, nitidez=70.0))
+    assert mon._toasts[-1]["cambio"] is True
 
 
 def test_el_handler_no_toca_la_db():

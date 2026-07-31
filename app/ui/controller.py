@@ -740,6 +740,10 @@ class MonitorController(QObject):
                 "stat": ev.get("stat") or "",
                 "dueno": ev.get("dueno"),
                 "tenencia": ev.get("tenencia") or "incierto",
+                # Si además hubo un CAMBIO (equipar/desequipar/reemplazar). La vista lo usa para
+                # decidir si interrumpe: un toast por cada arma mirada no aporta nada.
+                "cambio": bool(ev.get("cambio")),
+                "tenencia_previa": ev.get("tenencia_previa"),
             })
         except Exception:
             log.exception("Error armando el toast de W-Engine")

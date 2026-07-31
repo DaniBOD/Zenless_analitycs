@@ -78,6 +78,11 @@ class ToastData:
     # junto a rareza y nivel porque es lo que decide qué pasa al equiparla: un arma libre entra
     # sin confirmación, la de otro PJ abre diálogo.
     weapon_tenencia: str = ""
+    # Rótulo del header. Vacío = el de la variante. Existe para el toast de arma, que es UNA
+    # variante que cubre varios eventos (equipado / desequipado / reasignado): el toast salta
+    # solo cuando algo cambió, así que el header tiene que nombrar QUÉ cambió — un rótulo fijo
+    # tipo "VISTO" describiría mal el único caso en que ahora aparece.
+    label_override: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -465,7 +470,7 @@ class DiscToast(QWidget):
         label_font = QFont("Segoe UI", 10)
         label_font.setBold(True)
         p.setFont(label_font)
-        label = v["label"].upper()
+        label = (self._data.label_override or v["label"]).upper()
         text_w = p.fontMetrics().horizontalAdvance(label)
 
         # Underline bar debajo del label (decorativo con el color del variant)

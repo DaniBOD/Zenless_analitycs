@@ -86,6 +86,24 @@ def test_refinamiento_no_leido_no_pinta_estrellas_vacias(qapp):
     w.hide()
 
 
+def test_el_header_puede_nombrar_el_evento(qapp):
+    """El toast de arma salta SOLO ante un cambio (equipar / desequipar / reasignar), así que el
+    header dice cuál fue. Sin override sigue el rótulo de la variante — el fallback importa
+    porque un evento no contemplado no debe dejar el header vacío."""
+    from app.ui.toast import DiscToast
+    import app.ui.tokens as T
+    w = DiscToast()
+    d = _data()
+    d.label_override = "W-ENGINE EQUIPADO"
+    w.show_weapon(d)
+    w.repaint()
+    assert w._data.label_override == "W-ENGINE EQUIPADO"
+    w.show_weapon(_data())                       # sin override
+    w.repaint()
+    assert T.variant("arma_vista")["label"] == "W-ENGINE VISTO"
+    w.hide()
+
+
 def test_nombre_crudo_y_campos_faltantes_no_crashean(qapp):
     """El caso normal de un arma fuera del catálogo, y el peor caso de OCR parcial."""
     from app.ui.toast import DiscToast

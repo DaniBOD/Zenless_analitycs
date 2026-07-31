@@ -360,6 +360,15 @@ class Monitor:
         # firma del último log para no repetir la misma línea. Observación pura: no escribe DB.
         self._s26_panel_sig: bytes | None = None
         self._s26_last_log_sig: tuple | None = None
+        # Votos del DUEÑO acumulados sobre el arma que se está mirando (`_s26_owner_key` la
+        # identifica; al cambiar de arma la votación arranca limpia). Nombrar con UN frame
+        # suelto daba dueños que oscilaban entre dos PJs con el panel quieto (QA 2026-07-31).
+        self._s26_owner_key: tuple | None = None
+        self._s26_owner_votes: dict[str, float] = {}
+        # Última tenencia vista por arma. NO se limpia al salir de S26: equipar un arma te saca y
+        # te devuelve a la pantalla, y si se olvidara justo ahí, el único cambio que hay para
+        # avisar se perdería. Acotado para que una sesión larga no lo haga crecer sin techo.
+        self._s26_tenencia_vista: dict[tuple, str] = {}
         # Tanda de desmontaje en curso (S11). Se crea perezosamente al entrar a la pantalla.
         self._teardown = None
         # Tracking interno para el heartbeat
@@ -3731,6 +3740,8 @@ class Monitor:
         """Al salir de S26, olvidar el arma mirada (así al volver se re-emite)."""
         self._s26_panel_sig = None
         self._s26_last_log_sig = None
+        self._s26_owner_key = None
+        self._s26_owner_votes = {}
 
     def _process_s26_weapon_detail(self, frame, state: ScreenState) -> None:
         """Detalle de W-Engine (S26, RF-15): nombre, nivel, rareza, refinamiento, ATK y stat.
@@ -3743,6 +3754,7 @@ class Monitor:
         cuando la firma del panel cambió (cambió de arma). Sin eso, mirar un arma diez segundos
         serían diez OCRs idénticos.
         """
+        from app.core.owner_vote import decide_owner
         from app.core.parser_disc_s17 import read_s17_action_button
         from app.core.parser_weapon_s26 import (
             clasificar_tenencia,
@@ -3767,21 +3779,45 @@ class Monitor:
         # no a la franja fija de `crop_detail_badge`: esa franja da falso LIBRE cuando el nombre
         # del arma envuelve a dos líneas y corre el panel.
         badge = read_weapon_owner_badge(frame, d.pill_bbox)
+        # El dueño se vota a través de FRAMES, no se decide con uno suelto. El recorte lo produce
+        # un Hough por frame: si el círculo se corre unos píxeles el recorte cambia, y un match
+        # ajustado se da vuelta — en el QA del 2026-07-31 el dueño alternaba Grace↔Miyabi cada
+        # ciclo con el panel QUIETO. Es el mismo remedio que ya estabilizó la identidad en S8/S19.
+        arma_key = (d.nombre_canon or d.nombre_raw, d.nivel, d.refinamiento, d.atk_base)
+        if arma_key != self._s26_owner_key:
+            self._s26_owner_key = arma_key
+            self._s26_owner_votes = {}
         badge_nombre = None
         if badge is not None and badge.crop is not None and self._identifier is not None:
             try:
-                crudo = self._identifier.surfaces["detail"].match(badge.crop)
-                crudo = crudo.name if crudo else None
+                res = self._identifier.surfaces["detail"].match(badge.crop)
+                crudo = res.name if res else None
                 # Se CANONICALIZA contra el roster antes de reportar. La librería compartida tiene
                 # al menos un label con mojibake ('n.Âº11' = N.º 11 guardado con UTF-8 leído como
                 # latin-1), y sin este paso ese texto corrupto llegaría al log y al toast como si
                 # fuera el nombre del PJ. Un nombre que no resuelve se descarta: preferimos
                 # "incierto" antes que basura (RNF-02).
-                badge_nombre = self._identifier._canonical_name(crudo) if crudo else None
-                if crudo and badge_nombre is None:
+                canon = self._identifier._canonical_name(crudo) if crudo else None
+                if crudo and canon is None:
                     log.debug("S26: dueño %r no resuelve al roster → incierto", crudo)
+                if canon:
+                    conf = float(getattr(res, "conf", 1.0) or 0.0)
+                    self._s26_owner_votes[canon] = self._s26_owner_votes.get(canon, 0.0) + conf
             except Exception:
                 log.debug("S26: fallo al nombrar el badge del dueño", exc_info=True)
+        if self._s26_owner_votes:
+            badge_nombre, _fuente = decide_owner(
+                {}, self._s26_owner_votes, latch=self._last_agent_name)
+        if len(self._s26_owner_votes) > 1:
+            # El badge nombró a DOS PJs distintos para la MISMA arma. Un arma tiene un solo dueño,
+            # así que acá el matcher no es fiable — y no hay forma de saber cuál de los dos es el
+            # bueno, porque el que puntea más alto puede ser el equivocado (en el QA ganaba Grace
+            # y el arma era de Miyabi). Abstención PEGAJOSA hasta cambiar de arma: RNF-02, un
+            # "sin identificar" es información honesta y un nombre equivocado no.
+            if badge_nombre is not None:
+                log.debug("S26: el badge osciló entre %s → dueño incierto",
+                          ", ".join(sorted(self._s26_owner_votes)))
+            badge_nombre = None
         # El botón se lee derecho, sin el gate de caché de S17: ese gate está armado sobre la
         # identidad de un DISCO. Acá no hace falta — este handler ya corre solo cuando cambió la
         # firma del panel, así que es un OCR por arma mirada, no por ciclo.
@@ -3822,10 +3858,26 @@ class Monitor:
                 log.warning("[S26] ⚠ %s", n)
                 self._diag(f"[S26] ⚠ {n}")
 
+        # --- ¿Esto es NOTICIA o es una lectura más? ---
+        # El monitor reporta siempre lo que vio (el evento alimenta el panel en vivo); lo que
+        # calcula acá es si además hay un CAMBIO, y la UI decide con eso si interrumpe con un
+        # toast. Abrir un arma para mirarla no es noticia — el usuario la está viendo. Hoy el
+        # único cambio observable es la TENENCIA (equipar/desequipar/reemplazar); cuando las
+        # armas sincronicen a la DB, el disparador pasa a ser la escritura, como en discos.
+        # "incierto" no cuenta como cambio en ninguna punta: no saber no es una novedad.
+        previa = self._s26_tenencia_vista.get(arma_key)
+        self._s26_tenencia_vista[arma_key] = d.tenencia
+        if len(self._s26_tenencia_vista) > 64:      # techo: sesión larga, no fuga
+            self._s26_tenencia_vista.pop(next(iter(self._s26_tenencia_vista)))
+        cambio = (previa is not None and previa != d.tenencia
+                  and "incierto" not in (previa, d.tenencia))
+
         if self._on_weapon_seen:
             try:
                 self._on_weapon_seen({
                     "nombre": nombre,
+                    "cambio": cambio,
+                    "tenencia_previa": previa,
                     "en_catalogo": d.nombre_canon is not None,
                     "rareza": d.rareza,
                     "nivel": d.nivel,
