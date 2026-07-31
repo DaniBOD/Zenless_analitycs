@@ -586,6 +586,76 @@ def test_sin_firma_del_frame_no_se_reusa(monkeypatch):
     assert m._identifier.learned_detail == []
 
 
+# ---- Rescate PENDIENTE: la ventana deja de ser el warmup ---------------------------------
+#
+# La decisión del dueño corre durante el warmup (~2 pasadas) y el recorte del detalle sale ~1 de
+# cada 4 frames: Lycaon perdió 3 de 3 discos (det_loc 1, 0, 0). El rescate queda pendiente y el
+# loop rápido (10 fps) lo cobra apenas salga un recorte bueno del MISMO disco.
+
+def _pendiente(monkeypatch, latch="Lycaon", voted="Cissia", sig_disco=10):
+    """Monitor con un rescate pendiente ya anotado: al decidir, no había recorte."""
+    import app.core.monitor as mon
+    m = _monitor_cross_check(monkeypatch, latch=latch, voted=voted)
+    monkeypatch.setattr(mon, "crop_detail_badge", lambda f: None)     # Hough no cierra al decidir
+    m._s17_owner_sig = _sig(sig_disco)
+    m._assign_s17_pj(_disc(slot=1), _frame())
+    assert m._identifier.learned_detail == []          # todavía no cosechó
+    assert m._s17_rescue_pending is not None           # pero quedó anotado
+    return m
+
+
+def _cobrar(m, monkeypatch, sig_disco=10):
+    """Un frame del loop rápido con recorte BUENO del disco `sig_disco`."""
+    import numpy as np
+    import app.core.monitor as mon
+    from app.core.monitor import Monitor
+    monkeypatch.setattr(mon, "crop_grid_selected_badge", lambda f: None)
+    monkeypatch.setattr(mon, "crop_detail_badge", lambda f: np.zeros((40, 40, 3), np.uint8))
+    monkeypatch.setattr(Monitor, "_s17_disc_signature", staticmethod(lambda f: _sig(sig_disco)))
+    m._sample_s17_owner(_frame())
+
+
+def test_el_pendiente_se_cobra_cuando_el_recorte_sale(monkeypatch, caplog):
+    """El caso que motivó todo: el recorte llega tarde, después de que el disco ya emitió."""
+    import logging
+    m = _pendiente(monkeypatch)
+    with caplog.at_level(logging.INFO, logger="app.core.monitor"):
+        _cobrar(m, monkeypatch)
+    assert m._identifier.learned_detail == ["Lycaon"]
+    assert m._s17_rescue_pending is None
+    assert any("PENDIENTE cobrado" in r.getMessage() for r in caplog.records), \
+        [r.getMessage() for r in caplog.records]
+
+
+def test_el_pendiente_no_se_cobra_con_la_cara_de_otro_disco(monkeypatch):
+    """Un pendiente vivo esperando su momento es justo cómo se cosecha la cara equivocada. La
+    firma lo ata a UN disco: si cambió, se cancela en vez de quedar al acecho."""
+    m = _pendiente(monkeypatch, sig_disco=10)
+    _cobrar(m, monkeypatch, sig_disco=200)             # otro disco en pantalla
+    assert m._identifier.learned_detail == []
+    assert m._s17_rescue_pending is None, "se cancela, no queda colgado"
+
+
+def test_el_pendiente_muere_si_cambia_el_pj(monkeypatch):
+    """El pendiente sobrevive frames, y en el medio el latch pudo moverse: ahí el nombre anotado
+    ya no describe lo que estamos mirando."""
+    m = _pendiente(monkeypatch)
+    m._last_agent_name = "Miyabi"                      # el latch se movió
+    _cobrar(m, monkeypatch)
+    assert m._identifier.learned_detail == []
+    assert m._s17_rescue_pending is None
+
+
+def test_el_pendiente_muere_si_el_detalle_ya_aprendio_al_pj(monkeypatch):
+    """Si entró por otro disco mientras tanto, la superficie YA puede opinar sobre él y la regla
+    de rescate —que existe para las que no pueden— deja de aplicar."""
+    m = _pendiente(monkeypatch)
+    m._identifier._det_conocidos.add("Lycaon")         # cosechado por otra vía
+    _cobrar(m, monkeypatch)
+    assert m._identifier.learned_detail == []
+    assert m._s17_rescue_pending is None
+
+
 def test_el_loop_guarda_la_cara_y_la_olvida_al_cambiar_de_disco(monkeypatch):
     """La otra mitad: el loop rápido es quien guarda el recorte. Solo si es CARA (no el texto
     '(N)', que cosechado sería basura con nombre de PJ) y solo del disco actual."""

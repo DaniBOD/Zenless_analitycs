@@ -540,6 +540,11 @@ class Monitor:
         # ese disco y se tiró. Se guarda solo si pasó el clasificador cara-vs-texto, y atado a la
         # firma para no arrastrar la cara de otro disco. Uno solo, no historial (RNF-06).
         self._s17_det_crop: tuple | None = None
+        # Rescate de cosecha esperando recorte: (firma, latch, voted). La decisión del dueño corre
+        # durante el warmup del disco (~2 pasadas) y ahí el recorte puede no haber salido nunca;
+        # el pendiente estira la ventana a todo el rato que el disco esté en pantalla. Se cobra en
+        # el loop rápido y se cancela ante cualquier cambio (ver `_collect_pending_rescue`).
+        self._s17_rescue_pending: tuple | None = None
         # flag de "maduró pero dueño aún frío" (warmup 5R.L.6).
         self._s17_warming: bool = False
         # Mapa disco→dueño (5R.C): verdad de tierra automática. Si DANIBOD_EQUIP_MAP
@@ -2743,6 +2748,7 @@ class Monitor:
         # Votación del dueño (5R.5c/L.8): olvidar al salir de S17.
         self._s17_owner_sig = None
         self._s17_det_crop = None
+        self._s17_rescue_pending = None
         self._s17_vote.reset()
         self._s17_warming = False
         self._grid_diag_counts.clear()
@@ -3069,18 +3075,21 @@ class Monitor:
             det = self._reuse_det_crop(frame)
             origen = "guardado del mismo disco"
         if det is None:
-            # Ni este frame ni ninguno anterior del disco. Se declara — un rescate que no ocurre
-            # en silencio es indistinguible de uno que no existe, y sin esta línea el caso se lee
-            # como "la regla no dispara" en vez de "el recorte falló, probá de nuevo".
+            # Ni este frame ni ninguno anterior. En vez de perder el tiro, queda PENDIENTE: el
+            # loop rápido lo cobra apenas salga un recorte bueno de este mismo disco. La ventana
+            # del rescate era el warmup del disco —2 pasadas— y con el recorte saliendo ~1 de
+            # cada 4 veces, Lycaon perdió 3 de 3 (det_loc 1, 0, 0). Pendiente, la ventana pasa a
+            # ser todo el rato que el disco esté en pantalla.
+            self._s17_rescue_pending = (self._s17_owner_sig, latch, voted)
             self._log_s17_assign(
                 ("veto_detalle_sin_recorte", latch),
-                "[badge] iba a rescatar la cosecha del detalle de '%s' pero el recorte del badge "
-                "no salió en este frame ni en ninguno previo del disco (Hough no cerró) — "
-                "reintenta al re-abrir el disco.",
+                "[badge] el rescate del detalle de '%s' queda PENDIENTE: el recorte del badge no "
+                "salió todavía (Hough no cerró) — se cosecha solo apenas salga uno bueno.",
                 latch,
             )
             return
         if self._identifier.learn_s17_detail(det, latch):
+            self._s17_rescue_pending = None
             self._log_s17_assign(
                 ("cosecha_detalle_pese_al_veto", latch),
                 "[cosecha] detalle de '%s' (recorte %s) PESE al veto del grid (que votó '%s'): el "
@@ -3094,6 +3103,37 @@ class Monitor:
                 "[badge] el rescate de '%s' pasó los 3 checks pero la librería NO aceptó la ref.",
                 latch,
             )
+
+    def _collect_pending_rescue(self, sig, det) -> None:
+        """Cobra un rescate PENDIENTE con el primer recorte bueno que aparezca del mismo disco.
+
+        Lo llama el loop rápido (10 fps) con un `det` ya validado como CARA. Las 3
+        confirmaciones se hicieron al decidir el disco; acá se re-verifica lo que pudo cambiar
+        entre medio, porque el pendiente sobrevive frames:
+
+          - la FIRMA, que es lo que ata la cara a un disco (sin esto se cosecha la cara del
+            disco siguiente bajo el nombre del anterior);
+          - el LATCH, porque si el PJ cambió el nombre ya no describe lo que estamos mirando;
+          - que el detalle SIGA sin refs del latch — si entró por otro disco mientras tanto, la
+            regla de rescate ya no aplica (existe para superficies que no pueden opinar).
+
+        Cualquiera que falle CANCELA el pendiente en vez de dejarlo colgado: un pendiente viejo
+        buscando su momento es exactamente cómo se cosecha la cara equivocada.
+        """
+        pend = self._s17_rescue_pending
+        if not pend:
+            return
+        sig_pend, latch, voted = pend
+        if not self._sig_close(sig, sig_pend):
+            self._s17_rescue_pending = None
+            return
+        if self._last_agent_name != latch or self._identifier.knows_detail_badge(latch):
+            self._s17_rescue_pending = None
+            return
+        self._s17_rescue_pending = None
+        if self._identifier.learn_s17_detail(det, latch):
+            log.info("[cosecha] detalle de '%s' PENDIENTE cobrado: el recorte salió bueno unos "
+                     "frames después de la decisión (el grid había votado '%s').", latch, voted)
 
     def _reuse_det_crop(self, frame):
         """El último recorte BUENO del detalle-badge, SOLO si es del disco que está en pantalla.
@@ -4154,6 +4194,7 @@ class Monitor:
             self._s17_owner_sig = sig          # disco nuevo → empezar votación limpia
             self._s17_vote.reset()
             self._s17_det_crop = None          # la cara guardada era del disco anterior
+            self._s17_rescue_pending = None    # y el rescate pendiente, del disco anterior
             if self._id_diag_on:
                 self._id_diag = {"samples": 0, "grid_loc": 0, "grid_match": 0,
                                  "det_loc": 0, "det_match": 0, "grid_votes": {}, "det_votes": {}}
@@ -4194,6 +4235,7 @@ class Monitor:
                 # es de ESTE disco. Que el matcher no sepa nombrarla es justamente el caso que
                 # la cosecha viene a resolver, así que no se exige nombre.
                 self._s17_det_crop = (sig, det)
+                self._collect_pending_rescue(sig, det)  # ¿había un rescate esperando este crop?
             else:
                 self._s17_vote.mark_absent(_SURF_DET)   # crop espurio (texto) → ausente
             if d_name:
