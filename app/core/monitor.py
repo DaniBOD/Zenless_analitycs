@@ -533,6 +533,13 @@ class Monitor:
         # arbitra LIBRE) y las pasadas del warmup. Los nombres `_s17_*` históricos
         # quedan como properties de compatibilidad (tests + call sites).
         self._s17_vote = OwnerVoteAccumulator()
+        # Último recorte BUENO del detalle-badge para el disco actual: (firma, crop). El recorte
+        # es intermitente —Hough cierra el círculo en unos frames y en otros no— y la cosecha de
+        # rescate corría sobre el frame de la decisión, que podía ser justo uno de los malos:
+        # Lycaon falló 3 de 3 con `det_loc=1 samples=2`, o sea que el recorte SÍ había salido en
+        # ese disco y se tiró. Se guarda solo si pasó el clasificador cara-vs-texto, y atado a la
+        # firma para no arrastrar la cara de otro disco. Uno solo, no historial (RNF-06).
+        self._s17_det_crop: tuple | None = None
         # flag de "maduró pero dueño aún frío" (warmup 5R.L.6).
         self._s17_warming: bool = False
         # Mapa disco→dueño (5R.C): verdad de tierra automática. Si DANIBOD_EQUIP_MAP
@@ -2735,6 +2742,7 @@ class Monitor:
         self._s17_last_slot = 0
         # Votación del dueño (5R.5c/L.8): olvidar al salir de S17.
         self._s17_owner_sig = None
+        self._s17_det_crop = None
         self._s17_vote.reset()
         self._s17_warming = False
         self._grid_diag_counts.clear()
@@ -3052,24 +3060,33 @@ class Monitor:
             )
             return
         det = crop_detail_badge(frame) if frame is not None else None
+        origen = "de este frame"
         if det is None:
-            # Las 3 confirmaciones dieron OK y aun así no se cosecha: Hough no cerró el círculo en
-            # ESTE frame (se ve como `det_loc` bajando en el id_diag). Se declara — un rescate que
-            # no ocurre en silencio es indistinguible de uno que no existe, y sin esta línea el
-            # caso se lee como "la regla no dispara" en vez de "el recorte falló, probá de nuevo".
+            # Hough no cerró el círculo en ESTE frame. Pero el recorte es intermitente, no
+            # imposible: el loop rápido guarda el último BUENO del disco actual, y ese sirve igual
+            # (misma pantalla, mismo disco, ya validado como cara). Es lo que dejó a Lycaon afuera
+            # 3 de 3 veces con `det_loc=1 samples=2` — el recorte existía y se descartaba.
+            det = self._reuse_det_crop(frame)
+            origen = "guardado del mismo disco"
+        if det is None:
+            # Ni este frame ni ninguno anterior del disco. Se declara — un rescate que no ocurre
+            # en silencio es indistinguible de uno que no existe, y sin esta línea el caso se lee
+            # como "la regla no dispara" en vez de "el recorte falló, probá de nuevo".
             self._log_s17_assign(
                 ("veto_detalle_sin_recorte", latch),
                 "[badge] iba a rescatar la cosecha del detalle de '%s' pero el recorte del badge "
-                "no salió en este frame (Hough no cerró) — reintenta al re-abrir el disco.",
+                "no salió en este frame ni en ninguno previo del disco (Hough no cerró) — "
+                "reintenta al re-abrir el disco.",
                 latch,
             )
             return
         if self._identifier.learn_s17_detail(det, latch):
             self._log_s17_assign(
                 ("cosecha_detalle_pese_al_veto", latch),
-                "[cosecha] detalle de '%s' PESE al veto del grid (que votó '%s'): el detalle no "
-                "tiene refs suyas, el nombre se leyó en pantalla y el botón dice desequipar.",
-                latch, voted,
+                "[cosecha] detalle de '%s' (recorte %s) PESE al veto del grid (que votó '%s'): el "
+                "detalle no tiene refs suyas, el nombre se leyó en pantalla y el botón dice "
+                "desequipar.",
+                latch, origen, voted,
             )
         else:
             self._log_s17_assign(
@@ -3077,6 +3094,22 @@ class Monitor:
                 "[badge] el rescate de '%s' pasó los 3 checks pero la librería NO aceptó la ref.",
                 latch,
             )
+
+    def _reuse_det_crop(self, frame):
+        """El último recorte BUENO del detalle-badge, SOLO si es del disco que está en pantalla.
+
+        El riesgo de reusar un recorte es cosechar la cara del disco anterior bajo el nombre de
+        este, así que la firma manda: si no se puede confirmar que es el mismo disco, no se
+        reusa. Sin firma del frame actual (el recorte de firma también falla a veces) tampoco —
+        "no sé si es el mismo" se trata como "no es" (RNF-02).
+        """
+        if not self._s17_det_crop:
+            return None
+        sig_crop, det = self._s17_det_crop
+        sig_now = self._s17_disc_signature(frame) if frame is not None else None
+        if sig_now is None or sig_crop is None or not self._sig_close(sig_now, sig_crop):
+            return None
+        return det
 
     def _s17_owner_resolved(self, disc) -> bool:
         """True si el dueño del disco ya quedó DECIDIDO (no hace falta seguir calentando):
@@ -4120,6 +4153,7 @@ class Monitor:
         if self._s17_owner_sig is None or not self._sig_close(sig, self._s17_owner_sig):
             self._s17_owner_sig = sig          # disco nuevo → empezar votación limpia
             self._s17_vote.reset()
+            self._s17_det_crop = None          # la cara guardada era del disco anterior
             if self._id_diag_on:
                 self._id_diag = {"samples": 0, "grid_loc": 0, "grid_match": 0,
                                  "det_loc": 0, "det_match": 0, "grid_votes": {}, "det_votes": {}}
@@ -4156,6 +4190,10 @@ class Monitor:
             # LIBRE (Jane desde Velina, QA 2026-07-18).
             if self._identifier.s17_detail_is_face(det):
                 self._s17_vote.mark_present(_SURF_DET)  # avatar de dueño (nombrable o no)
+                # Guardar el recorte para la cosecha de rescate: es CARA (no el texto '(N)') y
+                # es de ESTE disco. Que el matcher no sepa nombrarla es justamente el caso que
+                # la cosecha viene a resolver, así que no se exige nombre.
+                self._s17_det_crop = (sig, det)
             else:
                 self._s17_vote.mark_absent(_SURF_DET)   # crop espurio (texto) → ausente
             if d_name:

@@ -530,6 +530,88 @@ def test_el_rescate_declara_cuando_el_recorte_falla(monkeypatch, caplog):
         [r.getMessage() for r in caplog.records]
 
 
+# ---- Reuso del último recorte bueno del disco (QA 2026-07-31, Lycaon) -------------------
+#
+# Lycaon falló 3 de 3 rescates con las 3 confirmaciones en verde: el recorte del detalle no
+# salía en el frame de la decisión. Pero el id_diag decía `det_loc=1 samples=2` — el recorte SÍ
+# había salido en ese mismo disco, en otro frame, y se tiraba. El loop rápido ahora lo guarda.
+
+def _sig(v: int):
+    """Firma híbrida sintética (name, detail, hex) — se compara con el `_sig_close` REAL."""
+    import numpy as np
+    return (np.full((24, 48), v, np.uint8), np.full((48, 48), v, np.uint8),
+            np.full((24, 24), v, np.uint8))
+
+
+def test_el_rescate_reusa_el_recorte_bueno_del_mismo_disco(monkeypatch, caplog):
+    """El recorte es intermitente, no imposible: si ya salió bueno en este disco, sirve igual."""
+    import logging
+    import numpy as np
+    import app.core.monitor as mon
+    m = _monitor_cross_check(monkeypatch, latch="Lycaon", voted="Cissia")
+    monkeypatch.setattr(mon, "crop_detail_badge", lambda f: None)      # Hough no cierra ACÁ
+    monkeypatch.setattr(type(m), "_s17_disc_signature", staticmethod(lambda f: _sig(10)))
+    m._s17_det_crop = (_sig(10), np.zeros((40, 40, 3), np.uint8))      # guardado del mismo disco
+    disc = _disc(slot=1)
+    with caplog.at_level(logging.INFO, logger="app.core.monitor"):
+        m._assign_s17_pj(disc, _frame())
+    assert m._identifier.learned_detail == ["Lycaon"]
+    assert any("guardado del mismo disco" in r.getMessage() for r in caplog.records), \
+        [r.getMessage() for r in caplog.records]
+
+
+def test_no_se_reusa_el_recorte_de_otro_disco(monkeypatch):
+    """El riesgo del reuso es cosechar la cara del disco anterior bajo el nombre de este. La
+    firma manda: distinto disco ⇒ no se reusa, aunque las 3 confirmaciones estén en verde."""
+    import numpy as np
+    import app.core.monitor as mon
+    m = _monitor_cross_check(monkeypatch, latch="Lycaon", voted="Cissia")
+    monkeypatch.setattr(mon, "crop_detail_badge", lambda f: None)
+    monkeypatch.setattr(type(m), "_s17_disc_signature", staticmethod(lambda f: _sig(10)))
+    m._s17_det_crop = (_sig(200), np.zeros((40, 40, 3), np.uint8))     # otro disco
+    m._assign_s17_pj(_disc(slot=1), _frame())
+    assert m._identifier.learned_detail == []
+
+
+def test_sin_firma_del_frame_no_se_reusa(monkeypatch):
+    """El recorte de firma también falla a veces. 'No sé si es el mismo disco' se trata como
+    'no es' (RNF-02): se pierde una cosecha, no se ensucia la librería."""
+    import numpy as np
+    import app.core.monitor as mon
+    m = _monitor_cross_check(monkeypatch, latch="Lycaon", voted="Cissia")
+    monkeypatch.setattr(mon, "crop_detail_badge", lambda f: None)
+    monkeypatch.setattr(type(m), "_s17_disc_signature", staticmethod(lambda f: None))
+    m._s17_det_crop = (_sig(10), np.zeros((40, 40, 3), np.uint8))
+    m._assign_s17_pj(_disc(slot=1), _frame())
+    assert m._identifier.learned_detail == []
+
+
+def test_el_loop_guarda_la_cara_y_la_olvida_al_cambiar_de_disco(monkeypatch):
+    """La otra mitad: el loop rápido es quien guarda el recorte. Solo si es CARA (no el texto
+    '(N)', que cosechado sería basura con nombre de PJ) y solo del disco actual."""
+    import numpy as np
+    import app.core.monitor as mon
+    monkeypatch.setattr(mon, "crop_grid_selected_badge", lambda f: None)
+    monkeypatch.setattr(mon, "crop_detail_badge", lambda f: np.zeros((40, 40, 3), np.uint8))
+    from app.core.monitor import Monitor
+    monkeypatch.setattr(Monitor, "_s17_disc_signature", staticmethod(lambda f: _sig(10)))
+    m = _monitor()
+    m._identifier = _StubIdent(sim=0.40, owner=None, det_owner=None)
+    m._sample_s17_owner(_frame())
+    assert m._s17_det_crop is not None, "hubo una cara del disco actual → se guarda"
+
+    # Crop de TEXTO '(N)': el clasificador lo rechaza ⇒ no se guarda (se conserva el anterior).
+    m._identifier = _StubIdent(sim=0.40, owner=None, det_owner=None, det_rej=True)
+    guardado = m._s17_det_crop
+    m._sample_s17_owner(_frame())
+    assert m._s17_det_crop is guardado, "un crop de texto no debe pisar la cara buena"
+
+    # Otro disco ⇒ se olvida (si no, se cosecharía la cara del anterior bajo este nombre).
+    monkeypatch.setattr(Monitor, "_s17_disc_signature", staticmethod(lambda f: _sig(200)))
+    m._sample_s17_owner(_frame())
+    assert m._s17_det_crop is not guardado
+
+
 def test_no_se_rescata_si_el_boton_no_confirma(monkeypatch, caplog):
     """Tercera confirmación: 'desequipar' es el juego afirmando que ESE PJ lo lleva puesto. Sin
     esa afirmación podríamos estar mirando un CANDIDATO de otro PJ — y ahí el grid tendría razón,
