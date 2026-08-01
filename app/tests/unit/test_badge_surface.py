@@ -97,6 +97,64 @@ def test_load_merge_reincorpora_lo_persistido(tmp_path):
     assert "Ellen" in fresh.matcher._refs
 
 
+# ---- Auto-restauración desde el baseline versionado --------------------------------------
+#
+# Las librerías viven en %LOCALAPPDATA%, que no se versiona, y se vaciaron dos veces: el detalle
+# el 2026-07-28 (0 dueños en todas las pantallas) y el grid + row el 2026-07-31. La segunda pasó
+# desapercibida porque el archivo del grid REAPARECÍA, regenerado con la semilla -ico: una
+# librería de arte de comunidad no se abstiene, nombra mal con confianza 0.85.
+
+def _baseline(tmp_path, name="Ellen"):
+    """Un .npz versionado con una ref, para hacer de snapshot en audit/."""
+    m = AvatarMatcher()
+    m.add_reference(name, _cara())
+    p = tmp_path / "baseline.npz"
+    m.save(p)
+    return p
+
+
+def test_load_restaura_del_baseline_si_falta_la_libreria(tmp_path, caplog):
+    import logging
+    base = _baseline(tmp_path)
+    lib = tmp_path / "runtime" / "surf.npz"              # no existe: subcarpeta incluida
+    s = _surface(tmp_path, library_path=lib, baseline_path=base)
+    with caplog.at_level(logging.WARNING, logger="app.core.badge_surface"):
+        assert s.load() == 1
+    assert lib.exists(), "la librería del runtime queda repuesta en disco, no solo en memoria"
+    assert "Ellen" in s.matcher._refs
+    assert any("NO ESTABA" in r.getMessage() for r in caplog.records), \
+        "restaurar en silencio esconde justo el evento que hay que investigar"
+
+
+def test_load_no_pisa_una_libreria_existente(tmp_path):
+    """El baseline es una red de emergencia, no una fuente de verdad: si hay librería del
+    runtime —aunque tenga menos refs que el snapshot— manda ella, porque contiene la cosecha
+    posterior al snapshot."""
+    base = _baseline(tmp_path, name="Ellen")
+    s = _surface(tmp_path, matcher=AvatarMatcher())
+    s.learn(_cara("Nicole.png"), "Nicole")               # crea la librería del runtime
+    fresh = _surface(tmp_path, matcher=AvatarMatcher(), baseline_path=base)
+    fresh.load()
+    assert "Nicole" in fresh.matcher._refs
+    assert "Ellen" not in fresh.matcher._refs
+
+
+def test_load_sin_baseline_se_comporta_como_antes(tmp_path):
+    s = _surface(tmp_path, library_path=tmp_path / "no_esta.npz")
+    assert s.load() == 0                                 # sin baseline y sin librería: 0, sin romper
+
+
+def test_coverage_reporta_la_clase_mas_flaca(tmp_path):
+    """La cobertura se loguea al cargar porque el modo de falla de 2026-07-31 fue una librería
+    PRESENTE pero degradada, y no había una sola línea que lo dijera."""
+    s = _surface(tmp_path)
+    assert s.coverage() == (0, 0, 0)
+    s.learn(_cara(), "Ellen")
+    s.learn(_cara("Nicole.png"), "Nicole")
+    s.learn(_cara("Lucy.png"), "Nicole")
+    assert s.coverage() == (2, 3, 1)                     # 2 clases, 3 refs, la más flaca tiene 1
+
+
 def test_agent_identifier_expone_surfaces():
     """AgentIdentifier compone las 3 superficies históricas y las expone por nombre
     (la vía de entrada para consumidores nuevos)."""

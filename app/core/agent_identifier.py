@@ -42,6 +42,18 @@ _REJECT_DIR = _RESOURCES / "avatar_reject"
 # PRESENCIA ESTRUCTURAL: crop no-rechazado = hay una cara (nombrable o no).
 _REJECT_DET_DIR = _RESOURCES / "avatar_reject_det"
 
+# Baselines VERSIONADOS de cada superficie (audit/ sí se versiona; %LOCALAPPDATA% no). Si la
+# librería del runtime no está, `BadgeSurface.load` la repone de acá — pasó dos veces: el detalle
+# el 2026-07-28 y el grid + row el 2026-07-31, y esta última dejó al grid nombrando con arte
+# `-ico` (4.3% top-1, Cissia llevándose 14 discos ajenos). Actualizar cuando se cosecha de más:
+# `tools/preseed_badge_lib.py --save-snapshot` deja el archivo con este nombre.
+_AUDIT_DIR = Path(__file__).resolve().parents[2] / "audit"
+_BASELINES = {
+    "row": _AUDIT_DIR / "avatar_row_v2_snapshot_20260801.npz",
+    "grid": _AUDIT_DIR / "avatar_badge_v2_snapshot_20260612_full47.npz",
+    "detail": _AUDIT_DIR / "avatar_detbadge_v2_snapshot_20260731_cosecha50.npz",
+}
+
 # Cache del seed -ico: los descriptores son inmutables (frozen) y caros de construir
 # (53 PNGs + CLAHE + histogramas). Se construyen UNA vez y se comparten entre
 # instancias (cada una recibe listas propias, así su cosecha no se filtra).
@@ -96,6 +108,12 @@ class AgentIdentifier:
         herramientas de INSPECCIÓN (tools/audit_badge_lib.py) — un audit no debe
         modificar su objeto de estudio (regresión 2026-07-31)."""
         base = Path(library_path) if library_path else _default_library_path()
+        # El baseline repone la librería DEL RUNTIME, y SOLO esa. Apuntar a otro lado —un
+        # `library_path` explícito, o `DANIBOD_AVATAR_LIB`, que es como el conftest aísla cada
+        # test en su tmp— es una decisión deliberada: ahí que el archivo no exista es
+        # información, no una avería, y volcarle 459 refs del repo rompe el aislamiento.
+        _bl = ({} if (library_path is not None or os.environ.get("DANIBOD_AVATAR_LIB"))
+               else _BASELINES)
         self._row_path = base.with_name("avatar_row_v2.npz")
         self._badge_path = base.with_name("avatar_badge_v2.npz")
         # Detalle-badge (5R.C.4): librería PROPIA del avatar del panel de detalle S17
@@ -120,32 +138,38 @@ class AgentIdentifier:
                 "row", crop_selected_avatar, self._row, self._row_path,
                 canonicalize=self._canonical_name,
                 persist_gate=lambda: not is_readonly(),
+                baseline_path=_bl.get("row"),
             ),
             "grid": BadgeSurface(
                 "grid", crop_grid_selected_badge, self._badge, self._badge_path,
                 canonicalize=self._canonical_name, persist_gate=_harvest_gate,
+                baseline_path=_bl.get("grid"),
             ),
             "detail": BadgeSurface(
                 "detail", crop_detail_badge, self._detbadge, self._detbadge_path,
                 canonicalize=self._canonical_name, persist_gate=_harvest_gate,
                 presence_fn=self.s17_detail_is_face,
+                baseline_path=_bl.get("detail"),
             ),
         }
         if autoload:
-            self._seed_ico()
+            self._seed_ico()              # reject-set + nombres con -ico (no siembra refs)
             self._seed_det_rejects()
             self.load()
             self.load_s17()
             self.load_s17_detail()
+            self._seed_ico_refs()         # DESPUÉS de cargar: solo tapa huecos, no duplica
             if prune:
                 self.prune_to_roster()
 
     # ---- semilla -ico (badge) -----------------------------------------------
 
     def _seed_ico(self) -> None:
-        """Siembra el matcher de badge con los `-ico` del roster + reject-set. Los
-        nombres se canonicalizan al roster (build_name_map); los PJs no obtenidos
-        que igual tienen ico quedan con su stem (cobertura día-1 de grises)."""
+        """Carga el reject-set de las tres superficies y los nombres con `-ico`.
+
+        NO siembra refs: eso lo hace `_seed_ico_refs` DESPUÉS de cargar las librerías. Ver ahí
+        el porqué de la separación.
+        """
         global _ICO_SEED_CACHE
         if not _ICO_DIR.is_dir():
             return
@@ -158,14 +182,38 @@ class AgentIdentifier:
                 seeded = AvatarMatcher.from_folders(_ICO_DIR, _REJECT_DIR, name_map=nm)
                 _ICO_SEED_CACHE = (seeded._refs, seeded._rejects)
             refs, rejects = _ICO_SEED_CACHE
-            for name, lst in refs.items():        # listas propias, descriptores compartidos
-                self._badge._refs.setdefault(name, []).extend(lst)
             self._badge._rejects = list(rejects)
             self._row._rejects = list(rejects)
             self._detbadge._rejects = list(rejects)   # detalle comparte reject-set, NO los -ico
+            # TODOS los nombres con -ico, tengan o no refs sembradas: `prune_to_roster` usa este
+            # set para proteger a los PJs no obtenidos, y esa protección no depende de que la
+            # semilla haya entrado.
             self._ico_names = set(refs.keys())
         except Exception:
-            log.exception("AgentIdentifier: error sembrando -ico")
+            log.exception("AgentIdentifier: error cargando el reject-set -ico")
+
+    def _seed_ico_refs(self) -> None:
+        """Siembra el badge con los `-ico`, SOLO para los PJs que quedaron sin refs cosechadas.
+
+        El `-ico` es arte de comunidad recortado del splash: **otro dominio** que el badge
+        in-game. Su función declarada es dar cobertura día-1 de los PJs grises que no se poseen
+        (2026-06-10), no competir con la cosecha real — contra `-ico` solo, el badge real da 34%.
+
+        Antes se sembraba SIEMPRE y ANTES de cargar el `.npz`. Como el `.npz` ya contenía una
+        copia guardada de la semilla, cada ciclo seed → load → save sumaba otra: el 2026-07-31 el
+        grid tenía 2 refs IDÉNTICAS por clase (distancia intra-clase 0.0) y ninguna cosechada. Ni
+        `_seed_ico` ni `load_merge` aplican `_MAX_REFS_PER_NAME`, así que nada lo frenaba.
+
+        Sembrar solo los huecos corta la duplicación y saca al `-ico` de la competencia en los
+        PJs que tienen refs del dominio correcto. El clasificador cara-vs-texto no se ve afectado:
+        `s17_detail_is_face` toma sus anclas de `_ICO_SEED_CACHE`, no de `_badge._refs`.
+        """
+        if _ICO_SEED_CACHE is None:
+            return
+        refs, _rejects = _ICO_SEED_CACHE
+        for name, lst in refs.items():        # listas propias, descriptores compartidos
+            if not self._badge._refs.get(name):
+                self._badge._refs[name] = list(lst)
 
     def _seed_det_rejects(self) -> None:
         """Carga las anclas de TEXTO '(N)' del detalle (avatar_reject_det/) para el

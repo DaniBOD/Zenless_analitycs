@@ -32,6 +32,7 @@ Dos señales SEPARADAS por diseño (la lección del falso-LIBRE, QA 2026-07-18):
 from __future__ import annotations
 
 import logging
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -67,24 +68,69 @@ class BadgeSurface:
                  canonicalize: Callable[[str], str | None] | None = None,
                  persist_gate: Callable[[], bool] | None = None,
                  presence_fn: Callable[[np.ndarray], bool] | None = None,
-                 guard: float = _GUARD_DEFAULT):
+                 guard: float = _GUARD_DEFAULT,
+                 baseline_path: Path | None = None):
         self.name = name
         self.crop_fn = crop_fn
         self.matcher = matcher
         self.library_path = Path(library_path) if library_path else None
+        # Snapshot VERSIONADO (en audit/) del que se restaura si la librería del runtime
+        # desapareció. Ver `load`.
+        self.baseline_path = Path(baseline_path) if baseline_path else None
         self._canonicalize = canonicalize
         self._persist_gate = persist_gate
         self._presence_fn = presence_fn
         self.guard = guard
 
     # ---- persistencia -------------------------------------------------------
+    def _restore_from_baseline(self) -> bool:
+        """Repone la librería del runtime desde el snapshot versionado.
+
+        Las librerías viven en `%LOCALAPPDATA%`, que no está versionado, y ya se vaciaron dos
+        veces: el `detail` el 2026-07-28 (0 dueños en TODAS las pantallas) y el `grid` + `row` el
+        2026-07-31. La segunda tardó días en detectarse porque el archivo del grid volvía a
+        aparecer —regenerado con la semilla `-ico`— y una librería de arte de comunidad no se
+        abstiene: nombra mal con confianza 0.85 (4.3% top-1, medido). Reponer del baseline es
+        barato y la alternativa es re-cosechar 50 PJs a mano.
+        """
+        if not (self.baseline_path and self.baseline_path.exists() and self.library_path):
+            return False
+        try:
+            self.library_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(self.baseline_path, self.library_path)
+        except Exception:
+            log.exception("BadgeSurface[%s]: no se pudo restaurar desde %s",
+                          self.name, self.baseline_path)
+            return False
+        log.warning("BadgeSurface[%s]: la libreria del runtime NO ESTABA (%s) — restaurada "
+                    "desde el snapshot %s. Si perdiste cosecha posterior, re-cosechá.",
+                    self.name, self.library_path, self.baseline_path.name)
+        return True
+
+    def coverage(self) -> tuple[int, int, int]:
+        """(clases, refs, refs de la clase más flaca) de lo que hay cargado."""
+        refs = self.matcher._refs
+        if not refs:
+            return 0, 0, 0
+        tam = [len(v) for v in refs.values()]
+        return len(refs), sum(tam), min(tam)
+
     def load(self) -> int:
-        """Fusiona la librería persistida (si existe). Devuelve refs cargadas."""
+        """Fusiona la librería persistida, restaurándola del baseline si no está.
+
+        Loguea la cobertura resultante a propósito: el modo de falla de 2026-07-31 fue una
+        librería PRESENTE pero degradada, y no había una sola línea en el log que lo dijera.
+        """
         if self.library_path is None:
             return 0
+        if not self.library_path.exists():
+            self._restore_from_baseline()
         n = self.matcher.load_merge(self.library_path)
         if n:
-            log.info("BadgeSurface[%s]: %d refs cargadas de %s", self.name, n, self.library_path)
+            clases, total, flaca = self.coverage()
+            log.info("BadgeSurface[%s]: %d refs cargadas de %s · %d clases · %d refs totales "
+                     "· la clase más flaca tiene %d",
+                     self.name, n, self.library_path, clases, total, flaca)
         return n
 
     def save(self) -> None:

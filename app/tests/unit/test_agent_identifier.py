@@ -83,6 +83,93 @@ def test_discrimina_entre_dos_pj(tmp_path):
     assert res is not None and res[0] == "Nangong Yu"
 
 
+# ---- Semilla -ico: tapa huecos, no compite ni se duplica ---------------------------------
+#
+# Regresión 2026-07-31. `_seed_ico` sembraba SIEMPRE y ANTES de cargar el .npz; como el .npz ya
+# tenía una copia guardada de la semilla, cada ciclo seed → load → save sumaba otra (ni el seed
+# ni `load_merge` aplican `_MAX_REFS_PER_NAME`). El grid terminó con 2 refs IDÉNTICAS por clase y
+# CERO cosechadas: el arte -ico es de otro dominio, así que nombraba mal con confianza 0.85 —
+# 4.3% top-1 sobre badges reales, con Cissia llevándose 14 discos ajenos.
+
+def _grid_ident(tmp_path, refs_previas=None):
+    """AgentIdentifier real (con autoload) sobre una librería de grid controlada."""
+    from app.core.avatar_descriptor import AvatarMatcher
+    base = tmp_path / "lib.npz"
+    if refs_previas:
+        m = AvatarMatcher()
+        for name, img in refs_previas:
+            m.add_reference(name, img)
+        m.save(base.with_name("avatar_badge_v2.npz"))
+    return AgentIdentifier(library_path=base, autoload=True, prune=False)
+
+
+def _ico(name="Ellen.png"):
+    return cv2.imread(str(REPO / "app" / "resources" / "avatar_refs" / name))
+
+
+def test_la_semilla_ico_no_pisa_a_un_pj_con_cosecha(tmp_path):
+    """Un PJ con refs del dominio REAL no recibe la semilla: el -ico es arte de comunidad y solo
+    agrega una ref de otro dominio a competir dentro de su propia clase."""
+    cosechada = _ico("Ellen.png")
+    if cosechada is None:
+        pytest.skip("assets no disponibles")
+    ident = _grid_ident(tmp_path, refs_previas=[("Ellen", cosechada)])
+    assert len(ident._badge._refs["Ellen"]) == 1, "se le sumó la semilla encima de la cosecha"
+
+
+def test_la_semilla_ico_si_tapa_un_pj_sin_refs(tmp_path):
+    """Su función declarada sigue viva: cobertura día-1 de los PJs que no se poseen."""
+    ident = _grid_ident(tmp_path)
+    sembrados = [k for k, v in ident._badge._refs.items() if v]
+    assert sembrados, "sin librería, la semilla tiene que dar algo"
+    assert "Ellen" in ident._badge._refs
+
+
+def test_dos_cargas_seguidas_no_duplican_la_semilla(tmp_path):
+    """El bucle que vació el grid: cargar → guardar → volver a cargar no puede crecer."""
+    a = _grid_ident(tmp_path)
+    n_a = len(a._badge._refs["Ellen"])
+    a.save_s17()                                   # persiste la semilla, como hacía la cosecha
+    b = AgentIdentifier(library_path=tmp_path / "lib.npz", autoload=True, prune=False)
+    assert len(b._badge._refs["Ellen"]) == n_a, "la semilla se duplicó al recargar"
+
+
+def test_el_baseline_solo_aplica_a_la_libreria_del_runtime(tmp_path, monkeypatch):
+    """La red de emergencia es para la ubicación REAL. Apuntar a otro lado —un `library_path`
+    explícito, o `DANIBOD_AVATAR_LIB`, que es como el conftest aísla cada test— es deliberado: ahí
+    que falte el archivo es información, y volcarle 459 refs del repo rompe el aislamiento (pasó:
+    los tests de armas empezaron a ver una librería que se suponía vacía)."""
+    from app.core.agent_identifier import _BASELINES
+    # con library_path explícito → sin baseline
+    ident = AgentIdentifier(library_path=tmp_path / "lib.npz", autoload=False)
+    assert all(ident.surfaces[s].baseline_path is None for s in ("row", "grid", "detail"))
+    # con DANIBOD_AVATAR_LIB (el caso del conftest) → tampoco
+    monkeypatch.setenv("DANIBOD_AVATAR_LIB", str(tmp_path / "otra.npz"))
+    assert AgentIdentifier(autoload=False).surfaces["grid"].baseline_path is None
+    # ruta por defecto → sí, y apuntando al snapshot versionado de audit/
+    monkeypatch.delenv("DANIBOD_AVATAR_LIB", raising=False)
+    surf = AgentIdentifier(autoload=False).surfaces["grid"]
+    assert surf.baseline_path == _BASELINES["grid"]
+
+
+def test_los_baselines_versionados_existen():
+    """Un baseline que apunta a un archivo inexistente es una red de emergencia imaginaria: no
+    falla al declararla, falla el día que hace falta."""
+    from app.core.agent_identifier import _BASELINES
+    faltan = [k for k, p in _BASELINES.items() if not p.exists()]
+    assert not faltan, f"baselines declarados pero ausentes de audit/: {faltan}"
+
+
+def test_los_nombres_ico_quedan_protegidos_de_la_poda(tmp_path):
+    """`prune_to_roster` usa `_ico_names` para no borrar a los PJs no obtenidos. Ese set tiene
+    que poblarse con TODOS los stems, tenga o no la clase refs sembradas."""
+    cosechada = _ico("Ellen.png")
+    if cosechada is None:
+        pytest.skip("assets no disponibles")
+    ident = _grid_ident(tmp_path, refs_previas=[("Ellen", cosechada)])
+    assert "Ellen" in ident._ico_names
+
+
 def test_persistencia_round_trip(tmp_path):
     """Aprender + guardar + recargar en otra instancia → sigue reconociendo."""
     s18, s8 = _read(NANGONG_S18), _read(NANGONG_S8)
