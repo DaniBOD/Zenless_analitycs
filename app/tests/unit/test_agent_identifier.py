@@ -134,6 +134,32 @@ def test_dos_cargas_seguidas_no_duplican_la_semilla(tmp_path):
     assert len(b._badge._refs["Ellen"]) == n_a, "la semilla se duplicó al recargar"
 
 
+def test_identify_face_se_abstiene_bajo_el_guard(tmp_path):
+    """QA en vivo 2026-08-01: la página de Remielle Dan —que no tenía refs de fila— dio
+    `Vivian conf=0.550`, y dos frames de eso fijaron el latch en Vivian. Los discos eran de
+    Remielle, así que el badge tuvo que desautorizar al ancla en los 6 slots.
+
+    Esta ruta devolvía cualquier match que pasara los gates internos del matcher
+    (`min_conf=0.45`), la mitad del guard que usa el resto del sistema. El umbral sale medido:
+    leave-one-out sobre las refs de fila, la confianza MÍNIMA de un match correcto es 0.928.
+    """
+    from app.core.avatar_descriptor import AvatarMatcher, MatchResult
+    ident = _ident(tmp_path)
+    guard = ident.surfaces["row"].guard
+    cara = _ico("Ellen.png")
+    if cara is None:
+        pytest.skip("assets no disponibles")
+
+    ident._row = ident.surfaces["row"].matcher = AvatarMatcher()
+    ident._row.match = lambda face: MatchResult(  # type: ignore[assignment]
+        name="Vivian", conf=guard - 0.05, margin=0.08, rejected=False, top=[])
+    assert ident.identify_face(cara) is None, "un match por debajo del guard no puede nombrar"
+
+    ident._row.match = lambda face: MatchResult(  # type: ignore[assignment]
+        name="Vivian", conf=guard + 0.05, margin=0.08, rejected=False, top=[])
+    assert ident.identify_face(cara) == ("Vivian", guard + 0.05)
+
+
 def test_el_baseline_solo_aplica_a_la_libreria_del_runtime(tmp_path, monkeypatch):
     """La red de emergencia es para la ubicación REAL. Apuntar a otro lado —un `library_path`
     explícito, o `DANIBOD_AVATAR_LIB`, que es como el conftest aísla cada test— es deliberado: ahí

@@ -358,10 +358,27 @@ class AgentIdentifier:
         return self.identify_face(crop_selected_avatar(frame))
 
     def identify_face(self, face) -> tuple[str, float] | None:
+        """Identifica al PJ por su avatar de FILA, bajo el guard de la superficie.
+
+        Hasta 2026-08-01 esta ruta devolvía cualquier match que pasara los gates internos del
+        matcher (`min_conf=0.45`, `min_margin=0.04`) — la mitad del guard que usa el resto del
+        sistema. Con la librería completa casi no se notaba; con huecos miente: en el QA en vivo
+        la página de **Remielle Dan** —que no tiene refs de fila— dio `Vivian conf=0.550`, y dos
+        frames de eso fijaron el latch en Vivian. Los discos eran de Remielle, así que el
+        cross-check del badge tuvo que desautorizar al ancla en los 6 slots.
+
+        El guard sale medido, no elegido: leave-one-out sobre las 328 refs de fila, la confianza
+        MÍNIMA de un match correcto es **0.928** (mediana 1.000). A 0.80 no cae ni uno, y el
+        falso Vivian de 0.550 queda afuera con margen. Un PJ sin refs pasa a ABSTENERSE, que es
+        lo que corresponde (RNF-02): el monitor sostiene al último conocido en vez de saltar a
+        uno equivocado.
+        """
         if face is None:
             return None
         r = self._row.match(face)
-        return (r.name, r.conf) if r.name else None
+        if r.name is None or r.conf < self.surfaces["row"].guard:
+            return None
+        return r.name, r.conf
 
     # ---- API: badge de DUEÑO (grilla S17) -----------------------------------
 
