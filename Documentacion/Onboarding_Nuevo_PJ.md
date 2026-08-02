@@ -171,6 +171,24 @@ El script es idempotente — solo descargará el archivo nuevo (`46_Lyra.png`), 
 
 La pestaña Roster (RF-11) lo levanta automáticamente porque busca por convención `{id:02d}_{nombre}.png`.
 
+## §9-bis — Paso 7-bis: Badges (reconocimiento visual)
+
+Los pasos anteriores cargan lo que el PJ **es**. Este le enseña al sistema a **reconocerlo en
+pantalla**: en qué PJ estás parado, de quién es cada disco, y de quién es su W-Engine.
+
+Es un flujo aparte porque depende de tenerlo desbloqueado in-game y equipado, así que
+normalmente ocurre días después del resto del onboarding.
+
+**Protocolo completo:** [`Onboarding_Badges_PJ_Nuevo.md`](./Onboarding_Badges_PJ_Nuevo.md)
+
+TL;DR: un screenshot de su Equipamiento para la superficie `row`, y una pasada por sus 6 discos
+con `qa_launch -BadgeHarvest` para `grid` y `detail`. Después **medir que no empeore** con
+`measure_badge_lib --against-labeled` y **dejar snapshot en `audit/`** — las librerías viven en
+`%LOCALAPPDATA%`, que no se versiona, y ya se vaciaron dos veces.
+
+Sin esto el PJ nuevo no rompe nada: las superficies se **abstienen** (RNF-02). Lo que se pierde
+es cobertura, no corrección.
+
 ## §10 — Paso 8: Notificación UI
 
 Cuando el onboarding está completo, el sistema emite un toast resumen:
@@ -246,6 +264,9 @@ Cuando salga un patch nuevo de ZZZ con 1-2 PJs:
 □ 5. Confirmar arquetipo (default por rol o override si escala con HP)
 □ 6. Click "Confirmar y catalogar" → esperar ~5-10 min para los 44 pares IA
 □ 7. Verificar splash art descargado en splash_arts/{id}_{nombre}.png
+□ 7b. (Cuando lo desbloquees y equipes) Badges → Onboarding_Badges_PJ_Nuevo.md
+      screenshot para `row` + pasada con -BadgeHarvest para `grid`/`detail`,
+      medir que no empeore, y snapshot a audit/ + actualizar _BASELINES
 □ 8. (Cuando lo desbloquees in-game) Capturar su build real con RF-04
 □ 9. (Cuando consigas su awakening) Reemplazar placeholder con texto real
 □ 10. (Cuando hagas runs) RF-13 lo agrega automáticamente a tier list personal
