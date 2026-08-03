@@ -636,6 +636,9 @@ class Monitor:
         self._swap_seq: int = 0
         self._swap_check_mark: tuple | None = None
         self._s23_last_key: tuple | None = None
+        # S29 (sustitución de ARMA): mismo dedup por flanco, sin pending — el flujo de W-Engines
+        # es display-only por ahora, así que no hay nada que confirmar después.
+        self._s29_last_key: tuple | None = None
         # Botón de acción de S17 ("Equipar"/"Reemplazar"/"Desequipar"): 2ª señal del feature
         # "disco libre equipado" (2026-07-22). `_btn_read_key` gatea la RELECTURA (RNF-06): es
         # una llamada extra a OCR y solo cambia en transiciones reales — abrir otro disco, o que
@@ -1092,6 +1095,8 @@ class Monitor:
             self._s28_last_sig = None
         if state.code != "S23":
             self._s23_last_key = None   # el pending_swap PERSISTE (se confirma en S17); solo el dedup del log resetea
+        if state.code != "S29":
+            self._s29_last_key = None
         if state.code != "S22":
             self._s22_last_sig = None
             self._s22_seen = {}
@@ -1247,6 +1252,15 @@ class Monitor:
             # NO debe resetear el latch de identidad (cae en el `else` de abajo, que lo resetearía
             # a conf alta) → se maneja acá explícitamente, preservando `_last_agent_name`.
             self._process_s23_sustitucion(frame, state)
+            self._processed_disc_state_code = None
+            self._reported_agent_stats_state_code = None
+            self._agent_stats_screen_logged = False
+        elif state.code == "S29":
+            # Diálogo de sustitución de un W-ENGINE. Va acá y no en el `else` por la MISMA razón
+            # que S23: es un modal sobre el flujo de equipamiento, y el `else` resetearía el latch
+            # de identidad a conf alta (el diálogo matchea ~0.999) justo cuando el PJ que estás
+            # mirando es el dato que hace falta al volver a S26.
+            self._process_s29_sustitucion_arma(frame, state)
             self._processed_disc_state_code = None
             self._reported_agent_stats_state_code = None
             self._agent_stats_screen_logged = False
@@ -1997,6 +2011,37 @@ class Monitor:
                 self._on_diagnostic(msg)
             except Exception:
                 log.debug("on_diagnostic S23 falló", exc_info=True)
+
+    def _process_s29_sustitucion_arma(self, frame, state: ScreenState) -> None:
+        """Diálogo de sustitución de un W-Engine. **Display-only**: deja una línea por flanco y
+        nada más — ni pending, ni DB, ni toast (ver el diálogo no prueba que se confirme).
+
+        Este estado nació para que el diálogo del arma dejara de caer en S23, donde
+        `parse_sustitucion` fallaba —lo correcto, no tiene slot— y volcaba un PNG de diagnóstico
+        por cada reemplazo, ensuciando `audit/s23_parse_fallo/` y disfrazando los fallos reales
+        (QA 2026-07-30). Acá no hay volcado: que el parser de discos no lea esto es el diseño.
+
+        El texto trae **PJ + arma escritos por el juego**, que es verdad de tierra sin librería de
+        badges de por medio. Hoy solo se loguea; el día que el flujo de armas escriba la DB, esta
+        es la fuente del origen."""
+        from app.core.parser_sustitucion import parse_sustitucion_arma
+        d = parse_sustitucion_arma(frame, self._ocr)
+        if d is None:
+            self._note_stall("S29", "el parser no leyó el diálogo del arma")
+            return
+        self._clear_stall("S29")
+        origin = self._resolve_agent_name(d.origin_raw) or d.origin_raw.strip()
+        dest = self._last_agent_name    # PJ cuya pantalla se está viendo (destino del arma)
+
+        # Dedup por flanco: el diálogo dura varios ciclos.
+        key = (origin, d.weapon_raw, dest)
+        if key == self._s29_last_key:
+            return
+        self._s29_last_key = key
+
+        msg = f"[reemplazo arma] {d.weapon_raw} · {origin} → {dest or '?'} (pendiente)"
+        log.info("Sustitución de W-Engine S29 (display-only): %s", msg)
+        self._diag(msg)
 
     def _refresh_action_button(self, merged, frame, badge_present: bool = False) -> None:
         """Relee el botón de acción de S17 y lo cachea en `_s17_action_btn`.

@@ -105,3 +105,66 @@ def test_texto_sin_patron_no_inventa():
 
 def test_none_sin_frame():
     assert ps.parse_sustitucion(None, object()) is None
+
+
+# --- El gemelo del arma (S29) -----------------------------------------------------------------
+# Mismo diálogo, sin sufijo de slot. Es DISPLAY-ONLY: no arma pending ni escribe nada; existe
+# para que el log del estado nuevo diga PJ + arma, que el juego imprime en texto plano y es la
+# única verdad de tierra del dueño que no depende de la librería de badges.
+
+_ARMA_FX = (Path(__file__).resolve().parents[3] / "Documentacion" / "Screenshots_Triggers"
+            / "Engines_Triggers" / "Reemplazo_engine")
+
+_TRUTH_ARMA = {
+    "Ejemplo_1.png": ("Ben", "cilindro"),
+    "Ejemplo_2.png": ("Zhu Yuan", "rotor"),
+    "Ejemplo_3.png": ("Billy Estelar", "herciano"),
+    "Ejemplo_4.png": ("César", "celuloide"),
+}
+
+
+@pytest.mark.skipif(not _ARMA_FX.exists(), reason="capturas del reemplazo de arma no presentes")
+@pytest.mark.parametrize("name", sorted(_TRUTH_ARMA))
+def test_parsea_origen_y_arma(name):
+    p = _ARMA_FX / name
+    if not p.exists():
+        pytest.skip(f"falta {name}")
+    pj_sub, arma_sub = _TRUTH_ARMA[name]
+    frame = cv2.imdecode(np.fromfile(str(p), np.uint8), cv2.IMREAD_COLOR)
+    d = ps.parse_sustitucion_arma(frame, _paddle())
+    assert d is not None, f"{name}: no parseó"
+    assert arma_sub in d.weapon_raw.lower(), f"{name}: arma {d.weapon_raw!r}"
+    assert pj_sub.split()[0].lower() in d.origin_raw.lower(), f"{name}: origen {d.origin_raw!r}"
+
+
+def test_el_parser_de_arma_se_abstiene_ante_un_dialogo_de_disco():
+    """Si un frame de disco llega acá es porque el ruteo falló. Leerlo como arma taparía el
+    problema; abstenerse lo deja visible (RNF-02)."""
+    import numpy as np
+    txt = "Yixuan equipa actualmente Balada de la rama y la espada (2). ¿Deseas sustituirlo?"
+    assert ps.parse_sustitucion_arma(np.zeros((10, 10, 3), dtype=np.uint8), _OcrFijo(txt)) is None
+
+
+def test_el_parser_de_arma_tolera_el_eguipa_de_paddle():
+    """PaddleOCR lee "eguipa" en 2 de los 4 fixtures (confusión q↔g). Sin esta tolerancia el
+    estado quedaba mudo la mitad de las veces."""
+    import numpy as np
+    txt = "Zhu Yuan eguipa actualmente Rotor de cañón. Deseas sustituirlo?"
+    d = ps.parse_sustitucion_arma(np.zeros((10, 10, 3), dtype=np.uint8), _OcrFijo(txt))
+    assert d is not None and d.origin_raw == "Zhu Yuan"
+    assert d.weapon_raw == "Rotor de cañón"
+
+
+def test_el_parser_de_arma_no_se_come_la_pregunta():
+    """El punto que abre '¿Deseas sustituirlo?' es el ancla de cierre del nombre. Sin él, el
+    `.+?` lazy se llevaría la pregunta entera adentro del nombre del arma."""
+    import numpy as np
+    txt = "Ben equipa actualmente Cilindro neumático de Bigger. ¿Deseas sustituirlo?"
+    d = ps.parse_sustitucion_arma(np.zeros((10, 10, 3), dtype=np.uint8), _OcrFijo(txt))
+    assert d is not None
+    assert d.weapon_raw == "Cilindro neumático de Bigger"
+    assert d.origin_raw == "Ben"
+
+
+def test_parser_de_arma_none_sin_frame():
+    assert ps.parse_sustitucion_arma(None, object()) is None

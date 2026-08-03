@@ -104,6 +104,10 @@ THRESHOLD_BY_STATE: dict[str, float] = {
                    #   ({slot}). ¿Deseas sustituirlo?") — arma un WRITE a DB (mover disco), así
                    #   que umbral alto. Template = fila "Cancelar/Confirmar" (genérica de ZZZ) →
                    #   acompañado de _verify_s23 (OCR del texto "sustituirlo").
+    "S29": 0.85,   # Diálogo de sustitución de W-ENGINE entre PJs. MISMA frase que S23 salvo por el
+                   #   sufijo de slot: el disco dice "... {set} (4). ¿Deseas sustituirlo?" y el arma
+                   #   "... {arma}. ¿Deseas sustituirlo?" — un arma no tiene slot. Mismo template y
+                   #   mismo umbral que S23 por eso; lo que separa es `_verify_s29`.
     "S12": 0.0,    # Sin coincidencia — no aplica
 }
 
@@ -126,7 +130,7 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     # caía a S12 ⇒ el disco no se parseaba y NO saltaba el toast (bug de QA en vivo 2026-07-16).
     "S6":  {"S7", "S12", "S4", "S5", "S9", "S10", "S22"},
     "S7":  {"S12", "S4", "S6", "S5", "S9", "S10", "S22"},
-    "S8":  {"S17", "S18", "S19", "S12", "S15", "S9", "S23"},   # equipar un disco de otro PJ → diálogo swap
+    "S8":  {"S17", "S18", "S19", "S12", "S15", "S9", "S23", "S29"},   # equipar un disco/arma de otro PJ → diálogo swap
     "S9":  {"S8", "S12", "S17", "S16", "S6", "S7"},   # "Ver" un disco del inventario → S6/S7
     "S10": {"S12", "S9", "S3", "S20", "S6", "S7"},    # volver de la mejora a la vista individual
     # S24 = el "Obtenido" que confirma el desmontaje. S25 = el diálogo de grado S que va en el
@@ -135,7 +139,7 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     "S11": {"S12", "S9", "S3", "S24", "S25"},
     "S24": {"S11", "S12", "S9"},
     "S25": {"S11", "S12", "S24", "S9"},   # cancelar vuelve a la grilla; confirmar lleva al modal
-    "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18", "S19", "S20", "S21", "S22", "S23", "S24", "S27", "S28"},
+    "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18", "S19", "S20", "S21", "S22", "S23", "S24", "S27", "S28", "S29"},
     "S13": {"S12", "S14", "S1", "S18", "S21", "S22"},
     "S14": {"S12", "S1", "S13", "S15", "S18"},
     "S15": {"S8", "S18", "S19", "S12", "S14"},
@@ -144,7 +148,7 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     # S26 (detalle de W-Engine): misma familia de equipamiento que S17. Se llega desde la vista
     # del agente y se sale a los mismos lugares; el tab de armas y el de discos son vecinos, así
     # que S17↔S26 es una transición normal (el usuario alterna entre las dos).
-    "S26": {"S8", "S18", "S19", "S12", "S15", "S9", "S23", "S17"},
+    "S26": {"S8", "S18", "S19", "S12", "S15", "S9", "S23", "S17", "S29"},
     "S18": {"S8", "S19", "S12", "S15", "S17"},
     "S19": {"S8", "S18", "S12", "S15", "S17"},
     "S20": {"S12", "S17", "S9", "S8", "S15", "S10"},   # tras confirmar el vuelto → inventario
@@ -156,6 +160,10 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     # S23 (diálogo de sustitución): modal sobre el flujo de equipamiento. Se abre desde S8/S17 (o
     # la grilla de selección de disco, que cae a S12) y al confirmar/cancelar vuelve a ese flujo.
     "S23": {"S12", "S17", "S8", "S9"},
+    # S29 (diálogo de sustitución de ARMA): el gemelo de S23 en el flujo de W-Engines. Se abre
+    # desde la grilla de selección de arma (que cae a S12) o desde S26, y al confirmar/cancelar
+    # vuelve al mismo flujo de equipamiento.
+    "S29": {"S12", "S26", "S8", "S9", "S17"},
     # Gacha. El camino real del x10 es S27 → S12 → S28: entre el banner y la grilla va la
     # animación de recolección (la pila de televisores), que NO se modela porque es salteable y
     # no tiene datos. Que ahí diga "pantalla no reconocida" es correcto, no un bug. Se aceptan
@@ -188,6 +196,7 @@ STATE_DESCRIPTIONS: dict[str, str] = {
     "S21": "Modal selección de usos (baterías) — ANTELACIÓN A CAPTURA",
     "S22": "Modal 'Obtenido' (drops del farmeo por baterías)",
     "S23": "Diálogo de sustitución de disco entre PJs (confirmar swap)",
+    "S29": "Diálogo de sustitución de W-Engine entre PJs (confirmar swap de arma)",
     "S24": "Modal 'Obtenido' — confirmación del desmontaje",
     "S25": "Diálogo de confirmación del desmontaje (selección con grado S)",
     "S26": "Equipamiento PJ — vista detalle W-Engine",
@@ -216,6 +225,10 @@ NON_CAPTURE_STATES: set[str] = {
     # Gacha: ninguna de las dos pantallas expone DISCOS, que es de lo que habla este set. S28 sí
     # tiene recompensas, pero son agentes y W-Engines y las lee su propio handler.
     "S27", "S28",
+    # S29 es el diálogo de sustitución de un ARMA. Existe justamente para que el flujo de discos
+    # no lo mire: mientras cayó en S23, `parser_sustitucion` intentaba leerlo, fallaba —lo
+    # correcto— y dejaba un PNG de diagnóstico por cada reemplazo de arma (QA 2026-07-30).
+    "S29",
 }
 
 # Estados donde hay stats de agente visibles (Atributos base)
@@ -1201,6 +1214,16 @@ def _verify_s28(frame: np.ndarray) -> tuple[bool, str | None]:
 # fixtures). La usan `_verify_s23` (anti-FP) y el parser (parser_sustitucion).
 _S23_TEXT_ROI = (0.10, 0.44, 0.80, 0.12)   # x, y, w, h
 _RE_S23_VERIFY = re.compile(r"sustituir|equipa\s+actualmente", re.I)
+
+# El sufijo de SLOT es lo único que separa el diálogo de disco del de ARMA: un disco vive en un
+# slot 1-6 y el juego lo imprime, un W-Engine no tiene slot.
+#     disco → "Yixuan equipa actualmente Balada de la rama y la espada (2). ¿Deseas sustituirlo?"
+#     arma  → "Ben equipa actualmente Cilindro neumático de Bigger. ¿Deseas sustituirlo?"
+# Medido con Tesseract sobre los 7 fixtures de disco y los 4 de arma: 7/7 con sufijo, 4/4 sin.
+# El patrón replica el de `parser_sustitucion` a propósito —incluidos el "(" opcional (el OCR se
+# lo come a veces) y los alias de dígito de la variante laxa—, porque el criterio de ruteo tiene
+# que ser el MISMO que el de parseo: si el parser va a poder leer un slot de ahí, es un disco.
+_RE_S23_SLOT = re.compile(r"\(?\s*[1-6]\s*\)|\(\s*[il|¡zsb]\s*\)", re.I)
 _s23_verify_ocr = None
 
 
@@ -1225,8 +1248,14 @@ def _verify_s23(frame: np.ndarray) -> tuple[bool, str | None]:
     """Verifica que S23 sea el diálogo de SUSTITUCIÓN de disco. El template es la fila
     "Cancelar/Confirmar", GENÉRICA de ZZZ (varios diálogos de confirmación la tienen), así que el
     template solo sería un FP a la espera. La firma exclusiva es el TEXTO del diálogo ("... equipa
-    actualmente ... sustituirlo"). OCR de esa banda (anti-FP, RNF-02). Sin Tesseract → no bloquear
-    (convención del repo: ante ausencia/excepción, no degradar)."""
+    actualmente ... sustituirlo") **más el sufijo de slot**, que es lo que lo separa del diálogo
+    gemelo de W-Engine (S29). OCR de esa banda (anti-FP, RNF-02). Sin Tesseract → no bloquear
+    (convención del repo: ante ausencia/excepción, no degradar).
+
+    Exigir el slot NO abre un modo de fallo nuevo: un frame de disco cuyo "(N)" el OCR arruine
+    hoy ya cae en S23, el parser se abstiene y el swap no ocurre (solo deja un PNG en
+    `audit/s23_parse_fallo/`). Con este cambio ese mismo frame cae en S29 y el swap tampoco
+    ocurre. Cambia la etiqueta, no el desenlace."""
     ocr = _get_dialog_verify_ocr()
     if ocr is None:
         return (True, None)
@@ -1237,10 +1266,42 @@ def _verify_s23(frame: np.ndarray) -> tuple[bool, str | None]:
         if crop.size == 0:
             return (True, None)
         text, _ = ocr.text(crop, psm=6, lang="spa")
-        ok = bool(_RE_S23_VERIFY.search(text or ""))
-        return (ok, "txt=sustituir" if ok else "txt=no-match")
+        text = text or ""
+        if not _RE_S23_VERIFY.search(text):
+            return (False, "txt=no-match")
+        if not _RE_S23_SLOT.search(text):
+            return (False, "txt=sin-slot")   # es el diálogo, pero de un arma → S29
+        return (True, "txt=sustituir")
     except Exception:
         return (True, None)
+
+
+def _verify_s29(frame: np.ndarray) -> tuple[bool, str | None]:
+    """Verifica que S29 sea el diálogo de sustitución de un **W-Engine**: el mismo texto de S23
+    pero SIN sufijo de slot (un arma no vive en un slot).
+
+    **Falla cerrado**, con el mismo razonamiento que `_verify_s25`: sin OCR no hay forma de
+    separarlo de S23, y de los dos el que tiene consecuencias es S23 —mueve un disco entre PJs y
+    **escribe la DB**. En una máquina sin Tesseract, S29 sencillamente no existe y S23 queda
+    exactamente como estaba (RNF-01/02: ante la duda gana el que hace algo)."""
+    ocr = _get_dialog_verify_ocr()
+    if ocr is None:
+        return (False, "sin-ocr")
+    try:
+        h, w = frame.shape[:2]
+        x, y, rw, rh = _S23_TEXT_ROI      # misma banda: es el mismo diálogo genérico
+        crop = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
+        if crop.size == 0:
+            return (False, "roi-vacio")
+        text, _ = ocr.text(crop, psm=6, lang="spa")
+        text = text or ""
+        if not _RE_S23_VERIFY.search(text):
+            return (False, "txt=no-match")
+        if _RE_S23_SLOT.search(text):
+            return (False, "txt=con-slot")   # tiene slot → es un disco, es de S23
+        return (True, "txt=arma-sin-slot")
+    except Exception:
+        return (False, "excepcion")
 
 
 # El diálogo de confirmación del DESMONTAJE comparte con S23 la fila "Cancelar/Confirmar" (mismo
@@ -1453,6 +1514,50 @@ def _verify_s24(frame: np.ndarray) -> tuple[bool, str | None]:
         return (True, None)
 
 
+# --- S9: el inventario de DISCOS, que comparte chrome con el de AMPLIFICADORES ---------------
+# Las dos pantallas son la misma grilla con el mismo panel de detalle a la derecha: el inventario
+# de W-Engines matchea `s9_inventario_general.png` a **0.855-0.864** sobre los 6 fixtures, por
+# encima del umbral 0.80 de S9 y sin ninguna verificación que lo frene. Hoy es inocuo porque el
+# handler de S9 nunca se cableó; el día que se cablee, el pipeline de DISCOS estaría parseando
+# armas. Es la misma trampa que S17/S26 y S23/S25, y se cierra igual: por el TÍTULO.
+#     discos → "Pistas de disco [339/3000]"
+#     armas  → "Amplificadores [57/2000]"
+# El ancla del lado de las armas es la COLA `lificador`, no la palabra entera: sobre los 6
+# fixtures el OCR nunca lee "Amplificadores" limpio y lo rompe de dos formas distintas —
+# "Amoplificadores" (×4) y "Amolificadores" (×2)—, o sea que ni el arranque "Ampl" ni la "p"
+# sobreviven. Lo que sí sobrevive en 6/6 es "lificadores".
+_S9_HEADER_ROI = (0.02, 0.085, 0.35, 0.055)   # x, y, w, h — título arriba a la izquierda
+_RE_S9_DISCOS = re.compile(r"pistas\s+de\s+disco", re.I)
+_RE_S9_ARMAS = re.compile(r"lificador", re.I)
+
+
+def _verify_s9(frame: np.ndarray) -> tuple[bool, str | None]:
+    """Rechaza S9 cuando la grilla es el inventario de AMPLIFICADORES y no el de discos.
+
+    Solo bloquea cuando **ve positivamente** el título de armas. Si el OCR devuelve basura, deja
+    pasar: hasta ahora S9 no tenía verificación ninguna, y este hito es un blindaje contra una
+    pantalla concreta, no una recalibración de S9 (que además es NON_CAPTURE e informativo). Sin
+    Tesseract → no bloquear, por la misma razón."""
+    ocr = _get_dialog_verify_ocr()
+    if ocr is None:
+        return (True, None)
+    try:
+        h, w = frame.shape[:2]
+        x, y, rw, rh = _S9_HEADER_ROI
+        crop = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
+        if crop.size == 0:
+            return (True, None)
+        text, _ = ocr.text(crop, psm=7, lang="spa")
+        text = text or ""
+        if _RE_S9_ARMAS.search(text):
+            return (False, "txt=amplificadores")
+        if _RE_S9_DISCOS.search(text):
+            return (True, "txt=pistas-de-disco")
+        return (True, None)
+    except Exception:
+        return (True, None)
+
+
 def _verify_s2(frame: np.ndarray) -> tuple[bool, str | None]:
     """Verifica que S2 sea un FARMEO DE DISCOS real. El template 's2_resultado_desafio' matchea
     (a ≥0.80) tanto los resultados de farmeo de discos como OTRAS pantallas de "Resultados del
@@ -1499,8 +1604,10 @@ _VERIFICATION_REGISTRY: dict[str, callable] = {
     "S2":  _verify_s2,
     "S22": _verify_s22,
     "S23": _verify_s23,
+    "S29": _verify_s29,
     "S24": _verify_s24,
     "S25": _verify_s25,
+    "S9":  _verify_s9,
     "S3":  _verify_s3,
     "S10": _verify_s10,
     "S17": _verify_s17,
@@ -1640,6 +1747,11 @@ _STATE_TEMPLATES: list[dict] = [
     # Va DESPUÉS de S23 en la lista: ante scores empatados el orden decide quién se verifica
     # primero, y el primer turno le toca al estado que escribe la DB.
     {"code": "S25", "template": "s23_sustitucion.png",              "desc": "Diálogo de confirmación del desmontaje (grado S)"},
+    # S29 (sustitución de W-Engine) reusa el mismo template por el mismo motivo, y va último por
+    # el mismo criterio: los tres diálogos empatan en score y el primer turno es del que escribe
+    # la DB. Los verifies de S23 y S29 son mutuamente excluyentes por construcción (con slot / sin
+    # slot), así que el orden acá es cinturón además de tirantes.
+    {"code": "S29", "template": "s23_sustitucion.png",              "desc": "Diálogo de sustitución de W-Engine entre PJs"},
 ]
 
 
@@ -1954,6 +2066,7 @@ def polling_cadence_ms(state: ScreenState) -> int:
         "S17": 1000, "S18": 1500, "S19": 1500, "S21": 1000, "S22": 700,
         "S26": 1000,   # misma cadencia que S17: es la misma pantalla con otro panel
         "S23": 1000,   # diálogo modal breve; el latch del destino se captura al detectarlo
+        "S29": 1000,   # gemelo de S23 para armas: mismo diálogo, misma cadencia
         "S25": 1000,   # diálogo de confirmación del desmontaje: una sola lectura alcanza (no lee
                        #   nada de la pantalla, solo congela el conteo ya declarado)
         # S11: 5000 → 300. Antes solo hacía falta RECONOCERLA para no capturar; ahora se sigue

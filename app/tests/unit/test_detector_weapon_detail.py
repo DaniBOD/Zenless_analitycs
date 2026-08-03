@@ -103,19 +103,27 @@ def test_los_frames_de_disco_del_equipamiento_siguen_en_s17():
     assert all(c == "S17" for _, c in malos), [x for x in malos if x[1] != "S17"]
 
 
+# Los dos tests que había acá afirmaban que el diálogo de reemplazo "sigue en S23" y el
+# inventario de armas "sigue en S9", con la nota de que desambiguarlos era **tramo posterior**.
+# Ese tramo llegó el 2026-08-02: el diálogo tiene estado propio (S29) y el inventario ya no entra
+# por S9. Se invierten acá para que este módulo no siga afirmando lo contrario del contrato
+# vigente; la cobertura completa de la desambiguación vive en
+# `test_detector_desambiguacion_armas.py`.
+
 @pytest.mark.skipif(not _REEMPLAZO, reason="capturas del reemplazo no presentes")
 @pytest.mark.parametrize("fx", _REEMPLAZO, ids=lambda p: p.stem)
-def test_el_dialogo_de_reemplazo_sigue_en_s23(fx):
-    """H1 no toca los otros dos cruces: el diálogo sigue clasificando S23 (lo que impide la
-    contaminación es el contrato de `test_armas_no_contaminan_discos`, no el estado)."""
-    assert ScreenDetector(use_state_machine=False).classify(_load(fx)).code == "S23"
+def test_el_dialogo_de_reemplazo_ya_no_es_s23(fx):
+    """Antes caía en S23 —el estado que escribe la DB— y volcaba un PNG de diagnóstico por cada
+    reemplazo de arma. Ahora es S29."""
+    assert ScreenDetector(use_state_machine=False).classify(_load(fx)).code == "S29"
 
 
 @pytest.mark.skipif(not _INVENTARIO, reason="capturas del inventario no presentes")
 @pytest.mark.parametrize("fx", _INVENTARIO, ids=lambda p: p.stem)
-def test_el_inventario_de_armas_sigue_en_s9(fx):
-    """Ídem: el inventario de armas es tramo posterior."""
-    assert ScreenDetector(use_state_machine=False).classify(_load(fx)).code == "S9"
+def test_el_inventario_de_armas_ya_no_es_s9(fx):
+    """Todavía no tiene estado propio (cae en S12, que es correcto y seguro); lo que se cerró es
+    que se hiciera pasar por el inventario de DISCOS a 0.86 y sin verificación."""
+    assert ScreenDetector(use_state_machine=False).classify(_load(fx)).code != "S9"
 
 
 @pytest.mark.skipif(not _FP_DIR.exists(), reason="corpus de negativos no presente")

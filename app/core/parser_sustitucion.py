@@ -47,6 +47,26 @@ _RE_SUSTITUCION_LAX = re.compile(
 )
 
 
+# El diálogo del W-ENGINE (S29) es la misma frase sin el sufijo de slot:
+#     "Ben equipa actualmente Cilindro neumático de Bigger. ¿Deseas sustituirlo?"
+# El nombre del arma termina en el punto que abre "¿Deseas sustituirlo?". Ese punto es el ancla
+# de cierre: sin él el `.+?` lazy se comería la pregunta entera. Si el OCR se lo come, el parser
+# se abstiene (RNF-02) — el ruteo a S29 ya ocurrió igual, esto solo pone nombres en el log.
+#
+# `e[qg]uipa` y no `equipa`: PaddleOCR lee **"eguipa"** en 2 de los 4 fixtures (Zhu Yuan, Billy
+# Estelar). Es la confusión q↔g, del mismo tipo acotado que el alias de dígito del slot, y no
+# aflojar el ancla dejaría el estado mudo la mitad de las veces.
+#
+# OJO — `_RE_SUSTITUCION` (la del disco) tiene el mismo `equipa` rígido. Hoy no falla porque los
+# 7 fixtures de disco salen limpios con Paddle, pero el modo de fallo es el mismo y ese camino
+# ESCRIBE la DB. No se toca acá a propósito: aflojar el parser del swap de discos pide su propio
+# QA (RNF-01/02).
+_RE_SUSTITUCION_ARMA = re.compile(
+    r"(?P<pj>.+?)\s+e[qg]uipa\s+actualmente\s+(?P<arma>[^.]+?)\s*\.",
+    re.IGNORECASE,
+)
+
+
 @dataclass(frozen=True)
 class SustitucionParsed:
     """Campos crudos del diálogo de sustitución. `origin_raw`/`set_raw` traen ruido de OCR
@@ -54,6 +74,15 @@ class SustitucionParsed:
     origin_raw: str
     set_raw: str
     slot: int
+    conf: float
+
+
+@dataclass(frozen=True)
+class SustitucionArmaParsed:
+    """Campos crudos del diálogo de sustitución de un W-Engine (S29). Sin slot: un arma no vive
+    en un slot, y esa ausencia es justamente lo que separa este diálogo del de disco."""
+    origin_raw: str
+    weapon_raw: str
     conf: float
 
 
@@ -105,3 +134,27 @@ def parse_sustitucion(frame: np.ndarray, ocr) -> SustitucionParsed | None:
     if not origin or not set_raw:
         return None
     return SustitucionParsed(origin_raw=origin, set_raw=set_raw, slot=slot, conf=1.0)
+
+
+def parse_sustitucion_arma(frame: np.ndarray, ocr) -> SustitucionArmaParsed | None:
+    """Parsea el diálogo S29 (sustitución de W-Engine) → (origen_raw, arma_raw), o None.
+
+    **Display-only.** A diferencia de `parse_sustitucion`, esto no arma ningún pending ni alimenta
+    un write: hoy solo pone nombres en el log para que el estado sea verificable en el QA en vivo.
+    Se abstiene si aparece un sufijo de slot — eso sería el diálogo de un disco mal ruteado, y
+    leerlo como arma taparía el problema en vez de mostrarlo."""
+    if frame is None or ocr is None or getattr(frame, "size", 0) == 0:
+        return None
+    text = _ocr_dialog_text(frame, ocr)
+    if not text:
+        return None
+    if _RE_SUSTITUCION.search(text) or _RE_SUSTITUCION_LAX.search(text):
+        return None
+    m = _RE_SUSTITUCION_ARMA.search(text)
+    if not m:
+        return None
+    origin = m.group("pj").strip()
+    weapon = m.group("arma").strip()
+    if not origin or not weapon:
+        return None
+    return SustitucionArmaParsed(origin_raw=origin, weapon_raw=weapon, conf=1.0)

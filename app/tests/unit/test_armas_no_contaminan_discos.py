@@ -1,9 +1,14 @@
 """Las pantallas de W-Engine NO deben producir datos de disco.
 
 La pantalla de detalle de un arma es, para el detector, **indistinguible** de la de un disco:
-matchea el mismo template `s17_personalizacion_pistas.png` a 1.000. Lo mismo pasa con el
-inventario de armas (S9) y con el diálogo de reemplazo de arma (S23 a 0.999, y **pasando**
-`_verify_s23`).
+matchea el mismo template `s17_personalizacion_pistas.png` a 1.000.
+
+> **Actualización 2026-08-02.** Las otras dos superposiciones ya se resolvieron por RUTEO y estos
+> tests dejaron de ser la única red: el diálogo de reemplazo de arma tiene estado propio (S29) y
+> el inventario de amplificadores ya no pasa por S9 — ver
+> `test_detector_desambiguacion_armas.py`. Los tests de acá se quedan igual, como segunda línea:
+> fijan que los PARSERS de disco se abstengan aunque el ruteo falle, que es la propiedad que de
+> verdad protege la DB.
 
 Hoy nada se rompe, pero por **accidente**, no por diseño:
 
@@ -116,8 +121,9 @@ def test_las_dos_condiciones_que_sostienen_la_abstencion():
 @pytest.mark.skipif(not _INVENTARIO, reason="capturas del inventario de armas no presentes")
 @pytest.mark.parametrize("fx", _INVENTARIO, ids=lambda p: p.stem)
 def test_inventario_de_armas_no_produce_disco_maduro(fx):
-    """El inventario de armas clasifica S9 (0.855-0.864) igual que el de discos; el parser
-    del panel derecho debe abstenerse."""
+    """El inventario de armas MATCHEABA el template de S9 (0.855-0.864) igual que el de discos.
+    Desde 2026-08-02 `_verify_s9` lo rechaza por el título, pero el parser del panel derecho
+    tiene que abstenerse igual: el ruteo es la primera línea, no la única."""
     d = parse_disc_s9(_load(fx), _paddle())
     assert not disc_is_mature(d), (
         f"{fx.name} maduró como disco: set={d.set_name_canon!r} raw={d.set_name_raw!r}"
@@ -130,8 +136,9 @@ def test_inventario_de_armas_no_produce_disco_maduro(fx):
 @pytest.mark.skipif(not _REEMPLAZO, reason="capturas del reemplazo de arma no presentes")
 @pytest.mark.parametrize("fx", _REEMPLAZO, ids=lambda p: p.stem)
 def test_dialogo_de_arma_no_parsea_como_sustitucion_de_disco(fx):
-    """El diálogo de reemplazo de ARMA pasa `_verify_s23` (texto "sustituir") y llega al
-    handler que escribe la DB. Lo único que lo frena es que la regex exige el `(N)` del slot.
+    """Desde 2026-08-02 el diálogo de arma ni siquiera llega acá: se rutea a S29. Este test
+    igual se queda, porque afirma la propiedad de más abajo en la pila — que aunque el ruteo
+    falle, la regex exige el `(N)` del slot y el parser se abstiene.
 
     Si alguna vez el slot se vuelve opcional para tolerar OCR malo, esto se rompe y el
     sistema movería un disco inexistente entre PJs.

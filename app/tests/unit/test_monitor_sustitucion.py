@@ -21,10 +21,11 @@ import pytest
 
 from app.core.detector import ScreenState
 from app.core.parser_disc import DiscParsed
-from app.core.parser_sustitucion import SustitucionParsed
+from app.core.parser_sustitucion import SustitucionArmaParsed, SustitucionParsed
 from app.core.stats_vocab import _norm_key
 
 _ST23 = ScreenState("S23", 1.0, "s23_sustitucion.png")
+_ST29 = ScreenState("S29", 1.0, "s23_sustitucion.png")   # mismo template, otro estado
 _ST17 = ScreenState("S17", 1.0, "s17")
 
 
@@ -124,6 +125,63 @@ def test_dispatch_s23_no_resetea_el_latch(monkeypatch):
     m._dispatch_state(_frame(), _ST23)
     assert m._last_agent_name == "Nangong Yu"      # NO reseteado
     assert m._pending_swap is not None
+
+
+# ---- S29: el gemelo del arma ------------------------------------------------
+
+def _monitor_arma(monkeypatch, parsed, roster=("Ben", "Nangong Yu")):
+    import app.core.parser_sustitucion as psu
+    m = _monitor(monkeypatch, None, roster=roster)
+    monkeypatch.setattr(psu, "parse_sustitucion_arma", lambda frame, ocr: parsed)
+    return m
+
+
+def _reemplazos_arma(m):
+    return [d for d in m._diags if d.startswith("[reemplazo arma]")]
+
+
+def test_s29_loguea_pj_y_arma_sin_armar_pending(monkeypatch):
+    """Display-only: el flujo de W-Engines todavía no escribe nada. Lo que aporta es el NOMBRE —
+    el juego lo imprime en texto plano, así que es dueño certero sin librería de badges."""
+    m = _monitor_arma(monkeypatch, SustitucionArmaParsed("Ben", "Cilindro neumático de Bigger", 1.0))
+    m._last_agent_name = "Nangong Yu"
+    m._process_s29_sustitucion_arma(_frame(), _ST29)
+
+    assert m._pending_swap is None, "S29 no debe armar un swap: no hay confirmación que lo consuma"
+    linea = _reemplazos_arma(m)
+    assert linea and "Cilindro neumático de Bigger" in linea[-1]
+    assert "Ben" in linea[-1] and "Nangong Yu" in linea[-1]     # origen (diálogo) → destino (latch)
+
+
+def test_s29_dedup_mientras_el_dialogo_sigue_en_pantalla(monkeypatch):
+    m = _monitor_arma(monkeypatch, SustitucionArmaParsed("Ben", "Rotor de cañón", 1.0))
+    m._last_agent_name = "Nangong Yu"
+    for _ in range(3):
+        m._process_s29_sustitucion_arma(_frame(), _ST29)
+    assert len(_reemplazos_arma(m)) == 1
+
+
+def test_dispatch_s29_no_resetea_el_latch(monkeypatch):
+    """La misma regresión que S23, y la razón por la que S29 necesitó rama propia: el diálogo
+    matchea ~0.999, así que el `else` de `_dispatch_state` habría borrado el PJ que estás mirando
+    justo cuando volver a S26 lo necesita."""
+    m = _monitor_arma(monkeypatch, SustitucionArmaParsed("Ben", "Rotor de cañón", 1.0))
+    m._last_agent_name = "Nangong Yu"
+    m._dispatch_state(_frame(), _ST29)
+    assert m._last_agent_name == "Nangong Yu"
+
+
+def test_s29_no_toca_el_pending_de_un_swap_de_disco(monkeypatch):
+    """Un swap de disco pendiente sobrevive a que el usuario pase por el diálogo de un arma: son
+    dos flujos distintos y el de disco se confirma después, en S17."""
+    m = _monitor(monkeypatch, SustitucionParsed("Yixuan", "Jazz caótico", 2, 1.0))
+    m._last_agent_name = "Nangong Yu"
+    m._process_s23_sustitucion(_frame(), _ST23)
+    import app.core.parser_sustitucion as psu
+    monkeypatch.setattr(psu, "parse_sustitucion_arma",
+                        lambda frame, ocr: SustitucionArmaParsed("Ben", "Rotor de cañón", 1.0))
+    m._dispatch_state(_frame(), _ST29)
+    assert m._pending_swap is not None and m._pending_swap["set_id"] == 2
 
 
 # ---- check del dueño en S17 (los 4 desenlaces) -----------------------------
