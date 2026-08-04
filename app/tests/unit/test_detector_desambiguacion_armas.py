@@ -16,6 +16,10 @@ El segundo todavía no rompía nada porque el handler de S9 nunca se cableó. Es
 motivo de blindarlo ahora: el día que se cablee, el pipeline de DISCOS estaría parseando armas y
 nada avisaría.
 
+> **2026-08-04.** El inventario ya no solo está blindado: tiene estado propio (**S30**) y su
+> handler lee el arma seleccionada. El parseo se testea en `test_parser_weapon_s30.py`; acá se fija
+> el RUTEO, que es lo que decide a qué pipeline llega cada frame.
+
 ## Lo medido
 
 El discriminante del diálogo es el **sufijo de slot**, que el juego imprime para un disco y no
@@ -60,6 +64,7 @@ from app.core.detector import (
     _verify_s9,
     _verify_s23,
     _verify_s29,
+    _verify_s30,
     polling_cadence_ms,
     ScreenState,
 )
@@ -190,11 +195,49 @@ def test_el_sufijo_de_slot_separa_disco_de_arma(texto, es_disco):
 
 @pytest.mark.skipif(not _ARMA_INVENTARIO, reason="capturas del inventario de armas no presentes")
 @pytest.mark.parametrize("fx", _ARMA_INVENTARIO, ids=lambda p: p.stem)
-def test_el_inventario_de_armas_no_da_s9(fx, det):
-    """Todavía no tiene estado propio (eso es el tramo siguiente); lo que importa acá es que no se
-    haga pasar por el inventario de DISCOS."""
+def test_el_inventario_de_armas_da_s30(fx, det):
+    """Primero se lo sacó de S9 (caía a S12, correcto y seguro); ahora tiene estado propio."""
     st = det.classify(_load(fx))
-    assert st.code != "S9", f"{fx.name}: sigue cayendo en S9 (conf={st.confidence:.3f})"
+    assert st.code == "S30", f"{fx.name}: {st.code} (conf={st.confidence:.3f})"
+
+
+@pytest.mark.skipif(not _DISCO_INVENTARIO, reason="capturas del inventario de discos no presentes")
+@pytest.mark.parametrize("fx", _DISCO_INVENTARIO[:6], ids=lambda p: p.stem)
+def test_verify_s30_rechaza_el_inventario_de_discos(fx):
+    ok, detalle = _verify_s30(_load(fx))
+    assert ok is False, f"{fx.name}: _verify_s30 se robó el inventario de discos"
+    assert detalle == "txt=no-match"
+
+
+def test_verify_s30_falla_cerrado_sin_ocr(monkeypatch):
+    """La asimetría deliberada del par: con el título ilegible el frame vuelve a S9 —el
+    comportamiento de siempre— en vez de quedar en tierra de nadie."""
+    if not _ARMA_INVENTARIO:
+        pytest.skip("capturas del inventario de armas no presentes")
+    monkeypatch.setattr(det_mod, "_get_dialog_verify_ocr", lambda: None)
+    ok, detalle = _verify_s30(_load(_ARMA_INVENTARIO[0]))
+    assert ok is False
+    assert detalle and "ocr" in detalle.lower()
+
+
+def test_s30_esta_registrado():
+    assert "S30" in STATE_DESCRIPTIONS
+    assert "S30" in THRESHOLD_BY_STATE
+    assert "S30" in NON_CAPTURE_STATES, "muestra armas, no discos"
+    assert "S30" in _VALID_TRANSITIONS
+    assert "S30" in det_mod._VERIFICATION_REGISTRY
+    assert polling_cadence_ms(ScreenState("S30", 1.0, "")) > 0
+    # S9↔S30 son un click: las pestañas de la bolsa están una al lado de la otra.
+    assert "S30" in _VALID_TRANSITIONS["S9"] and "S9" in _VALID_TRANSITIONS["S30"]
+
+
+def test_s30_va_antes_que_s9_en_la_lista_de_templates():
+    """Comparten template. Ante scores empatados el primer turno de verificación le toca al
+    ESTRICTO (`_verify_s30` falla cerrado); si S9 fuera primero se comería todo frame con el
+    título borroso y S30 no llegaría a probarse. Mismo mecanismo que S26 frente a S17."""
+    codigos = [e["code"] for e in det_mod._STATE_TEMPLATES
+               if e["template"] == "s9_inventario_general.png"]
+    assert codigos.index("S30") < codigos.index("S9")
 
 
 @pytest.mark.skipif(not _ARMA_INVENTARIO, reason="capturas del inventario de armas no presentes")

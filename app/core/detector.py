@@ -108,6 +108,10 @@ THRESHOLD_BY_STATE: dict[str, float] = {
                    #   sufijo de slot: el disco dice "... {set} (4). ¿Deseas sustituirlo?" y el arma
                    #   "... {arma}. ¿Deseas sustituirlo?" — un arma no tiene slot. Mismo template y
                    #   mismo umbral que S23 por eso; lo que separa es `_verify_s29`.
+    "S30": 0.80,   # Inventario general de AMPLIFICADORES (W-Engines). COMPARTE el template de S9:
+                   #   es la misma grilla con el mismo panel de detalle a la derecha y matchea
+                   #   `s9_inventario_general.png` a 0.855-0.864. Mismo umbral que S9 por eso; lo
+                   #   que separa es el título, vía `_verify_s30` / `_verify_s9`.
     "S12": 0.0,    # Sin coincidencia — no aplica
 }
 
@@ -131,7 +135,10 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     "S6":  {"S7", "S12", "S4", "S5", "S9", "S10", "S22"},
     "S7":  {"S12", "S4", "S6", "S5", "S9", "S10", "S22"},
     "S8":  {"S17", "S18", "S19", "S12", "S15", "S9", "S23", "S29"},   # equipar un disco/arma de otro PJ → diálogo swap
-    "S9":  {"S8", "S12", "S17", "S16", "S6", "S7"},   # "Ver" un disco del inventario → S6/S7
+    "S9":  {"S8", "S12", "S17", "S16", "S6", "S7", "S30"},   # "Ver" un disco del inventario → S6/S7
+    # S30 (inventario de amplificadores): vecino de S9 — las pestañas de la bolsa están una al
+    # lado de la otra, así que S9↔S30 es un click. Se sale al equipamiento o al detalle del arma.
+    "S30": {"S9", "S12", "S8", "S26", "S15", "S1"},
     "S10": {"S12", "S9", "S3", "S20", "S6", "S7"},    # volver de la mejora a la vista individual
     # S24 = el "Obtenido" que confirma el desmontaje. S25 = el diálogo de grado S que va en el
     # medio (se detecta desde 2026-07-25 para congelar el conteo; NO commitea). Camino real:
@@ -139,7 +146,7 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     "S11": {"S12", "S9", "S3", "S24", "S25"},
     "S24": {"S11", "S12", "S9"},
     "S25": {"S11", "S12", "S24", "S9"},   # cancelar vuelve a la grilla; confirmar lleva al modal
-    "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18", "S19", "S20", "S21", "S22", "S23", "S24", "S27", "S28", "S29"},
+    "S12": {"S1", "S2", "S4", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S3", "S5", "S6", "S7", "S17", "S18", "S19", "S20", "S21", "S22", "S23", "S24", "S27", "S28", "S29", "S30"},
     "S13": {"S12", "S14", "S1", "S18", "S21", "S22"},
     "S14": {"S12", "S1", "S13", "S15", "S18"},
     "S15": {"S8", "S18", "S19", "S12", "S14"},
@@ -197,6 +204,7 @@ STATE_DESCRIPTIONS: dict[str, str] = {
     "S22": "Modal 'Obtenido' (drops del farmeo por baterías)",
     "S23": "Diálogo de sustitución de disco entre PJs (confirmar swap)",
     "S29": "Diálogo de sustitución de W-Engine entre PJs (confirmar swap de arma)",
+    "S30": "Inventario general de amplificadores (W-Engines)",
     "S24": "Modal 'Obtenido' — confirmación del desmontaje",
     "S25": "Diálogo de confirmación del desmontaje (selección con grado S)",
     "S26": "Equipamiento PJ — vista detalle W-Engine",
@@ -229,6 +237,9 @@ NON_CAPTURE_STATES: set[str] = {
     # no lo mire: mientras cayó en S23, `parser_sustitucion` intentaba leerlo, fallaba —lo
     # correcto— y dejaba un PNG de diagnóstico por cada reemplazo de arma (QA 2026-07-30).
     "S29",
+    # S30 muestra AMPLIFICADORES, no discos. Mismo motivo que S26: que el pipeline de discos ni
+    # lo mire. Tiene su propio handler, igual que S26.
+    "S30",
 }
 
 # Estados donde hay stats de agente visibles (Atributos base)
@@ -1531,6 +1542,24 @@ _RE_S9_DISCOS = re.compile(r"pistas\s+de\s+disco", re.I)
 _RE_S9_ARMAS = re.compile(r"lificador", re.I)
 
 
+def _read_inventory_header(frame: np.ndarray) -> str | None:
+    """Texto del título del inventario, o None si no se pudo leer. Lo comparten `_verify_s9` y
+    `_verify_s30`: el template dice "hay una grilla de inventario" y el título dice de QUÉ."""
+    ocr = _get_dialog_verify_ocr()
+    if ocr is None:
+        return None
+    try:
+        h, w = frame.shape[:2]
+        x, y, rw, rh = _S9_HEADER_ROI
+        crop = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
+        if crop.size == 0:
+            return None
+        text, _ = ocr.text(crop, psm=7, lang="spa")
+        return text or ""
+    except Exception:
+        return None
+
+
 def _verify_s9(frame: np.ndarray) -> tuple[bool, str | None]:
     """Rechaza S9 cuando la grilla es el inventario de AMPLIFICADORES y no el de discos.
 
@@ -1538,24 +1567,29 @@ def _verify_s9(frame: np.ndarray) -> tuple[bool, str | None]:
     pasar: hasta ahora S9 no tenía verificación ninguna, y este hito es un blindaje contra una
     pantalla concreta, no una recalibración de S9 (que además es NON_CAPTURE e informativo). Sin
     Tesseract → no bloquear, por la misma razón."""
-    ocr = _get_dialog_verify_ocr()
-    if ocr is None:
+    text = _read_inventory_header(frame)
+    if text is None:
         return (True, None)
-    try:
-        h, w = frame.shape[:2]
-        x, y, rw, rh = _S9_HEADER_ROI
-        crop = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
-        if crop.size == 0:
-            return (True, None)
-        text, _ = ocr.text(crop, psm=7, lang="spa")
-        text = text or ""
-        if _RE_S9_ARMAS.search(text):
-            return (False, "txt=amplificadores")
-        if _RE_S9_DISCOS.search(text):
-            return (True, "txt=pistas-de-disco")
-        return (True, None)
-    except Exception:
-        return (True, None)
+    if _RE_S9_ARMAS.search(text):
+        return (False, "txt=amplificadores")
+    if _RE_S9_DISCOS.search(text):
+        return (True, "txt=pistas-de-disco")
+    return (True, None)
+
+
+def _verify_s30(frame: np.ndarray) -> tuple[bool, str | None]:
+    """La contracara: S30 exige ver el título de AMPLIFICADORES.
+
+    **Falla cerrado**, al revés que `_verify_s9`. Es la asimetría deliberada que hace que el par
+    tenga un fallback definido: con el título ilegible el frame vuelve a S9 —el comportamiento de
+    siempre— en vez de quedar en tierra de nadie. Y como S30 va ANTES en `_STATE_TEMPLATES`, el
+    primer turno de verificación le toca al estricto (mismo mecanismo que S26 frente a S17)."""
+    text = _read_inventory_header(frame)
+    if text is None:
+        return (False, "sin-ocr")
+    if _RE_S9_ARMAS.search(text):
+        return (True, "txt=amplificadores")
+    return (False, "txt=no-match")
 
 
 def _verify_s2(frame: np.ndarray) -> tuple[bool, str | None]:
@@ -1608,6 +1642,7 @@ _VERIFICATION_REGISTRY: dict[str, callable] = {
     "S24": _verify_s24,
     "S25": _verify_s25,
     "S9":  _verify_s9,
+    "S30": _verify_s30,
     "S3":  _verify_s3,
     "S10": _verify_s10,
     "S17": _verify_s17,
@@ -1726,6 +1761,11 @@ _STATE_TEMPLATES: list[dict] = [
     {"code": "S2",  "template": "s2_resultado_desafio_evento.png", "desc": "Resultado del Desafio (evento doble recompensa x2)"},
     {"code": "S5",  "template": "s5_resultado_afinacion.png",       "desc": "Resultado de afinacion"},
     {"code": "S5",  "template": "s5_resultado_afinacion_header.png", "desc": "Resultado de afinacion (header, robusto a selección de disco)"},
+    # S30 REUSA el template de S9 y va ANTES a propósito, por el mecanismo de S26/S17: ante
+    # scores empatados el primer turno de verificación le toca al ESTRICTO. `_verify_s30` exige
+    # ver "Amplificadores" y falla cerrado; `_verify_s9` deja pasar si el título es ilegible. Al
+    # revés, S9 se comería todo frame con el título borroso y S30 no llegaría a probarse.
+    {"code": "S30", "template": "s9_inventario_general.png",        "desc": "Inventario general de amplificadores (W-Engines)"},
     {"code": "S9",  "template": "s9_inventario_general.png",        "desc": "Inventario general de discos"},
     {"code": "S11", "template": "s11_desmontaje.png",               "desc": "Pantalla desmontaje"},
     {"code": "S10", "template": "s10_modal_upgrade.png",            "desc": "Modal upgrade"},
@@ -2067,6 +2107,7 @@ def polling_cadence_ms(state: ScreenState) -> int:
         "S26": 1000,   # misma cadencia que S17: es la misma pantalla con otro panel
         "S23": 1000,   # diálogo modal breve; el latch del destino se captura al detectarlo
         "S29": 1000,   # gemelo de S23 para armas: mismo diálogo, misma cadencia
+        "S30": 1500,   # inventario de amplificadores: misma cadencia que S9, es la misma grilla
         "S25": 1000,   # diálogo de confirmación del desmontaje: una sola lectura alcanza (no lee
                        #   nada de la pantalla, solo congela el conteo ya declarado)
         # S11: 5000 → 300. Antes solo hacía falta RECONOCERLA para no capturar; ahora se sigue

@@ -31,7 +31,7 @@ import logging
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, NamedTuple, Sequence
 
 import cv2
 import numpy as np
@@ -47,7 +47,9 @@ from app.core.parser_disc_s17 import (
     _Line,
     _norm_key,
     _ocr_detail_lines,
+    _ocr_s9_detail_lines,
     _parse_valor,
+    _S9_LAYOUT,
     _strip,
 )
 
@@ -62,6 +64,9 @@ _S26_LAYOUT = PanelLayout(0.30, 0.52, 0.42)
 # el del verify del detector a propósito — acá interesa detectar que cambió el ARMA, no solo que
 # la pantalla sigue siendo de arma.
 _PANEL_SIG_ROI = (0.30, 0.11, 0.23, 0.40)
+# Ídem para el panel DERECHO del inventario (S30). Mismo propósito, otra columna: cubre nombre,
+# nivel, estrellas y stats del arma seleccionada, que es lo que cambia al moverse por la grilla.
+_S30_PANEL_SIG_ROI = (0.72, 0.16, 0.26, 0.40)
 
 # "Nivel 60/60" (armas) — el denominador es 60 al máximo y 10 en las de rango B sin promocionar,
 # así que NO se ancla a un valor fijo. Es lo que distingue esta línea de los "Nivel 60" sueltos
@@ -106,7 +111,41 @@ _BADGE_PX_MIN = 20         # píxeles saturados mínimos para creerle al hue
 # Hue exacto medido en los 40 fixtures, con varianza CERO (son colores planos de UI):
 #     S = 22.0    A = 155.0    B = 98.0
 # Los rangos son ±10 alrededor de cada uno; no se solapan ni de cerca.
+# Se reconfirmaron sobre el panel del INVENTARIO (S30): S = 21.0, A = 155.0, B = 98.0. Es el mismo
+# color plano, así que la tabla se comparte entre paneles — lo único que cambia es DÓNDE mirar.
 _BADGE_HUE = {"S": (12, 32), "A": (145, 165), "B": (88, 108)}
+
+
+class PillGeometry(NamedTuple):
+    """Dónde caen el badge de rareza y la fila de estrellas RESPECTO DEL PILL "Nivel N/M".
+
+    El pill es el ancla de todo lo posicional (nada fijo funciona en estos paneles), pero el
+    LAYOUT alrededor del pill no es el mismo en las dos pantallas que muestran un arma:
+
+        S26 (detalle)     badge a la izquierda y separado · estrellas en una caja DEBAJO
+        S30 (inventario)  badge pegado al pill            · estrellas A LA DERECHA, misma fila
+
+    Los dos paneles tienen el pill del MISMO tamaño (190×28 vs 194×31), así que no es cuestión de
+    escalar: es otra disposición. Por eso la geometría se pasa como parámetro en vez de derivarse.
+    """
+    badge_dx: int                  # centro del badge, relativo a pill.x1
+    stars_x_from: str              # "x1" | "x2" — borde del pill que ancla la banda horizontal
+    stars_dx: tuple[int, int]
+    stars_y_from: str              # "y1" | "y2" — borde del pill que ancla la banda vertical
+    stars_dy: tuple[int, int]
+
+
+# Los de siempre (40 fixtures del detalle). Es el default de las dos funciones de lectura, así que
+# el camino de S26 no cambia en nada.
+_S26_PILL = PillGeometry(_BADGE_DX, "x1", _STARS_DX, "y2", _STARS_DY)
+
+# Panel del inventario, medido sobre los 6 fixtures:
+#     badge   dx = pill.x1 + [-28, -24]        ⇒ -26, centrado en el rango
+#     estrellas  5 blobs en 6/6, arrancando en pill.x2 + [78, 80], espaciados ~38.7 px, el último
+#                termina cerca de pill.x2 + 263
+# La banda va de +60 a +290: entra la fila entera con margen a los dos lados y no llega al borde
+# del pill (que si no metería un 6º blob del propio texto del nivel).
+_S30_PILL = PillGeometry(-26, "x2", (60, 290), "y1", (-8, 45))
 
 # --- Badge del DUEÑO: mismo ancla, otro lado del pill ------------------------------------------
 # Offsets medidos sobre los 28 fixtures que tienen avatar visible (ver `read_weapon_owner_badge`):
@@ -150,6 +189,14 @@ class WeaponParsed:
     stat_avanzado_canon: str | None = None
     stat_avanzado_valor: float | None = None
     stat_avanzado_unidad: str | None = None
+    # Se leen por PÍXELES anclados al pill de nivel, no por OCR. Declarados acá —y no asignados
+    # al vuelo, como estaban— porque sin el pill no se asignaban nunca y cualquier consumidor
+    # (p. ej. `monitor.py`, que arma la firma con `d.refinamiento`) reventaba con AttributeError
+    # en vez de ver el None que promete el docstring. Hoy no pasaba de casualidad: el gate del
+    # handler exige `nivel`, que sale del mismo pill. Al reusar el parser en otro panel (S30) esa
+    # casualidad deja de valer.
+    rareza: str | None = None
+    refinamiento: int | None = None
     # PJ que la tiene equipada. NO lo llena este módulo: lo resuelve el monitor con la superficie
     # de badge compartida (`crop_detail_badge` + `avatar_detbadge_v2`), que es stateful y vive ahí.
     dueno: str | None = None
@@ -214,6 +261,11 @@ def match_catalogo(nombre_raw: str, catalogo: Sequence[str] | None) -> str | Non
     return normalizados[cerca[0]] if cerca else None
 
 
+def weapon_panel_signature_s30(frame: np.ndarray) -> bytes:
+    """Firma del panel derecho del inventario (S30). Ver `weapon_panel_signature`."""
+    return _panel_signature(frame, _S30_PANEL_SIG_ROI)
+
+
 def weapon_panel_signature(frame: np.ndarray) -> bytes:
     """Firma barata (~0.3 ms) del panel, para que el handler no re-OCRee un panel quieto.
 
@@ -221,8 +273,12 @@ def weapon_panel_signature(frame: np.ndarray) -> bytes:
     durante diez segundos serían diez OCRs idénticos (RNF-06, CPU < 3 %). Es la misma idea que el
     cache del verify en el detector, pero con ROI propio y otro dueño: acá gatea el handler.
     """
+    return _panel_signature(frame, _PANEL_SIG_ROI)
+
+
+def _panel_signature(frame: np.ndarray, roi: tuple[float, float, float, float]) -> bytes:
     h, w = frame.shape[:2]
-    x, y, rw, rh = _PANEL_SIG_ROI
+    x, y, rw, rh = roi
     crop = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
     if crop.size == 0:
         return b""
@@ -248,7 +304,18 @@ def _star_runs(band_mask: np.ndarray) -> list[tuple[int, int]]:
     return runs
 
 
-def read_refinamiento(frame: np.ndarray, pill_bbox: tuple[int, int, int, int]) -> int | None:
+def _stars_band(frame: np.ndarray, pill_bbox: tuple[int, int, int, int],
+                geom: PillGeometry) -> np.ndarray:
+    """Recorte de la fila de estrellas, anclado al pill según la geometría del panel."""
+    x1, y1, x2, y2 = pill_bbox
+    xa = x1 if geom.stars_x_from == "x1" else x2
+    ya = y1 if geom.stars_y_from == "y1" else y2
+    return frame[max(0, ya + geom.stars_dy[0]):ya + geom.stars_dy[1],
+                 max(0, xa + geom.stars_dx[0]):xa + geom.stars_dx[1]]
+
+
+def read_refinamiento(frame: np.ndarray, pill_bbox: tuple[int, int, int, int],
+                      geom: PillGeometry = _S26_PILL) -> int | None:
     """Refinamiento 1-5 contando estrellas BLANCAS entre las 5 de la fila, o None.
 
     Devuelve None si no se detectan exactamente 5 estrellas. Es deliberado: sin las 5 no se sabe
@@ -256,9 +323,7 @@ def read_refinamiento(frame: np.ndarray, pill_bbox: tuple[int, int, int, int]) -
     ubicado (y entonces cualquier número sería inventado). RNF-02.
     """
     try:
-        _, _, _, y2 = pill_bbox
-        x1 = pill_bbox[0]
-        band = frame[y2 + _STARS_DY[0]:y2 + _STARS_DY[1], x1 + _STARS_DX[0]:x1 + _STARS_DX[1]]
+        band = _stars_band(frame, pill_bbox, geom)
         if band.size == 0:
             return None
         hsv = cv2.cvtColor(band, cv2.COLOR_BGR2HSV)
@@ -273,11 +338,12 @@ def read_refinamiento(frame: np.ndarray, pill_bbox: tuple[int, int, int, int]) -
         return None
 
 
-def read_rareza(frame: np.ndarray, pill_bbox: tuple[int, int, int, int]) -> str | None:
+def read_rareza(frame: np.ndarray, pill_bbox: tuple[int, int, int, int],
+                geom: PillGeometry = _S26_PILL) -> str | None:
     """Rareza S/A/B por el hue del badge circular a la izquierda del pill de nivel, o None."""
     try:
         x1, y1, _, y2 = pill_bbox
-        cx, cy = x1 + _BADGE_DX, (y1 + y2) // 2
+        cx, cy = x1 + geom.badge_dx, (y1 + y2) // 2
         roi = frame[cy - _BADGE_R:cy + _BADGE_R, cx - _BADGE_R:cx + _BADGE_R]
         if roi.size == 0:
             return None
@@ -444,6 +510,7 @@ def parse_weapon_s26_from_lines(
     catalogo: Sequence[str] | None = None,
     layout: PanelLayout = _S26_LAYOUT,
     frame: np.ndarray | None = None,
+    pill_geom: PillGeometry = _S26_PILL,
 ) -> WeaponParsed:
     """Core testeable: parsea el panel a partir de las líneas OCR con bbox.
 
@@ -560,8 +627,8 @@ def parse_weapon_s26_from_lines(
 
     # --- Rareza y refinamiento (píxeles, anclados al pill) ---
     if frame is not None and pill_bbox is not None:
-        out.rareza = read_rareza(frame, pill_bbox)
-        out.refinamiento = read_refinamiento(frame, pill_bbox)
+        out.rareza = read_rareza(frame, pill_bbox, pill_geom)
+        out.refinamiento = read_refinamiento(frame, pill_bbox, pill_geom)
         if out.rareza is None:
             out.notas.append("rareza_no_leida")
         if out.refinamiento is None:
@@ -588,3 +655,28 @@ def parse_weapon_s26(
     H, W = frame.shape[:2]
     return parse_weapon_s26_from_lines(
         _ocr_detail_lines(frame, ocr), W, H, catalogo=catalogo, frame=frame)
+
+
+def parse_weapon_s30(
+    frame: np.ndarray,
+    ocr: "OcrBackend",
+    catalogo: Sequence[str] | None = None,
+) -> WeaponParsed:
+    """El MISMO parser, contra el panel derecho del inventario de amplificadores (S30).
+
+    Las dos pantallas describen un arma con las mismas secciones ("Atributo principal",
+    "Atributos avanzados", "Efecto de amplificador"), así que reusar el parser no es un atajo: es
+    la misma gramática. Lo único distinto es dónde vive el panel y cómo se acomodan el badge y las
+    estrellas alrededor del pill, y las dos cosas ya son parámetros.
+
+    Medido sobre los 6 fixtures: nombre, nivel/máximo, ATK base y stat avanzado salen **6/6**; con
+    la geometría del inventario, rareza y refinamiento también.
+
+    Ojo con el nombre crudo: acá el OCR lo maltrata más que en el detalle (`Uitimacena` por
+    "Última cena", `Calderodela claridad`). Es `nombre_raw` a propósito — la canonización va
+    contra el catálogo con `match_catalogo`, nunca por comparación exacta.
+    """
+    H, W = frame.shape[:2]
+    return parse_weapon_s26_from_lines(
+        _ocr_s9_detail_lines(frame, ocr), W, H, catalogo=catalogo, frame=frame,
+        layout=_S9_LAYOUT, pill_geom=_S30_PILL)

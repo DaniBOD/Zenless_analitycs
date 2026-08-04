@@ -360,6 +360,9 @@ class Monitor:
         # firma del último log para no repetir la misma línea. Observación pura: no escribe DB.
         self._s26_panel_sig: bytes | None = None
         self._s26_last_log_sig: tuple | None = None
+        # S30 (inventario de amplificadores): mismo gate por firma, otro panel. No lleva votación
+        # de dueño ni memoria de tenencia — acá no hay toast que decidir, solo log.
+        self._s30_panel_sig: bytes | None = None
         # Votos del DUEÑO acumulados sobre el arma que se está mirando (`_s26_owner_key` la
         # identifica; al cambiar de arma la votación arranca limpia). Nombrar con UN frame
         # suelto daba dueños que oscilaban entre dos PJs con el panel quieto (QA 2026-07-31).
@@ -1109,6 +1112,8 @@ class Monitor:
         if state.code != "S26":
             # Fuera de S26 → olvidar el arma mirada, así al volver se re-emite.
             self._reset_s26_tracking()
+        if state.code != "S30":
+            self._s30_panel_sig = None      # ídem para el inventario
         # Tanda de desmontaje: se abandona al llegar a CUALQUIER pantalla confirmada que no sea
         # la propia grilla, el modal de commit, o un S12. Va acá arriba y no en el `else` final
         # porque los estados con handler propio (S9, S17, S8…) nunca llegan al `else` — un bug
@@ -1200,6 +1205,13 @@ class Monitor:
         elif state.code == "S26":
             # Detalle de W-Engine (RF-15). Observación pura: log + toast, cero escrituras a la DB.
             self._process_s26_weapon_detail(frame, state)
+            self._processed_disc_state_code = None
+            self._reported_agent_stats_state_code = None
+            self._agent_stats_screen_logged = False
+        elif state.code == "S30":
+            # Inventario de amplificadores (RF-15 tramo 2). Display-only y SIN toast: recorrer la
+            # grilla es lectura, no novedad.
+            self._process_s30_weapon_inventory(frame, state)
             self._processed_disc_state_code = None
             self._reported_agent_stats_state_code = None
             self._agent_stats_screen_logged = False
@@ -4085,6 +4097,52 @@ class Monitor:
                 })
             except Exception:
                 log.exception("Error en on_weapon_seen (toast de W-Engine)")
+
+    def _process_s30_weapon_inventory(self, frame, state: ScreenState) -> None:
+        """Inventario de amplificadores (S30): lee el arma SELECCIONADA del panel derecho.
+
+        **Display-only y sin toast, a diferencia de S26.** Acá el usuario recorre la grilla y cada
+        tile que toca es una lectura, no una novedad: interrumpir por cada una sería exactamente lo
+        que Daniel vetó ("un toast avisa de CAMBIOS, no de lecturas"). Va al log y al panel en vivo.
+
+        El parser es el MISMO de S26 (`parse_weapon_s30`): las dos pantallas describen un arma con
+        las mismas secciones, y lo único distinto —dónde vive el panel y cómo se acomodan badge y
+        estrellas alrededor del pill— son parámetros. Medido sobre los 6 fixtures: los 6 campos
+        salen 6/6 y la canonización contra `weapons` acierta 6/6, incluidos los que el OCR maltrata
+        ("Uitimacena" → "Última cena", "Modeloll" → "Modelo II").
+
+        El DUEÑO no se lee todavía: en este panel el avatar está arriba, junto al nombre, no al
+        lado del pill como en S26, así que `read_weapon_owner_badge` no aplica sin recalibrar.
+
+        Gate RNF-06 por firma del panel, igual que S26: moverse por la grilla cambia el panel, y
+        quedarse quieto no debe costar un OCR por ciclo.
+        """
+        from app.core.parser_weapon_s26 import parse_weapon_s30, weapon_panel_signature_s30
+
+        sig = weapon_panel_signature_s30(frame)
+        if sig and sig == self._s30_panel_sig:
+            return                      # panel quieto: ni stall ni OCR, es el camino normal
+        self._s30_panel_sig = sig
+
+        d = parse_weapon_s30(frame, self._ocr, catalogo=self._weapon_catalog())
+        if not d.nombre_raw or d.nivel is None:
+            self._note_stall("S30/inventario", f"panel ilegible (notas={','.join(d.notas) or '-'})")
+            return
+        self._clear_stall("S30/inventario")
+
+        nombre = d.nombre_canon or d.nombre_raw
+        stat = (f"{d.stat_avanzado_canon} {d.stat_avanzado_valor:g}{d.stat_avanzado_unidad or ''}"
+                if d.stat_avanzado_canon and d.stat_avanzado_valor is not None else None)
+        linea = (f"[S30] Inventario W-Engine — {nombre} · {d.rareza or '?'} · "
+                 f"Nv {d.nivel}/{d.nivel_max} · P{d.refinamiento or '?'} · "
+                 f"ATK base {d.atk_base or '?'} · {stat or 'stat ?'}"
+                 f"{'' if d.nombre_canon else ' · ⚠ fuera del catálogo'}")
+        log.info(linea)
+        self._diag(linea)
+        for n in d.notas:
+            if n.startswith("rareza_discrepa_atk"):
+                log.warning("[S30] ⚠ %s", n)
+                self._diag(f"[S30] ⚠ {n}")
 
     def _weapon_catalog(self) -> list[str] | None:
         """Nombres ESPAÑOLES de `weapons`, cacheados. None si la DB no está disponible.
