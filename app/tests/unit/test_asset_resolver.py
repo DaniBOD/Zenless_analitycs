@@ -109,18 +109,27 @@ def test_set_package_badge_paths_apostrofe_y_espacios():
 def test_set_package_badge_paths_sin_badge_devuelve_vacio():
     """Un set sin badges descargados devuelve [], no revienta ni inventa una ruta.
 
-    El ejemplo era *Branch & Blade Song* (el endpoint estaba caído cuando se bajaron los
-    assets); sus tres badges ya están, así que ahora el caso sin cubrir es **Hado emplumado**,
-    set nuevo del patch 3.1 que todavía no tiene ni fila en `disc_sets` ni logos."""
-    assert set_package_badge_paths("Feathered Fate") == []
+    **El ejemplo es un nombre INVENTADO a propósito.** Antes se usaba un set real que todavía no
+    tenía logos, y eso convirtió al test en un blanco móvil: el ejemplo era *Branch & Blade Song*,
+    se descargaron sus badges y hubo que moverlo a *Feathered Fate*; el 2026-08-07 entraron
+    también esos y el test volvió a fallar. Lo que se quiere afirmar acá es el comportamiento ante
+    un nombre sin archivos, y para eso un set real siempre va a terminar cubriéndose.
+
+    Los sets reales recién incorporados se afirman abajo, en positivo.
+    """
+    assert set_package_badge_paths("Fake Nonexistent Set") == []
     assert set_package_badge_paths(None) == []
     assert set_package_badge_paths("") == []
 
 
-def test_branch_and_blade_song_ya_tiene_sus_badges():
-    """Regresión del hueco que tapaba el test anterior: se descargaron los 3, y el `&` del
-    nombre viaja url-encodeado en el archivo (`%26`), que es donde falla un resolver ingenuo."""
-    assert len(set_package_badge_paths("Branch & Blade Song")) == 3
+@pytest.mark.parametrize("nombre_en", [
+    # Cada uno entró tapando un hueco distinto, y el positivo es lo que evita que se pierdan:
+    "Branch & Blade Song",   # el `&` viaja url-encodeado (`%26`) — ahí falla un resolver ingenuo
+    "Feathered Fate",        # 'Hado emplumado', del patch 3.1 (2026-08-07)
+    "Thorned Rose",          # 'Rosa espinosa', ídem
+])
+def test_los_sets_incorporados_tienen_sus_3_badges(nombre_en):
+    assert len(set_package_badge_paths(nombre_en)) == 3
 
 
 # Agentes con overrides irregulares (los más sensibles)

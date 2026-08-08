@@ -64,9 +64,24 @@ _S26_LAYOUT = PanelLayout(0.30, 0.52, 0.42)
 # el del verify del detector a propósito — acá interesa detectar que cambió el ARMA, no solo que
 # la pantalla sigue siendo de arma.
 _PANEL_SIG_ROI = (0.30, 0.11, 0.23, 0.40)
-# Ídem para el panel DERECHO del inventario (S30). Mismo propósito, otra columna: cubre nombre,
-# nivel, estrellas y stats del arma seleccionada, que es lo que cambia al moverse por la grilla.
-_S30_PANEL_SIG_ROI = (0.72, 0.16, 0.26, 0.40)
+
+# Ídem para el panel DERECHO del inventario (S30), pero en DOS bandas y no en un rectángulo.
+#
+# El primer intento fue un rectángulo único que cubría el panel entero, y se comió dos cosas que
+# **cambian solas**: el arte 3D del arma (arriba a la derecha) y la barra de pestañas de la bolsa.
+# Con eso la firma nunca era igual dos ciclos seguidos, el gate no cortaba nunca y el handler
+# re-OCReaba el mismo panel indefinidamente — QA 2026-08-07: 110 líneas de log para 9 armas. Es
+# exactamente la trampa del hexágono ANIMADO que ya había dejado mudo a S17 (QA 2026-07-23).
+#
+# No alcanza con recortar un rectángulo más chico: el nombre y el arte están LADO A LADO, y las
+# estrellas quedan a la derecha, más allá del arte. Cualquier rectángulo que tenga nombre y
+# estrellas tiene arte en el medio. Por eso van dos bandas:
+#     A · nombre + íconos, cortada antes de donde empieza el arte (x < 0.86)
+#     B · pill + estrellas + stats, que ya está por debajo del arte (y > 0.37)
+_S30_PANEL_SIG_ROIS = (
+    (0.72, 0.24, 0.14, 0.10),   # x 0.72-0.86, y 0.24-0.34
+    (0.72, 0.37, 0.24, 0.19),   # x 0.72-0.96, y 0.37-0.56
+)
 
 # "Nivel 60/60" (armas) — el denominador es 60 al máximo y 10 en las de rango B sin promocionar,
 # así que NO se ancla a un valor fijo. Es lo que distingue esta línea de los "Nivel 60" sueltos
@@ -262,8 +277,9 @@ def match_catalogo(nombre_raw: str, catalogo: Sequence[str] | None) -> str | Non
 
 
 def weapon_panel_signature_s30(frame: np.ndarray) -> bytes:
-    """Firma del panel derecho del inventario (S30). Ver `weapon_panel_signature`."""
-    return _panel_signature(frame, _S30_PANEL_SIG_ROI)
+    """Firma del panel derecho del inventario (S30), en dos bandas que **esquivan el arte
+    animada del arma y la barra de pestañas**. Ver `_S30_PANEL_SIG_ROIS`."""
+    return b"".join(_panel_signature(frame, roi) for roi in _S30_PANEL_SIG_ROIS)
 
 
 def weapon_panel_signature(frame: np.ndarray) -> bytes:
@@ -435,6 +451,76 @@ def read_weapon_owner_badge(frame: np.ndarray,
                 c = frame[max(0, ccy - r):min(H, ccy + r), max(0, ccx - r):min(W, ccx + r)]
                 crop = c if c.size else None
         return OwnerBadge(present=True, nitidez=nitidez, crop=crop)
+    except Exception:
+        return None
+
+
+# --- Badge del dueño en el panel del INVENTARIO (S30) ------------------------------------------
+# Acá el avatar NO está al lado del pill como en S26: vive arriba, en la fila de dos circulitos que
+# hay bajo el nombre — el izquierdo es el ícono de ESPECIALIDAD (martillo=Aturdidor, espadas=
+# Ataque, …) y el derecho es la cara del dueño.
+#
+# Y el ancla vertical se mueve: el bloque nombre+íconos se corre **~38 px hacia abajo cuando el
+# nombre envuelve a dos líneas** (medido: dy = −98..−102 con una línea, −64..−66 con dos), aunque
+# el pill se quede clavado. Es el mismo fenómeno que corre la fila de estrellas en S26.
+#
+# **La presencia se decide por POSICIÓN, no por nitidez.** En S26 el hueco vacío del badge es un
+# degradé y la nitidez lo separa 11×; acá el vecino es un glifo metálico con tanto detalle como
+# una cara (medido sobre las dos armas LIBRES: 85.1 y 66.6, dentro del rango de los dueños
+# reales). Lo que sí separa sin solape es dónde caen: el dueño en `pill.x1 + 24..26` y la
+# especialidad en `−32..−38`. Por eso el filtro es la banda de dx.
+_S30_OWNER_WIN_DX = (-70, 70)     # ventana de búsqueda, relativa a pill.x1
+_S30_OWNER_WIN_DY = (-135, -30)   # relativa a pill.y1; cubre los dos regímenes de nombre
+_S30_OWNER_DX = (10, 45)          # dx ACEPTADO para el centro (deja afuera la especialidad)
+
+
+def read_weapon_owner_badge_s30(frame: np.ndarray,
+                                pill_bbox: tuple[int, int, int, int] | None) -> OwnerBadge | None:
+    """Badge del dueño en el panel del inventario. `present=False` ⇒ el arma está LIBRE.
+
+    El recorte que se devuelve conserva el encuadre de `crop_detail_badge` (Hough +
+    `_DET_HOUGH_PAD`) a propósito: la librería `avatar_detbadge_v2` se cosechó así, y un recorte
+    con otro marco la volvería inútil para nombrar (regla like-with-like de la Fase 5R).
+
+    Como en S26, `present=True` sin `crop` es una salida legítima —"hay alguien, no sé quién"—:
+    que Hough no cierre el círculo no debe convertir un arma con dueño en un arma libre.
+    """
+    if frame is None or getattr(frame, "size", 0) == 0 or not pill_bbox:
+        return None
+    try:
+        H, W = frame.shape[:2]
+        px, py = pill_bbox[0], pill_bbox[1]
+        x0, x1 = px + _S30_OWNER_WIN_DX[0], px + _S30_OWNER_WIN_DX[1]
+        y0, y1 = py + _S30_OWNER_WIN_DY[0], py + _S30_OWNER_WIN_DY[1]
+        if x0 < 0 or y0 < 0 or x1 > W or y1 > H:
+            return None
+        sub = frame[y0:y1, x0:x1]
+        if sub.size == 0:
+            return None
+        blur = cv2.medianBlur(cv2.cvtColor(sub, cv2.COLOR_BGR2GRAY), 3)
+        circles = cv2.HoughCircles(
+            blur, cv2.HOUGH_GRADIENT, dp=1, minDist=30, param1=100, param2=20,
+            minRadius=int(_DET_HOUGH_RMIN_F * W), maxRadius=int(_DET_HOUGH_RMAX_F * W),
+        )
+        if circles is None:
+            return OwnerBadge(present=False, nitidez=0.0)
+        # De todos los círculos, el dueño es el que cae en su banda de dx. Si no hay ninguno ahí,
+        # lo único que se encontró fue el ícono de especialidad ⇒ el arma está libre.
+        elegido = None
+        for c in circles[0]:
+            dx = int(c[0]) + _S30_OWNER_WIN_DX[0]
+            if _S30_OWNER_DX[0] <= dx <= _S30_OWNER_DX[1]:
+                if elegido is None or c[2] > elegido[2]:
+                    elegido = c
+        if elegido is None:
+            return OwnerBadge(present=False, nitidez=0.0)
+        ccx, ccy = int(x0 + elegido[0]), int(y0 + elegido[1])
+        r = int(elegido[2] * _DET_HOUGH_PAD)
+        crop = None
+        if r >= 8:
+            c = frame[max(0, ccy - r):min(H, ccy + r), max(0, ccx - r):min(W, ccx + r)]
+            crop = c if c.size else None
+        return OwnerBadge(present=True, nitidez=0.0, crop=crop)
     except Exception:
         return None
 

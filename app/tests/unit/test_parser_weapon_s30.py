@@ -158,6 +158,79 @@ def test_la_firma_de_s30_mira_otro_panel_que_la_de_s26():
     assert weapon_panel_signature(fr) != weapon_panel_signature_s30(fr)
 
 
+# --- El badge del dueño ------------------------------------------------------------------------
+# Verdad de tierra leída de los screenshots: bajo el nombre hay dos circulitos, el izquierdo es el
+# ícono de ESPECIALIDAD (siempre está) y el derecho la cara del dueño (solo si el arma está
+# equipada). Ejemplo_2 y Ejemplo_5 son las dos LIBRES.
+_DUENO = {
+    "Ejemplo_1.png": True, "Ejemplo_2.png": False, "Ejemplo_3.png": True,
+    "Ejemplo_4.png": True, "Ejemplo_5.png": False, "Ejemplo_6.png": True,
+}
+
+
+@pytest.mark.skipif(not _FIXTURES, reason="capturas del inventario de armas no presentes")
+@pytest.mark.parametrize("name", sorted(_DUENO))
+def test_detecta_si_el_arma_tiene_dueno(name):
+    from app.core.parser_weapon_s26 import read_weapon_owner_badge_s30
+    p = _FX / name
+    if not p.exists():
+        pytest.skip(f"falta {name}")
+    fr = _load(p)
+    d = parse_weapon_s30(fr, _paddle())
+    b = read_weapon_owner_badge_s30(fr, d.pill_bbox)
+    assert b is not None, f"{name}: no se pudo leer el badge"
+    assert b.present is _DUENO[name], f"{name}: present={b.present}"
+
+
+@pytest.mark.skipif(not _FIXTURES, reason="capturas del inventario de armas no presentes")
+def test_la_presencia_va_por_POSICION_y_no_por_nitidez():
+    """En S26 el hueco vacío del badge es un degradé y la nitidez lo separa 11×. Acá el vecino es
+    un glifo metálico con TANTO detalle como una cara: medido sobre las dos armas libres da 85.1 y
+    66.6, dentro del rango de los dueños reales. Si alguien intenta portar el criterio de S26 a
+    esta pantalla, este test explica por qué no funciona — lo que separa sin solape es DÓNDE cae
+    el círculo (dueño en pill.x1 + 24..26, especialidad en −32..−38)."""
+    from app.core.parser_weapon_s26 import _S30_OWNER_DX
+    lo, hi = _S30_OWNER_DX
+    assert lo > 0, "la banda del dueño está a la DERECHA de pill.x1"
+    assert lo <= 24 <= hi and lo <= 26 <= hi, "los centros medidos tienen que entrar"
+    assert -38 < lo and -32 < lo, "y la especialidad tiene que quedar afuera"
+
+
+@pytest.mark.skipif(not _FIXTURES, reason="capturas del inventario de armas no presentes")
+def test_el_recorte_del_dueno_sirve_para_nombrar():
+    """El crop conserva el encuadre de `crop_detail_badge`, que es como se cosechó
+    `avatar_detbadge_v2`. Con otro marco la librería no serviría (like-with-like, Fase 5R)."""
+    from app.core.parser_weapon_s26 import read_weapon_owner_badge_s30
+    fr = _load(_FX / "Ejemplo_1.png")
+    d = parse_weapon_s30(fr, _paddle())
+    b = read_weapon_owner_badge_s30(fr, d.pill_bbox)
+    assert b and b.present and b.crop is not None
+    h, w = b.crop.shape[:2]
+    assert 30 <= w <= 120 and 30 <= h <= 120, f"recorte de {w}x{h}: no parece una cara"
+    assert abs(w - h) <= 4, "el recorte tiene que ser cuadrado"
+
+
+def test_sin_pill_no_inventa_dueno():
+    from app.core.parser_weapon_s26 import read_weapon_owner_badge_s30
+    assert read_weapon_owner_badge_s30(np.zeros((100, 100, 3), np.uint8), None) is None
+
+
+# --- La firma esquiva lo que se mueve ----------------------------------------------------------
+
+def test_la_firma_no_toca_el_arte_ni_las_pestanas():
+    """REGRESIÓN del QA 2026-08-07. La primera firma era un rectángulo único que se comía el arte
+    3D del arma y la barra de pestañas; los dos cambian solos, así que el gate no cortaba nunca y
+    el handler re-OCReaba indefinidamente. Es la misma trampa del hexágono ANIMADO de S17.
+
+    Medido sobre el panel: el arte ocupa x 0.87-0.95 / y 0.25-0.36 y las pestañas y < 0.19."""
+    from app.core.parser_weapon_s26 import _S30_PANEL_SIG_ROIS
+    for (x, y, w, h) in _S30_PANEL_SIG_ROIS:
+        assert y >= 0.19, "no puede entrar la barra de pestañas"
+        solapa_x = x < 0.955 and (x + w) > 0.87
+        solapa_y = y < 0.36 and (y + h) > 0.25
+        assert not (solapa_x and solapa_y), f"la banda {(x, y, w, h)} pisa el arte del arma"
+
+
 # --- El campo que faltaba en el dataclass -----------------------------------------------------
 
 def test_rareza_y_refinamiento_son_none_sin_frame():

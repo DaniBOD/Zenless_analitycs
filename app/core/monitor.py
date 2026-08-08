@@ -56,6 +56,29 @@ _DISC_DETAIL_STATES = _NEW_DISC_STATES | _EQUIPPED_DISC_STATES
 _AGENT_DETAIL_STATES = {"S8", "S19"}
 # Estados re-procesados en CADA ciclo de cadencia (no one-shot por entrada):
 _CONTINUOUS_STATES = AGENT_STATS_STATES | _AGENT_DETAIL_STATES
+
+# Estados que se RE-DESPACHAN mientras siguen en pantalla, además de los de arriba.
+#
+# El criterio es uno solo: **el contenido cambia sin que cambie la pantalla**. Un modal donde el
+# usuario mueve un slider, una grilla por la que scrollea, un panel de detalle que sigue a la
+# selección. Sin re-despacho, de esas pantallas solo se ve el PRIMER frame — y el síntoma es
+# siempre el mismo y siempre desconcertante: "reconoció el primero y después nada", sin una sola
+# línea de error, porque nunca se llega al handler.
+#
+# Estar acá NO significa pagar OCR por ciclo: cada handler tiene su propio gate (por firma del
+# panel, por índice, por hash de la selección) que corta antes de trabajar de más (RNF-06).
+#
+# Vivía como un literal dentro del loop, donde nada podía verificarlo; se extrajo cuando el QA del
+# 2026-08-07 encontró que S30 faltaba.
+_REDISPATCH_STATES = frozenset({
+    "S17", "S15", "S13", "S3", "S4", "S5", "S10", "S20", "S25",
+    "S9",         # inventario de discos: el panel derecho sigue al tile seleccionado
+    "S30",        # inventario de amplificadores: misma pantalla, misma razón
+    "S26",        # detalle de W-Engine: se cambia de arma sin salir
+    "S21", "S22",  # farmeo por baterías: slider y scroll de la lista
+    "S11", "S24",  # desmontaje: se tildan discos uno a uno; el modal vive hasta el Confirmar
+    "S27", "S28",  # gacha: se navega el riel; y la grilla puede llegar en plena transición
+})
 # S9 = INVENTARIO GLOBAL de discos: panel derecho = disco seleccionado (parse_disc_s9,
 # reusa S17), dueño = badge del tile resaltado. Diff máx de firma para "mismo disco".
 _S9_SIG_MAX = 3.0
@@ -361,8 +384,11 @@ class Monitor:
         self._s26_panel_sig: bytes | None = None
         self._s26_last_log_sig: tuple | None = None
         # S30 (inventario de amplificadores): mismo gate por firma, otro panel. No lleva votación
-        # de dueño ni memoria de tenencia — acá no hay toast que decidir, solo log.
+        # de dueño ni memoria de tenencia — acá no hay toast que decidir, solo log. `last_log_sig`
+        # es lo que mantiene el log edge-triggered: la firma de píxeles gatea el OCR, esta gatea
+        # la LÍNEA (sin ella el log se vuelve un heartbeat, QA 2026-08-07).
         self._s30_panel_sig: bytes | None = None
+        self._s30_last_log_sig: tuple | None = None
         # Votos del DUEÑO acumulados sobre el arma que se está mirando (`_s26_owner_key` la
         # identifica; al cambiar de arma la votación arranca limpia). Nombrar con UN frame
         # suelto daba dueños que oscilaban entre dos PJs con el panel quieto (QA 2026-07-31).
@@ -924,7 +950,8 @@ class Monitor:
                 # es estática y espera input: si el primer frame llega en plena transición, sin
                 # re-despacho no habría segunda oportunidad. En ambos el dedup (por índice de
                 # canal / por firma de rarezas) evita re-emitir lo mismo.
-                continuous = active_state.code in _CONTINUOUS_STATES or active_state.code in ("S17", "S15", "S9", "S13", "S3", "S4", "S5", "S10", "S20", "S21", "S22", "S11", "S24", "S25", "S26", "S27", "S28")
+                continuous = (active_state.code in _CONTINUOUS_STATES
+                              or active_state.code in _REDISPATCH_STATES)
                 should_dispatch = forced or (
                     elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
                 )
@@ -1114,6 +1141,7 @@ class Monitor:
             self._reset_s26_tracking()
         if state.code != "S30":
             self._s30_panel_sig = None      # ídem para el inventario
+            self._s30_last_log_sig = None
         # Tanda de desmontaje: se abandona al llegar a CUALQUIER pantalla confirmada que no sea
         # la propia grilla, el modal de commit, o un S12. Va acá arriba y no en el `else` final
         # porque los estados con handler propio (S9, S17, S8…) nunca llegan al `else` — un bug
@@ -4111,13 +4139,20 @@ class Monitor:
         salen 6/6 y la canonización contra `weapons` acierta 6/6, incluidos los que el OCR maltrata
         ("Uitimacena" → "Última cena", "Modeloll" → "Modelo II").
 
-        El DUEÑO no se lee todavía: en este panel el avatar está arriba, junto al nombre, no al
-        lado del pill como en S26, así que `read_weapon_owner_badge` no aplica sin recalibrar.
+        **Dueño**: el avatar vive arriba, en la fila de dos circulitos bajo el nombre (el izquierdo
+        es la especialidad), no al lado del pill como en S26 — por eso tiene su propia lectura,
+        `read_weapon_owner_badge_s30`. Sin avatar el arma está LIBRE. El recorte conserva el
+        encuadre de la librería `avatar_detbadge_v2`, así que nombrar es el mismo camino que S26.
 
-        Gate RNF-06 por firma del panel, igual que S26: moverse por la grilla cambia el panel, y
-        quedarse quieto no debe costar un OCR por ciclo.
+        Gate RNF-06 por firma del panel + **dedup del log por contenido**: el log de este proyecto
+        es edge-triggered, dice CAMBIOS. Las dos cosas hacen falta y ninguna reemplaza a la otra —
+        la firma ahorra el OCR, el dedup evita repetir la línea si el OCR devuelve lo mismo.
         """
-        from app.core.parser_weapon_s26 import parse_weapon_s30, weapon_panel_signature_s30
+        from app.core.parser_weapon_s26 import (
+            parse_weapon_s30,
+            read_weapon_owner_badge_s30,
+            weapon_panel_signature_s30,
+        )
 
         sig = weapon_panel_signature_s30(frame)
         if sig and sig == self._s30_panel_sig:
@@ -4130,12 +4165,45 @@ class Monitor:
             return
         self._clear_stall("S30/inventario")
 
+        # --- Dueño ---
+        badge = read_weapon_owner_badge_s30(frame, d.pill_bbox)
+        dueno = None
+        if badge is not None and badge.crop is not None and self._identifier is not None:
+            try:
+                res = self._identifier.surfaces["detail"].match(badge.crop)
+                crudo = res.name if res else None
+                # Canonicalizar contra el roster antes de reportar: la librería compartida tiene
+                # algún label con mojibake, y sin este paso llegaría al log como si fuera un
+                # nombre. Lo que no resuelve se descarta — antes "incierto" que basura (RNF-02).
+                dueno = self._identifier._canonical_name(crudo) if crudo else None
+            except Exception:
+                log.debug("S30: fallo al nombrar el badge del dueño", exc_info=True)
+        if badge is None:
+            tenencia = "dueño ?"
+        elif not badge.present:
+            tenencia = "LIBRE"
+        else:
+            # "hay alguien, no sé quién" es una salida legítima, no un fallo: `BadgeSurface` separa
+            # presencia de nombrado a propósito, y la librería del detalle todavía tiene PJs flacos.
+            tenencia = f"la tiene {dueno}" if dueno else "con dueño (sin identificar)"
+
         nombre = d.nombre_canon or d.nombre_raw
         stat = (f"{d.stat_avanzado_canon} {d.stat_avanzado_valor:g}{d.stat_avanzado_unidad or ''}"
                 if d.stat_avanzado_canon and d.stat_avanzado_valor is not None else None)
+
+        # Dedup por CONTENIDO. El gate de firma es de píxeles y basta para el costo de OCR, pero no
+        # garantiza que lo LEÍDO haya cambiado: cualquier temblor en el panel lo cruza y el log
+        # pasaría a ser un heartbeat repitiendo la misma arma (QA 2026-08-07: 110 líneas, 9 armas
+        # distintas). El log de este proyecto reporta cambios, no lecturas.
+        log_sig = (nombre, d.rareza, d.nivel, d.nivel_max, d.refinamiento, d.atk_base, stat,
+                   tenencia)
+        if log_sig == self._s30_last_log_sig:
+            return
+        self._s30_last_log_sig = log_sig
+
         linea = (f"[S30] Inventario W-Engine — {nombre} · {d.rareza or '?'} · "
                  f"Nv {d.nivel}/{d.nivel_max} · P{d.refinamiento or '?'} · "
-                 f"ATK base {d.atk_base or '?'} · {stat or 'stat ?'}"
+                 f"ATK base {d.atk_base or '?'} · {stat or 'stat ?'} · {tenencia}"
                  f"{'' if d.nombre_canon else ' · ⚠ fuera del catálogo'}")
         log.info(linea)
         self._diag(linea)

@@ -48,10 +48,13 @@ def mon(monkeypatch):
     m = mon_mod.Monitor(ocr=object(), detector=None, on_diagnostic=diags.append,
                         set_badge_matcher=object(), on_weapon_seen=toasts.append)
     m._diags, m._toasts = diags, toasts
-    m._stub = {"weapon": FakeWeapon(), "sig": b"A"}
+    # `badge=None` por defecto: sin lectura del avatar el handler dice "dueño ?" y los tests que
+    # no hablan del dueño no dependen de él.
+    m._stub = {"weapon": FakeWeapon(), "sig": b"A", "badge": None}
     monkeypatch.setattr(pw_mod, "parse_weapon_s30",
                         lambda fr, ocr, catalogo=None: m._stub["weapon"])
     monkeypatch.setattr(pw_mod, "weapon_panel_signature_s30", lambda fr: m._stub["sig"])
+    monkeypatch.setattr(pw_mod, "read_weapon_owner_badge_s30", lambda fr, pb: m._stub["badge"])
     monkeypatch.setattr(m, "_weapon_catalog", lambda: ["Última cena"])
     m._identifier = None
     return m
@@ -80,9 +83,9 @@ def test_loguea_el_arma_seleccionada(mon):
 def test_no_emite_toast_nunca(mon):
     """El contrato que separa esta pantalla de S26: recorrer la grilla es lectura, no novedad.
     Un toast por tile sería exactamente lo que Daniel vetó."""
-    for sig in (b"A", b"B", b"C"):
-        _paso(mon, _S30, sig=sig, weapon=FakeWeapon())
-    assert len(_lineas(mon)) == 3
+    for sig, canon in ((b"A", "Última cena"), (b"B", "Llanto mielgo"), (b"C", "Petrazufre")):
+        _paso(mon, _S30, sig=sig, weapon=FakeWeapon(canon=canon))
+    assert len(_lineas(mon)) == 3, "tres armas DISTINTAS son tres lecturas"
     assert mon._toasts == [], "S30 no debe interrumpir"
 
 
@@ -171,3 +174,121 @@ def test_el_inventario_de_discos_no_pasa_por_este_handler(mon):
     """S9 y S30 comparten template; si el ruteo se aflojara, el handler de armas leería discos."""
     _paso(mon, _S9)
     assert _lineas(mon) == []
+
+
+# --- El log dice CAMBIOS, no lecturas ----------------------------------------------------------
+
+def test_no_repite_la_linea_si_lo_leido_no_cambio(mon):
+    """REGRESIÓN del QA 2026-08-07: **110 líneas de log para 9 armas distintas**.
+
+    El gate de firma es de PÍXELES y no alcanza: cualquier temblor del panel lo cruza y el
+    handler vuelve a parsear. Si además se loguea sin mirar el contenido, el log deja de ser
+    edge-triggered y se vuelve un heartbeat que repite la misma arma cada ciclo.
+    """
+    for sig in (b"A", b"B", b"C", b"D"):      # firma distinta cada vez: el OCR sí corre
+        _paso(mon, _S30, sig=sig)             # ...pero devuelve SIEMPRE la misma arma
+    assert len(_lineas(mon)) == 1, _lineas(mon)
+
+
+def test_vuelve_a_loguear_si_cambia_un_solo_campo(mon):
+    """La contracara: el dedup no puede tragarse un cambio real. Mismo nombre y mismo nivel, pero
+    otro refinamiento, es un arma distinta de la grilla."""
+    _paso(mon, _S30)
+    otra = FakeWeapon()
+    otra.refinamiento = 3
+    _paso(mon, _S30, sig=b"B", weapon=otra)
+    assert len(_lineas(mon)) == 2
+
+
+def test_salir_de_la_pantalla_olvida_tambien_el_dedup_del_log(mon):
+    """Si no, volver al inventario con la misma arma seleccionada quedaría mudo."""
+    _paso(mon, _S30)
+    _paso(mon, _S12)
+    assert mon._s30_last_log_sig is None
+    _paso(mon, _S30)
+    assert len(_lineas(mon)) == 2
+
+
+# --- Dueño --------------------------------------------------------------------------------------
+
+def _badge(present=True, crop=True):
+    from app.core.parser_weapon_s26 import OwnerBadge
+    return OwnerBadge(present=present, nitidez=0.0,
+                      crop=(np.zeros((40, 40, 3), dtype=np.uint8) if crop else None))
+
+
+def test_sin_avatar_el_arma_sale_libre(mon):
+    _paso(mon, _S30, badge=_badge(present=False, crop=False))
+    assert "LIBRE" in _lineas(mon)[0]
+
+
+def test_con_avatar_reconocido_nombra_al_pj(mon):
+    class _Res:
+        name, conf = "Vivian", 0.92
+
+    class _Ident:
+        surfaces = {"detail": type("S", (), {"match": staticmethod(lambda c: _Res())})()}
+
+        @staticmethod
+        def _canonical_name(n):
+            return n
+    mon._identifier = _Ident()
+    _paso(mon, _S30, badge=_badge())
+    assert "la tiene Vivian" in _lineas(mon)[0]
+
+
+def test_con_avatar_pero_sin_librería_dice_que_hay_alguien(mon):
+    """"Hay alguien, no sé quién" es una salida legítima, no un fallo: `BadgeSurface` separa
+    presencia de nombrado a propósito. Degradarlo a LIBRE sería mentir sobre el estado del arma."""
+    mon._identifier = None
+    _paso(mon, _S30, badge=_badge())
+    linea = _lineas(mon)[0]
+    assert "sin identificar" in linea and "LIBRE" not in linea
+
+
+def test_un_nombre_que_no_resuelve_al_roster_se_descarta(mon):
+    """La librería del detalle tiene labels con mojibake. Antes 'incierto' que basura (RNF-02)."""
+    class _Res:
+        name, conf = "n.\xc2\xba11", 0.9
+
+    class _Ident:
+        surfaces = {"detail": type("S", (), {"match": staticmethod(lambda c: _Res())})()}
+
+        @staticmethod
+        def _canonical_name(n):
+            return None          # no resuelve
+    mon._identifier = _Ident()
+    _paso(mon, _S30, badge=_badge())
+    linea = _lineas(mon)[0]
+    assert "sin identificar" in linea and "n." not in linea.split("—")[1].split("·")[0]
+
+
+def test_cambiar_de_dueno_re_loguea_aunque_el_arma_sea_la_misma(mon):
+    """Dos copias del mismo modelo de arma, una libre y otra equipada, son filas distintas del
+    inventario. Si el dedup mirara solo los stats, la segunda desaparecería del log."""
+    _paso(mon, _S30, badge=_badge(present=False, crop=False))
+    _paso(mon, _S30, sig=b"B", badge=_badge())
+    assert len(_lineas(mon)) == 2
+
+
+# --- Re-despacho: el bug del QA 2026-08-07 -----------------------------------------------------
+
+def test_s30_se_re_despacha_mientras_seguis_en_la_pantalla():
+    """REGRESIÓN. S30 no estaba en la lista de estados que se re-despachan, así que el monitor
+    llamaba al handler UNA sola vez, al entrar. En vivo se vio como "reconoció el primer engine y
+    después nada" — ocho minutos sin una línea, **ni siquiera de trabe**, porque nunca se llegaba
+    al parser. El gate por firma ya estaba puesto, así que el arreglo no cuesta OCR de más.
+
+    El criterio para estar en la lista es "el contenido cambia sin que cambie la pantalla", que es
+    exactamente lo que pasa al moverse por la grilla del inventario.
+    """
+    from app.core.monitor import _CONTINUOUS_STATES, _REDISPATCH_STATES
+    assert "S30" in _REDISPATCH_STATES or "S30" in _CONTINUOUS_STATES
+
+
+@pytest.mark.parametrize("code", ["S9", "S26", "S30"])
+def test_las_tres_pantallas_de_seleccion_se_re_despachan(code):
+    """Las tres muestran un panel de detalle que SIGUE a una selección. Si alguna se cayera de la
+    lista, se vería el mismo silencio desconcertante, así que van juntas."""
+    from app.core.monitor import _CONTINUOUS_STATES, _REDISPATCH_STATES
+    assert code in _REDISPATCH_STATES or code in _CONTINUOUS_STATES
