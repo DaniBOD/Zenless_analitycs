@@ -51,7 +51,7 @@ _AUDIT_DIR = Path(__file__).resolve().parents[2] / "audit"
 _BASELINES = {
     "row": _AUDIT_DIR / "avatar_row_v2_snapshot_20260801.npz",
     "grid": _AUDIT_DIR / "avatar_badge_v2_snapshot_20260802_roster50.npz",
-    "detail": _AUDIT_DIR / "avatar_detbadge_v2_snapshot_20260731_cosecha50.npz",
+    "detail": _AUDIT_DIR / "avatar_detbadge_v2_snapshot_20260807_cosecha184.npz",
 }
 
 # Cache del seed -ico: los descriptores son inmutables (frozen) y caros de construir
