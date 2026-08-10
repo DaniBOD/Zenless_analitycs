@@ -458,6 +458,16 @@ class AgentIdentifier:
         canon = self._canonical_name(name) if name else None
         return bool(canon) and bool(self._detbadge._refs.get(canon))
 
+    def detail_refs_count(self, name: str) -> int:
+        """Cuántas referencias tiene `name` en la librería del DETALLE (0 si no está).
+
+        Lo consulta quien vaya a cosechar, para no pasarse del techo: `add_reference` desaloja la
+        ref más vieja cuando se llena, así que cosechar sobre un PJ completo no agrega cobertura,
+        la CAMBIA — y lo que se pierde es el encuadre más viejo, que suele ser el diverso.
+        """
+        canon = self._canonical_name(name) if name else None
+        return len(self._detbadge._refs.get(canon, [])) if canon else 0
+
     def learn_s17_detail(self, face, name: str) -> bool:
         """Cosecha el detalle-badge de `name` (ground-truth del latch) a su librería
         PROPIA. Mismo gating que learn_s17: en readonly NO persiste salvo en cosecha

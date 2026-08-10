@@ -292,3 +292,64 @@ def test_las_tres_pantallas_de_seleccion_se_re_despachan(code):
     lista, se vería el mismo silencio desconcertante, así que van juntas."""
     from app.core.monitor import _CONTINUOUS_STATES, _REDISPATCH_STATES
     assert code in _REDISPATCH_STATES or code in _CONTINUOUS_STATES
+
+
+# --- S30 no cosecha (RF-15, spec 2026-08-10) --------------------------------------------------
+
+
+def test_s30_nunca_cosecha_el_badge(mon):
+    """El contrato que separa a S30 de S26, y la razón por la que existe.
+
+    Acá el dueño sale del PROPIO badge: no hay botón que lo confirme. Cosechar con la etiqueta que
+    produjo el mismo matcher lo realimenta con sus aciertos Y sus errores — es el efecto "imán" que
+    en julio dejó una librería nombrando mal con confianza. S30 es consumidor puro.
+    """
+    import app.core.parser_weapon_s26 as pw_mod
+
+    class Espia:
+        def __init__(self):
+            self.cosechado = []
+            self.surfaces = {"detail": type("S", (), {
+                "match": lambda self, crop: type("R", (), {"name": "Jane", "conf": 0.95})()})()}
+
+        def _canonical_name(self, n):
+            return n
+
+        def detail_refs_count(self, name):
+            return 0
+
+        def learn_s17_detail(self, crop, name):
+            self.cosechado.append(name)
+            return True
+
+    mon._identifier = Espia()
+    mon._last_agent_name = "Jane"
+    _paso(mon, _S30, badge=pw_mod.OwnerBadge(present=True, nitidez=70.0, crop=_frame(200)))
+    assert _lineas(mon), "el handler tenía que leer el arma igual"
+    assert mon._identifier.cosechado == []
+
+
+def test_s30_registra_a_quien_estuvo_cerca_cuando_se_abstiene(mon, caplog):
+    """S30 no cosecha, pero SÍ tiene que dejar registro: es la pantalla donde se midió el 3/7, y
+    sin el top-1 de cada abstención no se puede saber a qué PJ le faltan referencias."""
+    import logging
+
+    import app.core.parser_weapon_s26 as pw_mod
+
+    class Abstiene:
+        def __init__(self):
+            self.surfaces = {"detail": type("S", (), {"match": lambda self, crop: type("R", (), {
+                "name": None, "conf": 0.70, "margin": 0.02, "rejected": False,
+                "top": [("Harumasa", 0.30)]})()})()}
+
+        def _canonical_name(self, n):
+            return n
+
+    mon._identifier = Abstiene()
+    mon._last_agent_name = "Harumasa"
+    mon._id_diag_on = True
+    with caplog.at_level(logging.INFO):
+        _paso(mon, _S30, badge=pw_mod.OwnerBadge(present=True, nitidez=70.0, crop=_frame(200)))
+    diag = [r.getMessage() for r in caplog.records if "[id_diag/arma]" in r.getMessage()]
+    assert len(diag) == 1, diag
+    assert "pantalla=S30" in diag[0] and "Harumasa" in diag[0] and "abstuvo" in diag[0]

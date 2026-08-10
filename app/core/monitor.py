@@ -398,6 +398,12 @@ class Monitor:
         # te devuelve a la pantalla, y si se olvidara justo ahí, el único cambio que hay para
         # avisar se perdería. Acotado para que una sesión larga no lo haga crecer sin techo.
         self._s26_tenencia_vista: dict[tuple, str] = {}
+        # Pares (PJ, arma) ya cosechados para la librería del detalle. Como `_s26_tenencia_vista`,
+        # NO se limpia al salir de S26: el dedup es POR SESIÓN, no por entrada a la pantalla —
+        # si se limpiara, salir y volver sería la forma trivial de cosechar diez veces la misma, y
+        # `add_reference` desaloja la ref más vieja pasadas 10 (las de los discos, justamente las
+        # del encuadre diverso).
+        self._s26_harvested: set[tuple[str, tuple]] = set()
         # Tanda de desmontaje en curso (S11). Se crea perezosamente al entrar a la pantalla.
         self._teardown = None
         # Tracking interno para el heartbeat
@@ -4023,9 +4029,11 @@ class Monitor:
             self._s26_owner_key = arma_key
             self._s26_owner_votes = {}
         badge_nombre = None
+        res_dbg = None          # el MatchResult crudo, para el diagnóstico de abstenciones
         if badge is not None and badge.crop is not None and self._identifier is not None:
             try:
                 res = self._identifier.surfaces["detail"].match(badge.crop)
+                res_dbg = res
                 crudo = res.name if res else None
                 # Se CANONICALIZA contra el roster antes de reportar. La librería compartida tiene
                 # al menos un label con mojibake ('n.Âº11' = N.º 11 guardado con UTF-8 leído como
@@ -4063,6 +4071,19 @@ class Monitor:
             boton = None
         d.tenencia, d.dueno = clasificar_tenencia(
             boton, badge, badge_nombre, self._last_agent_name)
+        cosecha = self._maybe_harvest_weapon_owner(d, badge, badge_nombre, arma_key)
+        if self._id_diag_on:
+            if cosecha:
+                outcome = cosecha
+            elif len(self._s26_owner_votes) > 1:
+                outcome = "osciló"
+            elif badge_nombre:
+                outcome = "nombrado"
+            elif badge is None or badge.crop is None:
+                outcome = "noloc"
+            else:
+                outcome = "abstuvo"
+            self._log_weapon_id_diag("S26", badge, res_dbg, self._last_agent_name, outcome)
 
         logsig = (d.nombre_canon or d.nombre_raw, d.nivel, d.rareza, d.refinamiento,
                   d.tenencia, d.dueno)
@@ -4168,9 +4189,11 @@ class Monitor:
         # --- Dueño ---
         badge = read_weapon_owner_badge_s30(frame, d.pill_bbox)
         dueno = None
+        res_dbg = None          # el MatchResult crudo, para el diagnóstico de abstenciones
         if badge is not None and badge.crop is not None and self._identifier is not None:
             try:
                 res = self._identifier.surfaces["detail"].match(badge.crop)
+                res_dbg = res
                 crudo = res.name if res else None
                 # Canonicalizar contra el roster antes de reportar: la librería compartida tiene
                 # algún label con mojibake, y sin este paso llegaría al log como si fuera un
@@ -4186,6 +4209,17 @@ class Monitor:
             # "hay alguien, no sé quién" es una salida legítima, no un fallo: `BadgeSurface` separa
             # presencia de nombrado a propósito, y la librería del detalle todavía tiene PJs flacos.
             tenencia = f"la tiene {dueno}" if dueno else "con dueño (sin identificar)"
+        # Diagnóstico ANTES del dedup de log: la línea de S30 se emite una sola vez por arma, pero
+        # el diagnóstico habla de CADA evaluación del badge — que es lo que se quiere medir.
+        # S30 no cosecha (ver `_maybe_harvest_weapon_owner`): acá solo se observa.
+        if self._id_diag_on:
+            if badge is None or badge.crop is None:
+                _outcome = "noloc"
+            elif dueno:
+                _outcome = "nombrado"
+            else:
+                _outcome = "abstuvo"
+            self._log_weapon_id_diag("S30", badge, res_dbg, self._last_agent_name, _outcome)
 
         nombre = d.nombre_canon or d.nombre_raw
         stat = (f"{d.stat_avanzado_canon} {d.stat_avanzado_valor:g}{d.stat_avanzado_unidad or ''}"
@@ -4211,6 +4245,83 @@ class Monitor:
             if n.startswith("rareza_discrepa_atk"):
                 log.warning("[S30] ⚠ %s", n)
                 self._diag(f"[S30] ⚠ {n}")
+
+    def _maybe_harvest_weapon_owner(self, d, badge, badge_nombre, arma_key) -> str | None:
+        """Cosecha el badge del dueño a la librería del DETALLE cuando la etiqueta es certera.
+
+        Las pantallas de armas venían CONSUMIENDO `avatar_detbadge_v2` sin alimentarla nunca: el
+        único punto que cosechaba esa superficie era el flujo de discos, así que poder nombrar al
+        dueño de un arma dependía de que alguien hubiera paseado antes por los discos de ese PJ.
+        Acá se cierra el circuito, y se cierra con la MISMA disciplina que en discos.
+
+        La etiqueta sale de `tenencia == "equipada"`, que significa que el botón dijo *Desequipar*:
+        el juego afirma que el PJ del latch la lleva puesta. **No sale del badge** — cosechar con
+        la etiqueta que produjo el propio matcher lo realimenta con sus aciertos y sus errores, que
+        es el efecto "imán" que ya costó una re-cosecha en julio. Por eso S30 no cosecha: ahí el
+        dueño sale del badge y no hay botón que confirme nada.
+
+        El recorte sirve tal cual: `read_weapon_owner_badge` conserva a propósito el encuadre de
+        `crop_detail_badge` (regla like-with-like de la Fase 5R).
+
+        No lleva gate de readonly propio: `BadgeSurface.learn` ya respeta `DANIBOD_BADGE_HARVEST`.
+
+        Devuelve el desenlace (`cosechado` / `veto_conflicto` / `veto_techo`) o None si no había
+        nada que cosechar, para que el diagnóstico de `_log_weapon_id_diag` lo reporte: un veto
+        silencioso es indistinguible de "no pasó nada", que es la lección de los QA mudos.
+        """
+        if self._identifier is None or d.tenencia != "equipada" or not d.dueno:
+            return None
+        if badge is None or badge.crop is None:
+            return None                             # Hough no cerró: no hay nada que guardar
+        # `present` es la PRESENCIA estructural (¿esto es una cara?). Hay que exigirla explícitamente
+        # porque 'Desequipar' resuelve la tenencia SIN consultar el badge: un recorte de nitidez baja
+        # —el falso LIBRE— llegaría hasta acá con tenencia "equipada" y se aprendería un no-avatar
+        # bajo el nombre de un PJ. Leer y aprender piden evidencia distinta.
+        if not badge.present:
+            return None
+        canon = self._identifier._canonical_name(d.dueno)
+        if not canon:
+            return None
+        # Las dos señales en desacuerdo. Se le cree al badge —0-wrong en QA— y no se aprende nada:
+        # una de las dos está mal y no sabemos cuál, así que aprender sería etiquetar una cara con
+        # el nombre de otro PJ. Misma regla que el flujo-ancla de discos.
+        if badge_nombre and _norm_key(badge_nombre) != _norm_key(canon):
+            return "veto_conflicto"
+        clave = (canon, arma_key)
+        if clave in self._s26_harvested:
+            return None
+        from app.core.avatar_descriptor import _MAX_REFS_PER_NAME
+        if self._identifier.detail_refs_count(canon) >= _MAX_REFS_PER_NAME:
+            self._s26_harvested.add(clave)          # no reintentar por cada frame
+            return "veto_techo"
+        if self._identifier.learn_s17_detail(badge.crop, canon):
+            self._s26_harvested.add(clave)
+            log.info("[cosecha] detalle-badge de '%s' desde el arma '%s' (botón 'desequipar')",
+                     canon, arma_key[0])
+            return "cosechado"
+        return None
+
+    def _log_weapon_id_diag(self, pantalla: str, badge, res, latch, outcome: str) -> None:
+        """Una línea por badge de arma evaluado (gated `DANIBOD_ID_DIAG`).
+
+        `MatchResult` ya trae `conf`, `margin` y el `top` **aunque se abstenga**
+        (`avatar_descriptor.py`): hasta ahora esa evidencia se descartaba, y por eso el QA del
+        2026-08-07 pudo decir "nombre 3/7" pero no *cuáles* falló. Sin el top-1 de una abstención
+        no se puede distinguir "le faltan refs a este PJ" de "el recorte no matchea nada".
+
+        Las distancias del `top` van tal cual: **más chico es más parecido**.
+        """
+        if not self._id_diag_on:
+            return
+        loc = 1 if (badge is not None and getattr(badge, "crop", None) is not None) else 0
+        top = ",".join(f"{n}:{dist:.2f}" for n, dist in (getattr(res, "top", None) or [])[:3])
+        log.info(
+            "[id_diag/arma] pantalla=%s loc=%d top=%s conf=%.2f margin=%.2f rejected=%d "
+            "latch=%s outcome=%s",
+            pantalla, loc, top or "-", float(getattr(res, "conf", 0.0) or 0.0),
+            float(getattr(res, "margin", 0.0) or 0.0), int(bool(getattr(res, "rejected", False))),
+            latch or "-", outcome,
+        )
 
     def _weapon_catalog(self) -> list[str] | None:
         """Nombres ESPAÑOLES de `weapons`, cacheados. None si la DB no está disponible.

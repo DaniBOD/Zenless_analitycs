@@ -429,3 +429,222 @@ def test_cambiar_de_tenencia_vuelve_a_emitir(mon):
           badge=pw_mod.OwnerBadge(present=True, nitidez=70.0))
     assert len(mon._toasts) == 2
     assert mon._toasts[1]["tenencia"] == "equipada"
+
+
+# --- Cosecha del detalle-badge (RF-15, spec 2026-08-10) --------------------------------------
+#
+# Las pantallas de armas CONSUMÍAN `avatar_detbadge_v2` sin alimentarla nunca: el único punto que
+# cosechaba esa superficie era el flujo de discos. Acá se cierra el circuito con la única etiqueta
+# certera que tiene este panel — 'Desequipar' dice que la lleva el PJ del latch, y eso no depende
+# del matcher, así que no se realimenta con su propia salida.
+
+
+def _identifier_cosechable(nombre=None, roster=("Jane", "Ellen", "Velina"), refs=None):
+    """Fake con el contrato que usa la cosecha: nombrar, canonicalizar, contar refs y aprender.
+
+    `cosechado` registra los `(nombre, crop)` aprendidos para que el test afirme sobre lo que se
+    guardó, no sobre cuántas veces se llamó a algo.
+    """
+    conteo = dict(refs or {})
+
+    class FakeOut:
+        name = nombre
+        conf = 0.90
+
+    class FakeSurf:
+        def match(self, crop):
+            return FakeOut() if nombre is not None else None
+
+    class FakeIdent:
+        def __init__(self):
+            self.surfaces = {"detail": FakeSurf()}
+            self.cosechado = []
+
+        def _canonical_name(self, n):
+            return n if n in roster else None
+
+        def detail_refs_count(self, name):
+            return conteo.get(name, 0)
+
+        def learn_s17_detail(self, crop, name):
+            self.cosechado.append((name, crop))
+            conteo[name] = conteo.get(name, 0) + 1
+            return True
+
+    return FakeIdent()
+
+
+def test_desequipar_cosecha_el_badge_para_el_pj_del_latch(mon):
+    """El caso que justifica el feature: 'Desequipar' es prueba directa de quién la lleva, así que
+    el recorte se puede guardar con una etiqueta CERTERA — sin que el matcher opine."""
+    mon._identifier = _identifier_cosechable()
+    mon._last_agent_name = "Velina"
+    _paso(mon, _S26, boton="desequipar")
+    assert [n for n, _ in mon._identifier.cosechado] == ["Velina"]
+
+
+def test_no_cosecha_si_el_pj_mirado_no_la_lleva_puesta(mon):
+    """Sin 'Desequipar' no hay etiqueta certera: el arma puede ser de cualquiera. Cosechar acá
+    metería una cara bajo el nombre del PJ equivocado, que es la forma más cara de romper una
+    librería."""
+    import app.core.parser_weapon_s26 as pw_mod
+    mon._identifier = _identifier_cosechable()
+    mon._last_agent_name = "Velina"
+    _paso(mon, _S26, boton="reemplazar",
+          badge=pw_mod.OwnerBadge(present=True, nitidez=70.0, crop=_frame(200)))
+    assert mon._identifier.cosechado == []
+
+
+def test_no_cosecha_cuando_el_badge_contradice_al_latch(mon):
+    """Las dos señales en desacuerdo. Misma regla que en discos: se le cree al badge —0-wrong en
+    QA— y no se aprende nada. Una de las dos está mal y no sabemos cuál."""
+    mon._identifier = _identifier_cosechable("Jane")
+    mon._last_agent_name = "Velina"
+    _paso(mon, _S26, boton="desequipar")
+    assert mon._identifier.cosechado == []
+
+
+def test_la_misma_arma_no_se_cosecha_dos_veces(mon):
+    """`add_reference` no dedupea y desaloja la más vieja pasadas 10: sin este freno, mirar un arma
+    diez veces cambiaría refs diversas por diez recortes del mismo encuadre."""
+    mon._identifier = _identifier_cosechable()
+    mon._last_agent_name = "Velina"
+    _paso(mon, _S26, boton="desequipar")
+    _paso(mon, _S26, sig=b"B", boton="desequipar")
+    assert len(mon._identifier.cosechado) == 1
+
+
+def test_otra_arma_del_mismo_pj_si_se_cosecha(mon):
+    """El dedup es por (PJ, arma), no por PJ: otra arma es otro encuadre y suma diversidad real."""
+    mon._identifier = _identifier_cosechable()
+    mon._last_agent_name = "Velina"
+    _paso(mon, _S26, boton="desequipar")
+    _paso(mon, _S26, sig=b"B", boton="desequipar",
+          weapon=FakeWeapon(nombre="Sol exuvia", canon="Sol exuvia"))
+    assert len(mon._identifier.cosechado) == 2
+
+
+def test_salir_y_volver_no_re_cosecha_la_misma_arma(mon):
+    """El dedup es POR SESIÓN, no por entrada a la pantalla: `_reset_s26_state` no lo limpia. Si lo
+    limpiara, salir y volver sería la forma trivial de saltarse el freno."""
+    mon._identifier = _identifier_cosechable()
+    mon._last_agent_name = "Velina"
+    _paso(mon, _S26, boton="desequipar")
+    _paso(mon, _S12)
+    _paso(mon, _S26, boton="desequipar")
+    assert len(mon._identifier.cosechado) == 1
+
+
+def test_un_pj_en_el_techo_no_recibe_mas_refs(mon):
+    """Con el cupo lleno, cosechar DESALOJA la ref más vieja — que son las de los discos, el
+    encuadre diverso que hace útil a la librería. Preferimos no aprender nada."""
+    mon._identifier = _identifier_cosechable(refs={"Velina": 10})
+    mon._last_agent_name = "Velina"
+    _paso(mon, _S26, boton="desequipar")
+    assert mon._identifier.cosechado == []
+    assert mon._identifier.detail_refs_count("Velina") == 10
+
+
+def test_un_recorte_que_no_es_cara_no_se_cosecha(mon):
+    """'Desequipar' decide la tenencia SIN consultar el badge, así que un recorte que el propio
+    sistema no considera una cara (`present=False`, el falso LIBRE por nitidez baja) igual llegaría
+    hasta acá. Aprenderlo metería un no-avatar bajo el nombre de un PJ.
+
+    La tenencia no se ve afectada: el botón sigue siendo prueba directa de quién la lleva.
+    """
+    import app.core.parser_weapon_s26 as pw_mod
+    mon._identifier = _identifier_cosechable()
+    mon._last_agent_name = "Velina"
+    _paso(mon, _S26, boton="desequipar",
+          badge=pw_mod.OwnerBadge(present=False, nitidez=3.0, crop=_frame(200)))
+    assert mon._identifier.cosechado == []
+    assert mon._toasts[0]["tenencia"] == "equipada"
+
+
+def _identifier_que_se_abstiene(top=(("Lycaon", 0.28), ("Ben", 0.31)), conf=0.72, margin=0.03):
+    """Matcher que NO llega al guard: `name=None` pero con el top-k y los números poblados.
+
+    Es el caso que hoy no deja rastro y por el que existe la instrumentación — una abstención se ve
+    igual que un 'no había nadie', y sin el top-1 no se puede saber si faltan refs o pasa otra cosa.
+    """
+    class FakeOut:
+        name = None
+        conf = 0.72
+        margin = 0.03
+        rejected = False
+
+    FakeOut.conf, FakeOut.margin, FakeOut.top = conf, margin, list(top)
+
+    class FakeSurf:
+        def match(self, crop):
+            return FakeOut()
+
+    return type("I", (), {
+        "surfaces": {"detail": FakeSurf()},
+        "_canonical_name": lambda self, n: n,
+        "detail_refs_count": lambda self, n: 0,
+        "learn_s17_detail": lambda self, c, n: True,
+    })()
+
+
+def _diag_armas(caplog):
+    return [r.getMessage() for r in caplog.records if "[id_diag/arma]" in r.getMessage()]
+
+
+def test_sin_id_diag_no_se_emite_diagnostico(mon, caplog):
+    """Cero overhead cuando el flag está apagado: es instrumentación de QA, no de producción."""
+    import logging
+    mon._identifier = _identifier_cosechable()
+    mon._last_agent_name = "Velina"
+    mon._id_diag_on = False
+    with caplog.at_level(logging.INFO):
+        _paso(mon, _S26, boton="desequipar")
+    assert _diag_armas(caplog) == []
+
+
+def test_la_abstencion_deja_registrado_a_quien_estuvo_cerca(mon, caplog):
+    """El dato que el QA del 2026-08-07 no pudo dar: *cuáles* PJs falla. `MatchResult` ya trae el
+    top-k y los números aunque se abstenga; hasta ahora se descartaban."""
+    import logging
+    mon._identifier = _identifier_que_se_abstiene()
+    mon._last_agent_name = "Velina"
+    mon._id_diag_on = True
+    with caplog.at_level(logging.INFO):
+        _paso(mon, _S26, boton="reemplazar")
+    linea = _diag_armas(caplog)
+    assert len(linea) == 1, linea
+    assert "Lycaon" in linea[0] and "abstuvo" in linea[0] and "S26" in linea[0]
+
+
+def test_la_cosecha_queda_registrada_en_el_diagnostico(mon, caplog):
+    """Para poder cruzar, después del QA, qué refs entraron y de qué arma."""
+    import logging
+    mon._identifier = _identifier_cosechable()
+    mon._last_agent_name = "Velina"
+    mon._id_diag_on = True
+    with caplog.at_level(logging.INFO):
+        _paso(mon, _S26, boton="desequipar")
+    assert any("cosechado" in m for m in _diag_armas(caplog))
+
+
+def test_el_veto_por_conflicto_queda_registrado(mon, caplog):
+    """Un veto silencioso es indistinguible de 'no pasó nada' — la lección del QA mudo."""
+    import logging
+    mon._identifier = _identifier_cosechable("Jane")
+    mon._last_agent_name = "Velina"
+    mon._id_diag_on = True
+    with caplog.at_level(logging.INFO):
+        _paso(mon, _S26, boton="desequipar")
+    assert any("veto_conflicto" in m for m in _diag_armas(caplog))
+
+
+def test_sin_recorte_no_hay_nada_que_aprender(mon):
+    """Hough no cerró el círculo. La tenencia sigue siendo certera por el botón, pero no hay
+    referencia que guardar — y eso no es un fallo."""
+    import app.core.parser_weapon_s26 as pw_mod
+    mon._identifier = _identifier_cosechable()
+    mon._last_agent_name = "Velina"
+    _paso(mon, _S26, boton="desequipar",
+          badge=pw_mod.OwnerBadge(present=True, nitidez=70.0, crop=None))
+    assert mon._identifier.cosechado == []
+    assert mon._toasts[0]["tenencia"] == "equipada"     # la lectura no se ve afectada
