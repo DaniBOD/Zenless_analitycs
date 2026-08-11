@@ -215,6 +215,25 @@ def test_sin_pill_no_inventa_dueno():
     assert read_weapon_owner_badge_s30(np.zeros((100, 100, 3), np.uint8), None) is None
 
 
+def test_sin_ningun_circulo_no_se_declara_LIBRE():
+    """QA en vivo 2026-08-11: *Compilador quimérico* salió LIBRE y es de Grace.
+
+    La lógica de esta pantalla se apoya en que hay DOS círculos —especialidad a la izquierda,
+    dueño a la derecha— y el propio comentario del parser lo dice: si se encontraron círculos pero
+    ninguno cae en la banda del dueño, lo único que había era la especialidad ⇒ libre. Ese
+    razonamiento es correcto.
+
+    Pero NO se aplica cuando Hough no encuentra **ningún** círculo: ahí no se vio ni la
+    especialidad, que está siempre. Eso es un fallo de detección, no un arma sin dueño, y
+    devolverlo como `present=False` lo convierte en el falso LIBRE — una AFIRMACIÓN falsa, no una
+    abstención. Y tiene consecuencia: un arma libre se equipa sin diálogo, la de otro PJ abre S23.
+    """
+    from app.core.parser_weapon_s26 import read_weapon_owner_badge_s30
+    liso = np.full((1439, 2559, 3), 40, np.uint8)      # sin bordes: Hough no encuentra nada
+    b = read_weapon_owner_badge_s30(liso, (1944, 546, 2139, 579))
+    assert b is None, f"sin círculos hay que abstenerse, no declarar libre (dio present={b.present})"
+
+
 # --- La firma esquiva lo que se mueve ----------------------------------------------------------
 
 def test_la_firma_no_toca_el_arte_ni_las_pestanas():

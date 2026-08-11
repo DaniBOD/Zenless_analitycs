@@ -404,6 +404,8 @@ class Monitor:
         # `add_reference` desaloja la ref más vieja pasadas 10 (las de los discos, justamente las
         # del encuadre diverso).
         self._s26_harvested: set[tuple[str, tuple]] = set()
+        # Última línea de `[id_diag/arma]` emitida, para no repetirla (ver `_log_weapon_id_diag`).
+        self._weapon_diag_sig: tuple | None = None
         # Tanda de desmontaje en curso (S11). Se crea perezosamente al entrar a la pantalla.
         self._teardown = None
         # Tracking interno para el heartbeat
@@ -4307,6 +4309,13 @@ class Monitor:
         if self._identifier.detail_refs_count(canon) >= _MAX_REFS_PER_NAME:
             self._s26_harvested.add(clave)          # no reintentar por cada frame
             return "veto_techo"
+        # El dedup de `_s26_harvested` es por SESIÓN: al volver mañana, la misma arma del mismo PJ
+        # se cosecha de nuevo y entra un clon (Lycaon terminó con dos refs a 0.000, QA 2026-08-11).
+        # Dedupear por CONTENIDO cubre eso y además la misma cara vista desde otra pantalla, que
+        # una clave (PJ, arma) no podría atrapar.
+        if self._identifier.detail_is_near_duplicate(badge.crop, canon):
+            self._s26_harvested.add(clave)
+            return "veto_clon"
         if self._identifier.learn_s17_detail(badge.crop, canon):
             self._s26_harvested.add(clave)
             log.info("[cosecha] detalle-badge de '%s' desde el arma '%s' (botón 'desequipar')",
@@ -4328,6 +4337,14 @@ class Monitor:
             return
         loc = 1 if (badge is not None and getattr(badge, "crop", None) is not None) else 0
         top = ",".join(f"{n}:{dist:.2f}" for n, dist in (getattr(res, "top", None) or [])[:3])
+        # Dedup por CONTENIDO, igual que la línea [S30]: el gate de firma es de píxeles y el arte
+        # 3D del arma se mueve solo, así que la misma evaluación cruza el gate una y otra vez (18
+        # líneas idénticas en el QA del 2026-08-11). Un diagnóstico repetido es tan ilegible como
+        # no tenerlo. Si cambia cualquier número, vuelve a loguear.
+        firma = (pantalla, loc, top, f"{getattr(res, 'conf', 0.0):.2f}", latch, outcome)
+        if firma == self._weapon_diag_sig:
+            return
+        self._weapon_diag_sig = firma
         log.info(
             "[id_diag/arma] pantalla=%s loc=%d top=%s conf=%.2f margin=%.2f rejected=%d "
             "latch=%s outcome=%s",

@@ -196,6 +196,34 @@ def test_los_nombres_ico_quedan_protegidos_de_la_poda(tmp_path):
     assert "Ellen" in ident._ico_names
 
 
+def test_el_mismo_recorte_se_reconoce_como_clon(tmp_path):
+    """QA en vivo 2026-08-11: Lycaon terminó con dos refs a distancia 0.000 entre sí.
+
+    El dedup de la cosecha es por (PJ, arma) y POR SESIÓN, así que una sesión nueva vuelve a
+    cosechar la misma arma del mismo PJ. Un clon no agrega discriminación y encima gasta una de
+    las 10 ranuras — y cuando se llenan, el desalojo FIFO empieza a tirar las refs DIVERSAS.
+    Por eso se dedupea por CONTENIDO: también atrapa la misma cara vista desde otra pantalla.
+    """
+    cara = _ico("Ellen.png")
+    if cara is None:
+        pytest.skip("assets no disponibles")
+    ident = AgentIdentifier(library_path=tmp_path / "lib.npz", autoload=False)
+    assert ident.detail_is_near_duplicate(cara, "Ellen") is False, "sin refs no hay clon posible"
+    ident.learn_s17_detail(cara, "Ellen")
+    assert ident.detail_is_near_duplicate(cara, "Ellen") is True
+
+
+def test_una_cara_distinta_no_es_clon(tmp_path):
+    """El contracaso: el umbral tiene que dejar entrar variación real. Medido sobre la librería
+    del runtime, dos refs genuinas del mismo PJ están a 0.098-0.229; un clon, a 0.000."""
+    a, b = _ico("Ellen.png"), _ico("Lycaon.png")
+    if a is None or b is None:
+        pytest.skip("assets no disponibles")
+    ident = AgentIdentifier(library_path=tmp_path / "lib.npz", autoload=False)
+    ident.learn_s17_detail(a, "Ellen")
+    assert ident.detail_is_near_duplicate(b, "Ellen") is False
+
+
 def test_persistencia_round_trip(tmp_path):
     """Aprender + guardar + recargar en otra instancia → sigue reconociendo."""
     s18, s8 = _read(NANGONG_S18), _read(NANGONG_S8)

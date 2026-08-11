@@ -503,9 +503,15 @@ def read_weapon_owner_badge_s30(frame: np.ndarray,
             minRadius=int(_DET_HOUGH_RMIN_F * W), maxRadius=int(_DET_HOUGH_RMAX_F * W),
         )
         if circles is None:
-            return OwnerBadge(present=False, nitidez=0.0)
+            # NINGÚN círculo: ni siquiera el de especialidad, que está SIEMPRE (con dueño o sin
+            # él). Eso es un fallo de detección, no un arma libre — devolverlo como
+            # `present=False` es el falso LIBRE, una afirmación falsa en vez de una abstención.
+            # Pasó en vivo el 2026-08-11: 'Compilador quimérico' salió LIBRE y era de Grace. None
+            # = "no pude ver", que el handler reporta como 'dueño ?'.
+            return None
         # De todos los círculos, el dueño es el que cae en su banda de dx. Si no hay ninguno ahí,
-        # lo único que se encontró fue el ícono de especialidad ⇒ el arma está libre.
+        # lo único que se encontró fue el ícono de especialidad ⇒ el arma está libre. Este
+        # razonamiento SÍ vale acá (se vio algo) y es lo que separa este caso del de arriba.
         elegido = None
         for c in circles[0]:
             dx = int(c[0]) + _S30_OWNER_WIN_DX[0]

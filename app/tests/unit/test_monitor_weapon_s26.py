@@ -439,7 +439,8 @@ def test_cambiar_de_tenencia_vuelve_a_emitir(mon):
 # del matcher, así que no se realimenta con su propia salida.
 
 
-def _identifier_cosechable(nombre=None, roster=("Jane", "Ellen", "Velina"), refs=None, conf=0.90):
+def _identifier_cosechable(nombre=None, roster=("Jane", "Ellen", "Velina"), refs=None, conf=0.90,
+                           clon=False):
     """Fake con el contrato que usa la cosecha: nombrar, canonicalizar, contar refs y aprender.
 
     `cosechado` registra los `(nombre, crop)` aprendidos para que el test afirme sobre lo que se
@@ -469,6 +470,9 @@ def _identifier_cosechable(nombre=None, roster=("Jane", "Ellen", "Velina"), refs
 
         def detail_refs_count(self, name):
             return conteo.get(name, 0)
+
+        def detail_is_near_duplicate(self, crop, name):
+            return clon
 
         def learn_s17_detail(self, crop, name):
             self.cosechado.append((name, crop))
@@ -572,6 +576,19 @@ def test_salir_y_volver_no_re_cosecha_la_misma_arma(mon):
     _paso(mon, _S12)
     _paso(mon, _S26, boton="desequipar")
     assert len(mon._identifier.cosechado) == 1
+
+
+def test_un_recorte_clonado_no_se_guarda_de_nuevo(mon):
+    """QA en vivo 2026-08-11: Lycaon quedó con dos refs a distancia 0.000, las dos de *Última
+    cena* — una de cada sesión. El dedup por (PJ, arma) es POR SESIÓN, así que no ataja esto.
+
+    El clon no suma discriminación (la distancia de clase es un `min`) y gasta una de las 10
+    ranuras; con el cupo lleno, el desalojo FIFO empieza a tirar las refs diversas de los discos.
+    """
+    mon._identifier = _identifier_cosechable(clon=True)
+    mon._last_agent_name = "Velina"
+    _paso(mon, _S26, boton="desequipar")
+    assert mon._identifier.cosechado == []
 
 
 def test_un_pj_en_el_techo_no_recibe_mas_refs(mon):

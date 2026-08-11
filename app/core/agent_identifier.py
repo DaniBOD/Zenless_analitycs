@@ -25,7 +25,12 @@ from pathlib import Path
 
 import numpy as np  # noqa: F401  (compat: tests/otros importan np de acá indirectamente)
 
-from app.core.avatar_descriptor import _MAX_REFS_PER_NAME, AvatarMatcher, build_name_map
+from app.core.avatar_descriptor import (
+    _MAX_REFS_PER_NAME,
+    AvatarDescriptor,
+    AvatarMatcher,
+    build_name_map,
+)
 from app.core.badge_surface import BadgeSurface
 from app.core.detector import crop_detail_badge, crop_grid_selected_badge, crop_selected_avatar
 from app.core.stats_vocab import _norm_key
@@ -67,6 +72,11 @@ _DET_REJECT_CACHE: list | None = None
 # que a 0.80 quedan en "dueño incierto", nunca asertados). El guard latch (mismo PJ)
 # es aparte (_S17_GUARD_MIN en monitor, sigue 0.86).
 _S17_GUARD_DEFAULT = 0.80
+
+# Distancia por debajo de la cual dos refs del MISMO PJ se consideran la misma imagen. Medido
+# sobre la librería real (2026-08-11): refs genuinas del mismo PJ ≥ 0.098, un clon exacto 0.000.
+# Queda holgado por abajo del piso genuino: dedupea repetición sin castigar variación.
+_CLON_MAX_DIST = 0.03
 
 
 def _badge_harvest_enabled() -> bool:
@@ -467,6 +477,27 @@ class AgentIdentifier:
         """
         canon = self._canonical_name(name) if name else None
         return len(self._detbadge._refs.get(canon, [])) if canon else 0
+
+    def detail_is_near_duplicate(self, face, name: str, umbral: float = _CLON_MAX_DIST) -> bool:
+        """¿`face` es prácticamente la misma imagen que alguna ref que `name` ya tiene?
+
+        Una ref clonada no agrega discriminación —la distancia de clase es un `min`, así que dos
+        copias puntúan igual que una— pero sí gasta una de las `_MAX_REFS_PER_NAME` ranuras, y
+        cuando se llenan el desalojo es FIFO: entran clones, se van las diversas.
+
+        El umbral sale de la medición del 2026-08-11 sobre la librería real: dos refs genuinas del
+        mismo PJ están a 0.098-0.229, un clon exacto a 0.000. `_CLON_MAX_DIST` queda muy por
+        debajo del piso genuino para no confundir variación con repetición.
+        """
+        from app.core.avatar_descriptor import build_descriptor, descriptor_distance
+        canon = self._canonical_name(name) if name else None
+        refs = self._detbadge._refs.get(canon) if canon else None
+        if not refs:
+            return False
+        q = face if isinstance(face, AvatarDescriptor) else build_descriptor(face)
+        if q is None:
+            return False
+        return any(descriptor_distance(q, r, None, bool(q.is_gray)) <= umbral for r in refs)
 
     def learn_s17_detail(self, face, name: str) -> bool:
         """Cosecha el detalle-badge de `name` (ground-truth del latch) a su librería

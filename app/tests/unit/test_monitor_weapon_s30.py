@@ -329,6 +329,39 @@ def test_s30_nunca_cosecha_el_badge(mon):
     assert mon._identifier.cosechado == []
 
 
+def test_el_diagnostico_no_repite_la_misma_evaluacion(mon, caplog):
+    """QA en vivo 2026-08-11: 18 líneas idénticas para *Rotor de cañón*.
+
+    El gate de firma del panel es de PÍXELES y el arte 3D del arma se mueve solo, así que la firma
+    cambia sin que cambie nada de lo leído — la misma trampa que ya obligó al dedup por contenido
+    de la línea `[S30]`. Un diagnóstico que se repite es tan ilegible como no tenerlo: si mañana
+    hay que buscar una abstención entre 200 líneas iguales, no se encuentra.
+    """
+    import logging
+
+    import app.core.parser_weapon_s26 as pw_mod
+
+    class Abstiene:
+        def __init__(self):
+            self.surfaces = {"detail": type("S", (), {"match": lambda self, crop: type("R", (), {
+                "name": None, "conf": 0.70, "margin": 0.02, "rejected": False,
+                "top": [("Harumasa", 0.30)]})()})()}
+
+        def _canonical_name(self, n):
+            return n
+
+    mon._identifier = Abstiene()
+    mon._id_diag_on = True
+    badge = pw_mod.OwnerBadge(present=True, nitidez=70.0, crop=_frame(200))
+    with caplog.at_level(logging.INFO):
+        # Misma arma, mismo badge, firmas distintas: es el arte animado, no una selección nueva.
+        _paso(mon, _S30, sig=b"A", badge=badge)
+        _paso(mon, _S30, sig=b"B", badge=badge)
+        _paso(mon, _S30, sig=b"C", badge=badge)
+    diag = [r.getMessage() for r in caplog.records if "[id_diag/arma]" in r.getMessage()]
+    assert len(diag) == 1, f"{len(diag)} líneas para la misma evaluación: {diag}"
+
+
 def test_s30_registra_a_quien_estuvo_cerca_cuando_se_abstiene(mon, caplog):
     """S30 no cosecha, pero SÍ tiene que dejar registro: es la pantalla donde se midió el 3/7, y
     sin el top-1 de cada abstención no se puede saber a qué PJ le faltan referencias."""
