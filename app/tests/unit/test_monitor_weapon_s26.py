@@ -439,7 +439,7 @@ def test_cambiar_de_tenencia_vuelve_a_emitir(mon):
 # del matcher, así que no se realimenta con su propia salida.
 
 
-def _identifier_cosechable(nombre=None, roster=("Jane", "Ellen", "Velina"), refs=None):
+def _identifier_cosechable(nombre=None, roster=("Jane", "Ellen", "Velina"), refs=None, conf=0.90):
     """Fake con el contrato que usa la cosecha: nombrar, canonicalizar, contar refs y aprender.
 
     `cosechado` registra los `(nombre, crop)` aprendidos para que el test afirme sobre lo que se
@@ -449,7 +449,11 @@ def _identifier_cosechable(nombre=None, roster=("Jane", "Ellen", "Velina"), refs
 
     class FakeOut:
         name = nombre
-        conf = 0.90
+
+    FakeOut.conf = conf
+    FakeOut.margin = 0.15
+    FakeOut.rejected = False
+    FakeOut.top = [(nombre, 0.26)] if nombre else []
 
     class FakeSurf:
         def match(self, crop):
@@ -502,6 +506,41 @@ def test_no_cosecha_cuando_el_badge_contradice_al_latch(mon):
     mon._last_agent_name = "Velina"
     _paso(mon, _S26, boton="desequipar")
     assert mon._identifier.cosechado == []
+
+
+def test_el_badge_en_desacuerdo_veta_aunque_el_consenso_se_abstenga(mon):
+    """QA en vivo 2026-08-10: se cosechó la cara de Billy bajo el nombre de Lycaon.
+
+    El log fue `top=Billy:0.26 conf=0.74 margin=0.15 latch=Lycaon -> cosechado`. El badge tenía
+    una opinión firme y contraria, pero el veto comparaba contra `badge_nombre`, que sale de
+    `decide_owner` y exige 0.80 acumulado: con 0.74 de un frame devolvió None, y `if badge_nombre`
+    dejó pasar. Se usó un consenso pensado para REPORTAR como si fuera un detector de desacuerdo.
+
+    Para nombrar hace falta mucha evidencia; para NEGARSE A APRENDER tiene que alcanzar con poca.
+    """
+    mon._identifier = _identifier_cosechable("Jane", roster=("Jane", "Velina"), conf=0.74)
+    mon._last_agent_name = "Velina"
+    _paso(mon, _S26, boton="desequipar")
+    assert mon._identifier.cosechado == [], (
+        "el badge nombró a otro PJ con opinión propia: no se puede aprender bajo el latch")
+
+
+def test_un_matcher_perdido_no_impide_aprender(mon):
+    """El contracaso del anterior, y la razón de ser del feature. QA en vivo 2026-08-10, Rina:
+
+        top=Sunna:0.27, Alice:0.27, Anby:0.28 · conf=0.73 margin=0.00 · latch=Rina -> cosechado
+
+    El matcher no tenía idea (Rina ni figuraba en el top-3) y por margen ~0 se abstuvo: `name=None`.
+    Eso NO es desacuerdo, es ignorancia — justo el PJ de una sola ref que venimos a cubrir. Cinco
+    segundos después de esa cosecha el mismo badge daba `Rina:0.00`.
+
+    Si alguna vez se endurece el veto a "el top-1 crudo tiene que coincidir", este test cae — y
+    con él, la mitad de los PJs flacos que el feature existe para tapar.
+    """
+    mon._identifier = _identifier_cosechable(None)      # la superficie se abstiene
+    mon._last_agent_name = "Velina"
+    _paso(mon, _S26, boton="desequipar")
+    assert [n for n, _ in mon._identifier.cosechado] == ["Velina"]
 
 
 def test_la_misma_arma_no_se_cosecha_dos_veces(mon):

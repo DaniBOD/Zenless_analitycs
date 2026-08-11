@@ -4030,6 +4030,7 @@ class Monitor:
             self._s26_owner_votes = {}
         badge_nombre = None
         res_dbg = None          # el MatchResult crudo, para el diagnóstico de abstenciones
+        badge_crudo = None      # top-1 de ESTE frame, ya canonizado: es lo que veta la cosecha
         if badge is not None and badge.crop is not None and self._identifier is not None:
             try:
                 res = self._identifier.surfaces["detail"].match(badge.crop)
@@ -4043,6 +4044,7 @@ class Monitor:
                 canon = self._identifier._canonical_name(crudo) if crudo else None
                 if crudo and canon is None:
                     log.debug("S26: dueño %r no resuelve al roster → incierto", crudo)
+                badge_crudo = canon
                 if canon:
                     conf = float(getattr(res, "conf", 1.0) or 0.0)
                     self._s26_owner_votes[canon] = self._s26_owner_votes.get(canon, 0.0) + conf
@@ -4071,7 +4073,7 @@ class Monitor:
             boton = None
         d.tenencia, d.dueno = clasificar_tenencia(
             boton, badge, badge_nombre, self._last_agent_name)
-        cosecha = self._maybe_harvest_weapon_owner(d, badge, badge_nombre, arma_key)
+        cosecha = self._maybe_harvest_weapon_owner(d, badge, badge_nombre, arma_key, badge_crudo)
         if self._id_diag_on:
             if cosecha:
                 outcome = cosecha
@@ -4246,7 +4248,8 @@ class Monitor:
                 log.warning("[S30] ⚠ %s", n)
                 self._diag(f"[S30] ⚠ {n}")
 
-    def _maybe_harvest_weapon_owner(self, d, badge, badge_nombre, arma_key) -> str | None:
+    def _maybe_harvest_weapon_owner(self, d, badge, badge_nombre, arma_key,
+                                    badge_crudo=None) -> str | None:
         """Cosecha el badge del dueño a la librería del DETALLE cuando la etiqueta es certera.
 
         Las pantallas de armas venían CONSUMIENDO `avatar_detbadge_v2` sin alimentarla nunca: el
@@ -4285,8 +4288,18 @@ class Monitor:
         # Las dos señales en desacuerdo. Se le cree al badge —0-wrong en QA— y no se aprende nada:
         # una de las dos está mal y no sabemos cuál, así que aprender sería etiquetar una cara con
         # el nombre de otro PJ. Misma regla que el flujo-ancla de discos.
-        if badge_nombre and _norm_key(badge_nombre) != _norm_key(canon):
-            return "veto_conflicto"
+        #
+        # Se mira el match CRUDO de este frame (`badge_crudo`), no solo el consenso `badge_nombre`.
+        # `decide_owner` exige 0.80 acumulado para PROPONER un dueño, y con 0.74 de un frame
+        # devuelve None: en el QA del 2026-08-10 eso dejó pasar un `top=Billy conf=0.74
+        # margin=0.15` bajo el latch 'Lycaon' y se aprendió la cara de Billy como Lycaon. El
+        # `name` crudo ya viene gateado por el matcher (min_conf 0.45 / min_margin 0.04), o sea
+        # "tengo una opinión" — y para NEGARSE A APRENDER eso tiene que alcanzar, aunque no
+        # alcance para nombrar. Cuando el matcher no opina (margen ~0, el caso de un PJ con una
+        # sola ref) `badge_crudo` es None y la cosecha sigue: es justo para lo que existe.
+        for otro in (badge_crudo, badge_nombre):
+            if otro and _norm_key(otro) != _norm_key(canon):
+                return "veto_conflicto"
         clave = (canon, arma_key)
         if clave in self._s26_harvested:
             return None
