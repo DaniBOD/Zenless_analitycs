@@ -83,11 +83,26 @@ _H_BINS, _S_BINS = 24, 8
 # Pesos del score combinado (calibrables por el harness 5R.2).
 _W_HIST, _W_NCC, _W_REG = 0.40, 0.45, 0.15
 
-# Saturación media (en el círculo) por debajo de la cual el avatar se considera
-# GRIS (PJ no obtenido: el juego lo dessatura). En ese caso se matchea por
-# LUMINANCIA (canal L), invariante a saturación — el filtro gris preserva la luz.
-# Base 2026-06-10 (sin muestras grises reales aún): umbral tentativo, a calibrar.
+# Saturación media (en el círculo) por debajo de la cual el avatar se considera GRIS (PJ no
+# obtenido: el juego lo desatura). Solo informativo desde 2026-08-12: ya NO decide la métrica.
+#
+# Por qué dejó de decidir: era un umbral ABSOLUTO fijado en 2026-06-10 "sin muestras grises reales,
+# a calibrar", y la medición mostró que no separa lo que dice. No hay bimodalidad: es una sola
+# distribución continua cortada al medio. Lo que separa es la PALETA del personaje — el arte de
+# Seth tiene saturación 7.3, Anby 10.6, Lycaon 16.6, todos obtenidos y a color. A esos les tiraba
+# el color, que es lo único que los distingue entre sí, y los comparaba por luminancia: en la
+# librería del detalle, Seth caía a 0.084 de Zhao (dos personajes de oscuro).
 _GRAY_SAT_MAX = 45.0
+
+# La ruta gris se decide RELATIVA: un avatar está grisado si tiene mucha MENOS saturación que la
+# referencia contra la que se compara. Un umbral absoluto no puede expresar eso — un personaje de
+# negro (7.3) y un avatar realmente grisado (10-20) se solapan; una razón sí los separa, porque
+# "grisado" significa perder el color PROPIO, no tener poco.
+#
+# Calibrado 2026-08-12 sobre las tres librerías: entre refs legítimas del MISMO PJ la razón nunca
+# baja de 0.75 (detail) ni 0.98 (row); una Ellen desaturada al 12% da 0.14. 0.25 deja aire para un
+# grisado más suave sin rozar la variación normal. Medido 1-NN: detail 87% → 97%, grid 91% → 94%.
+_GRAY_SAT_RATIO = 0.25
 
 # Gates de abstención por defecto. Calibrados con el harness leave-one-out multi-ref
 # sobre la cosecha real de 41 PJs (2026-06-10): con multi-ref, min_margin=0.04 da
@@ -186,12 +201,27 @@ def build_descriptor(bgr: np.ndarray) -> AvatarDescriptor | None:
     return AvatarDescriptor(hist, ncc, np.asarray(regions, dtype=np.float32), gray, is_gray)
 
 
+def _saturacion(d: AvatarDescriptor) -> float:
+    """Saturación media (0..1) del descriptor, leída de las medias por banda de `regions`."""
+    return float((d.regions[2] + d.regions[5] + d.regions[8]) / 3.0)
+
+
+def _esta_grisado(q: AvatarDescriptor, ref: AvatarDescriptor) -> bool:
+    """¿`q` está DESATURADO respecto de `ref`? Ver `_GRAY_SAT_RATIO`."""
+    s_ref = _saturacion(ref)
+    return s_ref > 1e-6 and _saturacion(q) < _GRAY_SAT_RATIO * s_ref
+
+
 def descriptor_distance(a: AvatarDescriptor, b: AvatarDescriptor,
                         weights: tuple[float, float, float] | None = None,
-                        gray_only: bool = False) -> float:
+                        gray_only: bool | None = False) -> float:
     """Distancia combinada en [0..~1] (0 = idéntico). Pesos = (hist, ncc, regiones).
-    `gray_only`: matchea solo por luminancia (canal L) — para avatares grises (PJ no
-    obtenido), donde el color no es discriminativo."""
+
+    `gray_only`: `True`/`False` deciden la métrica explícitamente. **`None` = decidí vos**, y ahí
+    se aplica la regla RELATIVA de `_GRAY_SAT_RATIO`: `a` es el query y `b` la referencia.
+    """
+    if gray_only is None:
+        gray_only = _esta_grisado(a, b)
     if gray_only:
         cos = float(np.dot(a.gray, b.gray)) if a.gray.shape == b.gray.shape else -1.0
         return (1.0 - cos) / 2.0
@@ -328,7 +358,7 @@ class AvatarMatcher:
         lst = self._refs.get(name)
         if q is None or not lst:
             return None
-        d = min(descriptor_distance(q, r, self.weights, q.is_gray) for r in lst)
+        d = min(descriptor_distance(q, r, self.weights, None) for r in lst)
         return 1.0 - d
 
     # ---- match ----
@@ -338,8 +368,10 @@ class AvatarMatcher:
         q = bgr_or_desc if isinstance(bgr_or_desc, AvatarDescriptor) else build_descriptor(bgr_or_desc)
         if q is None or not self._refs:
             return MatchResult(None, 0.0, 0.0, False, [])
-        # PJ gris (no obtenido): el color no discrimina → matchear por luminancia.
-        gray_only = q.is_gray
+        # La ruta gris se decide POR COMPARACIÓN (`gray_only=None`), no por una propiedad del
+        # query: un personaje de paleta oscura no es un PJ grisado, y decidirlo mirando solo al
+        # query hacía que Seth y Zhao —los dos de oscuro— se compararan sin color.
+        gray_only = None
         # distancia a un PJ = mínimo sobre sus descriptores (multi-ref)
         scored = sorted(
             ((name, min(descriptor_distance(q, d, self.weights, gray_only) for d in lst))

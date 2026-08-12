@@ -162,7 +162,10 @@ class BadgeSurface:
         return q is not None and self._es_clon(q, refs)
 
     def _es_clon(self, q: AvatarDescriptor, refs: list) -> bool:
-        return any(descriptor_distance(q, r, self.matcher.weights, bool(q.is_gray)) <= _CLON_MAX_DIST
+        # `None` = la misma regla que usa el matcher para elegir métrica. Con el flag viejo, dos
+        # refs DISTINTAS de un PJ de paleta oscura se comparaban por luminancia y podían parecer
+        # clones — se habría descartado una ref buena creyendo que ya la teníamos.
+        return any(descriptor_distance(q, r, self.matcher.weights, None) <= _CLON_MAX_DIST
                    for r in refs)
 
     # ---- cosecha ------------------------------------------------------------

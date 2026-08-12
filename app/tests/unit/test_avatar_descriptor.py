@@ -146,3 +146,43 @@ def test_pj_gris_detectado_y_matchea_por_luminancia(matcher):
 def test_pj_color_no_es_gris():
     """Un avatar a color normal NO se marca como gris."""
     assert build_descriptor(_ref("Nicole")).is_gray is False
+
+
+# --- La ruta gris se decide RELATIVA, no contra un umbral absoluto (2026-08-12) -------------
+#
+# `is_gray` usaba `saturación < 45`, un umbral que el propio código declaraba "tentativo, a
+# calibrar" desde 2026-06-10. Medido: no separa "no obtenido" de "obtenido" — separa personajes
+# de PALETA OSCURA (el -ico de Seth tiene saturación 7.3, Anby 10.6, Lycaon 16.6) de los
+# brillantes. A esos les tiraba el color, que es lo único que los distingue entre sí, y los
+# mandaba a compararse por luminancia: en la librería del detalle, Seth caía a 0.084 de Zhao.
+#
+# El arreglo: "grisado" no es estar poco saturado, es estar MUCHO MENOS saturado que la
+# referencia contra la que te comparás. Un umbral absoluto no puede expresar eso (un personaje
+# de negro a 7.3 y un avatar grisado a 10-20 se solapan); una razón sí.
+
+
+def test_dos_oscuros_se_comparan_por_COLOR(matcher):
+    """Dos personajes de paleta oscura tienen saturaciones PARECIDAS entre sí: no hay nada
+    grisado acá, y el color es justamente lo que los separa."""
+    a, b = build_descriptor(_ref("Seth")), build_descriptor(_ref("Anby"))
+    assert a.is_gray and b.is_gray, "ambos caen bajo el umbral absoluto viejo"
+    auto = descriptor_distance(a, b, None, None)
+    assert auto == pytest.approx(descriptor_distance(a, b, None, False)), \
+        "dos oscuros parecidos entre sí tienen que compararse por color"
+
+
+def test_un_avatar_grisado_si_va_por_luminancia():
+    """El caso que la ruta gris existe para resolver, y que hay que preservar: el MISMO PJ,
+    desaturado contra su referencia a color. Ahí la razón de saturaciones se desploma (0.14)."""
+    color = build_descriptor(_ref("Ellen"))
+    grisada = build_descriptor(_desaturate(_ref("Ellen")))
+    auto = descriptor_distance(grisada, color, None, None)
+    assert auto == pytest.approx(descriptor_distance(grisada, color, None, True)), \
+        "un avatar realmente grisado tiene que compararse por luminancia"
+
+
+def test_el_modo_explicito_manda_sobre_el_automatico():
+    """`gray_only=True/False` sigue siendo una decisión del que llama; `None` es 'decidí vos'."""
+    a, b = build_descriptor(_ref("Seth")), build_descriptor(_ref("Anby"))
+    assert descriptor_distance(a, b, None, True) != pytest.approx(
+        descriptor_distance(a, b, None, False))

@@ -96,7 +96,8 @@ def planificar(path: Path) -> tuple[list[int], dict[str, tuple[int, int]]]:
         sobreviven: list[int] = []
         for i in idx:
             q = descs[i]
-            if not any(descriptor_distance(q, descs[j], None, bool(q.is_gray)) <= _CLON_MAX_DIST
+            # `None` = la misma regla de métrica que usa el matcher (relativa, no por el flag).
+            if not any(descriptor_distance(q, descs[j], None, None) <= _CLON_MAX_DIST
                        for j in sobreviven):
                 sobreviven.append(i)
         keep += sobreviven
