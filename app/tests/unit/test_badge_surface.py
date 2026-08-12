@@ -89,6 +89,65 @@ def test_guard_de_naming_se_abstiene_bajo_umbral(tmp_path):
     assert out.conf < 0.80 or out.rejected
 
 
+# ---- Dedup por contenido (spec 2026-08-11) ----------------------------------------------
+#
+# Medido ese día: `row` tenía 365 refs pero 62 imágenes distintas, con 40 de 50 PJs mostrando
+# CUATRO copias de la misma foto. La causa es que `learn_s17_detail` se llama una vez por disco y
+# el avatar del panel no cambia con el disco seleccionado. Un clon no agrega discriminación —la
+# distancia de clase es un `min`— y gasta una ranura; con el cupo lleno, el desalojo FIFO empieza
+# a tirar las refs DIVERSAS para meter más copias de lo mismo.
+
+
+def test_el_mismo_crop_no_entra_dos_veces(tmp_path):
+    s = _surface(tmp_path)
+    assert s.learn(_cara(), "Ellen") is True
+    assert s.learn(_cara(), "Ellen") is False
+    assert len(s.matcher._refs["Ellen"]) == 1
+
+
+def test_una_cara_distinta_del_mismo_pj_si_entra(tmp_path):
+    """El dedup no puede castigar variación real: dos refs genuinas del mismo PJ están a
+    0.098-0.229, muy por encima del umbral de clon (0.03)."""
+    s = _surface(tmp_path)
+    s.learn(_cara(), "Ellen")
+    assert s.learn(_cara("Nicole.png"), "Ellen") is True
+    assert len(s.matcher._refs["Ellen"]) == 2
+
+
+def test_el_dedup_es_dentro_de_la_clase(tmp_path):
+    """Dos PJs pueden tener caras parecidas —Billy y Billy Estelar están a 0.155— y eso no es
+    motivo para no aprender: la comparación es SOLO contra las refs del mismo nombre."""
+    s = _surface(tmp_path)
+    assert s.learn(_cara(), "Ellen") is True
+    assert s.learn(_cara(), "Nicole") is True
+    assert len(s.matcher._refs["Ellen"]) == 1 and len(s.matcher._refs["Nicole"]) == 1
+
+
+def test_un_clon_no_reescribe_el_archivo(tmp_path):
+    """`learn` persiste en CADA cosecha reescribiendo el .npz entero — el del row pesa 23 MB.
+    Un clon no puede pagar ese costo para no agregar nada (RNF-06)."""
+    import hashlib
+    s = _surface(tmp_path)
+    s.learn(_cara(), "Ellen")
+    npz = tmp_path / "surf.npz"
+    antes = hashlib.sha256(npz.read_bytes()).hexdigest()
+    assert s.learn(_cara(), "Ellen") is False
+    assert hashlib.sha256(npz.read_bytes()).hexdigest() == antes
+
+
+@pytest.mark.parametrize("surface", ["row", "grid", "detail"])
+def test_las_tres_superficies_dedupean(tmp_path, surface):
+    """El dedup vive en el cuello común, así que lo heredan las tres — y las pantallas nuevas
+    que registren la suya (S9, S23) sin que nadie tenga que acordarse."""
+    from app.core.agent_identifier import AgentIdentifier
+    ident = AgentIdentifier(library_path=tmp_path / "lib.npz", autoload=False)
+    surf = ident.surfaces[surface]
+    cara = _cara()
+    assert surf.learn(cara, "Ellen") is True
+    assert surf.learn(cara, "Ellen") is False
+    assert len(surf.matcher._refs["Ellen"]) == 1
+
+
 def test_load_merge_reincorpora_lo_persistido(tmp_path):
     s = _surface(tmp_path)
     s.learn(_cara(), "Ellen")

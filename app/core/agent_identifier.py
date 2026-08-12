@@ -52,11 +52,16 @@ _REJECT_DET_DIR = _RESOURCES / "avatar_reject_det"
 # el 2026-07-28 y el grid + row el 2026-07-31, y esta última dejó al grid nombrando con arte
 # `-ico` (4.3% top-1, Cissia llevándose 14 discos ajenos). Actualizar cuando se cosecha de más:
 # `tools/preseed_badge_lib.py --save-snapshot` deja el archivo con este nombre.
+#
+# Los `_dedup` del 2026-08-11 son los mismos snapshots con los CLONES colapsados: la cosecha del
+# flujo de discos llamaba a `learn` una vez por disco y el avatar del panel no cambia con el disco,
+# así que la mitad de las refs eran copias (row 365→62, detail 193→85, grid 486→356). Ninguna clase
+# se perdió. Los snapshots anteriores quedan como historia y NO se reescriben.
 _AUDIT_DIR = Path(__file__).resolve().parents[2] / "audit"
 _BASELINES = {
-    "row": _AUDIT_DIR / "avatar_row_v2_snapshot_20260801.npz",
-    "grid": _AUDIT_DIR / "avatar_badge_v2_snapshot_20260802_roster50.npz",
-    "detail": _AUDIT_DIR / "avatar_detbadge_v2_snapshot_20260807_cosecha184.npz",
+    "row": _AUDIT_DIR / "avatar_row_v2_snapshot_20260811_dedup.npz",
+    "grid": _AUDIT_DIR / "avatar_badge_v2_snapshot_20260811_dedup.npz",
+    "detail": _AUDIT_DIR / "avatar_detbadge_v2_snapshot_20260811_dedup.npz",
 }
 
 # Cache del seed -ico: los descriptores son inmutables (frozen) y caros de construir
@@ -72,11 +77,6 @@ _DET_REJECT_CACHE: list | None = None
 # que a 0.80 quedan en "dueño incierto", nunca asertados). El guard latch (mismo PJ)
 # es aparte (_S17_GUARD_MIN en monitor, sigue 0.86).
 _S17_GUARD_DEFAULT = 0.80
-
-# Distancia por debajo de la cual dos refs del MISMO PJ se consideran la misma imagen. Medido
-# sobre la librería real (2026-08-11): refs genuinas del mismo PJ ≥ 0.098, un clon exacto 0.000.
-# Queda holgado por abajo del piso genuino: dedupea repetición sin castigar variación.
-_CLON_MAX_DIST = 0.03
 
 
 def _badge_harvest_enabled() -> bool:
@@ -478,26 +478,15 @@ class AgentIdentifier:
         canon = self._canonical_name(name) if name else None
         return len(self._detbadge._refs.get(canon, [])) if canon else 0
 
-    def detail_is_near_duplicate(self, face, name: str, umbral: float = _CLON_MAX_DIST) -> bool:
+    def detail_is_near_duplicate(self, face, name: str) -> bool:
         """¿`face` es prácticamente la misma imagen que alguna ref que `name` ya tiene?
 
-        Una ref clonada no agrega discriminación —la distancia de clase es un `min`, así que dos
-        copias puntúan igual que una— pero sí gasta una de las `_MAX_REFS_PER_NAME` ranuras, y
-        cuando se llenan el desalojo es FIFO: entran clones, se van las diversas.
-
-        El umbral sale de la medición del 2026-08-11 sobre la librería real: dos refs genuinas del
-        mismo PJ están a 0.098-0.229, un clon exacto a 0.000. `_CLON_MAX_DIST` queda muy por
-        debajo del piso genuino para no confundir variación con repetición.
+        Delega en la superficie, que es la dueña del criterio — `BadgeSurface.learn` aplica el
+        mismo chequeo por su cuenta, y dos implementaciones del mismo umbral se desincronizan.
+        Lo usa la cosecha de armas para poder REPORTAR el desenlace (`veto_clon`) en el
+        diagnóstico, cosa que un `learn` que devuelve False no permite distinguir.
         """
-        from app.core.avatar_descriptor import build_descriptor, descriptor_distance
-        canon = self._canonical_name(name) if name else None
-        refs = self._detbadge._refs.get(canon) if canon else None
-        if not refs:
-            return False
-        q = face if isinstance(face, AvatarDescriptor) else build_descriptor(face)
-        if q is None:
-            return False
-        return any(descriptor_distance(q, r, None, bool(q.is_gray)) <= umbral for r in refs)
+        return self.surfaces["detail"].is_near_duplicate(face, name)
 
     def learn_s17_detail(self, face, name: str) -> bool:
         """Cosecha el detalle-badge de `name` (ground-truth del latch) a su librería

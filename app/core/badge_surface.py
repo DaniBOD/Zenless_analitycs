@@ -39,12 +39,23 @@ from typing import Callable
 
 import numpy as np
 
-from app.core.avatar_descriptor import AvatarMatcher, MatchResult
+from app.core.avatar_descriptor import (
+    AvatarDescriptor,
+    AvatarMatcher,
+    MatchResult,
+    build_descriptor,
+    descriptor_distance,
+)
 
 log = logging.getLogger(__name__)
 
 # Guard de naming por defecto (= _S17_GUARD_DEFAULT histórico, sub-fase B 2026-06-12).
 _GUARD_DEFAULT = 0.80
+
+# Distancia por debajo de la cual dos refs de la MISMA clase son la misma imagen. Medido sobre las
+# librerías reales (2026-08-11): refs genuinas del mismo PJ ≥ 0.098, un clon exacto 0.000. Queda
+# holgado por debajo del piso genuino: dedupea repetición sin castigar variación.
+_CLON_MAX_DIST = 0.03
 
 
 @dataclass
@@ -137,12 +148,41 @@ class BadgeSurface:
         if self.library_path is not None:
             self.matcher.save(self.library_path)
 
+    def is_near_duplicate(self, crop, label: str) -> bool:
+        """¿`crop` es prácticamente la misma imagen que alguna ref que `label` ya tiene?
+
+        La comparación es SOLO dentro de la clase: dos PJs pueden parecerse mucho —Billy y Billy
+        Estelar están a 0.155— y eso no es motivo para no aprender.
+        """
+        canon = self._canonicalize(label) if self._canonicalize else label
+        refs = self.matcher._refs.get(canon) if canon else None
+        if not refs:
+            return False
+        q = crop if isinstance(crop, AvatarDescriptor) else build_descriptor(crop)
+        return q is not None and self._es_clon(q, refs)
+
+    def _es_clon(self, q: AvatarDescriptor, refs: list) -> bool:
+        return any(descriptor_distance(q, r, self.matcher.weights, bool(q.is_gray)) <= _CLON_MAX_DIST
+                   for r in refs)
+
     # ---- cosecha ------------------------------------------------------------
     def learn(self, crop, label: str) -> bool:
         """Aprende `crop` como referencia de `label`, canonicalizando el label al
         roster ANTES de guardar (lección 2026-06-18: una librería con claves no
         canónicas la vacía `prune_to_roster` al arrancar). Respeta el gate de
-        persistencia (readonly/modo cosecha). Devuelve True si aprendió."""
+        persistencia (readonly/modo cosecha). Devuelve True si aprendió.
+
+        **No aprende un CLON.** Medido el 2026-08-11: el `row` tenía 365 refs pero 62 imágenes
+        distintas, con 40 de 50 PJs mostrando cuatro copias de la misma foto — `learn_s17_detail`
+        se llama una vez por disco y el avatar del panel no cambia con el disco seleccionado. Una
+        copia no agrega discriminación (la distancia de clase es un `min`) pero sí gasta una de las
+        `_MAX_REFS_PER_NAME` ranuras, y cuando se llenan el desalojo es FIFO: entran clones, se van
+        las diversas. Además evita reescribir el .npz entero —23 MB el del row— para nada.
+
+        El dedup va acá y NO en `AvatarMatcher.add_reference`: esa es la primitiva de bajo nivel
+        que usan también `load_merge`, la semilla `-ico` y la fusión de claves con mojibake del
+        audit, que legítimamente repiten.
+        """
         if crop is None or not label:
             return False
         if self._persist_gate is not None and not self._persist_gate():
@@ -151,7 +191,17 @@ class BadgeSurface:
         if canon is None:
             log.debug("BadgeSurface[%s]: '%s' fuera del roster → no se aprende", self.name, label)
             return False
-        if not self.matcher.add_reference(canon, crop):
+        # El descriptor se construye UNA vez y se reusa para el chequeo y para guardar: es lo caro
+        # de la operación (resize + CLAHE + histogramas).
+        desc = crop if isinstance(crop, AvatarDescriptor) else build_descriptor(crop)
+        if desc is None:
+            return False
+        refs = self.matcher._refs.get(canon)
+        if refs and self._es_clon(desc, refs):
+            log.debug("BadgeSurface[%s]: '%s' ya tenía esta imagen → no se duplica",
+                      self.name, canon)
+            return False
+        if not self.matcher.add_reference(canon, desc):
             return False
         self.save()
         return True

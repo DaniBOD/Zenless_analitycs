@@ -3190,6 +3190,16 @@ class Monitor:
                 "desequipar.",
                 latch, origen, voted,
             )
+        elif self._identifier.detail_is_near_duplicate(det, latch):
+            # No falló nada: la librería YA tenía esta imagen. Distinguirlo importa porque el
+            # rescate se da por cumplido —no queda pendiente— y porque "la librería no aceptó"
+            # manda a buscar un problema que no existe.
+            self._s17_rescue_pending = None
+            self._log_s17_assign(
+                ("cosecha_detalle_clon", latch),
+                "[cosecha] el detalle de '%s' ya tenía esta misma imagen → no se duplica.",
+                latch,
+            )
         else:
             self._log_s17_assign(
                 ("veto_detalle_no_aprendido", latch),
