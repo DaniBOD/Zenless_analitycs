@@ -57,11 +57,17 @@ _REJECT_DET_DIR = _RESOURCES / "avatar_reject_det"
 # flujo de discos llamaba a `learn` una vez por disco y el avatar del panel no cambia con el disco,
 # así que la mitad de las refs eran copias (row 365→62, detail 193→85, grid 486→356). Ninguna clase
 # se perdió. Los snapshots anteriores quedan como historia y NO se reescriben.
+#
+# `detail` apunta al 2026-08-13 (89 refs): son las 85 dedupeadas MÁS las 4 que cosechó el flujo de
+# armas para Jane, Nangong Yu y Zhao. Con esas cuatro, los tres pasaron a tener al dueño correcto
+# en el puesto 1 en el inventario S30 —Zhao venía saliendo detrás de Nicole— así que reponer el
+# baseline viejo perdería justo lo que arregló ese caso. `row` y `grid` siguen en el dedup: el row
+# no cosecha en readonly y el grid solo sumó 2 refs.
 _AUDIT_DIR = Path(__file__).resolve().parents[2] / "audit"
 _BASELINES = {
     "row": _AUDIT_DIR / "avatar_row_v2_snapshot_20260811_dedup.npz",
     "grid": _AUDIT_DIR / "avatar_badge_v2_snapshot_20260811_dedup.npz",
-    "detail": _AUDIT_DIR / "avatar_detbadge_v2_snapshot_20260811_dedup.npz",
+    "detail": _AUDIT_DIR / "avatar_detbadge_v2_snapshot_20260813_cosecha89.npz",
 }
 
 # Cache del seed -ico: los descriptores son inmutables (frozen) y caros de construir
