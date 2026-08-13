@@ -27,9 +27,10 @@ def _frame(fill: int = 40):
 
 
 class FakeWeapon:
-    def __init__(self, nombre="Petrazufre", canon="Petrazufre", nivel=60, refin=1, rareza="S"):
+    def __init__(self, nombre="Petrazufre", canon="Petrazufre", nivel=60, refin=1, rareza="S",
+                 nivel_max=60):
         self.nombre_raw, self.nombre_canon = nombre, canon
-        self.nivel, self.nivel_max = nivel, 60
+        self.nivel, self.nivel_max = nivel, nivel_max
         self.rareza, self.refinamiento = rareza, refin
         self.atk_base = 684
         self.stat_avanzado_canon, self.stat_avanzado_valor = "ATK%", 30.0
@@ -704,3 +705,47 @@ def test_sin_recorte_no_hay_nada_que_aprender(mon):
           badge=pw_mod.OwnerBadge(present=True, nitidez=70.0, crop=None))
     assert mon._identifier.cosechado == []
     assert mon._toasts[0]["tenencia"] == "equipada"     # la lectura no se ve afectada
+
+
+# --- El panel no es de un arma ---------------------------------------------------------------
+#
+# QA en vivo 2026-08-12: el detector siguió diciendo S26 durante ~15 ciclos DESPUÉS de que la
+# pantalla ya era S17, y este handler corrió sobre un panel de discos. Leyó el set del disco como
+# nombre del arma y emitió `[S26] W-Engine — Jazz ca6tico (1) · Nv 15/15 · ATK base 2200`, que es
+# un W-Engine inventado con números de disco.
+#
+# El tell NO es el catálogo: `weapons` está incompleto a propósito (42 armas de menos) y por eso
+# `test_arma_fuera_del_catalogo_se_reporta_igual` existe — fuera del catálogo NO significa que no
+# sea un arma, y vetar por ahí bloquearía armas legítimas. El tell es ESTRUCTURAL: el pill de un
+# W-Engine muestra un tope de ascensión múltiplo de 10 hasta 60; 15 es el tope de un DISCO.
+
+
+def test_un_panel_de_disco_no_se_reporta_como_arma(mon):
+    """Nv 15/15 no existe en un W-Engine. Reportarlo sería inventar un arma con datos de disco."""
+    _paso(mon, _S26, weapon=FakeWeapon(nombre="Jazz ca6tico (1)", canon=None,
+                                       nivel=15, nivel_max=15))
+    assert mon._toasts == []
+
+
+def test_un_panel_de_disco_no_cosecha_badges(mon):
+    """Y tampoco alimenta la librería: la etiqueta saldría bien (viene del latch, no del panel),
+    pero la ref quedaría registrada con una procedencia que no existe."""
+    mon._identifier = _identifier_cosechable()
+    mon._last_agent_name = "Velina"
+    _paso(mon, _S26, boton="desequipar",
+          weapon=FakeWeapon(nombre="Jazz ca6tico (1)", canon=None, nivel=15, nivel_max=15))
+    assert mon._identifier.cosechado == []
+
+
+def test_un_arma_a_medio_ascender_pasa(mon):
+    """El guard mira el TOPE, no el nivel: un W-Engine sin ascender del todo muestra 30/30 y es
+    perfectamente válido. Confundirlo con un disco sería peor que el bug que arreglamos."""
+    _paso(mon, _S26, weapon=FakeWeapon(nivel=30, nivel_max=30))
+    assert len(mon._toasts) == 1
+
+
+def test_un_tope_ilegible_no_veta(mon):
+    """No leer el tope es IGNORANCIA, no evidencia de que esto sea otra pantalla. Vetar por
+    ausencia de dato apagaría el handler cada vez que el OCR tenga un mal día."""
+    _paso(mon, _S26, weapon=FakeWeapon(nivel=60, nivel_max=None))
+    assert len(mon._toasts) == 1

@@ -297,6 +297,10 @@ _RAM_CHECK_INTERVAL_S = 15.0
 #     cuando después hay que diagnosticar rendimiento.
 _HEARTBEAT_SILENCIO_S = 60.0
 _HEARTBEAT_BASE_S = 600.0
+# Topes de ascensión que puede mostrar el pill "Nv. X/Y" de un W-Engine. Sirven de firma
+# estructural de la pantalla: un DISCO tope en 15 y por ahí se cuela un panel de discos parseado
+# como arma (ver `_parece_panel_de_arma`). Confirmado contra la pantalla por Daniel 2026-08-12.
+_TOPES_ASCENSION_ARMA = frozenset({10, 20, 30, 40, 50, 60})
 # Voto/presencia del dueño (5R.L.3 → L.8): la maquinaria vive en el módulo REUSABLE
 # `app/core/owner_vote.py` (OwnerVoteAccumulator + decide_owner) para que futuras
 # pantallas (S9 inventario global, S23 reemplazo) la instancien sin re-implementar la
@@ -4025,6 +4029,8 @@ class Monitor:
         if not d.nombre_raw or d.nivel is None:
             self._note_stall("S26/detalle", f"panel ilegible (notas={','.join(d.notas) or '-'})")
             return
+        if not self._parece_panel_de_arma(d):
+            return
         self._clear_stall("S26/detalle")
 
         # --- Tenencia: ¿la lleva el PJ en pantalla, otro, o está libre? ---
@@ -4259,6 +4265,30 @@ class Monitor:
             if n.startswith("rareza_discrepa_atk"):
                 log.warning("[S30] ⚠ %s", n)
                 self._diag(f"[S30] ⚠ {n}")
+
+    def _parece_panel_de_arma(self, d) -> bool:
+        """¿Lo que se parseó puede ser un W-Engine? Falso ⇒ el handler se calla del todo.
+
+        QA en vivo 2026-08-12: el detector siguió diciendo S26 unos 15 ciclos DESPUÉS de que la
+        pantalla ya era S17, y este handler corrió sobre un panel de DISCOS. Leyó el set del disco
+        como nombre del arma y emitió `W-Engine — Jazz ca6tico (1) · Nv 15/15 · ATK base 2200`: un
+        arma inventada con números de disco. Además cosechó un badge bajo esa procedencia falsa.
+
+        El tell **no es el catálogo**. `weapons` está incompleto a propósito (42 armas de menos) y
+        por eso un arma fuera de catálogo se reporta igual: *no estar en el catálogo* no significa
+        *no ser un arma*, y vetar por ahí bloquearía las 42. El tell es ESTRUCTURAL: el pill de un
+        W-Engine muestra un tope de ascensión múltiplo de 10 hasta 60, y 15 es el tope de un disco.
+
+        Un tope ilegible (`None`) NO veta: eso es ignorancia, no evidencia de estar en otra
+        pantalla — la misma distinción que en el veto de la cosecha, donde un matcher sin opinión
+        deja pasar y uno en desacuerdo frena.
+        """
+        if d.nivel_max is None or d.nivel_max in _TOPES_ASCENSION_ARMA:
+            return True
+        self._note_stall("S26/detalle",
+                         f"el panel no es de un arma (tope Nv {d.nivel_max}, "
+                         f"esperado uno de {sorted(_TOPES_ASCENSION_ARMA)})")
+        return False
 
     def _maybe_harvest_weapon_owner(self, d, badge, badge_nombre, arma_key,
                                     badge_crudo=None) -> str | None:
