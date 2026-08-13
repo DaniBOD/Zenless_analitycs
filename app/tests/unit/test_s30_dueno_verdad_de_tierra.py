@@ -8,19 +8,34 @@ confirmó a ojo el 2026-08-13, después de dos pasadas de QA en vivo.
 
 La pasada del 2026-08-11 dio 5/11 y el diagnóstico fue "faltan referencias". Se cosecharon refs
 nuevas para tres de los cinco que fallaban (Jane, Nangong Yu, Zhao) y la pasada del 2026-08-13 dio
-1/5 *nombrados*... pero el número esconde el resultado real:
+1/5 *nombrados*... pero ese número esconde el resultado real. Sobre los 10 fixtures:
 
-| fixture | arma | dueño | qué pasa hoy |
-|---|---|---|---|
-| `Ejemplo_8`  | Aguijón agudo       | Jane       | **nombrado ✓** |
-| `Ejemplo_9`  | Fósil preciado      | Nangong Yu | top-1 correcto, margen 0.002 ⇒ se abstiene |
-| `Ejemplo_10` | Transmorfer original| Zhao       | top-1 correcto, margen 0.032 ⇒ se abstiene |
-| `Ejemplo_1`  | Engranaje infernal  | Dialyn     | **nombra a otro** (Orfia y Magas) |
-| `Ejemplo_7`  | Compilador quimérico| Grace      | **afirma LIBRE** |
+| fixture | arma | dueño | qué pasa hoy | distancia |
+|---|---|---|---|---|
+| `Ejemplo_4`  | Llanto mielgo        | Vivian     | nombrado ✓ | 0.080 |
+| `Ejemplo_6`  | Caldero de la claridad| Yixuan    | nombrado ✓ | 0.087 |
+| `Ejemplo_8`  | Aguijón agudo        | Jane       | nombrado ✓ | 0.235 |
+| `Ejemplo_3`  | Última cena          | Gatillo    | nombrado ✓ | 0.255 |
+| `Ejemplo_2`  | Florescencia         | *(libre)*  | LIBRE ✓ | — |
+| `Ejemplo_5`  | Repercusión Modelo II| *(libre)*  | LIBRE ✓ | — |
+| `Ejemplo_9`  | Fósil preciado       | Nangong Yu | top-1 correcto, margen 0.002 ⇒ abstiene | 0.203 |
+| `Ejemplo_10` | Transmorfer original | Zhao       | top-1 correcto, margen 0.032 ⇒ abstiene | 0.302 |
+| `Ejemplo_1`  | Engranaje infernal   | Dialyn     | **nombra a otro** (Orfia y Magas) | 0.227 (2º) |
+| `Ejemplo_7`  | Compilador quimérico | Grace      | **afirma LIBRE** | — |
+
+6 de 10 salen bien, 2 se abstienen con el ranking correcto y 2 fallan. **En los 8 que localizan el
+badge, el dueño correcto está en el puesto 1 siete veces.**
 
 **Los tres que recibieron refs tienen al dueño correcto en el puesto 1.** No fallan por identificar
 mal: dos fallan por el gate de margen (`_MIN_MARGIN` = 0.04), que es otra cosa y se arregla de otra
 forma. Los dos que NO recibieron refs (Dialyn, Grace) siguen fallando, y fallan distinto entre sí.
+
+Dos cosas que las distancias dejan ver y conviene no olvidar:
+
+- **La cantidad de refs no explica el resultado.** Gatillo tiene 3 refs y cae en 0.255; Vivian tiene
+  2 y cae en 0.080. Lo que decide no es cuántas hay sino si alguna se parece a ESTA vista.
+- **Hay dos regímenes**, no un continuo: los seguros caen por debajo de 0.09 y los dudosos se
+  amontonan entre 0.20 y 0.31. Nadie aterriza en el medio.
 
 O sea que acá hay tres defectos separados, y este archivo los separa para que nadie los vuelva a
 tratar como uno solo:
@@ -29,7 +44,10 @@ tratar como uno solo:
    con más refs, NO aflojando el 0.04: ese umbral es lo único que impide nombrar mal.
 2. **discriminación** (`Ejemplo_1`) — el dueño correcto sale segundo. Es un problema de librería.
 3. **detección** (`Ejemplo_7`) — el círculo del dueño no se localiza y se AFIRMA que el arma está
-   libre. El peor de los tres: los otros dos se abstienen, este miente.
+   libre. El peor de los tres: los otros dos se abstienen, este miente. Y **no es que el camino
+   esté roto**: `Ejemplo_2` y `Ejemplo_5` son armas realmente libres y las dos se reportan LIBRE
+   bien. O sea que `present=False` funciona y lo de Grace es un miss de Hough en ESE frame, no un
+   `present=False` que sobre-dispare. Eso acota mucho dónde buscar.
 
 Los dos defectos abiertos van como `xfail(strict=True)`: si alguien los arregla, el test falla por
 pasar de más y avisa que hay que actualizar esta tabla.
@@ -60,9 +78,18 @@ _FX = (_ROOT / "Documentacion" / "Screenshots_Triggers" / "Engines_Triggers"
 _SNAP = _ROOT / "audit" / "avatar_detbadge_v2_snapshot_20260813_cosecha89.npz"
 
 # Verdad de tierra dictada por Daniel el 2026-08-13, mirando la pantalla. No sale del sistema:
-# es justamente contra lo que se lo mide.
-_DUENOS = {
+# es justamente contra lo que se lo mide. `None` = el arma NO tiene dueño (libre).
+#
+# Ojo con `Ejemplo_3`: Daniel dijo "trigger", que es el nombre en inglés. El roster de la DB está
+# en español y la clave de la librería es **Gatillo** — traducir acá y no en el test evita que el
+# día de mañana alguien "corrija" el assert.
+_DUENOS: dict[str, str | None] = {
     "Ejemplo_1": "Dialyn",
+    "Ejemplo_2": None,
+    "Ejemplo_3": "Gatillo",
+    "Ejemplo_4": "Vivian",
+    "Ejemplo_5": None,
+    "Ejemplo_6": "Yixuan",
     "Ejemplo_7": "Grace",
     "Ejemplo_8": "Jane",
     "Ejemplo_9": "Nangong Yu",
@@ -70,6 +97,10 @@ _DUENOS = {
 }
 # Los tres que recibieron refs nuevas en la cosecha del 2026-08-12.
 _COSECHADOS = ("Ejemplo_8", "Ejemplo_9", "Ejemplo_10")
+# Los que hoy se nombran bien de punta a punta: localizan, rankean y pasan el gate.
+_NOMBRADOS_OK = ("Ejemplo_3", "Ejemplo_4", "Ejemplo_6", "Ejemplo_8")
+# Armas realmente libres. Son el control del defecto 3.
+_LIBRES = ("Ejemplo_2", "Ejemplo_5")
 
 
 def _load(p: Path) -> np.ndarray:
@@ -131,12 +162,35 @@ def test_los_cosechados_tienen_al_dueno_en_el_puesto_uno(stem):
 
 
 @_skip
-def test_jane_se_nombra_de_punta_a_punta():
-    """El caso completo: localiza, rankea bien y además pasa el gate. Es el que hay que replicar."""
-    if _falta("Ejemplo_8"):
-        pytest.skip("falta Ejemplo_8")
-    _b, r = _badge("Ejemplo_8")
-    assert r.name == "Jane", f"name={r.name} conf={r.conf:.2f} margin={r.margin:.2f}"
+@pytest.mark.parametrize("stem", _NOMBRADOS_OK)
+def test_se_nombran_de_punta_a_punta(stem):
+    """Los casos completos: localizan, rankean bien y además pasan el gate.
+
+    Vivian (0.080) y Yixuan (0.087) están MUY cerca; Gatillo (0.255) y Jane (0.235) apenas
+    alcanzan. Los cuatro se nombran, pero los dos últimos lo hacen con poco aire — si el encuadre
+    se corre un poco, caen del lado de la abstención.
+    """
+    if _falta(stem):
+        pytest.skip(f"falta {stem}")
+    _b, r = _badge(stem)
+    assert r.name == _DUENOS[stem], f"name={r.name} conf={r.conf:.2f} margin={r.margin:.2f}"
+
+
+@_skip
+@pytest.mark.parametrize("stem", _LIBRES)
+def test_un_arma_sin_dueno_se_reporta_libre(stem):
+    """El control del defecto 3, y por eso importa que estén acá.
+
+    `Ejemplo_7` (Grace) sale LIBRE siendo de alguien, y la lectura fácil sería "el camino de
+    `present=False` sobre-dispara". Estas dos armas son realmente libres y las dos se reportan bien,
+    así que ese camino FUNCIONA: lo de Grace es un miss de Hough en ese frame concreto. Sin este
+    par, el defecto 3 no se puede acotar — y alguien podría "arreglarlo" quitando el
+    `present=False`, que es justo lo que estos dos tests impiden.
+    """
+    if _falta(stem):
+        pytest.skip(f"falta {stem}")
+    b, r = _badge(stem)
+    assert b is not None and not b.present, f"no se reportó libre (badge={b}, match={r})"
 
 
 @_skip
