@@ -253,24 +253,114 @@ def test_materiales_sin_ocr_devuelve_lista_vacia():
     assert parse_obtenido_materiales(np.zeros((10, 10, 3), np.uint8), None) == []
 
 
+# --- Presupuesto del loop rápido (RNF-06) --------------------------------------------------
+# Se vigila con DOS tests, porque son dos preguntas distintas y solo una necesita cronómetro:
+#   · cuánto cuesta de verdad          → `test_bench_censo_bajo_3ms` (medido, con las cautelas
+#                                         que documenta su docstring)
+#   · sigue costando O(1) llamadas     → `test_el_censo_no_escala_con_las_45_celdas`
+#                                         (estructural, determinista, no puede parpadear)
+
+# Lote CORTO a propósito: tiene que caber entero en un quantum del scheduler para que exista
+# alguna muestra sin desalojar. Medido dentro de la suite completa, el mínimo baja al acortarlo
+# (lote de 20 → 1.83 ms, de 5 → 1.63, de 3 → 1.52), que es la firma de que el lote largo siempre
+# come un cambio de contexto. Ver el docstring del bench.
+_LOTE, _REPS = 3, 60
+
+
+def _ms_por_censo(fr) -> float:
+    """Costo propio de un censo, en ms: mínimo de `_REPS` lotes cortos medidos con `perf_counter`.
+
+    El mínimo es el estimador robusto acá porque la contención solo puede SUMAR tiempo: ningún
+    desalojo hace que el trabajo salga más barato de lo que es."""
+    tilde_cells(fr)                      # warmup (cachea la máscara del annulus)
+    lotes = []
+    for _ in range(_REPS):
+        t0 = time.perf_counter()
+        for _ in range(_LOTE):
+            tilde_cells(fr)
+        lotes.append((time.perf_counter() - t0) / _LOTE * 1000)
+    return min(lotes)
+
+
 @pytest.mark.skipif(not _present("Ejemplo_2.png"), reason="fixture no presente")
 def test_bench_censo_bajo_3ms():
     """Corre en el loop rápido a 10 fps ⇒ RNF-06. Sin OCR, solo máscaras HSV.
 
-    **Se mide con `thread_time`, no con `perf_counter`.** Dos intentos anteriores fallaron en la
-    suite completa y pasaban aislados: el reloj de pared incluye el tiempo en que el proceso está
-    desalojado, así que estaban midiendo la contención de CPU de los otros 1100 tests. Ni
-    promediar ni tomar el mínimo lo arregla — el instrumento estaba mal. `thread_time` cuenta solo
-    el CPU de ESTE hilo, que es exactamente lo que este test tiene que vigilar.
+    **Tercer intento de instrumentar esto; los dos anteriores midieron el reloj, no el censo.**
 
-    Al medirlo bien apareció el problema real: la versión ingenua (un `cvtColor` + un `inRange`
-    por celda) costaba ~2.3 ms contra un presupuesto de 3 ms — 30 % de margen, demasiado fino. El
-    costo no era el trabajo de píxeles sino el overhead de 135 llamadas a OpenCV, así que el censo
-    se vectorizó a dos llamadas sobre los 45 recortes apilados."""
-    fr = _load(_DIR / "Ejemplo_2.png")
-    tilde_cells(fr)                      # warmup (cachea la máscara del annulus)
-    t0 = time.thread_time()
-    for _ in range(20):
-        tilde_cells(fr)
-    ms = (time.thread_time() - t0) / 20 * 1000
-    assert ms < 3.0, f"{ms:.2f} ms de CPU por censo"
+    El intento #1 usó `perf_counter` sobre un lote de 20 y falló en la suite completa. Se
+    diagnosticó "el reloj de pared incluye el tiempo desalojado" y se pasó a `thread_time`, que
+    falló igual. El diagnóstico #2 fue "`thread_time` cuenta ciclos y la presión de caché de los
+    otros tests los infla". También era falso. Lo medido el 2026-08-12:
+
+        `time.thread_time()` en esta máquina avanza SOLO de a 15.625 ms exactos
+        — 64 cambios por segundo, cero valores intermedios: es la tick del scheduler.
+
+    `GetThreadTimes()` no cuenta ciclos ni tiempo real: es contabilidad **muestreada por tick**, y
+    Windows le carga la tick entera al hilo que esté corriendo cuando salta. El `resolution=1e-07`
+    que declara `get_clock_info` es la unidad de la API, no su granularidad. Sobre un lote de 20
+    este test no medía milisegundos: contaba ticks, y `assert ms < 3.0` era `assert ticks <= 3`.
+    Por eso TODAS las muestras históricas son múltiplos de 15.625/20 = 0.78125 ms:
+
+        0.78 = 1 tick · 1.56 = 2 ticks · 2.34 = 3 ticks · 3.125 = 4 ticks ← el "fallo"
+
+    Así de roto: con la máquina ociosa el instrumento también reportó 0.000 ms, o sea cero CPU
+    para trabajo real. La "dispersión de 3×" entre 0.78 y 2.34 era la cuantización, no el censo.
+
+    **Pero la sospecha de que los otros tests encarecen el censo no era falsa** — solo estaba mal
+    dimensionada. Medido con QPC: en un proceso limpio el censo cuesta 0.82 ms y dispersa 1.12×;
+    DENTRO de la suite cuesta ~1.6 ms, 2.5× más, y eso es real. No es el GC (con `gc.disable()`
+    da igual: 1.654 vs 1.625 ms) ni contención de hilos (hay uno solo): es el estado de memoria
+    de un proceso que arrastra 357k objetos vivos después de 1516 tests. O sea que el censo se
+    encarece a 1.6 ms, no a 3.125; el resto lo puso el reloj. Contra el presupuesto de 3 ms
+    quedan ~1.9× de margen medidos donde el test corre de verdad — así que no hay nada que
+    arreglar en el código ni umbral que subir, y el 3.0 recién ahora significa algo.
+
+    **Cómo se mide ahora**, con la misma convención que `test_parser_disc_s11.py`: `perf_counter`
+    (sub-µs de verdad) y el MÍNIMO de muchos lotes; la contención solo puede sumar tiempo. La
+    clave que faltaba es que el lote sea CORTO: para que exista una muestra sin desalojar tiene
+    que caber entera en un quantum del scheduler (~15-30 ms en Windows). El lote de 20 del intento
+    #1 duraba ~16 ms, o sea que casi siempre se comía un cambio de contexto — por eso "tomar el
+    mínimo" no alcanzó entonces, no porque el mínimo sea mal estimador. Se ve en la suite
+    completa: el mínimo baja de 1.83 ms (lote 20) a 1.63 (lote 5) a 1.52 (lote 3). Con lote de 3
+    ni el PEOR de 60 lotes llegó al umbral (2.77 ms), y es el mínimo lo que se asegura. Medido
+    aparte con los 12 cores saturados, el mínimo se sostuvo en 1.03 ms mientras el peor lote se
+    iba a 4.45."""
+    ms = _ms_por_censo(_load(_DIR / "Ejemplo_2.png"))
+    assert ms < 3.0, f"{ms:.3f} ms por censo (mínimo de {_REPS} lotes de {_LOTE})"
+
+
+@pytest.mark.skipif(not _present("Ejemplo_1.png"), reason="fixtures no presentes")
+@pytest.mark.parametrize("name", list(_GT), ids=lambda n: n.replace(".png", ""))
+def test_el_censo_no_escala_con_las_45_celdas(name, monkeypatch):
+    """La otra mitad del presupuesto, sin cronómetro: cuántas llamadas a OpenCV cuesta un censo.
+
+    Lo que hay que impedir es volver a la versión ingenua (un `cvtColor` + un `inRange` por
+    celda). Eso es una propiedad ESTRUCTURAL y se puede afirmar sin medir tiempo, así que este
+    test no puede parpadear por la carga de la máquina — que es justamente lo que arruinó tres
+    veces al bench de arriba.
+
+    La ley es exacta: **2 llamadas** para el lote vectorizado de las 45 celdas (constante — no
+    escala con la grilla) **+ 4 por cada tilde**, que es lo que cuesta comprobarle la franja de
+    rareza (1 `cvtColor` + 3 `inRange`, una por banda). Con la grilla vacía el censo cuesta 2
+    llamadas y nada más."""
+    esperado, _ = _GT[name]
+    n = 0
+
+    def contar(f):
+        def envuelta(*a, **k):
+            nonlocal n
+            n += 1
+            return f(*a, **k)
+        return envuelta
+
+    for fn in ("cvtColor", "inRange"):
+        monkeypatch.setattr(cv2, fn, contar(getattr(cv2, fn)))
+
+    obtenido = tilde_cells(_load(_DIR / name))
+    # `tilde_cells` se traga las excepciones: sin esto, un wrapper roto pasaría como "2 llamadas".
+    assert obtenido == esperado, f"{name}: el censo instrumentado ya no da el ground-truth"
+    assert n == 2 + 4 * len(esperado), (
+        f"{name}: {n} llamadas a OpenCV para {len(esperado)} tildes; se esperaban "
+        f"{2 + 4 * len(esperado)}. Si subió con las celdas, el censo volvió a ser por-celda."
+    )

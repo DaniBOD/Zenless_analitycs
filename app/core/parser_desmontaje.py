@@ -91,14 +91,19 @@ def _annulus_mask(box: int, rad: float) -> np.ndarray:
 def _all_badge_fracs(frame: np.ndarray) -> dict[tuple[int, int], float]:
     """Fracción de amarillo del annulus de las 45 celdas, en DOS llamadas a OpenCV.
 
-    La versión ingenua (un `cvtColor` + un `inRange` por celda) costaba ~2.3 ms de CPU medidos con
-    `thread_time` — no por el trabajo de píxeles (45 recortes de 46×46 px son nada) sino por el
-    **overhead de 135 llamadas** a través del binding de OpenCV. Contra el presupuesto de 3 ms del
-    loop rápido eso deja un margen del 30 %, tan fino que la propia suite de tests lo hacía fallar.
+    Los 45 recortes se apilan en una sola imagen y se convierten/umbralizan de una vez; las medias
+    por celda salen de un `reshape` + `mean` de numpy. Mismo resultado exacto que hacer una celda
+    por vez, con ~1 llamada por operación en vez de 45.
 
-    Acá los 45 recortes se apilan en una sola imagen y se convierten/umbralizan de una vez, y las
-    medias por celda salen de un `reshape` + `mean` de numpy. Mismo resultado, ~1 llamada por
-    operación en vez de 45."""
+    **Corrección 2026-08-12 — el número que justificaba esto era falso.** Decía que la versión
+    ingenua (un `cvtColor` + un `inRange` por celda) costaba "~2.3 ms contra un presupuesto de
+    3 ms", o sea un margen del 30 %. Ese 2.3 salió de `time.thread_time()`, que en Windows avanza
+    de a 15.625 ms (una tick del scheduler): 2.34375 ms es exactamente 3 ticks / 20 iteraciones,
+    un artefacto de cuantización. Remedido con QPC, la versión ingenua costaba **0.98 ms** y la
+    vectorizada cuesta **0.58 ms** — 1.69× real, pero nunca hubo tal crisis de margen: las dos
+    entraban cómodas en los 3 ms. La vectorización se queda porque es más barata y da idéntico
+    resultado, no porque hiciera falta. Historia completa en el docstring de
+    `test_bench_censo_bajo_3ms`."""
     H, W = frame.shape[:2]
     rad = _BADGE_RAD * W
     box = int(rad * 1.3)
