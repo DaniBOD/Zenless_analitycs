@@ -473,14 +473,41 @@ _S30_OWNER_WIN_DX = (-70, 70)     # ventana de búsqueda, relativa a pill.x1
 _S30_OWNER_WIN_DY = (-135, -30)   # relativa a pill.y1; cubre los dos regímenes de nombre
 _S30_OWNER_DX = (10, 45)          # dx ACEPTADO para el centro (deja afuera la especialidad)
 
+# Radio del recorte, como fracción del ancho del frame. **Hough LOCALIZA, esta constante ENCUADRA.**
+#
+# El badge del dueño es un elemento de UI de tamaño fijo, así que su radio no hay que detectarlo —
+# solo su centro. Dejárselo decidir a Hough era el defecto: sobre los 7 fixtures con dueño, el radio
+# devuelto se partía en dos grupos, ~21 (el círculo de la CARA) y 25.8 clavado (el borde EXTERIOR
+# del badge). Cuando salía el exterior, el recorte traía un anillo de fondo, la cara ocupaba menos
+# cuadro y tras el resize el descriptor veía otra composición: los cuatro casos de radio 25.8 caían
+# en 0.203-0.255 contra 0.080-0.087 de los ajustados. Ese era el escalón entre los dos "regímenes"
+# de distancia que no se explicaba por cobertura (2026-08-13: Gatillo con 3 refs peor que Vivian
+# con 2 — no decide cuántas hay sino si alguna comparte el encuadre).
+#
+# Medido con el radio fijo, contra las 50 clases: **4/7 → 6/7 nombrados**. Dialyn pasa de nombrar a
+# OTRO (Orfia y Magas) a nombrarse bien con margen 0.235, y Nangong Yu de abstenerse con 0.002 a
+# nombrar con 0.273. Los que ya pasaban lo hacen con mucho más aire (Jane 0.073 → 0.279).
+#
+# **Calibrado sobre 7 muestras, no derivado de la UI.** El barrido 18-27 px tiene una meseta plana
+# en 21-22 (media 0.107 y 0.115; a los lados sube rápido) y se toma el centro de esa meseta. Si
+# aparecen fixtures a otra resolución, esto es lo primero a re-medir.
+#
+# Lo que NO arregla: `Ejemplo_10` (Zhao) mejora en la dirección CONTRARIA — 0.050 a r=27 — porque
+# sus refs se cosecharon anchas. Normalizar la lectura no alcanza cuando la ref está desalineada;
+# eso pide normalizar también `crop_detail_badge`, que es el camino de cosecha y NO se tocó (lo
+# comparten S17 y S26, y la ruta de discos escribe la DB).
+_S30_OWNER_R_F = 21.0 / 2559.0
+
 
 def read_weapon_owner_badge_s30(frame: np.ndarray,
                                 pill_bbox: tuple[int, int, int, int] | None) -> OwnerBadge | None:
     """Badge del dueño en el panel del inventario. `present=False` ⇒ el arma está LIBRE.
 
-    El recorte que se devuelve conserva el encuadre de `crop_detail_badge` (Hough +
-    `_DET_HOUGH_PAD`) a propósito: la librería `avatar_detbadge_v2` se cosechó así, y un recorte
-    con otro marco la volvería inútil para nombrar (regla like-with-like de la Fase 5R).
+    El recorte busca el mismo encuadre que `crop_detail_badge` porque la librería
+    `avatar_detbadge_v2` se cosechó así, y un marco distinto la vuelve inútil para nombrar (regla
+    like-with-like de la Fase 5R). Pero el radio **no** sale de Hough sino de `_S30_OWNER_R_F`:
+    dejárselo a Hough era justamente lo que rompía el like-with-like, porque el radio detectado
+    saltaba entre la cara y el borde exterior del badge.
 
     Como en S26, `present=True` sin `crop` es una salida legítima —"hay alguien, no sé quién"—:
     que Hough no cierre el círculo no debe convertir un arma con dueño en un arma libre.
@@ -521,7 +548,9 @@ def read_weapon_owner_badge_s30(frame: np.ndarray,
         if elegido is None:
             return OwnerBadge(present=False, nitidez=0.0)
         ccx, ccy = int(x0 + elegido[0]), int(y0 + elegido[1])
-        r = int(elegido[2] * _DET_HOUGH_PAD)
+        # El radio sale de la constante, NO de `elegido[2]`: ver `_S30_OWNER_R_F`. Del círculo
+        # detectado se usa solo el CENTRO, que es lo que Hough resuelve bien acá.
+        r = int(_S30_OWNER_R_F * W)
         crop = None
         if r >= 8:
             c = frame[max(0, ccy - r):min(H, ccy + r), max(0, ccx - r):min(W, ccx + r)]
