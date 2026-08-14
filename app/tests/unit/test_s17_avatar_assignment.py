@@ -1061,6 +1061,34 @@ def test_crop_detail_badge_localiza_y_none():
     assert crop_detail_badge(np.zeros((H, W, 3), np.uint8)) is None
 
 
+def test_el_encuadre_no_depende_del_radio_que_devuelva_hough():
+    """El badge es un elemento de UI de tamaño FIJO: Hough lo LOCALIZA, la constante lo ENCUADRA.
+
+    Dejarle el radio a Hough metía varianza sin aportar nada. Medido sobre los 95 badges de los
+    fixtures: el radio devuelto se concentra en 23-25 (81 de 95) pero se va hasta 37 en una decena.
+    Un recorte flojo mete un anillo de fondo, la cara ocupa menos cuadro y tras el resize el
+    descriptor ve otra composición — y si eso pasa mientras se COSECHA, la ref queda envenenada para
+    siempre. Es lo que le pasó a Zhao: sus refs matchean mejor con encuadre ancho que ajustado.
+
+    El mismo defecto, medido en S30, era la causa de que el naming se partiera en dos regímenes
+    (ver `_S30_OWNER_R_F`). Acá el efecto es más chico porque la distribución ya venía apretada.
+    """
+    import cv2
+    import numpy as np
+
+    from app.core.detector import crop_detail_badge
+    H, W = 1439, 2559                       # resolución real; con 1280 el radio 34 cae fuera de Hough
+    tam = []
+    for radio in (24, 34):                  # el modal y un outlier de los medidos
+        frame = np.zeros((H, W, 3), np.uint8)
+        cv2.circle(frame, (int(0.495 * W), int(0.19 * H)), radio, (40, 60, 220), -1)
+        crop = crop_detail_badge(frame)
+        assert crop is not None, f"no localizó el badge de radio {radio}"
+        tam.append(crop.shape[0])
+    assert tam[0] == tam[1], (
+        f"el encuadre sigue dependiendo de Hough: radio 24 → {tam[0]}px, radio 34 → {tam[1]}px")
+
+
 def test_detail_is_face_distingue_cara_de_texto(tmp_path):
     """5R.L.8: `s17_detail_is_face` = PRESENCIA estructural del detalle. Anclas de cara
     (semilla -ico del roster + refs cosechadas) vs anclas de texto '(N)'

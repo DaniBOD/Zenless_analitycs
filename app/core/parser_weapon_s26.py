@@ -37,7 +37,7 @@ import cv2
 import numpy as np
 
 from app.core.detector import (
-    _DET_HOUGH_PAD,
+    _DET_CROP_R_F,
     _DET_HOUGH_RMAX_F,
     _DET_HOUGH_RMIN_F,
 )
@@ -395,7 +395,7 @@ def read_weapon_owner_badge(frame: np.ndarray,
     juego no pide confirmación al equiparla (a diferencia del arma de otro PJ, que abre el diálogo
     S23). Ese era el agujero: sin esta señal no se puede distinguir "libre" de "la tiene otro".
 
-    El `crop` conserva el encuadre de `crop_detail_badge` (Hough + `_DET_HOUGH_PAD`) a propósito:
+    El `crop` conserva el encuadre de `crop_detail_badge` (centro por Hough + `_DET_CROP_R_F`):
     la librería `avatar_detbadge_v2` se cosechó así y un recorte distinto la volvería inútil para
     nombrar. Lo que cambia es **dónde se busca** y **cómo se decide que hay algo**.
 
@@ -446,7 +446,18 @@ def read_weapon_owner_badge(frame: np.ndarray,
         if circles is not None:
             c0 = circles[0][0]
             ccx, ccy = int(x0 + c0[0]), int(ry0 + c0[1])
-            r = int(c0[2] * _DET_HOUGH_PAD)
+            # Radio de la constante, no de Hough (ver `_DET_CROP_R_F`). Es el MISMO valor que usa
+            # `crop_detail_badge` porque las dos pantallas dibujan el badge en el panel central, al
+            # mismo tamaño; S30 tiene el suyo (`_S30_OWNER_R_F`) porque ahí el panel es más angosto
+            # y el badge sale más chico. Lo que tiene que coincidir entre superficies no es el radio
+            # en píxeles sino la FRACCIÓN de cuadro que ocupa la cara.
+            #
+            # Medido sobre los 30 badges localizados de `Engine_vista_detallada_pj`: los lados se
+            # partían en 48-52 (modal) y 60-62, y cuatro de los cinco de 62 px estaban entre los
+            # peores matches. **Esta es la ruta que cosechó a Zhao**, y explica por qué sus refs
+            # matchean mejor con encuadre ancho. Con el radio fijo: distancia media 0.199 → 0.169,
+            # bajo 0.15 de 11/30 a 17/30, nombrados 22 → 26, y CERO cambian de identificación.
+            r = int(_DET_CROP_R_F * W)
             if r >= 8:
                 c = frame[max(0, ccy - r):min(H, ccy + r), max(0, ccx - r):min(W, ccx + r)]
                 crop = c if c.size else None

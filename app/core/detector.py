@@ -433,7 +433,33 @@ _DET_MIN_AREA = 200
 # eliminado. El radio fijo queda solo como referencia histórica (no se usa).
 _DET_HOUGH_RMIN_F = 0.008                     # radio mín del avatar / W
 _DET_HOUGH_RMAX_F = 0.015                     # radio máx del avatar / W
-_DET_HOUGH_PAD = 1.05                         # margen sobre el radio Hough (no comer la oreja)
+# `_DET_HOUGH_PAD` (1.05) vivía acá y daba el margen sobre el radio de Hough. Se eliminó el
+# 2026-08-14 junto con el radio detectado: ya no hay nada a lo que ponerle margen.
+
+# Radio del RECORTE, como fracción de W. **Hough LOCALIZA, esta constante ENCUADRA** (2026-08-14).
+#
+# Esto NO es volver al radio fijo que falló en 2026-06-17. Aquel era `_DET_R_F·W ≈ 96 px` para un
+# avatar de ~55: ahogaba la cara en fondo a rayas y el descriptor se agrupaba por página. La
+# lección de entonces fue *no recortar ancho*, no *no usar una constante*; lo de acá es una
+# constante AJUSTADA a la cara, con el centro que Hough ya resuelve bien.
+#
+# El badge es un elemento de UI de tamaño fijo, así que detectar su radio solo mete varianza.
+# Medido sobre los 95 badges localizados en los fixtures (S17 grilla/slots/inventario + S26): el
+# radio se concentra en 23-25 —81 de 95— pero se va a 29-37 en una decena. Esos son los que
+# recortan flojo, y si pasa mientras se COSECHA la ref queda envenenada para siempre: es el caso
+# de Zhao, cuyas refs matchean mejor con encuadre ancho que ajustado.
+#
+# Barrido con la distancia al mejor match como métrica (misma que en `_S30_OWNER_R_F`):
+#
+#     hoy    dist media 0.128 · bajo 0.15: 67/95 · nombrados 61
+#     r=25   dist media 0.118 · bajo 0.15: 74/95 · nombrados 64   ← elegido
+#     r=26   dist media 0.127 · bajo 0.15: 74/95 · nombrados 66
+#
+# Es un CLAMP de outliers más que un re-encuadre: 25 es casi lo que el código ya producía para el
+# caso modal (24 × 1.05 = 25.2). Por eso la ganancia es modesta —y por eso es segura: en los 95
+# badges, CERO cambian de identificación. Esto importa porque este crop decide el dueño en S17 y
+# ese dueño alimenta `sync_equip`, que ESCRIBE la DB.
+_DET_CROP_R_F = 25.0 / 2559.0
 
 
 def _selected_grid_tile_bbox(frame: np.ndarray, region: tuple = _GRID_REGION):
@@ -544,9 +570,13 @@ def crop_detail_badge(frame: np.ndarray) -> np.ndarray | None:
     """Recorta (círculo) el avatar del dueño del PANEL DE DETALLE S17 (junto a 'Nivel
     15/15'). Two-stage (5R.L.2b): (1) franja fija del header como recorte grueso + gate
     de presencia (blob saturado = hay avatar; sin él → disco sin dueño → None); (2) Hough
-    localiza el CÍRCULO real del avatar y recorta AJUSTADO a la cara, excluyendo el fondo
-    a rayas que antes ahogaba al descriptor (imán por página, ver
+    localiza el CENTRO del avatar y se recorta AJUSTADO a la cara con `_DET_CROP_R_F`,
+    excluyendo el fondo a rayas que antes ahogaba al descriptor (imán por página, ver
     audit/detbadge_magnet_diag_20260617.md). Encuadre propio → librería avatar_detbadge_v2.
+
+    **El radio no sale de Hough**: es un elemento de UI de tamaño fijo y detectarlo solo metía
+    varianza — ver `_DET_CROP_R_F` para los números y para por qué esto no es volver al radio
+    fijo de junio.
     None si no hay avatar (disco libre) o si Hough no halla el círculo (abstención segura;
     el voto multi-frame cubre el frame perdido — RNF-02)."""
     if frame is None or frame.size == 0:
@@ -576,7 +606,8 @@ def crop_detail_badge(frame: np.ndarray) -> np.ndarray | None:
             return None
         c0 = circles[0][0]
         cx, cy = int(x0 * W + c0[0]), int(y0 * H + c0[1])
-        r = int(c0[2] * _DET_HOUGH_PAD)
+        # Del círculo detectado se usa solo el CENTRO; el radio sale de `_DET_CROP_R_F`.
+        r = int(_DET_CROP_R_F * W)
         if r < 8:
             return None
         crop = frame[max(0, cy - r):min(H, cy + r), max(0, cx - r):min(W, cx + r)]

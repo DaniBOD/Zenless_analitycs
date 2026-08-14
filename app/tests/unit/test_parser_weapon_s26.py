@@ -430,6 +430,43 @@ def test_sin_ancla_no_se_inventa_tenencia():
     panel ilegible se reporte como arma libre."""
     frame = np.zeros((1440, 2560, 3), np.uint8)
     assert W.read_weapon_owner_badge(frame, None) is None
+
+
+def test_el_encuadre_del_dueno_lo_fija_el_frame_y_no_hough():
+    """El encuadre no puede depender del radio que devuelva Hough — **esta es la ruta que cosecha**.
+
+    Medido sobre los 30 badges localizados: los lados se partían en 48-52 (modal) y 60-62, y cuatro
+    de los cinco de 62 px estaban entre los peores matches de toda la tanda. Un recorte flojo mete
+    un anillo de fondo, la cara ocupa menos cuadro y el descriptor ve otra composición; cuando eso
+    pasa mientras se COSECHA, la ref queda envenenada para siempre. Es lo que le pasó a Zhao, cuyas
+    refs matchean mejor con encuadre ancho que ajustado.
+
+    Con el radio de `_DET_CROP_R_F`: distancia media 0.199 → 0.169, bajo 0.15 de 11/30 a 17/30,
+    nombrados 22 → 26, y **cero cambian de identificación** — que es lo que hacía falta verificar
+    antes de tocar esto, porque el dueño alimenta `sync_equip` y eso escribe la DB.
+
+    Lo que se afirma NO es "todos del mismo tamaño en píxeles": el radio es una FRACCIÓN del ancho
+    del frame, y dos de estas capturas están a 2554 y 2555 px en vez de 2559, así que salen a 48 y
+    no a 50. Eso es la fracción funcionando. Lo que se afirma es que el lado queda determinado por
+    el frame y **nada más** — si volviera a depender del círculo detectado, dos capturas de la misma
+    resolución darían lados distintos.
+    """
+    from app.core.detector import _DET_CROP_R_F
+    vistos = 0
+    for stem in sorted(_GT):
+        if not _present(stem):
+            continue
+        frame = _load(stem)
+        b = W.read_weapon_owner_badge(frame, _pill_bbox(stem))
+        if b is None or b.crop is None:
+            continue
+        vistos += 1
+        esperado = 2 * int(_DET_CROP_R_F * frame.shape[1])
+        assert b.crop.shape[0] == esperado, (
+            f"{stem}: lado {b.crop.shape[0]} para un frame de {frame.shape[1]} px "
+            f"(esperado {esperado}) — el encuadre volvió a depender de Hough")
+    if not vistos:
+        pytest.skip("ningún badge localizado en las capturas presentes")
     assert W.clasificar_tenencia("reemplazar", None, None, "Velina") == ("incierto", None)
 
 
