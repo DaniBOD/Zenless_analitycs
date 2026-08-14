@@ -205,25 +205,55 @@ verlo en vez de suponer que la bitácora quedó completa.
    trabajo **diferido** de `2026-07-10_Futuro_Latencia_GPU_Distribucion.md`, que por su propia nota
    no se retoma hasta cerrar la cobertura de extracción — o sea, hasta después de este feature.
 
-### Lección de método: el bench mentía dos veces, y la segunda tapaba un problema real
+### Lección de método: el bench mintió tres veces — y las dos primeras correcciones también
 
-El bench del censo **falló dos veces en la suite completa pasando aislado**. La primera vez lo
-atribuí a contención y promedié 20 corridas; la segunda tomé el mínimo de varias tandas. Seguía
-fallando, porque el problema no era la estadística sino el **instrumento**: `perf_counter` mide
-reloj de pared, que incluye el tiempo en que el proceso está desalojado, así que estaba midiendo el
-CPU que se llevaban los otros 1100 tests.
+> ⚠️ **Corregido el 2026-08-12.** Lo que esta sección afirmaba en julio era falso, y era falso
+> porque salía del mismo instrumento roto que decía haber arreglado. Se deja el error a la vista
+> porque la conclusión invertida es la parte útil.
 
-Con `thread_time` (CPU de este hilo) apareció lo que las dos versiones anteriores tapaban: el censo
-costaba **2.34 ms contra un presupuesto de 3 ms**. Un 30 % de margen es demasiado fino — de ahí que
-cualquier carga lo pasara. El síntoma "test flaky" era en realidad "el código está al límite".
+El bench del censo **falló tres veces en la suite completa pasando aislado**. La primera vez lo
+atribuí a contención y promedié 20 corridas; la segunda tomé el mínimo de varias tandas; la tercera
+cambié `perf_counter` por `thread_time`, razonando que el reloj de pared incluye el tiempo en que el
+proceso está desalojado. Ninguna de las tres tocó la causa:
 
-Y el costo no era el trabajo de píxeles (45 recortes de 46×46 px son nada) sino el **overhead de
-135 llamadas** al binding de OpenCV. Vectorizado (los 45 recortes apilados → un `cvtColor`, un
-`inRange`, medias por `reshape`): **2.34 → 1.56 ms**, 1.9× de margen.
+**`time.thread_time()` en Windows avanza solo de a 15.625 ms** — 64 cambios por segundo, cero
+valores intermedios en un millón de muestras: es la tick del scheduler. `GetThreadTimes()` es
+contabilidad *muestreada por tick*, y Windows le carga la tick entera al hilo que esté corriendo
+cuando salta. El `resolution=1e-07` que declara `get_clock_info` es la unidad de la API, no su
+granularidad — y es el único de los cuatro relojes que se declara mal (`monotonic` y `time`
+declaran su 0.015625 de frente).
 
-> Un bench que falla según lo que más corra en la máquina no es solo molesto: **oculta la señal que
-> debía dar**. Si hubiera subido el umbral —la tentación obvia— el censo se habría ido a producción
-> corriendo a 10 fps con un 30 % de margen y nadie se enteraba.
+Sobre un lote de 20 iteraciones el bench no medía milisegundos: **contaba ticks**, y `assert
+ms < 3.0` era `assert ticks <= 3`. Todas las cifras que esta sección citaba son múltiplos exactos
+de 15.625/20 = 0.78125 ms:
+
+| lo que decía este doc | qué era en realidad | costo real (QPC) |
+|---|---|---|
+| censo ingenuo «2.34 ms, 30 % de margen» | 3 ticks | **0.98 ms** |
+| censo vectorizado «1.56 ms, 1.9× de margen» | 2 ticks | **0.58 ms** |
+| el fallo «3.125 ms» | 4 ticks | — |
+
+O sea que **la conclusión de julio estaba dada vuelta**. No era "el código está al límite y el test
+flaky es la señal": el código nunca estuvo al límite —las dos versiones entraban cómodas en los
+3 ms— y lo flaky era el instrumento. La vectorización se queda porque es 1.69× más barata con
+resultado idéntico verificado, no porque hiciera falta para entrar en presupuesto.
+
+De la sospecha original sí era cierta una parte: la suite **encarece** el censo, de 0.82 ms en un
+proceso limpio a ~1.5 ms adentro. No es el GC (con `gc.disable()` da igual: 1.654 vs 1.625) ni
+contención de hilos (hay uno solo); es el estado de memoria de un proceso que arrastra 357k objetos
+vivos después de 1516 tests. Pero lo encarece a 1.5 ms, no a 3.125 — el resto lo ponía el reloj.
+
+Cómo quedó medido (la historia completa vive en el docstring de `test_bench_censo_bajo_3ms`):
+`perf_counter` + mínimo de 60 lotes de 3. La clave que faltaba no era el estimador sino el **largo
+del lote** — para que exista una muestra sin desalojar tiene que caber entera en un quantum del
+scheduler. El lote de 20 duraba ~16 ms y casi siempre se comía un cambio de contexto, y por eso
+"tomar el mínimo" había fracasado en el intento #2. La otra mitad de la vigilancia se pasó a un
+test **estructural** que cuenta llamadas a OpenCV (2 + 4 por tilde): determinista, a prueba de carga.
+
+> La lección que queda no es la que escribí en julio. Es: **antes de creerle a un número medido,
+> fijarse si es múltiplo de la granularidad del reloj.** Un instrumento cuantizado no produce ruido
+> que se pueda promediar — produce un conteo de ticks disfrazado de milisegundos, y encima
+> justifica optimizaciones que nadie necesitaba.
 
 El bench del **panel** sí usa reloj de pared a propósito: ahí interesa la latencia que el usuario
 percibe, y el OCR de Paddle es multi-hilo (`thread_time` sub-contaría). Su umbral es una guarda de
