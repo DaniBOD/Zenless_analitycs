@@ -835,6 +835,13 @@ class Monitor:
                 continue
 
             self._loop_ticks += 1
+            # `monotonic` acá es `GetTickCount64()`: resolución 15.625 ms (la declara de frente,
+            # a diferencia de `thread_time` — ver el docstring de `test_bench_censo_bajo_3ms`).
+            # Como gobierna el `elapsed_ms >= cadence_ms` de abajo, toda cadencia se redondea
+            # hacia arriba al próximo múltiplo de tick: los 100 ms nominales disparan a ~109 ms,
+            # o sea ~9.1 fps en vez de 10. Medido y DEJADO ASÍ a propósito (2026-08-12): el 9 % no
+            # justifica tocar el loop caliente. Si algún día una cadencia tiene que ser exacta,
+            # el cambio es pasar esta línea a `perf_counter` — no ajustar las constantes.
             now = time.monotonic()
 
             # ---- Paso 1: clasificar frame individual ----

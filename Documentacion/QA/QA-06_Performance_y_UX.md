@@ -37,6 +37,42 @@ Reproducción de la tabla del README §3.2 RNF-06 con la columna "test L2 deriva
 
 ---
 
+### 1.bis Cómo medir (y con qué reloj) — leer antes de escribir un bench
+
+Los presupuestos de arriba solo significan algo si el instrumento tiene resolución para medirlos.
+En Windows **dos de los cuatro relojes de `time` avanzan de a 15.625 ms** (la tick del scheduler):
+
+| reloj | implementación | granularidad REAL | sirve para |
+|---|---|---|---|
+| `perf_counter` | `QueryPerformanceCounter` | sub-µs | **todo bench**; es el único que usar |
+| `thread_time` | `GetThreadTimes` | **15.625 ms** ⚠ | nada de este doc — y encima *declara* `1e-07` |
+| `process_time` | `GetProcessTimes` | 15.625 ms | ídem |
+| `monotonic` / `time` | `GetTickCount64` / FileTime | 15.625 ms (declarada) | timestamps, cadencias gruesas |
+
+Reglas que salieron de tres flakes seguidos del bench del censo de desmontaje (2026-08-12, historia
+completa en el docstring de `test_bench_censo_bajo_3ms` y en `Dev_IA/2026-07-25_IMPL_Bitacora…` §8):
+
+1. **`perf_counter` siempre.** `thread_time` es la trampa: promete `resolution=1e-07` y entrega
+   ticks de 15.625 ms, así que un bench de pocos ms devuelve un conteo de ticks disfrazado de
+   milisegundos — y llegó a reportar `0.000 ms` para trabajo real.
+2. **Mínimo de muchos lotes, y lotes CORTOS.** La contención solo puede sumar tiempo, así que el
+   mínimo estima el costo propio; pero para que exista una muestra sin desalojar el lote tiene que
+   caber entero en un quantum del scheduler (~15-30 ms). Un lote de ~16 ms casi siempre se come un
+   cambio de contexto y ahí el mínimo no salva nada.
+3. **Antes de creerle a un número, fijarse si es múltiplo de la granularidad del reloj.**
+4. **Si la propiedad es estructural, medirla sin reloj.** "Cuántas llamadas a OpenCV cuesta" es
+   determinista y no parpadea con la carga; el cronómetro queda solo para lo que de verdad es tiempo.
+5. **Un presupuesto se mide donde el test corre.** El mismo censo cuesta 0.82 ms en un proceso
+   limpio y ~1.5 ms dentro de la suite completa (estado de memoria con 357k objetos vivos, no el GC).
+
+**Consecuencia conocida y asumida en el loop de captura:** `monitor.py` usa `time.monotonic()` para
+decidir la cadencia de polling, así que toda cadencia se redondea al próximo múltiplo de 15.625 ms —
+los 100 ms nominales disparan a ~109 ms (~9.1 fps en vez de 10). Medido el 2026-08-12 y **dejado
+así**: el 9 % no justifica tocar el loop caliente. Si alguna cadencia tuviera que ser exacta, el
+cambio es el reloj, no las constantes.
+
+---
+
 ## 2. Instrumentación obligatoria
 
 ### 2.1 Decorator `@measure_latency`
