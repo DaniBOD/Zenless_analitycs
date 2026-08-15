@@ -421,11 +421,64 @@ def test_monitor_equipado_por_flujo_asigna_y_cosecha(monkeypatch):
     m = _monitor_badge(monkeypatch, sim=None, owner=None)
     m._s17_last_slot = 0                       # slot 1 será "nuevo" → equipado
     m._s17_owner_passes = _S17_OWNER_MIN_SAMPLES  # warmup ya corrió, sin voto del badge → trust anchor
+    m._detail_source = "avatar"                # latch CONFIRMADO en la ranura actual
     disc = _disc(slot=1)
     m._assign_s17_pj(disc, _frame())
     assert disc.agente_asignado_nombre == "Zhu Yuan"
     assert disc.agente_asignado_conf == 1.0
     assert "Zhu Yuan" in m._identifier.learned  # cosecha con label certero
+
+
+def test_un_latch_SOSTENIDO_no_asigna_por_ancla(monkeypatch):
+    """El agujero que encontró el QA de discos del 2026-08-15, y que Daniel notó a ojo en S8.
+
+    `_detail_source == "sostenido"` significa, exactamente: la barra de avatares está VISIBLE, NO
+    estamos en la ranura donde se confirmó la identidad, y el matcher no pudo reconocer al PJ. O
+    sea: la selección se movió y no sabemos hacia quién. El nombre que quedó en `_last_agent_name`
+    es el del PJ ANTERIOR.
+
+    El ancla de flujo ("el 1er disco de un slot nuevo es el equipado por el latch") tenía tres
+    guardas —botón, warm-up y cross-check contra el badge— pero **el cross-check solo ataja cuando
+    el badge dice OTRO PJ**. Si el badge no dice nada, asignaba al latch con conf 1.0.
+
+    Y los dos fallos están CORRELACIONADOS: el latch se sostiene porque el matcher de fila no
+    reconoce a ese PJ, y el badge calla porque el de grilla/detalle tampoco. Misma causa —refs
+    flacas—, así que justo cuando el latch está viejo la guarda que debería atraparlo está muda.
+
+    Sin confirmación independiente el ancla no vale: se cae al camino por evidencia (sim-a-latch,
+    LIBRE, desempate por contexto), que puede resolverlo bien o declararlo incierto. Lo que no
+    puede pasar es afirmar con conf 1.0 y cosechar bajo ese nombre.
+    """
+    from app.core.monitor import _S17_OWNER_MIN_SAMPLES
+    m = _monitor_badge(monkeypatch, sim=None, owner=None)
+    m._s17_last_slot = 0
+    m._s17_owner_passes = _S17_OWNER_MIN_SAMPLES   # warm-up cumplido: no es "esperá un poco más"
+    m._detail_source = "sostenido"                 # ...pero el latch quedó del PJ anterior
+    disc = _disc(slot=1)
+    m._assign_s17_pj(disc, _frame())
+    assert disc.agente_asignado_nombre != "Zhu Yuan", "asignó con un latch sostenido"
+    assert disc.agente_asignado_conf != 1.0, "afirmó certeza sin confirmación independiente"
+    assert "Zhu Yuan" not in m._identifier.learned, "cosechó bajo el nombre del PJ anterior"
+
+
+def test_un_latch_sostenido_SI_asigna_cuando_el_badge_lo_confirma(monkeypatch):
+    """El contrapeso: sostenido no es veneno, es falta de confirmación.
+
+    Si el badge vota y coincide con el latch, hay evidencia independiente de que el PJ es ese —
+    da igual que el matcher de FILA no lo haya podido confirmar en la barra. Sin este test, el
+    guard de arriba se podría "arreglar" apagando el ancla entera cuando hay sostenido, que sería
+    perder atribuciones correctas.
+    """
+    from app.core.monitor import _S17_OWNER_MIN_SAMPLES
+    m = _monitor_badge(monkeypatch, sim=None, owner=None)
+    m._s17_last_slot = 0
+    m._s17_owner_passes = _S17_OWNER_MIN_SAMPLES
+    m._detail_source = "sostenido"
+    monkeypatch.setattr(m, "_s17_voted_owner", lambda f: "Zhu Yuan")   # el badge lo confirma
+    disc = _disc(slot=1)
+    m._assign_s17_pj(disc, _frame())
+    assert disc.agente_asignado_nombre == "Zhu Yuan"
+    assert disc.agente_asignado_conf == 1.0
 
 
 # ---- rescate de la cosecha del DETALLE bajo veto del grid (QA 2026-07-31) ---

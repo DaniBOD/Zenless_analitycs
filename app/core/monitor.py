@@ -4801,8 +4801,8 @@ class Monitor:
                 "[botón] el ancla decía 'equipado por %s' pero el botón dice '%s' → NO es el "
                 "equipado (slot vacío o candidato).", latch, self._s17_action_btn,
             )
+        voted = self._s17_voted_owner(frame) if is_equipped else None
         if is_equipped:
-            voted = self._s17_voted_owner(frame)
             # ANCHOR-WARMUP (QA 2026-06-20): el ancla ("1er disco del slot = equipado por el
             # latch") puede caer sobre un CANDIDATO si el usuario NAVEGÓ dentro del slot. Si
             # finaliza ANTES de que el badge cante, mislabela (Nana de Seth → 'Nicole', el PJ
@@ -4811,6 +4811,32 @@ class Monitor:
             # frame re-evalúa con el voto listo (el warmup posterga la emisión mientras tanto).
             if voted is None and self._s17_owner_passes < _S17_OWNER_MIN_SAMPLES:
                 return
+            # GUARD POR LATCH SOSTENIDO (2026-08-15, agujero que destapó el QA de discos y que
+            # Daniel había notado a ojo en S8). `_detail_source == "sostenido"` significa, exacto:
+            # la barra de avatares está VISIBLE, NO estamos en la ranura donde se confirmó la
+            # identidad, y el matcher no pudo reconocer al PJ ⇒ **la selección se movió y no
+            # sabemos hacia quién**. `_last_agent_name` es el del PJ ANTERIOR.
+            #
+            # El cross-check de abajo no cubre esto: solo ataja cuando el badge dice OTRO PJ. Y los
+            # dos fallos están CORRELACIONADOS — el latch se sostiene porque el matcher de fila no
+            # reconoce a ese PJ, y el badge calla porque el de grilla/detalle tampoco (misma causa:
+            # refs flacas). Justo cuando el latch está viejo, la guarda que debería atraparlo está
+            # muda, y el ancla asignaba con conf 1.0 + cosechaba bajo ese nombre.
+            #
+            # Es un GUARD, no un reemplazo: solo desactiva el ANCLA. Se cae al camino por evidencia
+            # (voto, sim-a-latch, LIBRE, desempate por contexto), que puede resolverlo igual de
+            # bien o declararlo incierto — lo que no puede es afirmar certeza sin confirmación.
+            # Si el badge SÍ vota, `voted` no es None y esto no se activa: sostenido no es veneno,
+            # es falta de confirmación.
+            if voted is None and self._detail_source == "sostenido":
+                is_equipped = False
+                self._log_s17_assign(
+                    ("anchor_latch_stale", latch),
+                    "[latch] el ancla decía 'equipado por %s' pero ese latch está SOSTENIDO (la "
+                    "barra se movió y el avatar no se reconoció) y el badge no vota → sin "
+                    "confirmación independiente, no se asigna por ancla.", latch,
+                )
+        if is_equipped:
             self._s17_last_slot = slot
             # CROSS-CHECK ancla vs badge (5R.L.4): el ancla asume "1er disco del slot =
             # equipado por el latch", pero esa suposición se ROMPE si el latch quedó viejo
