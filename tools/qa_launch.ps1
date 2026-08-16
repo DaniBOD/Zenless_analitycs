@@ -24,6 +24,9 @@ param(
                              # disco (DANIBOD_GRID_DIAG). Diagnóstico de crops. NO toca DB.
     [switch]$MemDiag,        # heartbeat de memoria RNF-06 (DANIBOD_MEM_DIAG): loguea RSS +
                              # heap Python + contador OCR cada ~20s al app.log. Diagnóstico.
+    [switch]$LogDebug,       # baja el piso del log a DEBUG (DANIBOD_LOG_DEBUG): agrega el
+                             # RAZONAMIENTO (por qué se vetó un ancla, por qué no se cosechó, por
+                             # qué no se persistió). En INFO va un evento por línea y nada más.
     [switch]$Metrics,        # latencia por etapa (DANIBOD_METRICS): capturer/detector/ocr_text a
                              # db\metrics.db, una DB APARTE — la de dominio queda intacta, así que
                              # el sha256 sigue sirviendo de prueba en las corridas readonly.
@@ -123,6 +126,12 @@ if ($IdDiag) {
     Write-Host "[qa_launch] DANIBOD_ID_DIAG = 1 (por disco: [id_diag] grid/det loc+match+voto -> app.log)"
 } else {
     Remove-Item Env:\DANIBOD_ID_DIAG -ErrorAction SilentlyContinue
+}
+if ($LogDebug) {
+    $env:DANIBOD_LOG_DEBUG = "1"
+    Write-Host "[qa_launch] DANIBOD_LOG_DEBUG = 1 (agrega el razonamiento interno al app.log)"
+} else {
+    Remove-Item Env:\DANIBOD_LOG_DEBUG -ErrorAction SilentlyContinue
 }
 if ($Metrics) {
     $env:DANIBOD_METRICS = "1"

@@ -741,11 +741,15 @@ def test_no_se_rescata_si_el_boton_no_confirma(monkeypatch, caplog):
     que es justo el caso en que cosechar arruina la librería.
 
     Además se exige que DIGA por qué no rescató: una regla que no dispara en silencio es
-    indistinguible de una que no existe (la lección de los returns mudos)."""
+    indistinguible de una que no existe (la lección de los returns mudos).
+
+    **Se captura en DEBUG desde 2026-08-15**: el mensaje sigue existiendo, pero pasó de INFO a
+    DEBUG con la regla "un evento, una línea" — es el PORQUÉ de una no-cosecha, no un evento. Lo
+    que este test protege no cambió: que la regla no se calle."""
     import logging
     m = _monitor_cross_check(monkeypatch, latch="Velina", voted="Remielle Dan", boton=None)
     disc = _disc(slot=1)
-    with caplog.at_level(logging.INFO, logger="app.core.monitor"):
+    with caplog.at_level(logging.DEBUG, logger="app.core.monitor"):
         m._assign_s17_pj(disc, _frame())
     assert m._identifier.learned_detail == []
     assert any("no rescato la cosecha del detalle" in r.getMessage() for r in caplog.records), \

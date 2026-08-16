@@ -3199,6 +3199,7 @@ class Monitor:
                 ("veto_detalle_no_rescatado", latch),
                 "[badge] no rescato la cosecha del detalle para '%s': %s.",
                 latch, " · ".join(faltan),
+                razonamiento=True,
             )
             return
         det = crop_detail_badge(frame) if frame is not None else None
@@ -3333,10 +3334,22 @@ class Monitor:
             self._record_equip_map(identity, merged.agente_asignado_nombre)
         if self._id_diag_on:
             self._log_id_diag(merged, identity)
+        # LA línea del evento (un evento, una línea). Lleva el DUEÑO adentro: antes salía en una
+        # línea aparte —`[S17] asignado a 'X'`— y había que aparearlas por cercanía en el archivo.
+        # Con el dueño acá, esa otra pasa a DEBUG por redundante y el log queda con una línea
+        # autocontenida por disco, que es lo que permite usarlo como señal (para cronometrar la
+        # frescura, o para seguir un censo de ~300 discos sin perderse).
+        dueno = merged.agente_asignado_nombre or merged.equip_pj_visual
+        if dueno:
+            tenencia = f"dueño={dueno}"
+        elif merged.equip_libre:
+            tenencia = "LIBRE"
+        else:
+            tenencia = "dueño=?"
         log.info(
-            "Disco detectado: set=%s slot=%d main=%s nivel=%d conf=%.2f (agg %dc%s)",
+            "Disco detectado: set=%s slot=%d main=%s nivel=%d %s conf=%.2f (agg %dc%s)",
             merged.set_name_canon or merged.set_name_raw, merged.slot,
-            merged.main_stat_canon or merged.main_stat_raw, merged.nivel,
+            merged.main_stat_canon or merged.main_stat_raw, merged.nivel, tenencia,
             merged.confianza_global, self._disc_agg_cycles,
             "" if mature else " best-effort",
         )
@@ -4832,6 +4845,7 @@ class Monitor:
                 ("anchor_btn_veto", self._s17_action_btn),
                 "[botón] el ancla decía 'equipado por %s' pero el botón dice '%s' → NO es el "
                 "equipado (slot vacío o candidato).", latch, self._s17_action_btn,
+                razonamiento=True,
             )
         voted = self._s17_voted_owner(frame) if is_equipped else None
         if is_equipped:
@@ -4867,6 +4881,7 @@ class Monitor:
                     "[latch] el ancla decía 'equipado por %s' pero ese latch está SOSTENIDO (la "
                     "barra se movió y el avatar no se reconoció) y el badge no vota → sin "
                     "confirmación independiente, no se asigna por ancla.", latch,
+                    razonamiento=True,
                 )
         if is_equipped:
             self._s17_last_slot = slot
@@ -4884,6 +4899,7 @@ class Monitor:
                     ("anchor_badge_conflict", voted),
                     "[badge] ancla decía '%s' pero el badge dice '%s' → badge (sin cosechar).",
                     latch, voted,
+                    razonamiento=True,
                 )
                 self._maybe_harvest_detail_despite_veto(frame, latch, voted)
                 return
@@ -4996,18 +5012,32 @@ class Monitor:
         disc.agente_asignado_nombre = latch
         disc.agente_asignado_conf = conf
         disc.equip_pj_visual = latch
+        # DEBUG: el QUIÉN ya viaja en la línea de "Disco detectado"; lo que agrega esta es CÓMO se
+        # decidió (`sim=`), que es razonamiento. Se ve con `DANIBOD_LOG_DEBUG=1`.
         self._log_s17_assign(
-            ("confirm", latch), "[S17] asignado a '%s' (latch; sim=%s).", latch, sim_str
+            ("confirm", latch), "[S17] asignado a '%s' (latch; sim=%s).", latch, sim_str,
+            razonamiento=True,
         )
 
-    def _log_s17_assign(self, sig, msg, *args) -> None:
+    def _log_s17_assign(self, sig, msg, *args, razonamiento: bool = False) -> None:
         """Loguea la decisión de asignación S17 edge-triggered: 1× por cambio de
         firma (no en cada ciclo del modelo continuo). Re-loguea al transicionar
-        entre equipado/otro-PJ/sin-avatar. Reset en _reset_s17_disc_tracking."""
+        entre equipado/otro-PJ/sin-avatar. Reset en _reset_s17_disc_tracking.
+
+        `razonamiento=True` manda la línea a DEBUG en vez de INFO. La regla es **un evento, una
+        línea**: en INFO va QUÉ pasó (a quién se asignó el disco, si está libre, si es de otro PJ);
+        el PORQUÉ —qué guarda vetó al ancla, qué señal discrepó— es material de depuración y se ve
+        con `DANIBOD_LOG_DEBUG=1`.
+
+        Por qué importa (medido sobre el QA del 2026-08-15): un disco emitía 4-7 líneas y varias
+        salían IDÉNTICAS entre discos distintos, porque el mensaje no dice de cuál habla. Con 12-47
+        segundos entre ellas no eran repeticiones sino eventos reales indistinguibles — y eso es lo
+        que impide usar el log como señal para cronometrar o para seguir un censo.
+        """
         if sig == self._s17_assign_sig:
             return
         self._s17_assign_sig = sig
-        log.info(msg, *args)
+        (log.debug if razonamiento else log.info)(msg, *args)
 
     def _process_disc(self, frame, state: ScreenState) -> None:
         try:

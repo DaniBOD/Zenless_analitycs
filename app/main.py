@@ -9,6 +9,16 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 
+def _debug_logs() -> bool:
+    """¿Mostrar también el razonamiento interno? (`DANIBOD_LOG_DEBUG`)
+
+    El default es NO, y esa es la decisión de diseño: en INFO va **un evento, una línea**. El
+    porqué de cada decisión vive en DEBUG y se enciende cuando hace falta depurar. Mismo criterio
+    de env-gate que el resto de la instrumentación (`DANIBOD_ID_DIAG`, `DANIBOD_METRICS`).
+    """
+    return os.environ.get("DANIBOD_LOG_DEBUG", "").strip() not in ("", "0", "false", "no")
+
+
 def _setup_file_logging() -> Path | None:
     """
     Configura un RotatingFileHandler en %LOCALAPPDATA%/DaniBOD_ZZZ_Analytics/app.log.
@@ -27,8 +37,13 @@ def _setup_file_logging() -> Path | None:
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / "app.log"
 
+        # `DANIBOD_LOG_DEBUG=1` baja el piso a DEBUG. Ahí vive el RAZONAMIENTO del sistema —por qué
+        # vetó un ancla, por qué no cosechó, por qué no persistió— que en INFO ahogaba al EVENTO.
+        # Medido sobre el QA del 2026-08-15: 4 a 7 líneas por disco, de las cuales una sola decía
+        # qué había pasado. Un censo de ~300 discos daba 1200-2100 líneas con la señal enterrada.
+        nivel = logging.DEBUG if _debug_logs() else logging.INFO
         root_logger = logging.getLogger()
-        root_logger.setLevel(logging.INFO)
+        root_logger.setLevel(nivel)
 
         # Evitar duplicados si _setup_file_logging se llama dos veces
         for h in root_logger.handlers:
@@ -36,7 +51,7 @@ def _setup_file_logging() -> Path | None:
                 return log_file
 
         fh = RotatingFileHandler(log_file, maxBytes=2_000_000, backupCount=3, encoding="utf-8")
-        fh.setLevel(logging.INFO)
+        fh.setLevel(nivel)
         fh.setFormatter(logging.Formatter(
             "%(asctime)s %(levelname)-8s %(name)s :: %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
@@ -50,7 +65,7 @@ def _setup_file_logging() -> Path | None:
         # INMUNE a que paddle toque el nivel del root: el level-check ocurre en
         # el logger de origen (app.*), y los records propagan a los handlers del
         # root sin re-filtrarse por el nivel del root.
-        logging.getLogger("app").setLevel(logging.INFO)
+        logging.getLogger("app").setLevel(nivel)
 
         root_logger.info("Logging a archivo iniciado en %s", log_file)
         return log_file

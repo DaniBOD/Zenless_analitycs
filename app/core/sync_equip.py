@@ -366,7 +366,11 @@ class DiscSyncer:
         # 72% de los discos comparten firma con otro PJ) → corromper/robar datos.
         # Mejor no escribir y dejar que el usuario identifique el PJ (Atributos base).
         if agente_id is None:
-            log.info(
+            # DEBUG y no INFO: es el PORQUÉ de una no-escritura, no un evento. Un disco cuyo dueño
+            # no se resolvió ya se reporta arriba con su decisión; repetir acá el motivo por cada
+            # uno enterraba la línea que sí importa (medido: 4-7 líneas por disco, QA 2026-08-15).
+            # Se ve con `DANIBOD_LOG_DEBUG=1`.
+            log.debug(
                 "S17: PJ no confiable para '%s' slot=%d — no se persiste (evita colisión entre PJs).",
                 parsed.set_name_raw, parsed.slot,
             )
