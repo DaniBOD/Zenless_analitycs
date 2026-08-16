@@ -1,8 +1,11 @@
 # Onboarding de badges — incorporar un PJ nuevo al reconocimiento visual
 
-> **Cuándo se usa:** sacaste un PJ nuevo (el próximo caso es **Aria**) y querés que el sistema lo
-> reconozca en pantalla: que sepa que estás parado en su equipamiento y que sus discos y su
-> W-Engine son de él.
+> **Cuándo se usa:** sacaste un PJ nuevo y querés que el sistema lo reconozca en pantalla: que
+> sepa que estás parado en su equipamiento y que sus discos y su W-Engine son de él.
+>
+> **Última corrida: Aria, 2026-08-16** — salió redonda siguiendo esto al pie: 6/6 discos con
+> dueño correcto, la métrica sin moverse, y el lazo del §3 cerrándose en el slot 2 tal cual está
+> descrito. Dejó dos datos útiles, los dos en §3.
 >
 > Esto es **aparte** del [onboarding de datos](./Onboarding_Nuevo_PJ.md) (filas en `agents`,
 > thresholds, sinergias). Aquel carga lo que el PJ *es*; este enseña a *reconocerlo*.
@@ -98,6 +101,16 @@ AgentIdentifier: badge aprendido para 'Aria'
 
 **El lazo se cierra solo**: el primer disco aprende, del segundo en adelante ya la reconoce. Eso
 funciona porque el grid **arranca abstenido** en un PJ sin refs — no hay veto que estorbe.
+
+**No esperes 6 refs por superficie.** Medido con Aria (2026-08-16), los 6 slots dejaron **7 refs
+de `grid` pero solo 3 de `detail`**, y esa asimetría es el dedup funcionando, no una pasada
+incompleta: el tile del grid cambia con el disco, el avatar del panel de detalle **no**. Si ves
+`detail` sumando una ref por disco, el dedup dejó de andar — eso es lo que infló las librerías
+hasta agosto.
+
+**Y ojo con el orden**: si el PJ todavía no está en `agents`, esta pasada **no guarda nada y el
+log no te lo dice** — `learn` canoniza contra el roster y descarta en silencio. Es el §1, y es
+literal.
 
 ---
 

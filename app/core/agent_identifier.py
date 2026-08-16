@@ -58,16 +58,22 @@ _REJECT_DET_DIR = _RESOURCES / "avatar_reject_det"
 # así que la mitad de las refs eran copias (row 365→62, detail 193→85, grid 486→356). Ninguna clase
 # se perdió. Los snapshots anteriores quedan como historia y NO se reescriben.
 #
-# `detail` apunta al 2026-08-13 (89 refs): son las 85 dedupeadas MÁS las 4 que cosechó el flujo de
+# El `_20260813` de `detail` (89 refs) fueron las 85 dedupeadas MÁS las 4 que cosechó el flujo de
 # armas para Jane, Nangong Yu y Zhao. Con esas cuatro, los tres pasaron a tener al dueño correcto
-# en el puesto 1 en el inventario S30 —Zhao venía saliendo detrás de Nicole— así que reponer el
-# baseline viejo perdería justo lo que arregló ese caso. `row` y `grid` siguen en el dedup: el row
-# no cosecha en readonly y el grid solo sumó 2 refs.
+# en el puesto 1 en el inventario S30 —Zhao venía saliendo detrás de Nicole—.
+#
+# `_roster51` (2026-08-16) suma a **Aria**, del banner de ese día, y por eso las tres superficies se
+# mueven juntas: es el primer PJ onboardeado desde que existe el dedup, así que las tres traen
+# refs reales y ninguna copia. El `row` salió de un screenshot (no cosecha en readonly); `grid` y
+# `detail` de la pasada por sus 6 discos, y ahí se ve el dedup trabajando: el grid sumó 7 —su tile
+# cambia con el disco— y el detail solo 3, porque el avatar del panel NO cambia y las repetidas se
+# rechazaron. Con esto las tres cubren el roster completo (51/51). La medición contra etiquetados
+# quedó IGUAL que antes (grid 93.3% top-1 · 2.4% wrong): sumar un PJ no desplazó a ninguno.
 _AUDIT_DIR = Path(__file__).resolve().parents[2] / "audit"
 _BASELINES = {
-    "row": _AUDIT_DIR / "avatar_row_v2_snapshot_20260811_dedup.npz",
-    "grid": _AUDIT_DIR / "avatar_badge_v2_snapshot_20260811_dedup.npz",
-    "detail": _AUDIT_DIR / "avatar_detbadge_v2_snapshot_20260813_cosecha89.npz",
+    "row": _AUDIT_DIR / "avatar_row_v2_snapshot_20260816_roster51.npz",
+    "grid": _AUDIT_DIR / "avatar_badge_v2_snapshot_20260816_roster51.npz",
+    "detail": _AUDIT_DIR / "avatar_detbadge_v2_snapshot_20260816_roster51.npz",
 }
 
 # Cache del seed -ico: los descriptores son inmutables (frozen) y caros de construir

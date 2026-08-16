@@ -210,7 +210,10 @@ def test_ico_no_cae_al_cuadrado_de_hoyolab():
 # existen y se verifican normalmente.
 # Velina (id 48) y Pyrois (id 49): onboarding parcial vigente — faltan thresholds/splash/IA
 # y su Pj_stats.jpeg HoYoLAB. Ver memoria project_velina_onboarding / project_pyrois_onboarding.
-_PJ_STATS_DEFERIDO = {"Billy Estelar", "Velina", "Pyrois", "Remielle Dan"}
+# Aria (id 51, 2026-08-16, mig 19): mismo caso — le faltan agent_thresholds (Prydwen) y el
+# Pj_stats. Sus `-extend`/`-ico` sí están y los cubren las asserts de arriba, que es justo lo
+# que hizo caer este test al agregarla: la exención es POR ASSET, no por agente.
+_PJ_STATS_DEFERIDO = {"Billy Estelar", "Velina", "Pyrois", "Remielle Dan", "Aria"}
 
 
 def test_full_coverage_against_db():

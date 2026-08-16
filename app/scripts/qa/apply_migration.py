@@ -18,6 +18,16 @@ para ver los smoke checks sin persistir. Ojo: no sirve para migraciones que
 hacen DDL con su propio BEGIN/COMMIT (como los rebuilds de tabla), porque el
 COMMIT interno ya persiste — para esas confiá en el backup.
 
+Tampoco sirve si el .sql abre su PROPIO `BEGIN TRANSACTION`, que es como están
+escritas casi todas las de onboarding: revienta en la sentencia 01 con "cannot
+start a transaction within a transaction". Para esas, el ensayo es contra una
+COPIA de la DB, que además prueba más que el dry-run (los smoke checks corren
+sobre datos ya commiteados, igual que en la corrida real):
+
+    cp db/danibod_zzz_v2.db /tmp/ensayo.db
+    python app/scripts/qa/apply_migration.py <sql> --db /tmp/ensayo.db --no-backup
+    # revisar los expected_N; recién ahí, la corrida real sobre la DB buena
+
 `PRAGMA foreign_keys` se deja en OFF durante la ejecución: los rebuilds de tabla
 (DROP + RENAME) lo requieren, si no SQLite reescribe las FK de las tablas que
 apuntan a la que se renombra. Al terminar se corre `foreign_key_check` igual.
