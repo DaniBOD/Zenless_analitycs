@@ -149,13 +149,21 @@ WHERE ts >= (strftime('%s','now') - 7*24*3600)
 GROUP BY superficie;
 ```
 
-> SQLite no tiene `PERCENTILE_CONT` nativo; el cálculo p50/p99 se hace en Python:
+> SQLite no tiene `PERCENTILE_CONT` nativo; el cálculo p50/p99 se hace en Python, por **rango más
+> cercano**:
 > ```python
 > def percentile(values, p):
 >     s = sorted(values)
->     k = int(len(s) * p / 100)
+>     if not s:
+>         return None          # "no medí nada" ≠ "medí 0 ms"
+>     k = max(0, math.ceil(len(s) * p / 100) - 1)
 >     return s[min(k, len(s)-1)]
 > ```
+>
+> ⚠ **Corregido 2026-08-15.** La versión anterior usaba `k = int(len(s) * p / 100)`, que está
+> corrida en uno: con 100 muestras daba `k=99` para p99, o sea que **p99 salía siempre igual al
+> máximo**. Un p99 que es el peor caso no sirve para lo único que se le pide — separar la cola de
+> lo típico. Implementación real en `app/core/metrics.py`.
 
 ### 2.3 Test L2 — datos llegan a la tabla
 ```python

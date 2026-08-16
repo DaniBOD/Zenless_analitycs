@@ -24,6 +24,9 @@ param(
                              # disco (DANIBOD_GRID_DIAG). Diagnóstico de crops. NO toca DB.
     [switch]$MemDiag,        # heartbeat de memoria RNF-06 (DANIBOD_MEM_DIAG): loguea RSS +
                              # heap Python + contador OCR cada ~20s al app.log. Diagnóstico.
+    [switch]$Metrics,        # latencia por etapa (DANIBOD_METRICS): capturer/detector/ocr_text a
+                             # db\metrics.db, una DB APARTE — la de dominio queda intacta, así que
+                             # el sha256 sigue sirviendo de prueba en las corridas readonly.
     [switch]$IdDiag,         # instrumentación de identidad (DANIBOD_ID_DIAG): por disco emitido
                              # loguea [id_diag] grid/det loc+match+voto al app.log. Diagnóstico L.0.
     [switch]$FromSource,     # corre desde fuente (.venv python -m app.main) en vez del .exe.
@@ -120,6 +123,13 @@ if ($IdDiag) {
     Write-Host "[qa_launch] DANIBOD_ID_DIAG = 1 (por disco: [id_diag] grid/det loc+match+voto -> app.log)"
 } else {
     Remove-Item Env:\DANIBOD_ID_DIAG -ErrorAction SilentlyContinue
+}
+if ($Metrics) {
+    $env:DANIBOD_METRICS = "1"
+    Write-Host "[qa_launch] DANIBOD_METRICS = 1 (latencia por etapa -> db\metrics.db · NO toca la DB de dominio)"
+    Write-Host "[qa_launch]   leer despues con: .\.venv\Scripts\python.exe -m app.scripts.qa.report_latency"
+} else {
+    Remove-Item Env:\DANIBOD_METRICS -ErrorAction SilentlyContinue
 }
 if ($Recapture) {
     $env:DANIBOD_RECAPTURE = "1"

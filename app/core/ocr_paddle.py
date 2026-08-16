@@ -14,6 +14,7 @@ import sys
 import numpy as np
 
 from app.core import mem_diag
+from app.core.metrics import measure_latency
 from app.core.ocr_backend import OcrBackend
 
 # Flags de memoria de paddlepaddle (RNF-06) — DEBEN setearse ANTES de importar paddle.
@@ -78,7 +79,11 @@ class PaddleBackend(OcrBackend):
                 ) from e
         return self._ocr
 
+    @measure_latency("ocr_text")
     def text(self, img: np.ndarray, psm: int = 6, lang: str = "spa") -> tuple[str, float]:
+        # Instrumentada (QA-06 §3.1, presupuesto 180 ms para el OCR completo). Es la etapa que el
+        # doc de latencia señala como la única con margen real, así que es la que hay que medir
+        # antes de decidir si conviene NCC o DirectML.
         # PaddleOCR no usa PSM — el parámetro se ignora para compatibilidad
         ocr = self._get_ocr()
         mem_diag.bump_ocr()

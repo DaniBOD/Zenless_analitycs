@@ -195,7 +195,45 @@ El nivel **proyectado es una PREDICCIÓN de tu intención**, no un hecho. El hec
 
 **Recomendación: A + B.** A hace correcto el caso normal (foto en el instante del commit); B blinda el caso raro (cargaste material después) reconciliando contra la S17. C solo como refuerzo si la **medición** muestra huecos, porque toca el presupuesto de CPU. D es un agregado gratis.
 
-### 10.4 Igual que el resto del doc: medir antes de tocar
+### 10.4 Cómo se mide la frescura sin saber cuándo cambió la pantalla (implementado 2026-08-15)
+
+El problema que plantea esta sección tiene una trampa: **ni el usuario ni el sistema saben el
+instante exacto en que la pantalla cambió**, así que a primera vista no hay contra qué cronometrar.
+
+La idea de Daniel fue usar **los intervalos entre logs**: pasar de pantalla apenas salta el log, y
+medir cuánto tarda en salir el siguiente. Funciona y da una cota superior — pero mezcla su tiempo de
+reacción con el del sistema, y no los separa.
+
+**Lo que lo destraba:** `classify` corre en CADA tick del loop rápido (~109 ms), no a la cadencia.
+Así que el primer frame en que se ve el estado nuevo **es** el cambio de pantalla, con un error
+acotado por el período del loop. Eso el sistema sí lo sabe, y sin que nadie cronometre nada.
+
+Instrumentado como `frescura_estado_a_log` (`monitor.py`): se abre el cronómetro en el loop rápido
+al ver un código de estado nuevo y se cierra en `_notify_state_change`. Lo que queda medido es la
+pantalla-a-log completa — espera del tick + **votación 2/3 del buffer temporal** + clasificación —.
+La demora del buffer cuenta como latencia real: es el precio de no reportar transiciones espurias.
+
+**Lo que NO se puede medir así, y es honesto decirlo.** El CONTENIDO (disco, engine, nodo) no se
+mira en el loop rápido sino dentro del handler, que corre a la cadencia (500-4000 ms). Para un
+cambio de contenido sin cambio de pantalla, el sistema no puede enterarse antes del próximo ciclo:
+el término dominante es la cadencia, no el cómputo. Saberlo con más precisión pediría computar una
+firma de contenido en el loop caliente — que es exactamente la tensión de §5, y no se hizo.
+
+Por eso se instrumentó además **`dispatch:SXX`**, el costo del ciclo etiquetado por pantalla, cuyo
+techo natural es `polling_cadence_ms` de ESE estado. La comparación entre los dos es la que separa
+*"tarda en enterarse"* de *"tarda en procesar"* — y solo en el segundo caso la optimización de §1-9
+tiene algo que arreglar.
+
+**Los dos métodos se complementan, y conviene correr los dos.** El número instrumentado es preciso
+pero mide lo que el sistema cree que pasó; la pasada manual mide lo que el usuario PERCIBE,
+incluyendo lo que la instrumentación no ve (un toast que tarda en pintarse no está en ninguna etapa
+medida). Si dan parecido, el instrumento es fiel. Si la percepción es peor, hay latencia fuera de lo
+instrumentado — y ahí está lo interesante.
+
+> **Requisito previo del método manual:** para cronometrar con el log como señal, el log tiene que
+> saltar **una vez por evento**. Depende de la reducción de logs pendiente.
+
+### 10.5 Igual que el resto del doc: medir antes de tocar
 
 Antes de subir cadencias (idea C) hay que instrumentar la latencia **poll→emisión** con el mismo `@measure_latency` / `metrics_latency` de §9 (QA-06). Sin baseline no se sabe si el hueco es de 200 ms (irrelevante) o de 2 s (molesto). Las ideas A y B **no** dependen de esa medición (son correctas por diseño), así que se pueden encarar antes; C sí.
 

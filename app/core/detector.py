@@ -19,6 +19,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from app.core.metrics import measure_latency
+
 # =========================================================================
 # Constantes
 # =========================================================================
@@ -2033,8 +2035,11 @@ class ScreenDetector:
         dark = (gray < threshold).sum()
         return (dark / gray.size) > dark_ratio
 
+    @measure_latency("detector")
     def classify(self, frame: np.ndarray) -> ScreenState:
         """
+        Instrumentado (QA-06 §3.1, presupuesto 50 ms) — solo mide con `DANIBOD_METRICS=1`.
+
         Pipeline completo de clasificación multi-capa:
         0. Dark frame filter (pantallas de carga/transición → S12 inmediato)
         1. Template matching (rápido, ~50ms)

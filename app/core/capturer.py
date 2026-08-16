@@ -11,6 +11,8 @@ from typing import NamedTuple
 
 import numpy as np
 
+from app.core.metrics import measure_latency
+
 # Nombres del ejecutable del juego (filtro principal — el más confiable).
 # Verificado en QA 2026-05-11: el proceso del juego es "ZenlessZoneZero.exe".
 ZZZ_EXECUTABLE_NAMES = (
@@ -195,10 +197,14 @@ def find_zzz_window(title_substrings: tuple[str, ...] = ZZZ_WINDOW_TITLE_CANDIDA
     return None
 
 
+@measure_latency("capturer")
 def capture_window(window: WindowBounds | None = None) -> np.ndarray | None:
     """
     Captura la ventana del juego. Si window=None, busca la ventana de ZZZ.
     Devuelve numpy array BGR o None si la ventana no se encontró.
+
+    Instrumentada (QA-06 §3.1, presupuesto 50 ms). Apagada por defecto: solo mide con
+    `DANIBOD_METRICS=1`.
     """
     try:
         import mss

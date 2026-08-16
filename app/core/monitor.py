@@ -16,7 +16,7 @@ from typing import Callable
 
 import numpy as np
 
-from app.core import mem_diag
+from app.core import mem_diag, metrics
 from app.core.capturer import (
     WindowBounds, capture_window, find_zzz_window,
     get_foreground_window, is_zzz_focused,
@@ -410,6 +410,10 @@ class Monitor:
         self._s26_harvested: set[tuple[str, tuple]] = set()
         # Última línea de `[id_diag/arma]` emitida, para no repetirla (ver `_log_weapon_id_diag`).
         self._weapon_diag_sig: tuple | None = None
+        # FRESCURA (QA-06): cuándo se VIO por primera vez un estado nuevo en el loop rápido, y
+        # cuál era. Se cierra al emitirse el log de cambio de estado. Ver `_notify_state_change`.
+        self._frescura_estado_visto: str | None = None
+        self._frescura_estado_t: float | None = None
         # Tanda de desmontaje en curso (S11). Se crea perezosamente al entrar a la pantalla.
         self._teardown = None
         # Tracking interno para el heartbeat
@@ -747,6 +751,11 @@ class Monitor:
         if self._log_clock is not None:
             logging.getLogger("app").removeHandler(self._log_clock)
             self._log_clock = None
+        # El buffer de métricas escribe cada 100 muestras; sin este flush, la cola de la última
+        # sesión se pierde — y en una pasada corta esa cola puede ser TODO lo medido.
+        n = metrics.flush()
+        if n:
+            log.info("[metrics] %d muestras de latencia volcadas a %s", n, metrics.db_path())
         log.info("Monitor detenido · pedido desde: %s", origen)
 
     def toggle_pause(self) -> bool:
@@ -854,6 +863,16 @@ class Monitor:
             self._ram_watchdog(now)
             # Latido: throttle interno, seguro llamarlo en cada iteración.
             self._heartbeat(now, raw_state.code)
+
+            # FRESCURA (QA-06 · §10 del doc de latencia): marcar el PRIMER frame en que se ve el
+            # estado nuevo. `classify` corre en cada tick rápido, así que ese instante es el cambio
+            # de pantalla con un error acotado por el período del loop (~109 ms) — no hace falta que
+            # el usuario cronometre nada. El cierre está en `_notify_state_change`.
+            if (raw_state.code != self._frescura_estado_visto
+                    and raw_state.code != (self._confirmed_state.code
+                                           if self._confirmed_state is not None else None)):
+                self._frescura_estado_visto = raw_state.code
+                self._frescura_estado_t = now
 
             # Muestreo RÁPIDO de identidad en S8/S19 (10 fps, no cadencia): el
             # avatar-row es deslizante y se auto-oculta; muestrear en cada frame
@@ -976,7 +995,12 @@ class Monitor:
                 )
                 if should_dispatch:
                     last_process_time = now
-                    self._safe_dispatch(frame, active_state)
+                    # Costo del ciclo, ETIQUETADO POR PANTALLA: es lo que compite con la cadencia.
+                    # Si un `dispatch:SXX` se acerca a su `polling_cadence_ms`, ese estado tiene el
+                    # loop saturado y ahí sí la latencia de cómputo pasa a ser el problema. Sin
+                    # esta separación no se distingue "tarda en enterarse" de "tarda en procesar".
+                    with metrics.measure_block(f"dispatch:{active_state.code}"):
+                        self._safe_dispatch(frame, active_state)
 
             # ---- Espera corta entre capturas (fast polling) ----
             # (Sin heartbeat periódico: el logging es edge-triggered. El cambio de
@@ -1110,6 +1134,14 @@ class Monitor:
             same_slot = state.slot == self._last_state.slot
             if same_code and same_slot:
                 return
+        # FRESCURA: se cierra acá el cronómetro que abrió el loop rápido al VER el estado nuevo.
+        # Lo que queda medido es la pantalla-a-log completa: espera del tick + votación 2/3 del
+        # buffer temporal + clasificación. La demora del buffer es real y cuenta — es el precio
+        # que se paga por no reportar transiciones espurias.
+        if self._frescura_estado_t is not None and self._frescura_estado_visto == state.code:
+            metrics.registrar("frescura_estado_a_log",
+                              (time.time() - self._frescura_estado_t) * 1000.0)
+            self._frescura_estado_t = None
         # Edge-triggered: solo se loguea al cambiar de estado (o de slot en S17).
         slot_txt = f" slot={state.slot}" if state.slot is not None else ""
         log.info("[estado] %s → %s%s (conf=%.2f)",
