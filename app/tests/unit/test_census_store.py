@@ -167,6 +167,35 @@ def test_un_pj_que_desaparecio_del_roster_no_borra_lo_ya_observado(store):
     assert "Aria" in {r.clave for r in c2.filas()}
 
 
+# --- el catálogo de personajes que EXISTEN ---------------------------------------------------
+
+def test_el_catalogo_toma_tambien_los_splash_arts():
+    """QA en vivo 2026-08-17: Norma es un PJ que Daniel no posee y que **no tiene** arte en
+    `avatar_refs/`, así que el censo la reportaba como "no reconocida" en vez de "no poseída".
+    Al agregarle el splash art —el paso 7 del onboarding, que Daniel ya hace— la esperada es que
+    el catálogo se entere sola.
+
+    Por eso el catálogo es la UNIÓN de las dos carpetas: `avatar_refs/` (semilla de badges) y
+    `splash_arts/`. Cuál de las dos se actualice primero no debería importar."""
+    from app.core.census_store import roster_y_catalogo
+    roster, catalogo = roster_y_catalogo()
+    if not roster:
+        pytest.skip("roster DB no disponible")
+    from app.core.asset_resolver import SPLASH_ARTS_DIR
+    if not (SPLASH_ARTS_DIR / "Norma-ico.webp").exists():
+        pytest.skip("falta el splash art de Norma")
+    assert "Norma" in catalogo
+
+
+def test_el_catalogo_no_confunde_las_variantes_de_archivo_con_personajes():
+    """Cada PJ tiene `-ico` y `-extend`; son dos archivos del MISMO personaje."""
+    from app.core.census_store import roster_y_catalogo
+    roster, catalogo = roster_y_catalogo()
+    if not roster:
+        pytest.skip("roster DB no disponible")
+    assert not [c for c in catalogo if c.endswith(("-ico", "-extend", "_ico", "_extend"))]
+
+
 # --- la frontera con el dominio -------------------------------------------------------------
 
 def test_readonly_queda_registrado_en_la_corrida(store, monkeypatch):

@@ -32,10 +32,11 @@ class _SeqOcr:
         return t, self._conf
 
 
-def _monitor(ocr, censo=None, on_census_progress=None):
+def _monitor(ocr, censo=None, on_census_progress=None, on_diagnostic=None):
     import app.core.monitor as mon
     return mon.Monitor(ocr=ocr, detector=None, censo=censo,
-                       on_census_progress=on_census_progress)
+                       on_census_progress=on_census_progress,
+                       on_diagnostic=on_diagnostic)
 
 
 def _censo():
@@ -139,6 +140,36 @@ def test_el_progreso_se_avisa_solo_cuando_cambia_el_estado():
     assert eventos[-1]["vistos"] == 2 and eventos[-1]["total_db"] == 3
 
 
+def test_el_progreso_se_ve_en_el_PANEL_no_solo_en_el_archivo():
+    """QA en vivo 2026-08-17: el censo contaba bien pero Daniel no veía nada, porque las líneas
+    iban a `app.log` y él miraba el panel de la app. Para una tarea de 51 selecciones eso es
+    inservible — el progreso tiene que estar donde está el usuario, no en un archivo aparte.
+
+    El panel ES el log visible, así que esto no contradice "solo log": lo que se descartó fue el
+    toast (interrumpe) y el panel de progreso dedicado (es fase 5)."""
+    panel: list[str] = []
+    c = _censo()
+    m = _monitor(_SeqOcr(["Nangong Yu", "Jane"]), censo=c, on_diagnostic=panel.append)
+    for f in _frames()[:2]:
+        m._dispatch_state(f, _st())
+    censo_lineas = [p for p in panel if p.startswith("[censo]")]
+    assert len(censo_lineas) == 2
+    assert "Nangong Yu" in censo_lineas[0] and "1/3" in censo_lineas[0]
+    assert "Jane" in censo_lineas[1] and "2/3" in censo_lineas[1]
+
+
+def test_el_panel_no_repite_al_volver_a_pasar_por_un_pj_ya_visto():
+    """Mismo criterio que el log: la línea es por flanco. Si repitiera, el panel se llenaría de
+    ruido justo cuando el usuario necesita ver qué le falta."""
+    panel: list[str] = []
+    c = _censo()
+    fa, fb, _ = _frames()
+    m = _monitor(_SeqOcr(["Nangong Yu", "Jane", "Nangong Yu"]), censo=c, on_diagnostic=panel.append)
+    for f in (fa, fb, fa):
+        m._dispatch_state(f, _st())
+    assert len([p for p in panel if p.startswith("[censo]")]) == 2
+
+
 # --- cierre por hotkey ----------------------------------------------------------------------
 
 def test_f8_esta_registrada_como_hotkey_valida():
@@ -154,7 +185,8 @@ def test_cerrar_censo_emite_reporte_y_resumen(tmp_path, monkeypatch):
     c = _censo()
     m = _monitor(_SeqOcr(["Nangong Yu"]), censo=c)
     m._dispatch_state(_frames()[0], _st())
-    reg = m.cerrar_censo()
+    m.cerrar_censo()                       # advierte por los pendientes
+    reg = m.cerrar_censo()                 # confirma
     assert reg is not None and reg["completo"] is True
     assert set(reg["huerfanos"]) == {"Jane", "Ellen"}
     assert list((tmp_path / "audit" / "censos").glob("*.md"))
@@ -181,7 +213,8 @@ def test_cerrar_censo_marca_los_huerfanos_de_verdad_en_el_dominio(tmp_path, monk
     c = _censo()
     m = _monitor(_SeqOcr(["Nangong Yu"]), censo=c)
     m._dispatch_state(_frames()[0], _st())
-    m.cerrar_censo()
+    m.cerrar_censo()                       # advierte
+    m.cerrar_censo()                       # confirma
 
     con = sqlite3.connect(dom)
     notas = dict(con.execute("SELECT nombre, notas FROM agents"))
@@ -189,6 +222,61 @@ def test_cerrar_censo_marca_los_huerfanos_de_verdad_en_el_dominio(tmp_path, monk
     assert notas["Nangong Yu"] is None, "el visto no se marca"
     for huerfano in ("Jane", "Ellen"):
         assert notas[huerfano] and "no_visto_en_censo_" in notas[huerfano]
+
+
+# --- la guarda del cierre parcial -------------------------------------------------------------
+
+def test_una_pasada_COMPLETA_cierra_al_primer_F8(tmp_path, monkeypatch):
+    """Sin pendientes no hay nada que advertir: cero fricción en el caso normal."""
+    monkeypatch.setenv("DANIBOD_AUDIT_DIR", str(tmp_path / "audit"))
+    monkeypatch.setenv("DANIBOD_READONLY", "1")
+    c = _censo()
+    m = _monitor(_SeqOcr(["Nangong Yu", "Jane", "Ellen"]), censo=c)
+    for f in _frames():
+        m._dispatch_state(f, _st())
+    assert m.cerrar_censo() is not None
+
+
+def test_una_pasada_PARCIAL_no_cierra_al_primer_F8_y_dice_a_quienes_declararia_huerfanos():
+    """Riesgo real, visto en vivo el 2026-08-17: tras cerrar una pasada completa, volver al menú
+    a revisar unos pocos PJs abre una corrida NUEVA. Cerrarla ahí declararía huérfanos a los 49
+    por los que no se volvió a pasar — y el reporte mentiría con cara de completo.
+
+    El cierre es una DECLARACIÓN, así que cuando lo que se va a declarar es grande, se pide
+    decirlo dos veces."""
+    panel: list[str] = []
+    c = _censo()
+    m = _monitor(_SeqOcr(["Nangong Yu"]), censo=c, on_diagnostic=panel.append)
+    m._dispatch_state(_frames()[0], _st())
+    assert m.cerrar_censo() is None, "no debe cerrar de una con pendientes"
+    assert c.abierta, "la corrida sigue viva"
+    aviso = " ".join(p for p in panel if "censo" in p)
+    assert "2" in aviso and ("Jane" in aviso and "Ellen" in aviso)
+
+
+def test_el_segundo_F8_confirma_y_cierra(tmp_path, monkeypatch):
+    monkeypatch.setenv("DANIBOD_AUDIT_DIR", str(tmp_path / "audit"))
+    monkeypatch.setenv("DANIBOD_READONLY", "1")
+    c = _censo()
+    m = _monitor(_SeqOcr(["Nangong Yu"]), censo=c)
+    m._dispatch_state(_frames()[0], _st())
+    assert m.cerrar_censo() is None
+    reg = m.cerrar_censo()
+    assert reg is not None
+    assert set(reg["huerfanos"]) == {"Jane", "Ellen"}
+
+
+def test_la_confirmacion_caduca_y_vuelve_a_advertir(monkeypatch):
+    """Si el aviso quedó armado hace rato, el segundo F8 ya no es una confirmación consciente:
+    puede ser el usuario intentando cerrar de nuevo sin haber leído nada."""
+    import app.core.monitor as mon
+    c = _censo()
+    m = _monitor(_SeqOcr(["Nangong Yu"]), censo=c)
+    m._dispatch_state(_frames()[0], _st())
+    assert m.cerrar_censo() is None
+    m._cierre_pedido_ts -= mon._CIERRE_CONFIRM_S + 1.0
+    assert m.cerrar_censo() is None, "caducada: vuelve a advertir en vez de cerrar"
+    assert c.abierta
 
 
 def test_cerrar_censo_sin_corrida_no_revienta():
@@ -202,8 +290,9 @@ def test_cerrar_censo_dos_veces_no_duplica_el_reporte(tmp_path, monkeypatch):
     c = _censo()
     m = _monitor(_SeqOcr(["Nangong Yu"]), censo=c)
     m._dispatch_state(_frames()[0], _st())
-    m.cerrar_censo()
-    assert m.cerrar_censo() is None
+    m.cerrar_censo()                       # advierte
+    assert m.cerrar_censo() is not None    # confirma y cierra
+    assert m.cerrar_censo() is None, "ya no hay pasada abierta"
     assert len(list((tmp_path / "audit" / "censos").glob("*.json"))) == 1
 
 

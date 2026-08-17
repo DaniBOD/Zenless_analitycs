@@ -30,6 +30,49 @@ def _isolate_avatar_library(tmp_path, monkeypatch):
     monkeypatch.setenv("DANIBOD_AVATAR_LIB_S17", str(tmp_path / "avatar_library_s17.npz"))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_side_outputs(tmp_path, monkeypatch):
+    """Mismo principio que la librería de avatares, para los otros tres archivos que la app
+    escribe de costado: los reportes de `audit/`, `census.db` y `metrics.db`.
+
+    Existe por un incidente real (2026-08-17): una versión temprana de los tests del cierre del
+    censo no redirigía `DANIBOD_AUDIT_DIR`, y dejó dos reportes falsos en el `audit/censos/` del
+    repo. Ningún test necesita los archivos reales; olvidarse de redirigirlos, en cambio, es fácil
+    y silencioso — así que se redirigen todos por defecto en vez de test por test.
+    """
+    monkeypatch.setenv("DANIBOD_AUDIT_DIR", str(tmp_path / "audit"))
+    monkeypatch.setenv("DANIBOD_CENSUS_DB", str(tmp_path / "census.db"))
+    # Ojo: `DANIBOD_METRICS` es el interruptor on/off; el PATH es `DANIBOD_METRICS_DB`.
+    monkeypatch.setenv("DANIBOD_METRICS_DB", str(tmp_path / "metrics.db"))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _domain_db_untouched():
+    """La suite entera no debe modificar `db/danibod_zzz_v2.db`. Se verifica por sha256.
+
+    La redirección de arriba tapa los efectos de costado, pero no el que más duele: la DB de
+    dominio, que se lee de verdad en varios tests (cobertura de assets, roster) y por eso NO se
+    puede redirigir a un temp. Lo que sí se puede es **verificar el efecto**: si algún test le
+    escribe, la suite lo dice al terminar en vez de que aparezca semanas después como un dato raro.
+
+    Es la misma lección que ya dejó `audit_badge_lib` podando refs "solo por mirarlas": un
+    docstring que dice READ-ONLY no es evidencia; el hash antes/después sí.
+    """
+    import hashlib
+
+    db = Path(__file__).resolve().parents[2] / "db" / "danibod_zzz_v2.db"
+    antes = hashlib.sha256(db.read_bytes()).hexdigest() if db.exists() else None
+    yield
+    if antes is None or not db.exists():
+        return
+    despues = hashlib.sha256(db.read_bytes()).hexdigest()
+    assert despues == antes, (
+        f"algún test escribió en la DB de dominio ({db}). Revisá qué test no redirigió "
+        f"DANIBOD_DB_PATH a un tmp_path; el estado bueno se recupera con "
+        f"`git checkout -- db/danibod_zzz_v2.db` si el cambio no estaba commiteado."
+    )
+
+
 @pytest.fixture
 def mem_db():
     """DB SQLite en memoria con tablas mínimas para scoring tests."""

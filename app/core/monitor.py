@@ -272,6 +272,9 @@ _S18_SIG_NAME_MAX = 3.0
 # el umbral → re-OCR espurio cada segundo (presión de memoria, RNF-06); 6.0 absorbe ese ruido
 # y conserva margen amplio (≈2×) contra el cambio real de PJ.
 _MENU_SIG_MAX = 6.0
+# Ventana para confirmar un cierre de censo con PENDIENTES (F8 dos veces). Corta a propósito:
+# tiene que sentirse como "sí, dale" y no como un doble intento separado en el tiempo.
+_CIERRE_CONFIRM_S = 15.0
 # Throttle del fallback deep_detect S18 sobre S12 (RNF-06): máx 1 intento de OCR cada
 # N seg. En pantallas de carga/transición clasificadas como S12, esto corría OCR cada
 # frame → spike que colgaba la UI al abrir el juego. Un deep_detect exitoso igual promueve
@@ -391,6 +394,9 @@ class Monitor:
         # multi-sesión, que es cosa del arranque de la app y no del handler.
         self._census = censo
         self._on_census_progress = on_census_progress
+        # Momento del F8 que ARMÓ la confirmación de un cierre con pendientes (ver
+        # `_confirmar_cierre_parcial`). 0.0 = no hay confirmación pendiente.
+        self._cierre_pedido_ts = 0.0
         # S26 (detalle de W-Engine, RF-15): firma del panel para no re-OCRear un panel quieto, y
         # firma del último log para no repetir la misma línea. Observación pura: no escribe DB.
         self._s26_panel_sig: bytes | None = None
@@ -4507,6 +4513,31 @@ class Monitor:
             except Exception:
                 log.exception("Error en on_agent_detail callback (menú)")
 
+    def _confirmar_cierre_parcial(self, censo) -> bool:
+        """True si se puede cerrar ya. Con pendientes, el primer F8 sólo ADVIERTE y arma la
+        confirmación; el segundo dentro de `_CIERRE_CONFIRM_S` cierra.
+
+        La ventana caduca a propósito: un segundo F8 diez minutos después no es una confirmación
+        consciente, es alguien reintentando sin haber leído el aviso.
+        """
+        pendientes = [f.clave for f in censo.pendientes]
+        if not pendientes:
+            self._cierre_pedido_ts = 0.0
+            return True
+        ahora = time.time()
+        if ahora - self._cierre_pedido_ts <= _CIERRE_CONFIRM_S:
+            self._cierre_pedido_ts = 0.0
+            return True
+        self._cierre_pedido_ts = ahora
+        muestra = ", ".join(sorted(pendientes)[:8])
+        if len(pendientes) > 8:
+            muestra += f", … (+{len(pendientes) - 8})"
+        aviso = (f"faltan {len(pendientes)} sin ver — cerrar ahora los declara HUÉRFANOS: "
+                 f"{muestra}. F8 otra vez en {int(_CIERRE_CONFIRM_S)} s para confirmar.")
+        log.warning("[censo] %s", aviso)
+        self._diag(f"[censo] {aviso}")
+        return False
+
     def _observe_census(self, lectura) -> None:
         """Alimenta la corrida de censo con lo leído en S15.
 
@@ -4527,6 +4558,10 @@ class Monitor:
             return
         for linea in d.logs:
             log.info("[censo] %s", linea)
+            # Y AL PANEL, no solo al archivo. QA en vivo 2026-08-17: el censo contaba bien y el
+            # usuario no veía nada, porque miraba la app y las líneas estaban en `app.log`. En un
+            # recorrido de 51 selecciones el progreso tiene que estar donde está el usuario.
+            self._diag(f"[censo] {linea}")
         if d.estado != d.estado_previo and self._on_census_progress:
             try:
                 self._on_census_progress({**censo.resumen(), "clave": d.clave,
@@ -5132,12 +5167,19 @@ class Monitor:
         debe cerrarse solo. Corolario asumido: una pasada que nunca se cierra no produce
         huérfanos, y eso es correcto.
 
+        **Con pendientes, pide confirmar dos veces.** Riesgo visto en vivo (2026-08-17): después
+        de cerrar una pasada completa, volver al menú a revisar unos pocos PJs abre una corrida
+        NUEVA; cerrarla ahí declararía huérfanos a los 49 por los que no se volvió a pasar, y el
+        reporte mentiría con cara de completo. Sin pendientes no hay fricción: cierra de una.
+
         Es también el único momento en que el censo escribe la DB de dominio, y solo para anotar
         (RNF-01 + gate de readonly dentro de `marcar_huerfanos_en_dominio`).
         """
         censo = self._census
         if censo is None or not censo.abierta:
             log.info("[censo] no hay ninguna pasada abierta que cerrar")
+            return None
+        if not self._confirmar_cierre_parcial(censo):
             return None
         from app.core.census import write_census_report
         registro = censo.cerrar(ts=time.time())

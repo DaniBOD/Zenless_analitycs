@@ -218,6 +218,15 @@ class CensusStore:
             con.close()
 
 
+def _sin_variante(stem: str) -> str:
+    """`Norma-ico` / `Aria_extend` → el nombre del personaje. Cada PJ tiene dos archivos de arte
+    y son el MISMO personaje; el separador varía (`Aria_ico.webp` contra `Alice-ico.webp`)."""
+    for suf in ("-ico", "_ico", "-extend", "_extend"):
+        if stem.endswith(suf):
+            return stem[: -len(suf)]
+    return stem
+
+
 def roster_y_catalogo() -> tuple[list[tuple[int, str]], set[str]]:
     """Las **dos listas distintas** que el censo necesita, y que significan cosas distintas:
 
@@ -248,11 +257,17 @@ def roster_y_catalogo() -> tuple[list[tuple[int, str]], set[str]]:
     catalogo: set[str] = set()
     try:
         from app.core.agent_identifier import _ICO_DIR
+        from app.core.asset_resolver import SPLASH_ARTS_DIR
         from app.core.avatar_descriptor import build_name_map
+        # UNIÓN de las dos carpetas donde vive el arte de un personaje. Cuál se actualice primero
+        # no debería importar: `avatar_refs/` es la semilla de badges y `splash_arts/` el paso 7
+        # del onboarding. QA 2026-08-17: Norma tenía splash y no semilla, y el censo la reportaba
+        # como "no reconocida" en vez de "no poseída".
         stems = [p.stem for p in _ICO_DIR.glob("*.png")]
-        catalogo = set(build_name_map(stems, [n for _i, n in roster]).values())
+        stems += [_sin_variante(p.stem) for p in SPLASH_ARTS_DIR.glob("*.webp")]
+        catalogo = set(build_name_map(sorted(set(stems)), [n for _i, n in roster]).values())
     except Exception:
-        log.exception("[censo] no se pudo leer el catálogo de arte -ico")
+        log.exception("[censo] no se pudo leer el catálogo de arte")
     return roster, catalogo
 
 
