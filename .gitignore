@@ -68,6 +68,11 @@ db/*.db-wal
 db/*.db-shm
 # Basura de conexiones rotas
 db/*.db?*
+# DBs HERMANAS de la de dominio: telemetría y evidencia, no datos de la cuenta. Viven aparte
+# justamente para que el sha256 de danibod_zzz_v2.db siga probando que un QA readonly no
+# escribió; versionarlas sería volver a mezclar lo que se separó.
+db/metrics.db
+db/census.db
 
 # Mantenemos: db/danibod_zzz_v2.db (DB activa, fuente de verdad estructural)
 # Mantenemos: db/migrations/ (SQL aplicadas)

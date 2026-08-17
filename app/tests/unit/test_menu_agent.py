@@ -34,15 +34,20 @@ def _frame():
 # --- identify_menu_agent (hermético con stub OCR + DB real) -------------------
 
 def test_identify_menu_agent_pasa_texto_a_match(monkeypatch):
-    """El texto OCR del nombre se enruta a _match_agent y se devuelve su (nombre,rol,elem)."""
+    """El texto OCR del nombre se enruta al matcher y se devuelve su (nombre,rol,elem).
+
+    La costura es `_match_agent_scored` desde 2026-08-16: `_match_agent` pasó a ser su vista de
+    3 campos, y `read_menu_agent` —que necesita la confianza y el motivo de abstención— llama al
+    de 5. Parchear el viejo dejaría el stub muerto y el test pasaría usando el matcher REAL, que
+    es peor que fallar: parecería aislado sin estarlo."""
     import app.core.parser_agent_stats as p
     captured = {}
 
     def _fake_match(t, *a, **k):
         captured["t"] = t
-        return ("Nangong Yu", "Aturdimiento", "Éter")
+        return ("Nangong Yu", "Aturdimiento", "Éter", "Nangong Yu", 1.0)
 
-    monkeypatch.setattr(p, "_match_agent", _fake_match)
+    monkeypatch.setattr(p, "_match_agent_scored", _fake_match)
     n, r, e = identify_menu_agent(_frame(), _StubOcr("Nangong Yu"))
     assert (n, r, e) == ("Nangong Yu", "Aturdimiento", "Éter")
     assert captured["t"] == "Nangong Yu"
@@ -76,7 +81,8 @@ def test_identify_menu_agent_tolera_subicono_y_sin_espacios(monkeypatch):
     """El match recibe el texto crudo ('Astra Yao &' / 'OrfiayMagas'); la canonicalización
     la hace _match_agent (probado aparte). Acá: el ROI/abstención y el ruteo no rompen."""
     import app.core.parser_agent_stats as p
-    monkeypatch.setattr(p, "_match_agent", lambda t, *a, **k: ("Astra Yao", "Soporte", "Éter"))
+    monkeypatch.setattr(p, "_match_agent_scored",
+                        lambda t, *a, **k: ("Astra Yao", "Soporte", "Éter", "Astra Yao", 1.0))
     assert identify_menu_agent(_frame(), _StubOcr("Astra Yao &"))[0] == "Astra Yao"
 
 
@@ -102,7 +108,8 @@ def test_monitor_s15_emite_edge_triggered(monkeypatch):
     SÍ re-emite."""
     import app.core.parser_agent_stats as p
     from app.core.detector import ScreenState
-    monkeypatch.setattr(p, "_match_agent", lambda t, *a, **k: (t.strip(), "rol", "elem"))
+    monkeypatch.setattr(p, "_match_agent_scored",
+                        lambda t, *a, **k: (t.strip(), "rol", "elem", t.strip(), 1.0))
     emitted = []
     # El gate visual deja pasar f_a y f_b (firmas distintas); el OCR devuelve PJs distintos.
     m = _monitor(_SeqOcr(["Nangong Yu", "Jane"]),
@@ -126,7 +133,8 @@ def test_monitor_s15_siembra_el_latch_de_identidad(monkeypatch):
     """
     import app.core.parser_agent_stats as p
     from app.core.detector import ScreenState
-    monkeypatch.setattr(p, "_match_agent", lambda t, *a, **k: (t.strip(), "rol", "elem"))
+    monkeypatch.setattr(p, "_match_agent_scored",
+                        lambda t, *a, **k: (t.strip(), "rol", "elem", t.strip(), 1.0))
     m = _monitor(_StubOcr("Nangong Yu"))
     m._dispatch_state(np.zeros((1439, 2559, 3), np.uint8), ScreenState("S15", 1.0, "t"))
     assert m._last_agent_name == "Nangong Yu"
@@ -145,7 +153,8 @@ def test_monitor_s15_abstencion_no_borra_el_latch(monkeypatch):
     """
     import app.core.parser_agent_stats as p
     from app.core.detector import ScreenState
-    monkeypatch.setattr(p, "_match_agent", lambda t, *a, **k: (None, None, None))
+    monkeypatch.setattr(p, "_match_agent_scored",
+                        lambda t, *a, **k: (None, None, None, None, None))
     m = _monitor(_StubOcr("basura ilegible"))
     m._last_agent_name = "Remielle Dan"
     m._detail_source = "menu"
@@ -157,7 +166,8 @@ def test_monitor_menu_a_equipamiento_hereda_el_pj(monkeypatch):
     """S15 → S8: Equipamiento reporta al PJ del menú en vez de `PJ=?` (el caso de Daniel)."""
     import app.core.parser_agent_stats as p
     from app.core.detector import ScreenState
-    monkeypatch.setattr(p, "_match_agent", lambda t, *a, **k: (t.strip(), "rol", "elem"))
+    monkeypatch.setattr(p, "_match_agent_scored",
+                        lambda t, *a, **k: (t.strip(), "rol", "elem", t.strip(), 1.0))
     emitted = []
     m = _monitor(_StubOcr("Remielle Dan"),
                  on_agent_detail=lambda st, name, ident, src: emitted.append((name, ident, src)))

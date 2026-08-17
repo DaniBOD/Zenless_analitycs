@@ -1,9 +1,12 @@
 """
 Hotkeys globales (RNF-03: solo lectura, nunca enviamos teclas).
 
+  F8  → cerrar la pasada de censo en curso
   F9  → toggle panel principal
   F10 → toggle pause/resume monitor
   F11 → registrar run lategame (Fase 4)
+
+F8 y no F12: F12 la reservan los depuradores y varias grabadoras de pantalla.
 
 Backend primario: **Win32 RegisterHotKey** (`pywin32`). Estos son hotkeys a
 nivel sistema operativo — Windows enruta la combinación directo a nuestra
@@ -25,6 +28,7 @@ log = logging.getLogger(__name__)
 
 # Win32 virtual key codes (ver MSDN: Virtual-Key Codes)
 _VK_CODES = {
+    "f8":  0x77,
     "f9":  0x78,
     "f10": 0x79,
     "f11": 0x7A,
@@ -32,6 +36,7 @@ _VK_CODES = {
 
 # Mapeo legible (para logs)
 _KEY_NAMES = {
+    "f8":  "cerrar_censo",
     "f9":  "toggle_panel",
     "f10": "toggle_pausa",
     "f11": "registrar_run",
@@ -60,7 +65,7 @@ class HotkeyManager:
         self._debounce_s: float = 0.25
 
     def on(self, key_name: str, callback: Callable) -> None:
-        """Registra callback para key_name (f9, f10, f11)."""
+        """Registra callback para key_name (f8, f9, f10, f11)."""
         key_name = key_name.lower()
         if key_name not in self._handlers:
             raise ValueError(f"Hotkey desconocida: {key_name}. Válidas: {list(_KEY_NAMES)}")
@@ -107,7 +112,7 @@ class HotkeyManager:
 
         if started:
             log.info(
-                "HotkeyManager activo (%s): F9=panel F10=pausa F11=run",
+                "HotkeyManager activo (%s): F8=cerrar censo F9=panel F10=pausa F11=run",
                 " + ".join(started),
             )
             self._warn_if_not_elevated()

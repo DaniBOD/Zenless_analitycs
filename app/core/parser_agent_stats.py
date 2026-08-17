@@ -641,6 +641,59 @@ def _name_similarity(ocr_tokens: set[str], ocr_norm: str,
     return max(ratio, jaccard)
 
 
+def _match_agent_scored(
+    name_text: str,
+    rol_screen: str | None = None,
+    elem_screen: str | None = None,
+) -> tuple[str | None, str | None, str | None, str | None, float | None]:
+    """Identifica al agente contra el roster (Capas 1+2+3) **devolviendo también la evidencia**:
+    `(nombre, rol, elemento, candidato, sim)`.
+
+    `candidato`/`sim` son el mejor parecido y su similitud CRUDA, se haya superado o no
+    `_NAME_MIN_SIM`. Sin eso, quien llama no puede distinguir tres cosas muy distintas que hoy
+    salen todas como `None`: un nombre ilegible, un PJ que no está en el roster, y una lectura
+    sucia de uno que sí está. El censo necesita separarlas — un falso "PJ nuevo" dispara el
+    onboarding de un personaje inexistente.
+
+    `_match_agent` es la vista de 3 campos de esto y sigue siendo la API de los llamadores que
+    solo quieren identificar.
+    """
+    ocr_norm = _norm_name(name_text)
+    if not ocr_norm:
+        return (None, None, None, None, None)
+    ocr_tokens = set(ocr_norm.split())
+
+    rol_s = _strip_accents(rol_screen).lower() if rol_screen else None
+    elem_s = _strip_accents(elem_screen).lower() if elem_screen else None
+
+    best = None
+    best_score = -1.0
+    best_sim = None          # similitud cruda del ELEGIDO
+    mejor_parecido = None    # el más parecido, haya pasado el umbral o no
+    mejor_sim = -1.0
+    for ag in _get_roster():
+        name_sim = _name_similarity(ocr_tokens, ocr_norm, ag["tokens"], ag["norm"])
+        if name_sim > mejor_sim:
+            mejor_sim, mejor_parecido = name_sim, ag
+        if name_sim < _NAME_MIN_SIM:
+            continue
+        # Capa 3: bonus/penalización por rol + elemento de pantalla.
+        bonus = 0.0
+        if rol_s and ag["rol"]:
+            bonus += _ROL_MATCH_BONUS if _strip_accents(ag["rol"]).lower() == rol_s else -_ROL_MISS_PENALTY
+        if elem_s and ag["elemento"]:
+            bonus += _ELEM_MATCH_BONUS if _strip_accents(ag["elemento"]).lower() == elem_s else -_ELEM_MISS_PENALTY
+        score = name_sim + bonus
+        if score > best_score:
+            best_score = score
+            best = ag
+            best_sim = name_sim
+    if best is None:
+        cand = mejor_parecido["nombre"] if mejor_parecido is not None else None
+        return (None, None, None, cand, (mejor_sim if mejor_parecido is not None else None))
+    return (best["nombre"], best["rol"], best["elemento"], best["nombre"], best_sim)
+
+
 def _match_agent(
     name_text: str,
     rol_screen: str | None = None,
@@ -654,33 +707,8 @@ def _match_agent(
     desambiguan homónimos. Retorna (nombre_canon, rol_db, elemento_db) del mejor
     match, o (None, None, None) si ninguno supera el umbral de similitud.
     """
-    ocr_norm = _norm_name(name_text)
-    if not ocr_norm:
-        return (None, None, None)
-    ocr_tokens = set(ocr_norm.split())
-
-    rol_s = _strip_accents(rol_screen).lower() if rol_screen else None
-    elem_s = _strip_accents(elem_screen).lower() if elem_screen else None
-
-    best = None
-    best_score = -1.0
-    for ag in _get_roster():
-        name_sim = _name_similarity(ocr_tokens, ocr_norm, ag["tokens"], ag["norm"])
-        if name_sim < _NAME_MIN_SIM:
-            continue
-        # Capa 3: bonus/penalización por rol + elemento de pantalla.
-        bonus = 0.0
-        if rol_s and ag["rol"]:
-            bonus += _ROL_MATCH_BONUS if _strip_accents(ag["rol"]).lower() == rol_s else -_ROL_MISS_PENALTY
-        if elem_s and ag["elemento"]:
-            bonus += _ELEM_MATCH_BONUS if _strip_accents(ag["elemento"]).lower() == elem_s else -_ELEM_MISS_PENALTY
-        score = name_sim + bonus
-        if score > best_score:
-            best_score = score
-            best = ag
-    if best is None:
-        return (None, None, None)
-    return (best["nombre"], best["rol"], best["elemento"])
+    n, r, e, _cand, _sim = _match_agent_scored(name_text, rol_screen, elem_screen)
+    return (n, r, e)
 
 
 def _lookup_agent(nombre_ocr: str) -> tuple[str | None, str | None, str | None]:
@@ -688,29 +716,58 @@ def _lookup_agent(nombre_ocr: str) -> tuple[str | None, str | None, str | None]:
     return _match_agent(nombre_ocr)
 
 
-def identify_menu_agent(
-    frame: np.ndarray, ocr: "OcrBackend"
-) -> tuple[str | None, str | None, str | None]:
-    """Identifica al PJ SELECCIONADO en el MENÚ DE PERSONAJES (S15) leyendo su nombre de
-    la barra inferior-izquierda y matcheándolo contra el roster (Fase M.1). Devuelve
-    (nombre, rol, elemento) — rol+elemento salen de la DB vía `_match_agent`. Read-only
-    (no escribe DB). Abstención (None, None, None) si el nombre no se lee o no matchea
-    (RNF-02). Calibrado: el OCR del nombre rinde 0.95-1.00 (psm 7); el match tolera el
-    sub-ícono que se cuela ('Astra Yao &' → Astra Yao) y nombres sin espacios
-    ('OrfiayMagas' → Orfia y Magas) y acentos ('César')."""
+@dataclass(frozen=True)
+class MenuAgentRead:
+    """Lectura COMPLETA del nombre del PJ seleccionado en S15.
+
+    `identify_menu_agent` es la vista de 3 campos de esto. La diferencia está en lo que NO se
+    tira: la confianza del OCR y el porqué de una abstención. Abstenerse nunca es inventar
+    (RNF-02), pero abstenerse **en silencio** impide censar: sin `motivo` no se distingue "no
+    llegué a leer" de "leí un nombre que no está en tu roster", y esa segunda es la señal de un
+    PJ que falta cargar.
+    """
+    nombre: str | None        # canónico del roster; None = no superó el umbral de match
+    rol: str | None
+    elemento: str | None
+    texto_crudo: str | None   # lo que leyó el OCR, resuelva o no
+    conf: float | None        # confianza del OCR — de los CARACTERES
+    candidato: str | None     # el más parecido del roster, pase o no el umbral
+    score: float | None       # su similitud cruda — de la IDENTIDAD
+    motivo: str               # 'ok' | 'sin_roi' | 'ocr_error' | 'ocr_vacio' | 'sin_match'
+
+
+def read_menu_agent(frame: np.ndarray, ocr: OcrBackend) -> MenuAgentRead:
+    """Lee el nombre del PJ seleccionado en el MENÚ DE PERSONAJES (S15) de la barra
+    inferior-izquierda y lo matchea contra el roster. Read-only (no escribe DB).
+
+    Calibrado: el OCR del nombre rinde 0.95-1.00 (psm 7); el match tolera el sub-ícono que se
+    cuela ('Astra Yao &' → Astra Yao), nombres sin espacios ('OrfiayMagas' → Orfia y Magas) y
+    acentos ('César').
+    """
     try:
         roi = crop_named_roi(frame, "menu_personajes", "nombre_seleccionado")
     except Exception:
-        return (None, None, None)
+        return MenuAgentRead(None, None, None, None, None, None, None, "sin_roi")
     if roi is None or roi.size < 100:
-        return (None, None, None)
+        return MenuAgentRead(None, None, None, None, None, None, None, "sin_roi")
     try:
-        text, _conf = ocr.text(roi, psm=7)
+        text, conf = ocr.text(roi, psm=7)
     except Exception:
-        return (None, None, None)
+        return MenuAgentRead(None, None, None, None, None, None, None, "ocr_error")
     if not text or not text.strip():
-        return (None, None, None)
-    return _match_agent(text)
+        return MenuAgentRead(None, None, None, None, conf, None, None, "ocr_vacio")
+    nombre, rol, elem, cand, sim = _match_agent_scored(text)
+    return MenuAgentRead(nombre, rol, elem, text, conf, cand, sim,
+                         "ok" if nombre else "sin_match")
+
+
+def identify_menu_agent(
+    frame: np.ndarray, ocr: "OcrBackend"
+) -> tuple[str | None, str | None, str | None]:
+    """Vista de 3 campos de `read_menu_agent`, para los llamadores que solo quieren identificar.
+    Abstención (None, None, None) si el nombre no se lee o no matchea (RNF-02)."""
+    r = read_menu_agent(frame, ocr)
+    return (r.nombre, r.rol, r.elemento)
 
 
 # ---------------------------------------------------------------------------

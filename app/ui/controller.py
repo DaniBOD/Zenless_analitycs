@@ -117,6 +117,7 @@ class MonitorController(QObject):
         self._farm_session = None
         self._farm_node_catalog = None
         self._set_badge_matcher = None
+        self._censo = None
         # Firma del último log de stats S18 emitido (edge-triggered): re-loguea solo
         # cuando el resultado cambia. Se resetea en _on_state_from_monitor.
         self._last_stats_sig: tuple | None = None
@@ -183,6 +184,7 @@ class MonitorController(QObject):
             set_badge_matcher=self._set_badge_matcher, # set por badge del disco en S2
             capture_only_focused=_capture_only_focused(),  # gate anti-FP por foco de ventana
             upgrade_syncer=self._upgrade_syncer,      # tracking PRE→POST modal upgrade (S10)
+            censo=self._censo,                        # censo de roster (S15), None si no se censa
         )
         self._monitor.start()
         self.monitor_started.emit()
@@ -392,6 +394,32 @@ class MonitorController(QObject):
                 log.info("[farmeo] contexto QA restaurado: nodo '%s' → %s", _node, _names)
             else:
                 log.info("[farmeo] restore QA solicitado pero sin contexto previo que cargar")
+        # Censo de cuenta (DANIBOD_CENSO, lo setea `qa_launch.ps1 -Censo`). APAGADO por defecto:
+        # censar es un modo, no el comportamiento normal de la app.
+        #
+        # Acá se REANUDA o se ABRE, nunca se cierra: el cierre lo declara el usuario con F8,
+        # porque el sistema no puede saber si el recorrido llegó al final (el menú de personajes
+        # no tiene contador de agentes). Una corrida abierta sobrevive a cerrar la app.
+        self._censo = None
+        if _os.environ.get("DANIBOD_CENSO", "").strip() not in ("", "0", "false", "no"):
+            try:
+                import time as _t
+
+                from app.core.census_store import (
+                    CensusStore,
+                    abrir_o_reanudar,
+                    roster_y_catalogo,
+                )
+
+                _roster, _catalogo = roster_y_catalogo()
+                self._censo = abrir_o_reanudar(CensusStore(), _roster, _catalogo, ts=_t.time())
+                _v, _tot = self._censo.progreso
+                log.info("[censo] corrida #%s activa — %d/%d vistos · %d pendientes. "
+                         "F8 para cerrar la pasada.",
+                         self._censo.run_id, _v, _tot, len(self._censo.pendientes))
+            except Exception:
+                log.exception("[censo] no se pudo abrir la corrida — se sigue sin censar")
+                self._censo = None
         # Catálogo de nodos de farmeo (S13): título del nodo → 2 sets que dropea. Resuelve
         # nombre_en → set_id contra la DB (disc_sets). Display-only; una carga fallida NO
         # debe tumbar el arranque (feature opcional), solo se loguea.

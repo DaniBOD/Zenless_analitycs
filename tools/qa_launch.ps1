@@ -34,6 +34,9 @@ param(
                              # loguea [id_diag] grid/det loc+match+voto al app.log. Diagnóstico L.0.
     [switch]$FromSource,     # corre desde fuente (.venv python -m app.main) en vez del .exe.
                              # NECESARIO para instrumentación nueva (id_diag) hasta rebuildear el .exe.
+    [switch]$Censo,          # censo de roster (DANIBOD_CENSO): abre o REANUDA una pasada y
+                             # cuenta que PJ viste al recorrer el menu. F8 la cierra. El estado
+                             # vive en db\census.db, NUNCA en la DB de dominio.
     [switch]$Recapture,      # QA: re-emite cualquier disco al VOLVER a verlo (desactiva la
                              # dedup de sesión, DANIBOD_RECAPTURE). Para re-testear/confirmar.
     [switch]$NoRamGuard,     # QA: apaga el watchdog de RAM (DANIBOD_NO_RAM_GUARD) para no
@@ -139,6 +142,15 @@ if ($Metrics) {
     Write-Host "[qa_launch]   leer despues con: .\.venv\Scripts\python.exe -m app.scripts.qa.report_latency"
 } else {
     Remove-Item Env:\DANIBOD_METRICS -ErrorAction SilentlyContinue
+}
+if ($Censo) {
+    $env:DANIBOD_CENSO = "1"
+    Write-Host "[qa_launch] DANIBOD_CENSO = 1 (censo de roster: abre o REANUDA una pasada)"
+    Write-Host "[qa_launch]   recorre el menu de personajes PJ por PJ; el estado va a db\census.db"
+    Write-Host "[qa_launch]   F8 CIERRA la pasada -> reporte en audit\censos\ + marca de huerfanos"
+    Write-Host "[qa_launch]   una pasada que no cerras NO produce huerfanos: podes seguir manana"
+} else {
+    Remove-Item Env:\DANIBOD_CENSO -ErrorAction SilentlyContinue
 }
 if ($Recapture) {
     $env:DANIBOD_RECAPTURE = "1"

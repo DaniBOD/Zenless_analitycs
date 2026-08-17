@@ -33,7 +33,7 @@ from app.core.parser_disc_s17 import (
     parse_disc_s17, parse_disc_s17_full, parse_disc_s9, DiscAggregator, disc_is_mature,
 )
 from app.core.parser_agent_stats import (
-    AgentStatsParsed, parse_agent_stats, AgentStatsAggregator, identify_menu_agent,
+    AgentStatsParsed, parse_agent_stats, AgentStatsAggregator, read_menu_agent,
 )
 from app.core.agent_identifier import AgentIdentifier
 from app.core.ocr_backend import OcrBackend
@@ -361,6 +361,8 @@ class Monitor:
         farm_node_catalog=None,                                 # FarmNodeCatalog opcional (predicción S13)
         set_badge_matcher=None,                                 # SetBadgeMatcher opcional (set por badge S2)
         capture_only_focused: bool = False,                     # gate anti-FP por foco: OFF por defecto
+        censo=None,                                             # RosterCensus opcional (censo de cuenta)
+        on_census_progress: Callable[[dict], None] | None = None,
     ):
         self._ocr = ocr
         self._detector = detector
@@ -383,6 +385,12 @@ class Monitor:
         self._on_replacement = on_replacement
         self._on_teardown = on_teardown
         self._on_weapon_seen = on_weapon_seen
+        # Censo de cuenta: OPCIONAL y apagado por defecto. La app se usa la enorme mayoría del
+        # tiempo sin censar, y ese camino no debe pagar nada ni cambiar de conducta. A diferencia
+        # de `TeardownBatch`, no se construye perezoso: abrir una corrida decide la reanudación
+        # multi-sesión, que es cosa del arranque de la app y no del handler.
+        self._census = censo
+        self._on_census_progress = on_census_progress
         # S26 (detalle de W-Engine, RF-15): firma del panel para no re-OCRear un panel quieto, y
         # firma del último log para no repetir la misma línea. Observación pura: no escribe DB.
         self._s26_panel_sig: bytes | None = None
@@ -3968,7 +3976,7 @@ class Monitor:
         """Siembra el latch de identidad con el PJ SELECCIONADO en el menú (S15).
 
         El nombre del menú está ESCRITO en pantalla y ya viene canonicalizado contra el
-        roster (`identify_menu_agent` abstiene si no matchea, RNF-02), así que es la
+        roster (`read_menu_agent` abstiene si no matchea, RNF-02), así que es la
         evidencia más barata y más certera de identidad que ve el sistema. Hasta el QA del
         2026-07-30 se logueaba y se tiraba: entrando al Equipamiento desde el menú, S8 salía
         `PJ=?` y había que desviarse por S18 (que lee el nombre por OCR) para que apareciera.
@@ -4466,17 +4474,25 @@ class Monitor:
 
     def _process_agent_menu(self, frame, state: ScreenState) -> None:
         """Menú de personajes (S15, Fase M.1): reconoce al PJ SELECCIONADO leyendo su
-        nombre de la barra bottom-left → `identify_menu_agent` → `_match_agent` (rol+elemento
+        nombre de la barra bottom-left → `read_menu_agent` → `_match_agent_scored` (rol+elemento
         de la DB). Loguea EDGE-triggered (1× por PJ). Gate RNF-06: re-OCR solo si la firma
-        del nombre cambió (cambió la selección). Informativo: no escribe DB ni toca el latch."""
+        del nombre cambió (cambió la selección). No escribe la DB de dominio ni toca el latch.
+
+        Si hay una corrida de censo abierta, cada cambio de selección deja una observación. El
+        gate de firma es lo que vuelve barato el recorrido: ~51 OCR por pasada en vez de uno por
+        frame de animación."""
         sig = self._menu_name_signature(frame)
         if (sig is not None and self._menu_last_sig is not None
                 and self._sig_component_diff(sig, self._menu_last_sig) <= _MENU_SIG_MAX):
             return                          # mismo PJ seleccionado → no re-OCR
         self._menu_last_sig = sig
-        nombre, rol, elemento = identify_menu_agent(frame, self._ocr)
+        lectura = read_menu_agent(frame, self._ocr)
+        nombre, rol, elemento = lectura.nombre, lectura.rol, lectura.elemento
         if nombre:
             self._seed_identity_from_menu(nombre)
+        # Antes del dedup del log: ese `return` es por MENSAJE repetido, y el censo cuenta
+        # observaciones — volver a pasar por un PJ ya visto no imprime, pero sí acumula.
+        self._observe_census(lectura)
         logsig = (nombre, rol, elemento)
         if logsig == self._last_menu_log_sig:
             return                          # mismo resultado → no re-loguear
@@ -4490,6 +4506,33 @@ class Monitor:
                 self._on_agent_detail(state, nombre, bool(nombre), "menu")
             except Exception:
                 log.exception("Error en on_agent_detail callback (menú)")
+
+    def _observe_census(self, lectura) -> None:
+        """Alimenta la corrida de censo con lo leído en S15.
+
+        Observación pura: **no toca la DB de dominio**. El estado del censo vive en `census.db`,
+        y esa separación es lo que vuelve estructural —y no disciplinar— que observar no
+        contamine el dominio. No-op si no hay corrida, que es el caso normal."""
+        censo = self._census
+        if censo is None or not censo.abierta:
+            return
+        from app.core.census import MenuSighting
+        try:
+            d = censo.observe(MenuSighting(
+                nombre=lectura.nombre, texto_crudo=lectura.texto_crudo, conf=lectura.conf,
+                candidato=lectura.candidato, score=lectura.score, motivo=lectura.motivo,
+            ), ts=time.time())
+        except Exception:
+            log.exception("Error acumulando la observación del censo")
+            return
+        for linea in d.logs:
+            log.info("[censo] %s", linea)
+        if d.estado != d.estado_previo and self._on_census_progress:
+            try:
+                self._on_census_progress({**censo.resumen(), "clave": d.clave,
+                                          "estado": d.estado, "es_nuevo": d.es_nuevo})
+            except Exception:
+                log.exception("Error en on_census_progress callback")
 
     @staticmethod
     def _stats_result_is_useful(stats) -> bool:
@@ -5080,10 +5123,49 @@ class Monitor:
         except Exception as exc:
             log.exception("Error parseando disco en estado %s: %s", state.code, exc)
 
+    def cerrar_censo(self) -> dict | None:
+        """Cierra la pasada de censo en curso (hotkey F8). Devuelve el registro, o None si no
+        había ninguna abierta.
+
+        **El cierre es una declaración del usuario, no una inferencia.** El sistema no puede
+        saber si el recorrido llegó al final —el menú no tiene contador de agentes—, así que no
+        debe cerrarse solo. Corolario asumido: una pasada que nunca se cierra no produce
+        huérfanos, y eso es correcto.
+
+        Es también el único momento en que el censo escribe la DB de dominio, y solo para anotar
+        (RNF-01 + gate de readonly dentro de `marcar_huerfanos_en_dominio`).
+        """
+        censo = self._census
+        if censo is None or not censo.abierta:
+            log.info("[censo] no hay ninguna pasada abierta que cerrar")
+            return None
+        from app.core.census import write_census_report
+        registro = censo.cerrar(ts=time.time())
+        if registro is None:
+            return None
+        r = registro["resumen"]
+        log.info("[censo] pasada cerrada — %d/%d vistos · %d dudosos · %d huérfanos · %d no "
+                 "reconocidos", r["vistos"], r["total_db"], r["dudosos"], r["huerfanos"],
+                 r["nuevos"])
+        try:
+            from datetime import datetime as _dt
+
+            from app.core.census_store import marcar_huerfanos_en_dominio
+            marcar_huerfanos_en_dominio(registro["huerfanos"],
+                                        fecha=_dt.now().strftime("%Y-%m-%d"))
+        except Exception:
+            log.exception("[censo] no se pudieron marcar los huérfanos")
+        try:
+            write_census_report(registro)
+        except Exception:
+            log.exception("[censo] no se pudo escribir el reporte")
+        return registro
+
     def _register_hotkeys(self) -> None:
         from app.core.hotkeys import HotkeyManager
         hk = HotkeyManager()
         hk.on("f10", self.toggle_pause)
+        hk.on("f8", self.cerrar_censo)
         if self._on_toggle_panel:
             hk.on("f9", self._on_toggle_panel)
         hk.start()

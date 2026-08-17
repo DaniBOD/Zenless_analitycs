@@ -1647,12 +1647,32 @@ def _verify_s2(frame: np.ndarray) -> tuple[bool, str | None]:
 _S4_GRAMOFONO_ROI = (0.63, 0.25, 0.88, 0.72)   # x0, y0, x1, y1
 _S4_COLORFUL_MAX = 0.10                          # margen holgado (13× de separación)
 
+# Contraste (desvío estándar en gris) del mismo ROI. Segunda señal, INDEPENDIENTE del color, y
+# hace falta: el color solo NO alcanza.
+#
+# Regresión 2026-08-16 (`Menu_Personajes/Ejemplo_10.png`): el menú lista en GRIS a los personajes
+# que no se poseen, así que una zona de la lista dominada por grises tiene colorido **0.048** —
+# por debajo del umbral— y el menú se clasificaba como tienda de música. No es un caso de
+# laboratorio: una pasada de censo recorre TODA la lista, así que cae ahí seguro.
+#
+# El contraste separa por ESTRUCTURA, no por paleta: la grilla tiene decenas de tiles con bordes
+# duros y texto (alto std) los pinte como los pinte; el gramófono es un objeto oscuro y liso.
+# Medido sobre 9 fixtures de cada uno: S4 ∈ [19.2, 22.1] · S15 ∈ [51.6, 85.7] (2.3× de
+# separación; el 51.6 es justamente Ejemplo_10, el peor caso gris).
+_S4_CONTRAST_MAX = 35.0
+
 
 def _is_music_selector(frame: np.ndarray) -> bool:
     """True si el panel derecho es el gramófono oscuro del selector de tienda de música (S4),
-    NO la grilla de retratos coloridos del menú de personajes (S15). Ambos comparten el chrome
-    "Plan de entrenamiento" (el template de S15 eclipsa a S4, que no tiene template propio), así
-    que se desambigua por AUSENCIA de color en el ROI del gramófono. Cheap, sin OCR (RNF-06)."""
+    NO la grilla de retratos del menú de personajes (S15). Ambos comparten el chrome "Plan de
+    entrenamiento" (el template de S15 eclipsa a S4, que no tiene template propio). Cheap, sin
+    OCR (RNF-06).
+
+    Pide **las dos** señales: poco color Y poco contraste. Exigir ambas solo vuelve más estricta
+    la clasificación como S4, que es la dirección segura — un falso S4 manda el frame a handlers
+    que no corresponden, mientras que fallar la detección deja el frame en S15, su default.
+    Ver `_S4_CONTRAST_MAX` para por qué el color solo no alcanza.
+    """
     try:
         h, w = frame.shape[:2]
         x0, y0, x1, y1 = _S4_GRAMOFONO_ROI
@@ -1661,7 +1681,10 @@ def _is_music_selector(frame: np.ndarray) -> bool:
             return False
         hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
         colorful = float(((hsv[:, :, 1] > 60) & (hsv[:, :, 2] > 60)).mean())
-        return colorful < _S4_COLORFUL_MAX
+        if colorful >= _S4_COLORFUL_MAX:
+            return False
+        contraste = float(cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY).std())
+        return contraste < _S4_CONTRAST_MAX
     except Exception:
         return False
 
