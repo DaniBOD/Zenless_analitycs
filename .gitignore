@@ -147,3 +147,7 @@ local-agent-mode-sessions/
 # ────────────── Personal ──────────────
 # CV de Daniel: archivo personal, no forma parte del proyecto (pedido 2026-07-19)
 cv_daniel_pilquil.docx
+
+# Staging de assets para subir a Claude Design: son COPIAS de Documentacion/Interfaz/*,
+# que ya estan versionados ahi. Se regeneran con tools/stage_design_assets.sh.
+Documentacion/Interfaz/claude_design_upload/assets/
