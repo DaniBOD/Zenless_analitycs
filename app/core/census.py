@@ -323,6 +323,13 @@ class RosterCensus:
         # No matcheó, pero se parece bastante a alguien conocido ⇒ es una lectura sucia de ESE,
         # no un PJ nuevo. Se le atribuye al candidato (quedará DUDOSO, que pide repetición).
         if s.candidato and s.score is not None and s.score >= _NUEVO_MAX_SIM:
+            # Ojo: desde el veto de la declaración el candidato **puede no ser tuyo**. Antes salía
+            # siempre del roster, así que dar `en_db=True` acá era correcto por construcción; hoy
+            # el matcher devuelve como candidato al gris que reconoció. Si no se distinguiera, un
+            # personaje ajeno entraría al censo como uno propio pendiente de ver.
+            cand_norm = _norm(s.candidato)
+            if cand_norm in self._grises:
+                return self._grises[cand_norm], False, True
             return s.candidato, True, True
         if not crudo:
             return None, False, False

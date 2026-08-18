@@ -236,3 +236,57 @@ def test_tiebreak_owner_helper_sin_tiebreaker():
                     agent_identifier=_MarginAbstainIdent(), owner_tiebreaker=None)
     disc = SimpleNamespace(agente_asignado_nombre=None, agente_asignado_conf=None, notas=[])
     assert m._tiebreak_owner(disc, badge=object(), tag="s17_owner") is False
+
+
+# --- LIBRE vs NO SÉ (2026-08-18) ----------------------------------------------------------
+
+def test_un_disco_LIBRE_queda_afirmado_como_libre():
+    """El disco sin dueño deja de ser mudo. `equip_libre=True` es una AFIRMACIÓN sobre la pantalla
+    —se leyó la esquina del tile y no hay cara—, no la ausencia de un dato.
+
+    Es lo que le falta al censo para poder persistir los 72 discos sueltos del inventario sin
+    inventar un equipamiento."""
+    fr = _frame_o_skip("Ejemplo_2")            # libre, etiquetado en test_s9_badge_libre
+    mon = _monitor(on_disc=lambda *_: None)
+    d = _disc_vacio()
+    mon._assign_s9_owner(d, fr)
+    assert d.equip_libre is True
+    assert d.agente_asignado_nombre is None
+
+
+def test_un_tile_que_no_se_localiza_NO_se_declara_libre():
+    """La mitad que importa: 'no pude leer' no puede convertirse en 'no tiene dueño'. Ese error
+    registraría como suelto un disco que alguien tiene equipado."""
+    fr = _frame_o_skip("Ejemplo_4")            # sin tile resaltado localizable
+    mon = _monitor(on_disc=lambda *_: None)
+    d = _disc_vacio()
+    mon._assign_s9_owner(d, fr)
+    assert d.equip_libre is False, "sin lectura no se afirma nada"
+    assert d.agente_asignado_nombre is None
+
+
+def test_un_disco_con_dueno_no_se_marca_libre():
+    fr = _frame_o_skip("Ejemplo_1")            # equipado
+    mon = _monitor(on_disc=lambda *_: None, ident=_StubIdent("Zhao"))
+    d = _disc_vacio()
+    mon._assign_s9_owner(d, fr)
+    assert d.equip_libre is False
+    assert d.agente_asignado_nombre == "Zhao"
+
+
+def _disc_vacio():
+    """DiscParsed mínimo: al `_assign_s9_owner` solo le importan los campos de dueño."""
+    from app.core.parser_disc import DiscParsed
+    return DiscParsed(set_name_raw="", set_name_canon=None, slot=1,
+                      main_stat_raw="", main_stat_canon=None, main_valor=0.0,
+                      main_unidad="flat", nivel=0, rareza="S")
+
+
+def _frame_o_skip(stem: str):
+    p = _S9 / f"{stem}.png"
+    if not p.exists():
+        pytest.skip(f"falta {p.name}")
+    fr = cv2.imread(str(p))
+    if fr is None:
+        pytest.skip(f"no se pudo leer {p.name}")
+    return fr

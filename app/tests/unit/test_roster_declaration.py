@@ -21,7 +21,8 @@ import pytest
 
 from app.core.roster_declaration import (
     CONFIRMADO,
-    DECLARABLE,
+    DECLARADO,
+    NO_OBTENIDO,
     catalogo_declarable,
     declarar,
 )
@@ -98,6 +99,7 @@ def test_marca_quien_ya_tiene_fila_en_agents(dominio):
     por_nombre = {p.nombre: p for p in _catalogo()}
     assert por_nombre["Ellen"].en_agents is True
     assert por_nombre["Hugo"].en_agents is False
+    assert por_nombre["Hugo"].estado == NO_OBTENIDO, "no estar en agents ES el tercer estado"
 
 
 def test_arrastra_la_identidad_de_los_que_estan(dominio):
@@ -134,7 +136,7 @@ def test_sin_discos_ni_stats_queda_declarable(dominio):
     Es también el estado de TODOS los PJs el día después de reconstruir la DB — y está bien: se
     está declarando desde cero. El bloqueo recupera sentido a medida que el censo llena datos."""
     aria = next(p for p in _catalogo() if p.nombre == "Aria")
-    assert aria.estado == DECLARABLE
+    assert aria.estado == DECLARADO
 
 
 def test_los_confirmados_vienen_tildados(dominio):
@@ -241,3 +243,57 @@ def test_el_resultado_trae_los_conteos_para_la_ui(dominio):
     assert res.declarados == 2
     assert res.total == 5
     assert res.escribio is True
+
+
+# --- lo que agregó el diseño v1 (Parte C) -----------------------------------------------------
+
+def test_el_predicado_es_el_del_diseno_discos_o_nivel_sobre_1(dominio, monkeypatch):
+    """`evidencia = p.d > 0 || p.n > 1`, textual de `editor-screen.jsx`.
+
+    No es "algún stat cargado": el diseño eligió el NIVEL a propósito, porque es lo que salva a
+    Aria (0 discos, Nv 40) y lo que deja a Remielle Dan (0 discos, Nv 1) sin evidencia — el falso
+    positivo que motivó el tercer estado."""
+    con = sqlite3.connect(dominio)
+    con.executemany("INSERT INTO agents (id, nombre, nivel) VALUES (?,?,?)",
+                    [(4, "Aria40", 40), (5, "Remielle", 1)])
+    con.commit(); con.close()
+    roster = [*_ROSTER, (4, "Aria40"), (5, "Remielle")]
+    cat = {p.nombre: p for p in catalogo_declarable(
+        roster_catalogo=(roster, _CATALOGO | {"Aria40", "Remielle"}))}
+    assert cat["Aria40"].estado == CONFIRMADO, "Nv 40 > 1: la salva el nivel"
+    assert cat["Remielle"].estado == DECLARADO, "Nv 1 es el default: sin evidencia"
+
+
+def test_una_variante_de_atuendo_se_marca_pero_no_se_oculta(dominio):
+    """Decisión B7: celda propia. Tienen rango, rol y build PROPIOS y compiten por discos de
+    verdad — esconderlas haría que un disco desaparezca del inventario visible."""
+    con = sqlite3.connect(dominio)
+    con.executemany("INSERT INTO agents (id, nombre) VALUES (?,?)",
+                    [(4, "Billy"), (5, "Billy Estelar"), (6, "N.º 0: Anby"), (7, "Anby")])
+    con.commit(); con.close()
+    extra = {"Billy", "Billy Estelar", "N.º 0: Anby", "Anby"}
+    roster = [*_ROSTER, (4, "Billy"), (5, "Billy Estelar"), (6, "N.º 0: Anby"), (7, "Anby")]
+    cat = {p.nombre: p for p in catalogo_declarable(
+        roster_catalogo=(roster, _CATALOGO | extra))}
+    assert cat["Billy Estelar"].variante_de == "Billy"
+    assert cat["N.º 0: Anby"].variante_de == "Anby"
+    assert cat["Billy"].variante_de is None, "el base no es variante de nadie"
+    assert "Billy Estelar" in cat, "no se oculta: es una build real que compite por discos"
+
+
+def test_dos_grafias_del_mismo_pj_se_muestran_las_dos(dominio):
+    """`Lichter` / `Lighter`. NO se dedupea: el nombre correcto es el que muestre la pantalla del
+    juego, y elegir por parecido es el error que ya nos mordió con los sets de discos."""
+    cat = {p.nombre: p for p in catalogo_declarable(
+        roster_catalogo=(_ROSTER, _CATALOGO | {"Lichter", "Lighter"}))}
+    assert cat["Lichter"].grafia_en_conflicto and cat["Lighter"].grafia_en_conflicto
+    assert not cat["Ellen"].grafia_en_conflicto
+
+
+def test_el_tooltip_del_bloqueo_dice_como_salir(dominio):
+    """Un control deshabilitado sin salida se lee como un callejón. El diseño cierra con dónde ir."""
+    nekomata = next(p for p in _catalogo() if p.nombre == "Nekomata")
+    tip = nekomata.tooltip_bloqueo()
+    assert "NO SE PUEDE DESTILDAR" in tip
+    assert "prueba de posesión" in tip
+    assert "Discos" in tip, "tiene que decir dónde se deshace"

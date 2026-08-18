@@ -5,6 +5,10 @@ Los writes los hacen sync_equip.py / sync_upgrade.py con sus propias transaccion
 import json
 import sqlite3
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.core.parser_disc import DiscParsed
 
 
 # ---------------------------------------------------------------------------
@@ -312,6 +316,32 @@ class InventoryDiscRepo:
             (set_id, slot, main_stat, main_valor),
         ).fetchone()
         return self._row_to_disc(r) if r else None
+
+    def find_all_by_identity(self, p: "DiscParsed", set_id: int) -> list["Disc"]:
+        """TODAS las filas que son el mismo disco que `p` por identidad COMPLETA
+        (set, slot, nivel, main, {substat normalizado + rolls}) — misma definición que
+        `row_matches_parsed_identity`, sin el filtro de dueño de `find_swap_candidates_by_identity`.
+
+        Es la clave de dedup correcta para el upsert de captura, donde no hay `(PJ, slot)` que
+        usar. `find_by_hash` no sirve ahí: compara `(set, slot, main, main_valor)`, y en los slots
+        1/2/3 el main es FIJO, así que a un mismo nivel todos los discos de un set son iguales para
+        esa firma. Medido sobre el inventario real de 367: la firma gruesa deja **177 filas**, la
+        identidad completa **345**.
+
+        Devuelve una lista y no un `Disc` a propósito: **≥2 significa ambigüedad real** (discos
+        indistinguibles, 22 pares en el inventario medido) y el caller tiene que poder avisarla en
+        vez de quedarse callado con el primero que salga (RNF-02).
+        """
+        rows = self._con.execute(
+            "SELECT * FROM inventory_discs WHERE set_id=? AND slot=? AND nivel=? AND descartado=0",
+            (set_id, p.slot, p.nivel),
+        ).fetchall()
+        out: list[Disc] = []
+        for r in rows:
+            d = self._row_to_disc(r)
+            if self.row_matches_parsed_identity(d, p, set_id):
+                out.append(d)
+        return out
 
     def find_equipped_by_agent_slot(self, agente_id: int, slot: int) -> "Disc | None":
         """

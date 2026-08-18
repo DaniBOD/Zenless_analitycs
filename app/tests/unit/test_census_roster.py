@@ -227,6 +227,18 @@ def test_un_casi_acierto_cae_sobre_el_candidato_y_nunca_es_pj_nuevo():
     assert {r.clave for r in c.dudosos} == {"Astra Yao"}
 
 
+def test_un_casi_acierto_sobre_un_GRIS_no_se_cuenta_como_PJ_tuyo():
+    """Desde el veto de la declaración, el candidato del matcher puede ser alguien que NO poseés
+    — antes siempre salía del roster. `Lichten` es Lichter mal leída: el texto crudo ya no cae en
+    la lista de grises, así que llega por la rama del candidato, y esa rama daba `en_db=True` a
+    mano. Sin este arreglo un personaje ajeno entraría al censo como uno tuyo pendiente de ver."""
+    c = _censo()
+    d = c.observe(MenuSighting(None, "Lichten", 0.9, "Lichter", 0.86, "sin_match"), ts=1.0)
+    assert d.clave == "Lichter"
+    assert d.estado == "no_poseido", "es un gris, no un PJ propio con lectura dudosa"
+    assert c.dudosos == [] and c.nuevos == []
+
+
 # --- frames que no aportan ------------------------------------------------------------------
 
 @pytest.mark.parametrize("motivo", ["sin_roi", "ocr_error", "ocr_vacio"])

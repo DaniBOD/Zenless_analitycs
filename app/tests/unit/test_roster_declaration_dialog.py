@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.roster_declaration import CONFIRMADO, DECLARABLE, PersonajeDeclarable
+from app.core.roster_declaration import CONFIRMADO, DECLARADO, NO_OBTENIDO, PersonajeDeclarable
 
 pytest.importorskip("PySide6.QtWidgets")
 
@@ -27,8 +27,9 @@ def qapp():
 _CATALOGO = [
     PersonajeDeclarable("Ellen", True, CONFIRMADO, "6 disco(s) asignado(s) — es prueba de posesión",
                         rango="S", elemento="Hielo", rol="Ataque", discos=6),
-    PersonajeDeclarable("Aria", True, DECLARABLE, rango="S", elemento="Éter", rol="Anomalía"),
-    PersonajeDeclarable("Hugo", False, DECLARABLE),
+    PersonajeDeclarable("Aria", True, DECLARADO, "declarado por vos · sin datos aún",
+                        rango="S", elemento="Éter", rol="Anomalía"),
+    PersonajeDeclarable("Hugo", False, NO_OBTENIDO),
 ]
 
 
@@ -69,12 +70,16 @@ def test_el_motivo_del_bloqueo_esta_a_la_vista(qapp):
 
 
 def test_el_contador_sigue_a_lo_tildado(qapp):
+    """Formato del diseño: los declarados contra las FILAS de `agents`, no contra el catálogo.
+
+    Son dos denominadores distintos y el header muestra el que pide acción: cuántas filas hay en
+    la DB frente a cuántas el usuario reconoce como suyas."""
     d = _dlg()
-    assert "2 declarados / 3 conocidos" in d._contador.text()
-    d._checks["Hugo"].setChecked(True)
-    assert "3 declarados / 3 conocidos" in d._contador.text()
+    assert d._contador.text() == "2 DECLARADOS · 2 FILAS EN AGENTS"
+    d._checks["Hugo"].setChecked(True)          # declara uno que no está en agents
+    assert d._contador.text().startswith("3 DECLARADOS")
     d._checks["Aria"].setChecked(False)
-    assert "2 declarados / 3 conocidos" in d._contador.text()
+    assert d._contador.text().startswith("2 DECLARADOS")
 
 
 def test_en_readonly_avisa_que_no_escribio_en_vez_de_cerrar(qapp, monkeypatch):

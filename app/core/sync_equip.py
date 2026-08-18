@@ -257,12 +257,25 @@ class DiscSyncer:
 
         try:
             with con_w:
-                # UPSERT por hash (set_id, slot, main_stat, main_valor)
-                existing = disc_repo_w.find_by_hash(
-                    set_id, parsed.slot,
-                    parsed.main_stat_canon or parsed.main_stat_raw,
-                    parsed.main_valor,
-                )
+                # UPSERT por IDENTIDAD COMPLETA (set, slot, nivel, main, {substat+rolls}).
+                # NO por `find_by_hash`: esa firma es (set, slot, main, main_valor), y en los
+                # slots 1/2/3 el main es FIJO (PV/ATK/DEF planos) ⇒ a un mismo nivel todos los
+                # discos de un set colisionan. Medido sobre el inventario real de 367 discos, la
+                # firma gruesa deja 177 filas y la identidad completa 345: un disco farmeado nuevo
+                # no se insertaba, PISABA a uno viejo. El mismo bug se había arreglado en junio en
+                # la capa de emisión (`_disc_identity`) y no acá, que es donde se escribe.
+                candidatos = disc_repo_w.find_all_by_identity(parsed, set_id)
+                if len(candidatos) > 1:
+                    # Discos realmente indistinguibles (22 pares en el inventario medido). No se
+                    # adivina cuál es (RNF-02): se actualiza uno solo —lo conservador— y queda
+                    # constancia de que el conteo puede estar corto.
+                    log.warning(
+                        "Ambigüedad: %d discos indistinguibles para set=%s slot=%d nivel=%d "
+                        "(ids %s) — se actualiza el primero; el conteo puede quedar corto.",
+                        len(candidatos), parsed.set_name_raw, parsed.slot, parsed.nivel,
+                        ", ".join(str(c.id) for c in candidatos),
+                    )
+                existing = candidatos[0] if candidatos else None
 
                 if existing:
                     disc_id = existing.id
@@ -366,6 +379,17 @@ class DiscSyncer:
         # 72% de los discos comparten firma con otro PJ) → corromper/robar datos.
         # Mejor no escribir y dejar que el usuario identifique el PJ (Atributos base).
         if agente_id is None:
+            # Sin dueño hay DOS casos, y sólo uno justifica no escribir (2026-08-18):
+            #
+            #   equip_libre=True  → se leyó la esquina del tile y NO hay avatar. Evidencia
+            #                       positiva ⇒ se persiste con `agente_asignado = NULL`. Son 72
+            #                       de 367 discos, el 20 % del inventario, que hasta acá se veían
+            #                       y se tiraban.
+            #   equip_libre=False → no se pudo leer. Ausencia de dato, no dato: sigue sin escribir.
+            #
+            # La distinción no existía antes: `crop_s9_selected_badge` devolvía None para las dos.
+            if getattr(parsed, "equip_libre", False):
+                return self._persist_disco_libre(parsed, set_id, t0)
             # DEBUG y no INFO: es el PORQUÉ de una no-escritura, no un evento. Un disco cuyo dueño
             # no se resolvió ya se reporta arriba con su decisión; repetir acá el motivo por cada
             # uno enterraba la línea que sí importa (medido: 4-7 líneas por disco, QA 2026-08-15).
@@ -510,6 +534,71 @@ class DiscSyncer:
             )
         except Exception as exc:
             log.exception("Error en persist_s17_disc: %s", exc)
+            return None
+        finally:
+            con_w.close()
+
+    def _persist_disco_libre(self, parsed: DiscParsed, set_id: int, t0: float) -> SyncResult | None:
+        """Persiste un disco que se AFIRMÓ libre: fila con `agente_asignado = NULL`, `equipado = 0`.
+
+        Sin dueño no existe la clave natural `(PJ, slot)`, así que la deduplicación es por
+        **identidad completa** (`find_all_by_identity`) — y por eso hizo falta arreglarla antes: la
+        firma vieja `(set, slot, main, main_valor)` colapsaba el 51,8 % del inventario.
+
+        La búsqueda se parte en libres y ocupados a propósito. Un disco libre cuya identidad
+        coincide con uno EQUIPADO admite dos lecturas y ninguna verificable: o es ese mismo disco
+        recién desequipado, o es su gemelo (hay 22 pares indistinguibles en el inventario real).
+        Actualizar la fila equipada la marcaría libre —un falso LIBRE, que es lo que habilita un
+        reemplazo erróneo— e insertar duplicaría. Se abstiene y avisa (RNF-02).
+        """
+        if is_readonly():
+            log.info("[readonly] disco LIBRE NO persiste — set=%s slot=%d",
+                     parsed.set_name_raw, parsed.slot)
+            return None
+        con_w = sqlite3.connect(str(self._db_path))
+        con_w.row_factory = sqlite3.Row
+        repo = InventoryDiscRepo(con_w)
+        try:
+            with con_w:
+                candidatos = repo.find_all_by_identity(parsed, set_id)
+                libres = [d for d in candidatos if d.agente_asignado is None]
+                ocupados = [d for d in candidatos if d.agente_asignado is not None]
+                if not libres and ocupados:
+                    log.warning(
+                        "Disco visto LIBRE con la identidad de uno EQUIPADO (ids %s, set=%s "
+                        "slot=%d) — no se toca ninguna fila: puede ser ese disco recién "
+                        "desequipado o su gemelo, y no hay forma de distinguirlos.",
+                        ", ".join(str(d.id) for d in ocupados), parsed.set_name_raw, parsed.slot,
+                    )
+                    return None
+                if len(libres) > 1:
+                    log.warning(
+                        "Ambigüedad: %d discos libres indistinguibles (ids %s, set=%s slot=%d) — "
+                        "se actualiza el primero; el conteo puede quedar corto.",
+                        len(libres), ", ".join(str(d.id) for d in libres),
+                        parsed.set_name_raw, parsed.slot,
+                    )
+                if libres:
+                    disc_id, trigger = libres[0].id, "libre_update"
+                    repo.update_from_parsed(disc_id, parsed)
+                else:
+                    disc_id = repo.insert_from_parsed(parsed, set_id,
+                                                      agente_asignado=None, equipado=0)
+                    trigger = "libre_insert"
+            bonus_2p_stat, bonus_2p_valor, bonus_4p = self._set_repo.get_bonus(set_id)
+            bonus_2p = (f"{bonus_2p_stat} {bonus_2p_valor}".strip()
+                        if (bonus_2p_stat or bonus_2p_valor) else None)
+            latency_ms = (time.perf_counter() - t0) * 1000
+            log.info("Disco LIBRE persistido id=%d %s set=%s slot=%d nivel=%d %.0fms",
+                     disc_id, trigger, parsed.set_name_raw, parsed.slot, parsed.nivel, latency_ms)
+            return SyncResult(
+                disc_id=disc_id, trigger=trigger, recomendacion="(libre)", score_norm=0.0,
+                agente_nombre=None, latency_ms=round(latency_ms, 1),
+                agente_asignado_nombre=None,
+                set_bonus_2p=bonus_2p, set_bonus_4p=bonus_4p, set_id=set_id,
+            )
+        except Exception:
+            log.exception("Error persistiendo disco libre")
             return None
         finally:
             con_w.close()

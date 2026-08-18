@@ -25,12 +25,14 @@ from app.core.detector import (
     ScreenDetector, ScreenState, TemporalBuffer, AGENT_STATS_STATES,
     extract_s17_slot, extract_s9_slot, polling_cadence_ms,
     _deep_detect_s18, detect_active_tab, selected_avatar_x,
-    crop_grid_selected_badge, crop_detail_badge, crop_s9_selected_badge,
+    crop_grid_selected_badge, crop_detail_badge,
+    read_s9_selected_badge, BADGE_LIBRE, BADGE_NO_LOCALIZADO, _S9_BADGE_NITIDEZ_MIN,
 )
 from app.core.stats_vocab import _norm_key
 from app.core.parser_disc import DiscParsed, parse_modal_detalle
 from app.core.parser_disc_s17 import (
     parse_disc_s17, parse_disc_s17_full, parse_disc_s9, DiscAggregator, disc_is_mature,
+    parse_s9_header_counter,
 )
 from app.core.parser_agent_stats import (
     AgentStatsParsed, parse_agent_stats, AgentStatsAggregator, read_menu_agent,
@@ -79,6 +81,11 @@ _REDISPATCH_STATES = frozenset({
     "S11", "S24",  # desmontaje: se tildan discos uno a uno; el modal vive hasta el Confirmar
     "S27", "S28",  # gacha: se navega el riel; y la grilla puede llegar en plena transición
 })
+# Cadencia de lectura del contador del header S9 (`Pistas de disco [339/3000]`). Es un OCR dentro
+# de un handler CONTINUO: leerlo por frame es justo lo que RNF-06 prohíbe, y el denominador cambia
+# poquísimo. 5 s alcanza para notar que farmeaste o desmontaste a mitad de pasada.
+_S9_CONTADOR_PERIODO_S = 5.0
+
 # S9 = INVENTARIO GLOBAL de discos: panel derecho = disco seleccionado (parse_disc_s9,
 # reusa S17), dueño = badge del tile resaltado. Diff máx de firma para "mismo disco".
 _S9_SIG_MAX = 3.0
@@ -467,6 +474,10 @@ class Monitor:
         self._s9_emitted: bool = False    # ya se emitió (persist/log) este disco S9
         self._s9_agg_cycles: int = 0
         self._s9_warming: bool = False     # maduró pero el dueño no resolvió → reintentar badge
+        # Censo del inventario: a diferencia del roster, acá HAY denominador en pantalla, así que
+        # la corrida se abre sola (hay disparador claro) y sabe cuánto le falta sin preguntar.
+        self._censo_discos = None          # DiscCensus, perezoso
+        self._s9_contador_ts: float = 0.0  # última lectura del header
         # --- S3 (modal de drop farmeado): mismo patrón aggregator/dedup, sin dueño ni warmup ---
         self._s3_aggregator = DiscAggregator()
         self._s3_agg_sig = None            # firma-ancla del modal de drop que se fusiona
@@ -3403,6 +3414,7 @@ class Monitor:
         de disco y resetea. El dueño = badge del tile resaltado de la grilla. Emite
         (sync vía on_disc) cuando madura o tras el techo de ciclos. Gate RNF-06: una vez
         emitido + firma estable, no re-OCR."""
+        self._anclar_contador_s9(frame)
         sig = self._s9_disc_signature(frame)
         if sig is None:
             return
@@ -3427,7 +3439,11 @@ class Monitor:
             else:
                 self._assign_s9_owner(merged, frame)   # reintenta el badge sobre el merge
                 self._s9_agg_cycles += 1
-                if merged.agente_asignado_nombre or self._s9_agg_cycles >= _S17_AGG_MAX_CYCLES:
+                # `equip_libre` corta el warmup: reintentar el badge de un disco que YA se afirmó
+                # libre es esperar algo que no va a aparecer. Antes agotaban el techo de ciclos,
+                # porque "no tiene dueño" no se distinguía de "todavía no lo veo".
+                if (merged.agente_asignado_nombre or merged.equip_libre
+                        or self._s9_agg_cycles >= _S17_AGG_MAX_CYCLES):
                     self._s9_warming = False
                     self._emit_s9_disc(merged, state)
                 return
@@ -3463,14 +3479,28 @@ class Monitor:
         """Dueño del disco S9 por el badge del tile seleccionado (esquina sup-der de la
         grilla). Reusa el matcher de badges de S17 (misma librería). Solo asigna si el
         match es CONFIABLE (no rejected); si no, deja el disco SIN dueño — captura los
-        stats igual, no inventa equipamiento (RNF-02). Un disco libre da badge None."""
+        stats igual, no inventa equipamiento (RNF-02).
+
+        **LIBRE y NO SÉ son desenlaces distintos** y el lector los separa desde 2026-08-18: antes
+        los dos daban `badge=None` y el disco quedaba igual de mudo. Esa diferencia es la que
+        habilita el censo — un disco que se AFIRMA libre se puede persistir sin dueño; uno que no
+        se pudo leer, no."""
         try:
-            badge = crop_s9_selected_badge(frame)
+            lectura = read_s9_selected_badge(frame)
         except Exception:
-            badge = None
-        if badge is None:
+            lectura = None
+        if lectura is None or lectura.estado == BADGE_NO_LOCALIZADO:
             if self._id_diag_on:
-                log.info("[s9_owner] badge=None (tile sin localizar / disco libre) -> sin dueno")
+                log.info("[s9_owner] tile sin localizar -> no se sabe (NO es 'libre')")
+            return
+        if lectura.estado == BADGE_LIBRE:
+            disc.equip_libre = True
+            if self._id_diag_on:
+                log.info("[s9_owner] disco LIBRE afirmado (nitidez %.1f < %.1f)",
+                         lectura.nitidez or 0.0, _S9_BADGE_NITIDEZ_MIN)
+            return
+        badge = lectura.crop
+        if badge is None:
             return
         try:
             name, conf, rejected = self._identifier.s17_match(badge)
@@ -3544,11 +3574,108 @@ class Monitor:
             merged.main_stat_canon or merged.main_stat_raw, merged.nivel,
             merged.agente_asignado_nombre or "-", merged.confianza_global,
         )
+        self._censar_disco(merged, state)
         if self._on_disc:
             try:
                 self._on_disc(merged, state)
             except Exception:
                 log.exception("Error en on_disc S9")
+
+    # --- Censo del inventario de discos -------------------------------------------------------
+
+    @property
+    def censo_discos(self):
+        """La corrida de censo del inventario, o `None` si nunca se abrió."""
+        return self._censo_discos
+
+    def _censo_discos_abierto(self):
+        """Devuelve la corrida ABIERTA, abriéndola si hace falta. `None` si ya se cerró.
+
+        Se abre sola —hay disparador claro: estás en el inventario— y **no se reabre después de
+        cerrada**. Volver a la pantalla tras cerrar no debe empezar a contar sobre lo ya reportado
+        sin que se note: es exactamente el problema que tuvo el censo del roster (QA 2026-08-17),
+        donde una segunda corrida declaraba huérfanos a los PJs de la primera.
+        """
+        if self._censo_discos is None:
+            from app.core.census_discs import DiscCensus
+            c = DiscCensus()
+            c.ensure_open(ts=time.time())
+            self._censo_discos = c
+            log.info("[censo-discos] pasada abierta")
+            return c
+        return self._censo_discos if self._censo_discos.abierta else None
+
+    def _anclar_contador_s9(self, frame, ahora: float | None = None) -> None:
+        """Lee el contador del header y fija el denominador, con CADENCIA PROPIA.
+
+        Es un OCR dentro de un handler continuo, así que leerlo por frame es lo que RNF-06
+        prohíbe; y el denominador cambia poquísimo. Releer alguna vez sí hace falta: farmear o
+        desmontar durante la pasada lo mueve, y quedarse con el viejo daría cobertura falsa.
+        """
+        censo = self._censo_discos_abierto()
+        if censo is None:
+            return
+        ahora = time.time() if ahora is None else ahora
+        if ahora - self._s9_contador_ts < _S9_CONTADOR_PERIODO_S:
+            return
+        self._s9_contador_ts = ahora
+        try:
+            n = parse_s9_header_counter(frame, self._ocr)
+        except Exception:
+            log.debug("[censo-discos] no se pudo leer el contador", exc_info=True)
+            return
+        previos = set(censo.avisos)
+        censo.anclar_total(n, ts=ahora)
+        for a in censo.avisos:
+            if a not in previos:
+                log.warning("[censo-discos] %s", a)
+
+    def _censar_disco(self, disc, state: ScreenState) -> None:
+        """Registra un disco emitido en la corrida de censo.
+
+        La identidad es la MISMA de `_disc_identity`, la del dedup de emisión: dos definiciones de
+        "mismo disco" en el mismo flujo sería una de más, y ninguna de las dos cuentas quedaría
+        verificable contra la otra.
+        """
+        censo = self._censo_discos_abierto()
+        if censo is None:
+            return
+        try:
+            from app.core.census_discs import DiscSighting
+            nuevo = censo.observe(DiscSighting(
+                identidad=self._disc_identity(disc),
+                libre=bool(getattr(disc, "equip_libre", False)),
+                dueno=disc.agente_asignado_nombre,
+            ), ts=time.time())
+        except Exception:
+            log.exception("[censo-discos] error registrando el disco")
+            return
+        if nuevo:
+            n, total = censo.progreso
+            log.info("[censo-discos] %d/%s", n, total if total is not None else "?")
+
+    def cerrar_censo_discos(self) -> dict | None:
+        """Cierra la pasada del inventario y devuelve el resumen, o `None` si no había ninguna.
+
+        A diferencia del roster, el resumen incluye **cobertura real** contra el contador de
+        pantalla. Y si quedó corta lo dice, sin resolver por su cuenta si lo que falta son discos
+        sin recorrer o gemelos indistinguibles (RNF-02).
+        """
+        censo = self._censo_discos
+        if censo is None or not censo.abierta:
+            log.info("[censo-discos] no hay ninguna pasada abierta que cerrar")
+            return None
+        censo.cerrar(ts=time.time())
+        r = censo.resumen()
+        log.info("[censo-discos] pasada cerrada — %d/%s registrados · %d con dueño · %d libres "
+                 "· %d sin resolver", r["registrados"], r["total_pantalla"] or "?",
+                 r["con_dueno"], r["libres"], r["sin_resolver"])
+        if r["motivo_incompleto"]:
+            log.warning("[censo-discos] %s", r["motivo_incompleto"])
+        if r["excedente"]:
+            log.warning("[censo-discos] %d identidades por ENCIMA del contador del header — "
+                        "contador viejo o dos pasadas mezcladas", r["excedente"])
+        return r
 
     def _reset_s9_disc_tracking(self) -> None:
         """Olvida el tracking del disco S9 mirado (al salir de S9)."""
@@ -5175,6 +5302,12 @@ class Monitor:
         Es también el único momento en que el censo escribe la DB de dominio, y solo para anotar
         (RNF-01 + gate de readonly dentro de `marcar_huerfanos_en_dominio`).
         """
+        # La hotkey es una sola y hay dos censos. El del inventario se cierra primero si está
+        # abierto: es el que tiene contador, así que cerrarlo produce un número verificable.
+        if self._censo_discos is not None and self._censo_discos.abierta:
+            self.cerrar_censo_discos()
+            if self._census is None or not self._census.abierta:
+                return None
         censo = self._census
         if censo is None or not censo.abierta:
             log.info("[censo] no hay ninguna pasada abierta que cerrar")

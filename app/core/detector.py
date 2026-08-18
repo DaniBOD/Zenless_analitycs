@@ -561,11 +561,88 @@ def crop_grid_selected_badge(frame: np.ndarray, region: tuple = _GRID_REGION) ->
     return crop
 
 
+# --- S9: LIBRE vs NO SÉ ------------------------------------------------------------------------
+# El badge del tile responde tres cosas distintas y hasta 2026-08-18 las dos últimas salían iguales
+# (`None`), que es lo que bloqueaba el censo: 72 de 367 discos no tienen dueño, y sin poder AFIRMAR
+# "está libre" no se los puede persistir sin arriesgar un equipamiento inventado.
+BADGE_CON_DUENO = "con_dueno"        # hay una cara en la esquina del tile
+BADGE_LIBRE = "libre"                # se leyó la esquina y NO hay nadie
+BADGE_NO_LOCALIZADO = "no_localizado"  # no se pudo leer (sin tile resaltado) — NO es lo mismo
+
+# Presencia por NITIDEZ (|Laplaciano| medio del disco interior), no por saturación.
+# `_grid_badge_present` (blob saturado + Hough) da True en los 4 libres de
+# `09_Inventario_discos_general`: la esquina libre tiene barra de nivel amarilla + arte gris, con
+# saturación y circularidad de sobra. Es el mismo hallazgo de S17
+# (audit/free_disc_presence_validation_20260620.md: "no existe umbral que la separe") y de RF-15 en
+# armas ("el área saturada SE SOLAPA"). La nitidez mide otra cosa: una cara tiene detalle, un
+# degradé no tiene ninguno.
+#
+# Medido sobre los 11 tiles etiquetados:   equipado 55.89-81.44   ·   libre 12.51-15.70   (3.56×)
+# Sobre los 504 tiles de la grilla completa la distribución es bimodal y la franja 20-35 está
+# VACÍA. Por eso 30 no es un umbral al borde: cae en el medio del hueco.
+_S9_BADGE_NITIDEZ_MIN = 30.0
+_S9_BADGE_DISCO_F = 0.55             # fracción del lado usada como disco interior
+
+
+@dataclass(frozen=True)
+class GridBadge:
+    """Lectura del badge de dueño de un tile de grilla, con el PORQUÉ cuando no hay recorte."""
+
+    estado: str                       # BADGE_CON_DUENO | BADGE_LIBRE | BADGE_NO_LOCALIZADO
+    nitidez: float | None = None      # la evidencia; None si no hubo dónde medir
+    crop: np.ndarray | None = None    # solo con dueño — es lo que el matcher nombra
+
+
+def _badge_nitidez(crop: np.ndarray) -> float:
+    """|Laplaciano| medio dentro del disco interior del recorte."""
+    g = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    h, w = g.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    disco = ((xx - w / 2) ** 2 + (yy - h / 2) ** 2) < (_S9_BADGE_DISCO_F * min(h, w) / 2) ** 2
+    return float(np.abs(cv2.Laplacian(g, cv2.CV_32F))[disco].mean())
+
+
+def read_s9_selected_badge(frame: np.ndarray) -> GridBadge:
+    """Badge del tile seleccionado del inventario global S9, distinguiendo los tres desenlaces.
+
+    Nunca lanza: ante cualquier fallo devuelve `BADGE_NO_LOCALIZADO`, que es la respuesta honesta
+    —no se pudo leer— y la única que no habilita ninguna escritura.
+    """
+    try:
+        if frame is None or frame.size == 0:
+            return GridBadge(BADGE_NO_LOCALIZADO)
+        bb = _selected_grid_tile_bbox(frame, _S9_GRID_REGION)
+        if bb is None:
+            return GridBadge(BADGE_NO_LOCALIZADO)
+        tx, ty, tw, th = bb
+        cx = int(tx + _BADGE_CX_F * tw)
+        cy = int(ty + _BADGE_CY_F * th)
+        r = int(_BADGE_R_F * tw)
+        if r < 8:
+            return GridBadge(BADGE_NO_LOCALIZADO)
+        H, W = frame.shape[:2]
+        crop = frame[max(0, cy - r):min(H, cy + r), max(0, cx - r):min(W, cx + r)]
+        if not crop.size:
+            return GridBadge(BADGE_NO_LOCALIZADO)
+        nit = _badge_nitidez(crop)
+        if nit < _S9_BADGE_NITIDEZ_MIN:
+            # Se leyó la esquina y no hay cara. Sin recorte a propósito: devolverlo invitaría al
+            # matcher a nombrar el arte del disco (el falso "Cissia" de los libres, 5R.L.7.2).
+            return GridBadge(BADGE_LIBRE, nitidez=nit)
+        return GridBadge(BADGE_CON_DUENO, nitidez=nit, crop=crop)
+    except Exception:
+        return GridBadge(BADGE_NO_LOCALIZADO)
+
+
 def crop_s9_selected_badge(frame: np.ndarray) -> np.ndarray | None:
     """Badge de dueño del tile seleccionado del INVENTARIO GLOBAL S9 (esquina sup-der,
     a la derecha del nº de slot). Reusa `crop_grid_selected_badge` con la región S9.
-    El badge es del mismo tipo que el de S17 → mismo matcher/librería (avatar_badge_v2)."""
-    return crop_grid_selected_badge(frame, _S9_GRID_REGION)
+    El badge es del mismo tipo que el de S17 → mismo matcher/librería (avatar_badge_v2).
+
+    Vista de un solo campo de `read_s9_selected_badge`: mismo contrato de siempre (recorte o None),
+    pero la presencia la decide la NITIDEZ y no el gate por saturación, que en S9 daba positivo en
+    los 4 discos libres medidos. Quien necesite saber POR QUÉ es None usa el lector completo."""
+    return read_s9_selected_badge(frame).crop
 
 
 def crop_detail_badge(frame: np.ndarray) -> np.ndarray | None:

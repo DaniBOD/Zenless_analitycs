@@ -94,14 +94,23 @@ def test_conf_y_score_miden_cosas_distintas():
 
 
 def test_el_matcher_expone_al_mas_parecido_aunque_no_pase_el_umbral():
-    """Medido: 'Hugo' —un PJ que no se posee— da 0.500 contra Zhao, por debajo del umbral de
-    identificación (0.55). Exponer ese número es lo que permite separar 'no lo reconozco' de
-    'lo leí mal': sin él, ambos son None."""
+    """'Hugo' —un PJ que no se posee— no se identifica, y el matcher igual dice a quién vio.
+    Exponer ese número es lo que separa 'no lo reconozco' de 'lo leí mal': sin él, ambos son None.
+
+    El *contenido* de esa evidencia cambió con el veto de la declaración, y el cambio es la
+    mejora: antes el mejor parecido era Zhao con 0.500 (por debajo del umbral, de casualidad);
+    ahora, si el roster está declarado, es el propio Hugo con 1.000 y una abstención deliberada.
+    El test acepta los dos mundos porque una DB recién clonada no tiene declaración todavía."""
     _roster_o_skip()
+    from app.core.roster_declaration import no_poseidos_declarados
+    from app.db.connection import get_db_path
     nombre, _rol, _elem, cand, sim = _match_agent_scored("Hugo")
     assert nombre is None, "no debería matchear a nadie"
     assert cand is not None and sim is not None
-    assert 0.4 <= sim < 0.55
+    if "Hugo" in no_poseidos_declarados(get_db_path()):
+        assert cand == "Hugo" and sim == pytest.approx(1.0),             "declarado no poseído: el veto lo reconoce por nombre y se abstiene"
+    else:
+        assert 0.4 <= sim < 0.55, "sin declaración: gana un parecido que no llega al umbral"
 
 
 def test_cuando_hay_match_el_score_describe_al_elegido():

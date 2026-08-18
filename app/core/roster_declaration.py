@@ -33,19 +33,25 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-#: Tiene evidencia de posesión (discos equipados o stats por encima del default). **No se puede
-#: destildar**: su build es la prueba. Ojo — el día después de reconstruir la DB nadie califica,
-#: y está bien: se está declarando desde cero.
+#: Tiene evidencia de posesión. **No se puede destildar**: su build es la prueba.
 CONFIRMADO = "confirmado"
 
-#: Sin evidencia. El usuario decide.
-DECLARABLE = "declarable"
+#: Está en `agents` pero sin evidencia. La declaración del usuario ES la evidencia — más débil que
+#: 6 discos, pero suficiente para no ofrecer borrarlo por accidente. Destildable.
+DECLARADO = "declarado"
 
-#: Columnas de `agents` cuya presencia prueba que el PJ se posee (el default de una fila recién
-#: creada las deja en NULL). Se consultan las que existan: la DB reconstruida las tiene todas en
-#: NULL a propósito.
-_COLS_EVIDENCIA = ("nivel", "pv", "ataque", "defensa", "impacto", "prob_critico",
-                   "dano_critico", "tasa_anomalia", "maestria_anomalia", "rec_energia")
+#: Ni declarado ni con evidencia: existe en el juego y no es tuyo.
+NO_OBTENIDO = "no_obtenido"
+
+#: Predicado de confirmación, textual del diseño (`editor-screen.jsx`):
+#:
+#:     const evidencia = p => p.tiene && (p.d > 0 || p.n > 1);
+#:
+#: **discos > 0 O nivel > 1**, y no "algún stat cargado". La diferencia importa: es exactamente lo
+#: que salva a Aria (0 discos, Nv 40) y lo que deja a Remielle Dan (0 discos, Nv 1) sin evidencia
+#: — el falso positivo que motivó el tercer estado. Ojo: el día después de reconstruir la DB nadie
+#: califica, y está bien: se está declarando desde cero.
+_NIVEL_DEFAULT = 1
 
 
 @dataclass(frozen=True)
@@ -59,7 +65,12 @@ class PersonajeDeclarable:
     elemento: str | None = None
     rol: str | None = None
     faccion: str | None = None
+    nivel: int | None = None
     discos: int = 0
+    #: Nombre del PJ base si esta fila es una variante de atuendo (`Billy Estelar` → `Billy`).
+    variante_de: str | None = None
+    #: Dos grafías del mismo personaje entre los archivos de arte (`Lichter` / `Lighter`).
+    grafia_en_conflicto: bool = False
 
     @property
     def poseido_actual(self) -> bool:
@@ -69,6 +80,16 @@ class PersonajeDeclarable:
     @property
     def bloqueado(self) -> bool:
         return self.estado == CONFIRMADO
+
+    def tooltip_bloqueo(self) -> str:
+        """El texto del diseño. Un control deshabilitado sin explicación se lee como un bug — y sin
+        la última línea, como un callejón sin salida."""
+        detalle = f"{self.discos} discos equipados"
+        if self.nivel is not None:
+            detalle += f" y nivel {self.nivel}"
+        return (f"NO SE PUEDE DESTILDAR\n\n{self.nombre} tiene {detalle}. Eso es prueba de "
+                "posesión: destildarlo declararía algo que la evidencia contradice, y borraría "
+                "la build.\n\nPara quitarlo hay que borrar su build primero, en la pestaña Discos.")
 
 
 @dataclass
@@ -122,12 +143,10 @@ def catalogo_declarable(
         con = _conectar(db_path, readonly=True)
         try:
             cols = {r[1] for r in con.execute("PRAGMA table_info(agents)")}
-            evidencia = [c for c in _COLS_EVIDENCIA if c in cols]
-            identidad = [c for c in ("rango", "elemento", "rol", "faccion") if c in cols]
-            sel = ", ".join(["nombre", *identidad, *evidencia])
+            campos = [c for c in ("rango", "elemento", "rol", "faccion", "nivel") if c in cols]
+            sel = ", ".join(["nombre", *campos])
             for r in con.execute(f"SELECT {sel} FROM agents"):
-                fila = dict(zip([ "nombre", *identidad, *evidencia], r, strict=True))
-                fila["_evidencia"] = any(fila.get(c) is not None for c in evidencia)
+                fila = dict(zip(["nombre", *campos], r, strict=True))
                 detalle[str(fila["nombre"])] = fila
             if "inventory_discs" in _tablas(con):
                 q = ("SELECT a.nombre, COUNT(d.id) FROM agents a "
@@ -138,16 +157,25 @@ def catalogo_declarable(
     except sqlite3.Error:
         log.exception("[roster] no se pudo leer `agents` para armar el catálogo declarable")
 
+    variantes = _variantes_de_atuendo(set(detalle))
+    grafias = _grafias_en_conflicto(nombres)
+
     salida: list[PersonajeDeclarable] = []
     for nombre in nombres:
         fila = detalle.get(nombre)
         n_discos = discos.get(nombre, 0)
-        if fila and n_discos:
-            estado, motivo = CONFIRMADO, f"{n_discos} disco(s) asignado(s) — es prueba de posesión"
-        elif fila and fila["_evidencia"]:
-            estado, motivo = CONFIRMADO, "tiene stats cargados por encima del default"
+        nivel = (fila or {}).get("nivel")
+
+        if fila is None:
+            estado, motivo = NO_OBTENIDO, ""
+        elif n_discos > 0:
+            estado = CONFIRMADO
+            motivo = f"{n_discos} discos" + (f" · Nv {nivel}" if nivel is not None else "")
+        elif nivel is not None and nivel > _NIVEL_DEFAULT:
+            estado, motivo = CONFIRMADO, f"Nv {nivel} sobre el default"
         else:
-            estado, motivo = DECLARABLE, ""
+            estado, motivo = DECLARADO, "declarado por vos · sin datos aún"
+
         salida.append(PersonajeDeclarable(
             nombre=nombre,
             en_agents=fila is not None,
@@ -157,9 +185,48 @@ def catalogo_declarable(
             elemento=(fila or {}).get("elemento"),
             rol=(fila or {}).get("rol"),
             faccion=(fila or {}).get("faccion"),
+            nivel=nivel,
             discos=n_discos,
+            variante_de=variantes.get(nombre),
+            grafia_en_conflicto=nombre in grafias,
         ))
     return salida
+
+
+def _variantes_de_atuendo(bases: set[str]) -> dict[str, str]:
+    """Detecta las variantes de atuendo por el nombre: `Billy Estelar` → `Billy`.
+
+    Decisión B7 del diseño: **celda propia, ni anidada ni oculta.** Tienen rango, rol, mindscape y
+    build propios (Billy Estelar es S/Disruptivos mientras Billy es A/Ataque) y compiten por discos
+    de verdad — esconderlas haría que un disco "desaparezca" del inventario visible. Lo que evita
+    leerlas como dos personajes más es la marca, no la ausencia.
+    """
+    salida: dict[str, str] = {}
+    for nombre in bases:
+        if ":" in nombre:                                   # `N.º 0: Anby` → `Anby`
+            cola = nombre.split(":", 1)[1].strip()
+            if cola in bases:
+                salida[nombre] = cola
+                continue
+        partes = nombre.split()                             # `Billy Estelar` → `Billy`
+        if len(partes) > 1 and partes[0] in bases:
+            salida[nombre] = partes[0]
+    return salida
+
+
+def _grafias_en_conflicto(nombres: Sequence[str]) -> set[str]:
+    """Nombres que difieren en una sola letra — el caso `Lichter` / `Lighter`.
+
+    **No se dedupean.** El nombre correcto es el que muestre la pantalla del juego; elegir uno por
+    parecido, o por cuántos archivos de arte tiene cada grafía, es exactamente el error que ya nos
+    mordió con los nombres de los sets de discos. Las dos ocupan lugar y la pantalla lo dice.
+    """
+    conflicto: set[str] = set()
+    for i, a in enumerate(nombres):
+        for b in nombres[i + 1:]:
+            if len(a) == len(b) and sum(x != y for x, y in zip(a, b, strict=True)) == 1:
+                conflicto.update((a, b))
+    return conflicto
 
 
 # --- la escritura -----------------------------------------------------------------------------
@@ -256,6 +323,37 @@ def declarar(
 
     log.info("[roster] declaración guardada — %s", res.resumen())
     return res
+
+
+def no_poseidos_declarados(db_path: Path | str | None = None) -> set[str]:
+    """Los nombres que el usuario declaró **no** tener, en la última tanda.
+
+    Es la primera lista autoritativa de lo que NO está en la cuenta, y por eso vale para algo que
+    la observación no puede hacer: **desmentir** un match difuso. El matcher elige el más parecido
+    de `agents`, así que frente a un personaje ajeno no tiene la opción correcta y gana un parecido
+    coincidental (`Norma→Nekomata 0.615`). Con estos nombres a mano puede abstenerse.
+
+    Solo la **última** tanda: una declaración vieja que siguiera pesando vetaría para siempre a un
+    PJ que el usuario acaba de sacar. Ante cualquier problema devuelve el conjunto vacío — esto
+    mejora la identificación, no puede ser un requisito para que funcione.
+    """
+    try:
+        con = _conectar(db_path, readonly=True)
+    except sqlite3.Error:
+        return set()
+    try:
+        if "roster_declarations" not in _tablas(con):
+            return set()
+        fila = con.execute("SELECT MAX(ts) FROM roster_declarations").fetchone()
+        ts = fila[0] if fila else None
+        if not ts:
+            return set()
+        return {r[0] for r in con.execute(
+            "SELECT nombre FROM roster_declarations WHERE ts = ? AND poseido = 0", (ts,))}
+    except sqlite3.Error:
+        return set()
+    finally:
+        con.close()
 
 
 # --- helpers ----------------------------------------------------------------------------------

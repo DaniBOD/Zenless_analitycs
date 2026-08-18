@@ -21,6 +21,7 @@ Layout de columnas (confirmado por DaniBOD):
 """
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 import tomllib
@@ -36,6 +37,8 @@ if TYPE_CHECKING:
     from app.core.ocr_backend import OcrBackend
 
 from app.core.capturer import crop_named_roi
+
+log = logging.getLogger(__name__)
 
 # Roles validos en DB
 _ROLES_DB: set[str] = {
@@ -614,6 +617,37 @@ def _get_roster() -> list[dict]:
     return _ROSTER_CACHE
 
 
+_NO_POSEIDOS_CACHE: list[dict] | None = None
+
+
+def _get_no_poseidos() -> list[dict]:
+    """Los nombres que el usuario DECLARÓ no tener, como **señuelos** del matcher.
+
+    No son candidatos a identificar —no son suyos— pero sí a ganar: cuando el más parecido es uno
+    de éstos, la respuesta correcta es abstenerse, no devolver el segundo. Se excluye a los que
+    igual tienen fila en `agents`: ahí la declaración y los datos se contradicen, y una fila con
+    build no se apaga por una casilla destildada (ese conflicto lo marca `declarar()` en `notas`).
+
+    Read-only y tolerante a todo: sin declaración la lista queda vacía y el matcher se comporta
+    como antes.
+    """
+    global _NO_POSEIDOS_CACHE
+    if _NO_POSEIDOS_CACHE is None:
+        senuelos: list[dict] = []
+        try:
+            from app.core.roster_declaration import no_poseidos_declarados
+            propios = {ag["norm"] for ag in _get_roster()}
+            for nombre in sorted(no_poseidos_declarados(_active_db_path())):
+                norm = _norm_name(nombre)
+                if not norm or norm in propios:
+                    continue
+                senuelos.append({"nombre": nombre, "norm": norm, "tokens": set(norm.split())})
+        except (ImportError, sqlite3.Error, OSError):
+            senuelos = []
+        _NO_POSEIDOS_CACHE = senuelos
+    return _NO_POSEIDOS_CACHE
+
+
 def _name_similarity(ocr_tokens: set[str], ocr_norm: str,
                      db_tokens: set[str], db_norm: str) -> float:
     """
@@ -688,6 +722,24 @@ def _match_agent_scored(
             best_score = score
             best = ag
             best_sim = name_sim
+    # Capa 4: VETO por declaración. Si un PJ que el usuario declaró no tener se parece MÁS que
+    # cualquiera del roster, lo que hay en pantalla es ése — y la respuesta es abstenerse, no
+    # devolver al segundo. Sin esto el matcher no tiene la opción correcta disponible y elige un
+    # parecido coincidental que igual supera el umbral (`Norma→Nekomata 0.615`, QA 2026-08-17),
+    # con lo que el latch le atribuye al PJ equivocado todo lo que venga después.
+    # Tiene que GANAR, no empatar: vetar por parecerse *tanto como* el propio convertiría la
+    # declaración en una forma de apagar la identificación de un PJ con build.
+    veto = None
+    veto_sim = -1.0
+    for ns in _get_no_poseidos():
+        s_ns = _name_similarity(ocr_tokens, ocr_norm, ns["tokens"], ns["norm"])
+        if s_ns > veto_sim:
+            veto_sim, veto = s_ns, ns
+    if veto is not None and veto_sim > mejor_sim:
+        log.debug("veto por declaracion: %r se parece a %r (%.3f), declarado no poseido",
+                  name_text, veto["nombre"], veto_sim)
+        return (None, None, None, veto["nombre"], veto_sim)
+
     if best is None:
         cand = mejor_parecido["nombre"] if mejor_parecido is not None else None
         return (None, None, None, cand, (mejor_sim if mejor_parecido is not None else None))

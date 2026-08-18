@@ -851,6 +851,63 @@ def _ocr_s9_detail_lines(frame: np.ndarray, ocr: "OcrBackend"):
     ]
 
 
+# --- Contador del header S9: el denominador del censo de discos --------------------------------
+# `Pistas de disco [339/3000]`. Es lo que el censo del roster no tiene: el menú de personajes no
+# trae `N/M`, y por eso allá el cierre lo declara el usuario (F8). Acá el denominador está escrito
+# en pantalla, igual que el `N/300` del desmontaje — y vale la misma doctrina: **el contador es la
+# autoridad del conteo**; la grilla sólo aparea, porque el viewport no ve todo el inventario.
+_S9_HEADER_ROI = (0.030, 0.100, 0.220, 0.050)     # x, y, w, h normalizados
+
+# Capacidad del inventario. Se exige como ANCLA: sin ella, cualquier par de números de cualquier
+# pantalla se leería como un inventario (la batería del header superior dice `237/240`).
+_S9_CAPACIDAD = 3000
+
+_RE_S9_COUNTER = re.compile(r"(\d{1,4})\s*/\s*" + str(_S9_CAPACIDAD) + r"(?!\d)")
+
+
+def _s9_counter_from_text(text: str) -> int | None:
+    """Extrae `N` de un `N/3000`. `None` si no aparece el ancla o el número es imposible.
+
+    A diferencia del contador del desmontaje no hace falta normalizar confusiones de OCR: medido
+    sobre los 14 fixtures de `09_Inventario_discos_general`, PaddleOCR lee el header limpio en
+    14/14. Si algún día aparece un `3o00`, acá va el `str.translate` — no antes (RNF-02: no se
+    inventan arreglos para fallas que no se observaron).
+    """
+    if not text:
+        return None
+    m = _RE_S9_COUNTER.search(text)
+    if m is None:
+        return None
+    try:
+        n = int(m.group(1))
+    except ValueError:
+        return None
+    return n if 0 <= n <= _S9_CAPACIDAD else None
+
+
+def parse_s9_header_counter(frame: np.ndarray, ocr: "OcrBackend") -> int | None:
+    """Cuántos discos tiene la cuenta, según el header del inventario global.
+
+    `None` significa **"no se pudo leer"**, no "cero": quien lo consuma debe declarar el total
+    desconocido en vez de sustituirlo por lo que alcanzó a contar en la grilla (que subcuenta
+    siempre, porque el viewport no ve todo).
+    """
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return None
+    try:
+        from app.core.capturer import crop_roi
+        crop = crop_roi(frame, _S9_HEADER_ROI)
+        if crop is None or getattr(crop, "size", 0) == 0:
+            return None
+        rows = ocr.text_with_bboxes(crop)
+        if not rows:
+            return None
+        return _s9_counter_from_text(" ".join(t for t, _c, _b in rows))
+    except Exception:
+        log.debug("S9: no se pudo leer el contador del header", exc_info=True)
+        return None
+
+
 def parse_disc_s9(frame: np.ndarray, ocr: "OcrBackend", slot: int | None = None) -> DiscParsed:
     """Extrae el disco SELECCIONADO del inventario global S9 (panel derecho).
 
