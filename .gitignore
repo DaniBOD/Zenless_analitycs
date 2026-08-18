@@ -63,6 +63,8 @@ Desktop.ini
 # ────────────── DB runtime artifacts ──────────────
 # Backups intermedios creados por scripts (regenerables — no se versionan)
 db/danibod_zzz_v2.backup_*.db
+# DB candidata que deja `rebuild_account_db.py --dry-run` para inspección (el swap la consume).
+db/danibod_zzz_v2.rebuild_*.db
 db/*.db-journal
 db/*.db-wal
 db/*.db-shm

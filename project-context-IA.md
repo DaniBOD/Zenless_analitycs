@@ -40,7 +40,24 @@ Sistema de análisis y optimización de cuenta para ZZZ porque el juego carece d
 
 ## 3. Estado real de la DB (verificado 2026-05-01)
 
-**31 tablas de usuario** (32 si se cuenta `sqlite_sequence`).
+**32 tablas de usuario** (33 si se cuenta `sqlite_sequence`).
+
+> ⚠️ **La DB se RECONSTRUYÓ el 2026-08-17** (`app/scripts/rebuild_account_db.py`, decisión de
+> Daniel). El inventario y los stats de cuenta arrancan **en cero** para re-censarse observando; lo
+> que el censo **no puede** recuperar se conservó entero.
+>
+> | | qué pasó |
+> |---|---|
+> | **conservado** | catálogo del juego (220 filas) · investigación de scoring (532: thresholds, preferencias, sinergias, despertares) · identidad de los 51 PJs **con su `id`** (las FK cuelgan de ahí) |
+> | **vaciado** | `inventory_discs` 367→0 · `inventory_disc_evaluations` 334→0 · `agent_discs` 270→0 · `inventory_weapons` 50→0 · `optimizer_pending_actions` 423→0 |
+> | **NULLeado en `agents`** | `nivel` + los 10 stats de `sync_agent_stats._STAT_MAP` + `weapon_*` + `set_*` + `disco6_main` |
+> | **⚠️ arrastrado sin reverificar** | `mindscape`, `perforacion`, `bono_dano_elemento` — son stats, pero **S18 no los parsea**, así que vaciarlos habría sido pérdida irrecuperable |
+>
+> Respaldo permanente con TODO lo anterior: `audit/danibod_zzz_v2.pre_censo_20260817_193905.db`.
+> Reporte: `audit/rebuild_db_20260817_193905.md`.
+>
+> **Las filas de abajo describen la DB PRE-reconstrucción.** Se dejan porque documentan de dónde
+> salió cada dato; para el número de hoy, `snapshot_counts.py`.
 
 | Capa | Tabla | Filas | Notas |
 |------|-------|------:|-------|
@@ -67,6 +84,7 @@ Sistema de análisis y optimización de cuenta para ZZZ porque el juego carece d
 | 7 | `lategame_runs` / `lategame_run_damage` | 0 / 0 | Captura F11 |
 | 7 | `tier_list_personal` | 0 | Snapshots atómicos (no UPDATE) |
 | 7 | `prydwen_tier_snapshots` | 0 | Snapshot semanal scraper |
+| 8 Censo | `roster_declarations` | **0** | Mig 20 (2026-08-17). **El roster lo DECLARA el usuario**; el OCR pasó a verificación. Nació del QA del censo: de 6 PJs no obtenidos solo 1 dejó registro y **4 de 6 matchean a un PJ propio** por encima del umbral (`Lichter→Alice 0.667`), envenenando el latch. Cada guardado escribe la **tanda completa** (los ~58 con su 1 o su 0) ⇒ historial + el **denominador**, que la observación nunca puede dar. Grupo `DECLARADO` del rebuild: se conserva entera si la DB se vuelve a reconstruir |
 | 7 | `team_synergy_adjustments` | 0 | Auditoría retro-feedback bayesiano |
 | 8 RF-14 | `weapon_passives_structured` | 0 | Modelado formal pasivas (15 trigger_tipo) |
 | 8 | `content_profiles` | 4 | seed: shiyu_critical, da, hollow_zero, general |

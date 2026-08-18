@@ -33,6 +33,22 @@ def db_path(tmp_path_factory):
         pytest.skip("DB no disponible — ejecutar desde la raíz del repo.")
     copia = tmp_path_factory.mktemp("optimizer_db") / "danibod_zzz_v2.db"
     shutil.copy2(REAL_DB_PATH, copia)
+
+    # El optimizador arma builds ELIGIENDO entre los discos que hay. Con el inventario vacío no
+    # devuelve "una build mala": devuelve builds de 0 discos y score 0, y los asserts caen por una
+    # precondición que no se cumple, no por un defecto.
+    #
+    # Pasa de verdad desde el 2026-08-17: la DB se reconstruyó para re-censar la cuenta observando
+    # (`app/scripts/rebuild_account_db.py`), y el inventario arranca en 0 a propósito. El skip se
+    # cura solo — en cuanto el censo cargue discos, el test vuelve sin tocar nada.
+    con = sqlite3.connect(copia)
+    try:
+        n = con.execute("SELECT COUNT(*) FROM inventory_discs WHERE descartado = 0").fetchone()[0]
+    finally:
+        con.close()
+    if n == 0:
+        pytest.skip("inventario vacío (DB reconstruida) — el optimizador necesita discos para "
+                    "elegir; volvé a correr cuando el censo haya cargado el inventario.")
     return copia
 
 
