@@ -76,12 +76,15 @@ for _dep in ("requests", "urllib3", "certifi", "charset_normalizer", "idna"):
 # Data files que tienen que ir adentro del bundle
 # ---------------------------------------------------------------------------
 datas = [
-    # Templates del detector (PNG)
-    (str(REPO / "app" / "resources" / "templates"), "app/resources/templates"),
-    # Configuración (rois.toml + futuros)
+    # La carpeta app/resources/ ENTERA: templates del detector, icon.ico, farm_nodes.toml,
+    # avatar_refs/, avatar_reject{,_det}/, engine_refs/, slot_digits{,_s5,_extraccion}/.
+    # Enumerar carpeta por carpeta ya falló una vez (2026-08-18: farm_nodes.toml quedó
+    # afuera → FileNotFoundError en cada arranque al cargar el catálogo de nodos S13).
+    # Todo lo que hay acá se lee en runtime y pesa ~6 MB en total: irrelevante al lado
+    # del stack de paddle, y así un recurso nuevo entra al bundle sin tocar el spec.
+    (str(REPO / "app" / "resources"),               "app/resources"),
+    # Configuración (rois.toml + defaults.toml)
     (str(REPO / "app" / "config"),                  "app/config"),
-    # Icono
-    (str(REPO / "app" / "resources" / "icon.ico"),  "app/resources"),
     # DB (sólo lectura desde el .exe; el usuario puede sobrescribirla)
     (str(REPO / "db" / "danibod_zzz_v2.db"),        "db"),
     # Assets para asset_resolver (Hito 2.7) — set logos, splash arts, avatares

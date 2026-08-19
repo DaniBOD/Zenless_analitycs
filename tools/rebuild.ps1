@@ -33,9 +33,31 @@ Write-Host "Repo root: $repoRoot"
 #    Python (App Execution Alias) which has numpy 2.x + torch and NO paddleocr ->
 #    a degraded, non-deterministic bundle (regression seen 2026-06-06). See
 #    Documentacion/Dev_IA/2026-05-31_Hito_2.8_Migracion_Python_PaddleOCR.md.
-$venvPy = Join-Path $repoRoot ".venv\Scripts\python.exe"
-if (Test-Path $venvPy) {
-    $py = $venvPy
+#    In a git WORKTREE there is no .venv next to the spec - it lives in the main
+#    worktree - so look there too before giving up. Without this the guard below
+#    aborts every build launched from a worktree (seen 2026-08-18), which reads as
+#    a broken build env when the env is simply somewhere else. 'git rev-parse
+#    --git-common-dir' resolves to the MAIN repo's .git from any worktree; its
+#    parent is the main worktree root.
+$venvCandidates = @(Join-Path $repoRoot ".venv\Scripts\python.exe")
+try {
+    $commonDir = & git -C $repoRoot rev-parse --git-common-dir 2>$null
+    if ($LASTEXITCODE -eq 0 -and $commonDir) {
+        if (-not [System.IO.Path]::IsPathRooted($commonDir)) {
+            $commonDir = Join-Path $repoRoot $commonDir
+        }
+        $mainRoot = (Resolve-Path (Join-Path $commonDir "..")).Path
+        $venvCandidates += (Join-Path $mainRoot ".venv\Scripts\python.exe")
+    }
+} catch {
+    # git ausente o no es un repo: nos quedamos con el candidato local.
+}
+
+$py = $null
+foreach ($cand in $venvCandidates) {
+    if (Test-Path $cand) { $py = $cand; break }
+}
+if ($py) {
     Write-Host "Interpreter: .venv ($py)" -ForegroundColor Green
 } else {
     $py = "python"
