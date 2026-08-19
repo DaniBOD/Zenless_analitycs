@@ -166,3 +166,66 @@ def test_observar_despues_de_cerrar_no_reabre_la_corrida():
     mon.cerrar_censo_discos()
     mon._censar_disco(_disco(2), _Estado())
     assert mon.censo_discos.registrados == 1
+
+
+# --- la autoridad de la identidad (bug de campo 2026-08-18) -----------------------------------
+
+class _Res:
+    """SyncResult mínimo: al censo sólo le importa `disc_id`, que es la fila que la persistencia
+    decidió tocar."""
+    def __init__(self, disc_id, trigger="s17_insert"):
+        self.disc_id, self.trigger = disc_id, trigger
+
+
+def test_el_MISMO_disco_con_el_set_leido_distinto_cuenta_UNA_vez():
+    """El bug medido en vivo. El OCR lee el nombre del set inconsistente entre pasadas —
+    `Firmamento Ilameante` (I mayúscula) vs `Firmamento llameante` (l minúscula)— y el
+    normalizador NO los une, porque son caracteres distintos.
+
+    El resolvedor difuso de la persistencia sí los une: devolvió `libre_update id=7`, o sea "este
+    disco ya lo tenía". El censo, calculando su propia identidad sobre el string, lo contó como
+    nuevo: 8/405 con 7 filas en la DB.
+
+    Quien decide si un disco es nuevo es **la persistencia**, que compara contra el `set_id`
+    resuelto. El censo cuenta esa decisión; no la recalcula."""
+    mon = _mon()
+    d1 = _disco(1); d1.set_name_canon = "Firmamento Ilameante"
+    d2 = _disco(1); d2.set_name_canon = "Firmamento llameante"
+    mon._censar_disco(d1, _Estado(), _Res(7))
+    mon._censar_disco(d2, _Estado(), _Res(7, "libre_update"))
+    assert mon.censo_discos.registrados == 1, "es el mismo disco: misma fila en la DB"
+
+
+def test_dos_filas_distintas_son_dos_discos():
+    mon = _mon()
+    mon._censar_disco(_disco(1), _Estado(), _Res(7))
+    mon._censar_disco(_disco(2), _Estado(), _Res(8))
+    assert mon.censo_discos.registrados == 2
+
+
+def test_sin_persistencia_cae_a_la_identidad_parseada_y_lo_MARCA():
+    """En read-only no hay fila que citar, así que el censo vuelve a la identidad del parser — que
+    es justamente la que puede desdoblarse. Sigue contando (una pasada en seco tiene que poder
+    medirse) pero deja dicho cuántos conteos NO están confirmados contra la DB, en vez de
+    presentar un número con más autoridad de la que tiene."""
+    mon = _mon()
+    mon._censar_disco(_disco(1), _Estado(), None)
+    c = mon.censo_discos
+    assert c.registrados == 1
+    assert c.provisorios == 1
+
+
+def test_un_disco_confirmado_no_cuenta_como_provisorio():
+    mon = _mon()
+    mon._censar_disco(_disco(1), _Estado(), _Res(7))
+    assert mon.censo_discos.provisorios == 0
+
+
+def test_un_resultado_sin_fila_real_no_se_toma_como_autoridad():
+    """`disc_id=-1` es lo que devuelve el camino de read-only: no es una fila, es un placeholder.
+    Tomarlo como identidad colapsaría TODOS los discos en uno."""
+    mon = _mon()
+    mon._censar_disco(_disco(1), _Estado(), _Res(-1, "readonly"))
+    mon._censar_disco(_disco(2), _Estado(), _Res(-1, "readonly"))
+    assert mon.censo_discos.registrados == 2
+    assert mon.censo_discos.provisorios == 2

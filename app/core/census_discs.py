@@ -38,9 +38,10 @@ COMPLETA = "completa"
 class DiscSighting:
     """Un disco visto en el inventario.
 
-    `identidad` es opaca acá a propósito: la calcula quien observa (el monitor, con
-    `_disc_identity`) y el censo sólo la usa como clave. Así la definición de "mismo disco" vive
-    en un solo lugar y este módulo no arrastra el parser.
+    `identidad` es opaca acá a propósito: el censo sólo la usa como clave, así que la definición
+    de "mismo disco" vive en un solo lugar y este módulo no arrastra el parser. Quien la provee es
+    el monitor, y desde el 2026-08-18 la saca de la FILA que la persistencia decidió tocar — no de
+    un recálculo propio (ver `confirmada`).
 
     `libre` es una AFIRMACIÓN (se leyó la esquina del tile y no hay avatar), no la ausencia de
     `dueno`. Los dos falsos —`libre=False, dueno=None`— significan "no se pudo resolver", y el
@@ -51,6 +52,11 @@ class DiscSighting:
     identidad: tuple
     libre: bool = False
     dueno: str | None = None
+    #: `True` si la identidad viene de la fila que la persistencia decidió tocar (autoridad
+    #: única), `False` si se cayó a la identidad del parser. Importa porque la del parser se
+    #: desdobla: el OCR lee el nombre del set inconsistente entre pasadas
+    #: (`Firmamento Ilameante` / `Firmamento llameante`) y el conteo se infla en silencio.
+    confirmada: bool = True
 
 
 @dataclass
@@ -137,6 +143,15 @@ class DiscCensus:
         return len(self._vistos)
 
     @property
+    def provisorios(self) -> int:
+        """Registrados cuya identidad NO está confirmada contra una fila de la DB.
+
+        Se cuentan igual —una pasada en seco tiene que poder medirse— pero se declaran aparte:
+        presentar el total como si toda la cobertura tuviera el mismo respaldo le daría al número
+        más autoridad de la que tiene."""
+        return sum(1 for s in self._vistos.values() if not s.confirmada)
+
+    @property
     def libres(self) -> int:
         return sum(1 for s in self._vistos.values() if s.libre)
 
@@ -212,6 +227,7 @@ class DiscCensus:
             "libres": self.libres,
             "con_dueno": self.con_dueno,
             "sin_resolver": self.sin_resolver,
+            "provisorios": self.provisorios,
             "avisos": self.avisos,
             "motivo_incompleto": self.motivo_incompleto(),
         }

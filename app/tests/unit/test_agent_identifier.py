@@ -237,3 +237,43 @@ def test_persistencia_round_trip(tmp_path):
     assert "Nangong Yu" in b.names
     res = b.identify(s8)
     assert res is not None and res[0] == "Nangong Yu"
+
+
+def test_los_baselines_viven_DENTRO_del_paquete_app():
+    """Un baseline fuera de `app/` es una red de emergencia que NO existe en el `.exe`.
+
+    `_BASELINES` apuntaba a `audit/`, resuelto como `Path(__file__).parents[2] / "audit"`. En
+    desarrollo eso es la raíz del repo y anda. Congelado, `__file__` es
+    `_internal/app/core/agent_identifier.py`, así que `parents[2]` es `_internal` y la ruta queda
+    en `_internal/audit/` — una carpeta que el spec nunca copió. El `.exe` no "asume que el repo
+    está al lado": no llega al repo por ninguna vía. El auto-restore estaba muerto, en silencio,
+    del lado empaquetado.
+
+    Y el modo de falla que cubre no es el ruidoso. Cuando la librería se perdió el 2026-07-31 el
+    grid no se quedó sin dueños: quedó con la semilla `-ico` y **nombró mal con confianza** —4.3%
+    top-1, 14 discos ajenos a Cissia—. Eso no se ve mirando el log.
+
+    El arreglo es que vivan bajo `app/resources/`, que es el mecanismo YA probado en el `.exe`
+    (`detector.TEMPLATES_DIR`, `farm_nodes._DEFAULT_TOML`) y que el spec copia entero desde el
+    2026-08-18. Cero cambios al spec: 34 MB sobre 1335 es 2.5% del bundle.
+    """
+    import app
+    from app.core.agent_identifier import _BASELINES
+    app_dir = Path(app.__file__).resolve().parent
+    fuera = {k: str(p) for k, p in _BASELINES.items() if app_dir not in p.parents}
+    assert not fuera, f"baselines fuera de app/ — no entran al bundle: {fuera}"
+
+
+def test_la_carpeta_de_baselines_no_junta_archivos_de_mas():
+    """`app/resources/` se bundlea ENTERA, así que todo lo que caiga acá viaja en el `.exe`.
+
+    Un snapshot suelto son 24 MB que nadie pidió y que nadie va a notar —el bundle ya pesa
+    1.3 GB—. La historia va a `audit/`, que no se empaqueta; acá viven exactamente los tres que
+    `_BASELINES` declara. Es el precio de haber elegido "la carpeta entera" en el spec, y se
+    paga con este test en vez de con una lista que hay que acordarse de actualizar.
+    """
+    from app.core.agent_identifier import _BASELINE_DIR, _BASELINES
+    declarados = {p.name for p in _BASELINES.values()}
+    presentes = {p.name for p in _BASELINE_DIR.glob("*.npz")}
+    assert presentes == declarados, (
+        f"sobran {sorted(presentes - declarados)} / faltan {sorted(declarados - presentes)}")

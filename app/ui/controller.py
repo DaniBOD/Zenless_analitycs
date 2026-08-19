@@ -698,7 +698,9 @@ class MonitorController(QObject):
                 # cuando el monitor OBSERVA el cambio de dueño, sin depender de que la persistencia
                 # haya movido una fila. Así sale también en read-only.)
                 self._log_s17_extraction(disc_parsed, result)
-                return
+                # Devolver el resultado NO es cosmético: el censo de discos lo usa como identidad
+                # (la fila que se tocó). Sin esto tendría que recalcularla y volvería el desfasaje.
+                return result
             payload = self._build_payload(disc_parsed, state)
             self.disc_detected.emit(payload)
         except Exception as exc:

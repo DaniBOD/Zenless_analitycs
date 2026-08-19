@@ -47,7 +47,7 @@ _REJECT_DIR = _RESOURCES / "avatar_reject"
 # PRESENCIA ESTRUCTURAL: crop no-rechazado = hay una cara (nombrable o no).
 _REJECT_DET_DIR = _RESOURCES / "avatar_reject_det"
 
-# Baselines VERSIONADOS de cada superficie (audit/ sí se versiona; %LOCALAPPDATA% no). Si la
+# Baselines VERSIONADOS de cada superficie (el repo sí se versiona; %LOCALAPPDATA% no). Si la
 # librería del runtime no está, `BadgeSurface.load` la repone de acá — pasó dos veces: el detalle
 # el 2026-07-28 y el grid + row el 2026-07-31, y esta última dejó al grid nombrando con arte
 # `-ico` (4.3% top-1, Cissia llevándose 14 discos ajenos). Actualizar cuando se cosecha de más:
@@ -69,11 +69,24 @@ _REJECT_DET_DIR = _RESOURCES / "avatar_reject_det"
 # cambia con el disco— y el detail solo 3, porque el avatar del panel NO cambia y las repetidas se
 # rechazaron. Con esto las tres cubren el roster completo (51/51). La medición contra etiquetados
 # quedó IGUAL que antes (grid 93.3% top-1 · 2.4% wrong): sumar un PJ no desplazó a ninguno.
-_AUDIT_DIR = Path(__file__).resolve().parents[2] / "audit"
+#
+# Viven bajo `app/resources/` y NO en `audit/`, aunque los snapshots HISTÓRICOS sigan ahí. La
+# ruta vieja era `Path(__file__).parents[2] / "audit"`: en desarrollo eso da la raíz del repo y
+# funciona, pero congelado `__file__` es `_internal/app/core/agent_identifier.py`, así que
+# `parents[2]` es `_internal` y apuntaba a `_internal/audit/` — una carpeta que el spec nunca
+# copió. O sea que en el `.exe` esta red de emergencia no existía, en silencio (hallado el
+# 2026-08-19 revisando el empaquetado de `farm_nodes.toml`).
+#
+# Bajo `app/resources/` resuelven con el MISMO mecanismo que `detector.TEMPLATES_DIR` y
+# `farm_nodes._DEFAULT_TOML`, que ya se sabe que anda empaquetado, y entran al bundle sin
+# tocar el spec porque desde el 2026-08-18 copia `app/resources` entera. Cuestan 34 MB sobre
+# 1335: 2.5 %. Los snapshots viejos se quedan en `audit/` como historia — el que la app repone
+# tiene UN solo lugar, que es de lo que se trata.
+_BASELINE_DIR = _RESOURCES / "badge_baselines"
 _BASELINES = {
-    "row": _AUDIT_DIR / "avatar_row_v2_snapshot_20260816_roster51.npz",
-    "grid": _AUDIT_DIR / "avatar_badge_v2_snapshot_20260816_roster51.npz",
-    "detail": _AUDIT_DIR / "avatar_detbadge_v2_snapshot_20260816_roster51.npz",
+    "row": _BASELINE_DIR / "avatar_row_v2_snapshot_20260816_roster51.npz",
+    "grid": _BASELINE_DIR / "avatar_badge_v2_snapshot_20260816_roster51.npz",
+    "detail": _BASELINE_DIR / "avatar_detbadge_v2_snapshot_20260816_roster51.npz",
 }
 
 # Cache del seed -ico: los descriptores son inmutables (frozen) y caros de construir

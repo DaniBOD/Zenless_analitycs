@@ -27,6 +27,7 @@ from app.core.detector import (
     _deep_detect_s18, detect_active_tab, selected_avatar_x,
     crop_grid_selected_badge, crop_detail_badge,
     read_s9_selected_badge, BADGE_LIBRE, BADGE_NO_LOCALIZADO, _S9_BADGE_NITIDEZ_MIN,
+    crop_s9_detail_badge,
 )
 from app.core.stats_vocab import _norm_key
 from app.core.parser_disc import DiscParsed, parse_modal_detalle
@@ -3512,8 +3513,51 @@ class Monitor:
             if self._id_diag_on:
                 log.info("[s9_owner] match directo: %s (conf %.2f)", name, conf)
             return
-        # Abstención del badge → desempate por CONTEXTO (helper compartido con S17).
+        # La grilla no resolvió. SEGUNDA SUPERFICIE: el avatar del panel de detalle (2026-08-18).
+        # No es redundancia: en la superficie `grid` hay pares que están separados apenas 1,1×
+        # —medido, Ben vs Soukaku— y ahí no existe umbral que los distinga; en `detail` la
+        # separación por histograma de color es 8,9×. Sin esto el disco se descarta ENTERO
+        # (`persist_s17_disc` exige dueño confiable), y se pierden set, slot, nivel y los cuatro
+        # substats, que sí se leyeron bien: 3 de 38 discos en la corrida real del 2026-08-18.
+        #
+        # Verificado sobre los 14 fixtures con `tools/audit_s9_surfaces.py`: donde las dos
+        # superficies hablan coinciden siempre (4/4, 0 desacuerdos) y el detalle rescata 3 casos
+        # que la grilla pierde. Se consulta SOLO si la grilla no resolvió — es un Hough más un
+        # match, y el handler corre continuo (RNF-06).
+        if self._assign_s9_owner_por_detalle(disc, frame):
+            return
+        # Sigue sin resolver → desempate por CONTEXTO (helper compartido con S17).
         self._tiebreak_owner(disc, badge, tag="s9_owner")
+
+    def _assign_s9_owner_por_detalle(self, disc, frame) -> bool:
+        """Intenta nombrar al dueño con el avatar del panel de detalle. True si lo logró.
+
+        `crop_s9_detail_badge` devuelve None cuando no hay avatar en el panel — que para un disco
+        significa que nadie lo tiene equipado. Acá eso sólo se traduce en "no pude nombrar": la
+        afirmación de LIBRE sigue siendo del gate de nitidez de la grilla, porque la regla del
+        proyecto es que la PRESENCIA gana a LIBRE y una superficie que no ve nada no alcanza para
+        contradecir a otra que sí vio una cara.
+        """
+        try:
+            face = crop_s9_detail_badge(frame)
+        except Exception:
+            return False
+        if face is None:
+            return False
+        try:
+            res = self._identifier.s17_match_detail(face)
+        except Exception:
+            return False
+        nombre = res[0] if isinstance(res, tuple) else getattr(res, "name", None)
+        conf = (res[1] if isinstance(res, tuple) and len(res) > 1
+                else getattr(res, "conf", 0.0)) or 0.0
+        if not nombre:
+            return False
+        disc.agente_asignado_nombre = nombre
+        disc.agente_asignado_conf = conf
+        if self._id_diag_on:
+            log.info("[s9_owner] rescatado por el DETALLE: %s (conf %.2f)", nombre, conf)
+        return True
 
     def _tiebreak_owner(self, disc, badge, tag: str) -> bool:
         """Desempate de dueño por CONTEXTO para un badge que el matcher NO resolvió por sí
@@ -3574,12 +3618,15 @@ class Monitor:
             merged.main_stat_canon or merged.main_stat_raw, merged.nivel,
             merged.agente_asignado_nombre or "-", merged.confianza_global,
         )
-        self._censar_disco(merged, state)
+        # Censar DESPUÉS de persistir: la decisión de la persistencia es la que dice si el disco
+        # es nuevo. Antes se censaba primero y con identidad propia, y las dos capas discrepaban.
+        resultado = None
         if self._on_disc:
             try:
-                self._on_disc(merged, state)
+                resultado = self._on_disc(merged, state)
             except Exception:
                 log.exception("Error en on_disc S9")
+        self._censar_disco(merged, state, resultado)
 
     # --- Censo del inventario de discos -------------------------------------------------------
 
@@ -3630,22 +3677,37 @@ class Monitor:
             if a not in previos:
                 log.warning("[censo-discos] %s", a)
 
-    def _censar_disco(self, disc, state: ScreenState) -> None:
+    def _censar_disco(self, disc, state: ScreenState, resultado=None) -> None:
         """Registra un disco emitido en la corrida de censo.
 
-        La identidad es la MISMA de `_disc_identity`, la del dedup de emisión: dos definiciones de
-        "mismo disco" en el mismo flujo sería una de más, y ninguna de las dos cuentas quedaría
-        verificable contra la otra.
+        **Quién decide si un disco es nuevo: la persistencia.** Ella compara contra el `set_id`
+        RESUELTO por el matcher difuso; el censo, si calculara su propia identidad, compararía el
+        string del nombre del set — y el OCR lo lee inconsistente entre pasadas. Medido en vivo el
+        2026-08-18: `Firmamento Ilameante` vs `Firmamento llameante` normalizan distinto (I
+        mayúscula vs l minúscula), así que el mismo disco entró dos veces al censo mientras la
+        persistencia lo reconocía y hacía `libre_update` sobre la fila que ya existía. Contador en
+        10, DB en 8.
+
+        Por eso la identidad es la FILA (`disc_id`) y no un recálculo. Una autoridad, no dos.
+
+        Sin persistencia —read-only, o el set no resolvió— se cae a la identidad del parser, que
+        es la que puede desdoblarse: se cuenta igual pero queda marcado como provisorio.
         """
         censo = self._censo_discos_abierto()
         if censo is None:
             return
+        disc_id = getattr(resultado, "disc_id", None) if resultado is not None else None
+        # `disc_id = -1` es el placeholder del camino read-only, no una fila: tomarlo como
+        # identidad colapsaría TODOS los discos en uno solo.
+        confirmada = isinstance(disc_id, int) and disc_id > 0
+        identidad = ("fila", disc_id) if confirmada else self._disc_identity(disc)
         try:
             from app.core.census_discs import DiscSighting
             nuevo = censo.observe(DiscSighting(
-                identidad=self._disc_identity(disc),
+                identidad=identidad,
                 libre=bool(getattr(disc, "equip_libre", False)),
                 dueno=disc.agente_asignado_nombre,
+                confirmada=confirmada,
             ), ts=time.time())
         except Exception:
             log.exception("[censo-discos] error registrando el disco")

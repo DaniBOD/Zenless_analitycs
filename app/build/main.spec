@@ -77,11 +77,15 @@ for _dep in ("requests", "urllib3", "certifi", "charset_normalizer", "idna"):
 # ---------------------------------------------------------------------------
 datas = [
     # La carpeta app/resources/ ENTERA: templates del detector, icon.ico, farm_nodes.toml,
-    # avatar_refs/, avatar_reject{,_det}/, engine_refs/, slot_digits{,_s5,_extraccion}/.
-    # Enumerar carpeta por carpeta ya falló una vez (2026-08-18: farm_nodes.toml quedó
-    # afuera → FileNotFoundError en cada arranque al cargar el catálogo de nodos S13).
-    # Todo lo que hay acá se lee en runtime y pesa ~6 MB en total: irrelevante al lado
-    # del stack de paddle, y así un recurso nuevo entra al bundle sin tocar el spec.
+    # avatar_refs/, avatar_reject{,_det}/, engine_refs/, slot_digits{,_s5,_extraccion}/,
+    # badge_baselines/.
+    # Enumerar carpeta por carpeta ya falló DOS veces: farm_nodes.toml quedó afuera
+    # (2026-08-18 → FileNotFoundError en cada arranque cargando los nodos S13), y los
+    # baselines de badges nunca estuvieron — vivían en audit/, que el .exe no alcanza, así
+    # que el auto-restore de la librería de avatares no existía del lado empaquetado
+    # (2026-08-19). Por eso va la carpeta entera: un recurso nuevo entra sin tocar el spec.
+    # ~40 MB, de los cuales 34 son los tres baselines. Sobre 1335 MB de bundle es 3%, y
+    # compra la red que evita que el grid vuelva a nombrar mal con confianza.
     (str(REPO / "app" / "resources"),               "app/resources"),
     # Configuración (rois.toml + defaults.toml)
     (str(REPO / "app" / "config"),                  "app/config"),

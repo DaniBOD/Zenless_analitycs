@@ -40,25 +40,27 @@ ROOT = Path(__file__).resolve().parents[1]
 import sys
 sys.path.insert(0, str(ROOT))
 from app.core.avatar_descriptor import AvatarMatcher  # noqa: E402
-from app.core.agent_identifier import _default_library_path  # noqa: E402
+from app.core.agent_identifier import _BASELINES, _default_library_path  # noqa: E402
 from app.core.detector import crop_grid_selected_badge, crop_selected_avatar  # noqa: E402
 
 _LABELED = ROOT / "audit" / "labeled_badges"
 _AUDIT = ROOT / "audit"
 
-# Por superficie: nombre del .npz que carga la app, qué recortes etiquetados le corresponden, y
-# el snapshot versionado que hace de baseline.
+# Por superficie: nombre del .npz que carga la app y qué recortes etiquetados le corresponden.
+# El BASELINE no se declara acá: es `agent_identifier._BASELINES`, el mismo que repone
+# `BadgeSurface.load`. Esta tabla tenía su propia lista y para el 2026-08-19 discrepaban —
+# apuntaba al snapshot de JUNIO, así que `--source snapshot --surface grid` reinstalaba una
+# librería sin Aria y sin el dedup, distinta de la que la app repone sola. Dos autoridades
+# para "cuál es el baseline" es una de más.
 _SURFACES = {
     "grid": {
         "npz": "avatar_badge_v2.npz",
         "globs": ("S17_*.png",),
-        "snapshot": "avatar_badge_v2_snapshot_20260612_full47.npz",
         "crop": crop_grid_selected_badge,
     },
     "row": {
         "npz": "avatar_row_v2.npz",
         "globs": ("S8_*.png", "S18_*.png"),
-        "snapshot": None,      # no existe todavía; `--source labeled` lo genera
         "crop": crop_selected_avatar,
         # SOLO harvest: los S8/S18 pre-cortados de `labeled_badges` son 37×37 circulares y el
         # `crop_fn` de hoy da 52×52 cuadrados sobre una captura del mismo tamaño — otro encuadre.
@@ -227,9 +229,12 @@ def main() -> int:
     ap.add_argument("--source", choices=("snapshot", "labeled", "frame"), default="labeled")
     ap.add_argument("--frame", default=None, help="PNG (o carpeta) de pantallas completas")
     ap.add_argument("--label", default=None, help="PJ al que pertenecen esas pantallas")
-    ap.add_argument("--snapshot", default=None, help="ruta del .npz a copiar (default: el de audit/)")
+    ap.add_argument("--snapshot", default=None,
+                    help="ruta del .npz a copiar (default: el baseline de app/resources/)")
     ap.add_argument("--save-snapshot", action="store_true",
-                    help="además, guardar el resultado como baseline versionado en audit/")
+                    help="además, archivar el resultado con fecha en audit/ (historia). Para que "
+                         "la app lo REPONGA hay que copiarlo a app/resources/badge_baselines/ y "
+                         "actualizar _BASELINES: promover es una decisión, no un efecto de costado")
     args = ap.parse_args()
 
     cfg = _SURFACES[args.surface]
@@ -244,10 +249,9 @@ def main() -> int:
         print(f"  backup   : {bak.name}")
 
     if args.source == "snapshot":
-        src = Path(args.snapshot) if args.snapshot else (
-            _AUDIT / cfg["snapshot"] if cfg["snapshot"] else None)
+        src = Path(args.snapshot) if args.snapshot else _BASELINES.get(args.surface)
         if src is None or not src.exists():
-            print(f"⚠️  No hay snapshot para '{args.surface}'"
+            print(f"⚠️  No hay baseline para '{args.surface}'"
                   f"{f' en {src}' if src else ''} — usá --source labeled o pasá --snapshot.")
             return 1
         shutil.copy2(src, dst)
@@ -266,7 +270,9 @@ def main() -> int:
     if args.save_snapshot:
         snap = _AUDIT / f"{dst.stem}_snapshot_{date.today():%Y%m%d}.npz"
         shutil.copy2(dst, snap)
-        print(f"  snapshot : audit/{snap.name}  (baseline versionado)")
+        print(f"  archivado: audit/{snap.name}")
+        print("  ojo: esto NO cambia lo que la app repone. Para promoverlo, copiarlo a "
+              "app/resources/badge_baselines/ y actualizar _BASELINES en agent_identifier.py.")
 
     print("\nVerificá con:  python tools/measure_badge_lib.py --against-labeled "
           f"--surface {args.surface}")

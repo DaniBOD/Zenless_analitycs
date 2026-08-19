@@ -645,6 +645,71 @@ def crop_s9_selected_badge(frame: np.ndarray) -> np.ndarray | None:
     return read_s9_selected_badge(frame).crop
 
 
+# --- S9: el avatar del dueño en el PANEL DE DETALLE (segunda superficie) -----------------------
+# La grilla no alcanza para nombrar. Medido el 2026-08-18: en la superficie `grid`, Ben y Soukaku
+# están separados 1,04-1,14× (las refs de Ben están casi tan dispersas entre sí como respecto a
+# Soukaku), así que un disco de Soukaku empata 0.897/0.897 con margen 0.000 y el matcher se
+# abstiene — correctamente, porque con esos datos no puede decidir. En la superficie `detail` la
+# separación por histograma de color es 8,87×.
+#
+# ROI: SOLO la mitad derecha de la banda superior del panel. La zona tiene tres círculos y dos son
+# señuelos:
+#     hexágono del nº de slot   izquierda   sat ~12
+#     badge dorado de rareza    abajo       sat ~119   ← el MÁS saturado de la zona
+#     avatar del dueño          derecha     sat ~58
+# Elegir "el más saturado" agarra siempre el de rareza: daba 0.47 constante en los 14 fixtures,
+# incluidos los libres que no tienen avatar. El discriminador es la POSICIÓN.
+#
+# La banda es alta (0.310-0.372) a propósito: el panel se corre verticalmente cuando el nombre del
+# set envuelve a dos líneas (medido: el avatar cae en y=29 o y=51 dentro de la zona según el caso).
+_S9_DET_REGION = (0.752, 0.788, 0.310, 0.372)      # x0, x1, y0, y1 normalizados
+
+# Radio del recorte, CONSTANTE. El avatar es un elemento de UI de tamaño fijo y detectarlo sólo
+# mete varianza (misma lección que `_DET_CROP_R_F` en S17 y `_S30_OWNER_R_F` en S30). Medido sobre
+# el badge de Soukaku: con r=18 nombra a 0.843; con 22, 25, 26 o 30 se abstiene. Es más chico que
+# el de S17 (25 px) porque este panel es más angosto.
+_S9_DET_R = 18
+
+
+def crop_s9_detail_badge(frame: np.ndarray) -> np.ndarray | None:
+    """Avatar del dueño en el panel de detalle del inventario S9, o `None` si no hay.
+
+    Segunda superficie para nombrar: la grilla y ésta **coinciden siempre que las dos hablan**
+    (verificado sobre los 14 fixtures, 0 desacuerdos) y el detalle resuelve casos que la grilla
+    pierde — tile no localizado, o abstención por look-alike.
+
+    `None` significa "no hay avatar en el panel", que para un disco es señal de que nadie lo tiene
+    equipado. No se usa para AFIRMAR libre por sí sola: esa decisión sigue en manos del gate de
+    nitidez de la grilla (ver `read_s9_selected_badge`), y la regla del proyecto es que la
+    PRESENCIA gana a LIBRE.
+    """
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return None
+    try:
+        H, W = frame.shape[:2]
+        fx0, fx1, fy0, fy1 = _S9_DET_REGION
+        x0, x1, y0, y1 = int(fx0 * W), int(fx1 * W), int(fy0 * H), int(fy1 * H)
+        sub = frame[y0:y1, x0:x1]
+        if sub.size == 0:
+            return None
+        gray = cv2.medianBlur(cv2.cvtColor(sub, cv2.COLOR_BGR2GRAY), 3)
+        circles = cv2.HoughCircles(
+            gray, cv2.HOUGH_GRADIENT, dp=1.2, minDist=25, param1=120, param2=18,
+            minRadius=14, maxRadius=30,
+        )
+        if circles is None:
+            return None
+        cx, cy = int(circles[0][0][0]), int(circles[0][0][1])
+        gx, gy = x0 + cx, y0 + cy
+        r = _S9_DET_R
+        crop = frame[max(0, gy - r):min(H, gy + r), max(0, gx - r):min(W, gx + r)]
+        if crop.shape[0] != 2 * r or crop.shape[1] != 2 * r:
+            return None            # recorte contra el borde: mejor abstenerse que deformar
+        return crop
+    except Exception:
+        return None
+
+
 def crop_detail_badge(frame: np.ndarray) -> np.ndarray | None:
     """Recorta (círculo) el avatar del dueño del PANEL DE DETALLE S17 (junto a 'Nivel
     15/15'). Two-stage (5R.L.2b): (1) franja fija del header como recorte grueso + gate
@@ -2233,6 +2298,11 @@ class ScreenDetector:
 def polling_cadence_ms(state: ScreenState) -> int:
     """
     Devuelve el intervalo de polling en ms según el estado actual (RF-04 §5).
+
+    **Ojo: es un PERÍODO MÍNIMO, no una pausa agregada.** Medido el 2026-08-18 en S9: el ciclo
+    real dura ~4,05 s porque el procesamiento (OCR) tarda más que la cadencia, así que el sleep ya
+    era CERO. Bajarla de 1500 a 700 ms dio exactamente los mismos 16 ciclos por 65 s. Para acelerar
+    S9 hay que atacar el procesamiento, no este número.
     """
     cadence = {
         "S1":  4000, "S2":  1000, "S3":   500, "S4":  4000,

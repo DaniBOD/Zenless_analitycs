@@ -290,3 +290,73 @@ def _frame_o_skip(stem: str):
     if fr is None:
         pytest.skip(f"no se pudo leer {p.name}")
     return fr
+
+
+# --- la segunda superficie: el avatar del panel de detalle (2026-08-18) -----------------------
+
+class _IdentSoloDetalle:
+    """La grilla ABSTIENE (empate de look-alikes, sin reject) y el detalle sí nombra.
+
+    Modela el caso medido en vivo: un disco de Soukaku da `Ben 0.897 / Soukaku 0.897` con margen
+    0.000 en la grilla, porque en esa superficie las dos clases están separadas apenas 1,1×. En el
+    detalle la separación es 8,9× y el match sale limpio."""
+    def __init__(self, nombre="Soukaku"):
+        self._n = nombre
+    def s17_match(self, badge):
+        return (None, 0.897, False)          # abstención por margen, NO reject
+    def s17_match_detail(self, face):
+        return (self._n, 0.843, 0.39, False)
+
+
+def test_el_detalle_nombra_al_dueno_que_la_grilla_no_pudo(monkeypatch):
+    """Sin esto el disco se descarta entero: `persist_s17_disc` exige dueño confiable, así que se
+    pierden set, slot, nivel y los cuatro substats — que se leyeron bien."""
+    import app.core.monitor as m
+    monkeypatch.setattr(m, "crop_s9_detail_badge", lambda f: object())
+    fr = _frame_o_skip("Ejemplo_1")
+    mon = _monitor(on_disc=lambda *_: None, ident=_IdentSoloDetalle("Soukaku"))
+    d = _disc_vacio()
+    mon._assign_s9_owner(d, fr)
+    assert d.agente_asignado_nombre == "Soukaku"
+    assert d.equip_libre is False
+
+
+def test_si_la_grilla_YA_nombro_no_se_consulta_el_detalle(monkeypatch):
+    """La grilla es la superficie primaria y basta cuando resuelve. Consultar el detalle igual
+    sería un Hough + un match por disco, gratis y en un handler continuo (RNF-06)."""
+    import app.core.monitor as m
+    llamadas = []
+    monkeypatch.setattr(m, "crop_s9_detail_badge",
+                        lambda f: (llamadas.append(1), object())[1])
+    fr = _frame_o_skip("Ejemplo_1")
+    mon = _monitor(on_disc=lambda *_: None, ident=_StubIdent("Zhao"))
+    d = _disc_vacio()
+    mon._assign_s9_owner(d, fr)
+    assert d.agente_asignado_nombre == "Zhao"
+    assert llamadas == [], "se consultó el detalle habiendo resuelto la grilla"
+
+
+def test_un_disco_afirmado_LIBRE_no_consulta_el_detalle(monkeypatch):
+    """`libre` es una afirmación sobre la pantalla, no una falta de datos. Buscarle dueño a un
+    disco que ya se afirmó sin dueño sólo puede producir un falso positivo."""
+    import app.core.monitor as m
+    llamadas = []
+    monkeypatch.setattr(m, "crop_s9_detail_badge",
+                        lambda f: (llamadas.append(1), object())[1])
+    fr = _frame_o_skip("Ejemplo_2")          # libre
+    mon = _monitor(on_disc=lambda *_: None, ident=_IdentSoloDetalle("Soukaku"))
+    d = _disc_vacio()
+    mon._assign_s9_owner(d, fr)
+    assert d.equip_libre is True
+    assert d.agente_asignado_nombre is None
+    assert llamadas == []
+
+
+def test_sin_avatar_en_el_detalle_no_se_inventa_dueno(monkeypatch):
+    import app.core.monitor as m
+    monkeypatch.setattr(m, "crop_s9_detail_badge", lambda f: None)
+    fr = _frame_o_skip("Ejemplo_1")
+    mon = _monitor(on_disc=lambda *_: None, ident=_IdentSoloDetalle("Soukaku"))
+    d = _disc_vacio()
+    mon._assign_s9_owner(d, fr)
+    assert d.agente_asignado_nombre is None
