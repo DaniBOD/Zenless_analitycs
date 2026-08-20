@@ -285,15 +285,21 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[ERROR] no existe {origen}", file=sys.stderr)
         return 1
 
+    # El sello nombra DOS cosas correlacionadas —la DB nueva y el reporte que la describe— en
+    # carpetas distintas. Se reserva la que tiene datos; el nombre del reporte se DERIVA del que
+    # la DB terminó tomando, así el reporte sigue nombrando a su DB aunque haya habido colisión.
+    from app.core.unique_paths import candidatos_numerados, reservar
     sello = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
-    nueva = origen.with_name(f"{origen.stem}.rebuild_{sello}.db")
+    (nueva,) = reservar(candidatos_numerados(
+        origen.parent, f"{origen.stem}.rebuild_{sello}", ("db",)))
+    marca = nueva.stem.split(".rebuild_", 1)[1]
 
     print(f"origen : {origen}")
     print(f"nueva  : {nueva}")
     rep = rebuild(origen, nueva)
 
     from app.core.audit_paths import resolve_audit_dir
-    destino_rep = Path(resolve_audit_dir()) / f"rebuild_db_{sello}.md"
+    destino_rep = Path(resolve_audit_dir()) / f"rebuild_db_{marca}.md"
     destino_rep.parent.mkdir(parents=True, exist_ok=True)
     destino_rep.write_text(rep.markdown(), encoding="utf-8")
     print(f"reporte: {destino_rep}")

@@ -24,7 +24,6 @@ validado del proyecto: gate `is_readonly()`, backup previo, transacción, los do
 from __future__ import annotations
 
 import logging
-import shutil
 import sqlite3
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
@@ -274,9 +273,9 @@ def declarar(
         log.warning("[roster] %s", res.motivo_no_escribio)
         return res
 
-    sello = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
-    res.backup = destino.with_name(f"{destino.stem}.backup_predeclaracion_{sello}.db")
-    shutil.copy2(destino, res.backup)
+    # Ver `respaldar_db`: el sello al segundo no discrimina, y `copy2` pisa sin avisar.
+    from app.db.connection import respaldar_db
+    res.backup = respaldar_db(destino, "predeclaracion")
 
     marca_falta = f"no_declarado_{fecha}"
     marca_nuevo = f"declarado_por_usuario_{fecha}; pendiente onboarding"

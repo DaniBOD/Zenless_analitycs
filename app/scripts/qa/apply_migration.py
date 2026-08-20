@@ -35,10 +35,8 @@ apuntan a la que se renombra. Al terminar se corre `foreign_key_check` igual.
 from __future__ import annotations
 
 import argparse
-import shutil
 import sqlite3
 import sys
-from datetime import datetime
 from pathlib import Path
 
 DEFAULT_DB = Path("db/danibod_zzz_v2.db")
@@ -79,9 +77,11 @@ def aplicar(sql_path: Path, db_path: Path, *, hacer_backup: bool, dry_run: bool)
 
     backup: Path | None = None
     if hacer_backup and not dry_run:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup = db_path.with_name(f"{db_path.stem}.backup_premig_{ts}.db")
-        shutil.copy2(db_path, backup)
+        # El sello al segundo no discrimina: dos migraciones seguidas caian en el mismo nombre
+        # y `copy2` pisaba el backup de la primera -- justo la evidencia que RNF-01 pide para
+        # poder volver atras. `respaldar_db` reserva el nombre de forma atomica.
+        from app.db.connection import respaldar_db
+        backup = respaldar_db(db_path, "premig")
         print(f"Backup   : {backup}")
     print("-" * 78)
 

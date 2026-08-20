@@ -18,6 +18,7 @@ import os
 import shutil
 import sqlite3
 import sys
+from datetime import datetime
 from pathlib import Path
 
 _APP_DIRNAME = "DaniBOD_ZZZ_Analytics"
@@ -104,3 +105,33 @@ def get_connection(db_path: Path | str | None = None, *, check_same_thread: bool
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")
     return con
+
+
+def respaldar_db(origen: Path | str, etiqueta: str) -> Path:
+    """Copia RNF-01 previa a una escritura al dominio. Devuelve dónde quedó.
+
+    Nombre: `<stem>.backup_<etiqueta>_<AAAAMMDD_HHMMSS>.db`, con `_2`, `_3`… si ese está tomado.
+    El sello queda para que un humano ubique la copia en su día; **la unicidad no cuelga de él** —
+    el porqué está en `app.core.unique_paths`, que es la autoridad de esto.
+
+    Acá el sello es al **segundo**, así que el problema es mucho más grosero que en `audit/`:
+    cualquier par de respaldos del mismo segundo caía en el mismo nombre, y `shutil.copy2` pisa el
+    destino sin avisar. El modo de falla no es "un archivo menos": es un archivo que **dice** ser
+    el estado previo y ya trae la primera escritura adentro. Justo la evidencia que RNF-01 existe
+    para conservar.
+
+    **Política de acá:** si la copia falla, la reserva **se borra**. Un `.db` de 0 bytes con
+    nombre de backup es peor que ningún archivo, porque parece un respaldo del que se podría
+    restaurar. (En `audit/` la decisión es la contraria: ver `core.audit_paths.reservar_rutas`.)
+    """
+    from app.core.unique_paths import candidatos_numerados, reservar
+    origen = Path(origen)
+    sello = datetime.now().strftime("%Y%m%d_%H%M%S")   # noqa: DTZ005 — local, para ubicarlo
+    (copia,) = reservar(candidatos_numerados(
+        origen.parent, f"{origen.stem}.backup_{etiqueta}_{sello}", ("db",)))
+    try:
+        shutil.copy2(origen, copia)
+    except BaseException:
+        copia.unlink(missing_ok=True)
+        raise
+    return copia

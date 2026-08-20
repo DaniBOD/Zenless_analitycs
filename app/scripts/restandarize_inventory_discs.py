@@ -10,15 +10,15 @@ Uso:
     python app/scripts/restandarize_inventory_discs.py [--dry-run]
 """
 import argparse
-import shutil
 import sqlite3
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app.core.stats_vocab import normalize_stat_name, parse_value
+from app.db.connection import respaldar_db
 
 DB_PATH = Path("db/danibod_zzz_v2.db")
 AUDIT_DIR = Path("audit")
@@ -97,8 +97,7 @@ def restandarize(dry_run: bool = False) -> dict:
 
     # --- Aplicar updates ---
     if not dry_run and updates:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        shutil.copy(str(DB_PATH), str(DB_PATH.parent / f"danibod_zzz_v2.backup_premig_{ts}.db"))
+        respaldar_db(DB_PATH, "premig")   # nombre reservado, no colgado del reloj
 
         con2 = sqlite3.connect(str(DB_PATH))
         with con2:

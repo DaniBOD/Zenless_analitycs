@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from app.core.audit_paths import resolve_audit_dir
+from app.core.audit_paths import reservar_rutas, resolve_audit_dir
 from app.core.teardown_batch import TeardownBatch, write_teardown_record
 
 
@@ -84,12 +84,33 @@ def test_no_deja_archivo_temporal(tmp_path, monkeypatch):
     assert list((tmp_path / "desmontajes").glob("*.tmp")) == []
 
 
-def test_dos_tandas_no_se_pisan(tmp_path, monkeypatch):
+def test_dos_tandas_en_el_mismo_tick_del_reloj_no_se_pisan(
+        tmp_path, monkeypatch, reloj_de_pared_congelado):
+    """El sello de tiempo **no** es un discriminador, y la unicidad no puede depender de él.
+
+    El reloj de pared solo separa dos escrituras si alcanza a avanzar entre una y otra, y cuánto
+    tarda en avanzar no lo decide esta app: es la resolución global del timer de Windows (15,625
+    ms por defecto). Con el reloj congelado esto falla siempre; sin congelar, fallaba a veces —
+    que es peor, porque parece que anda.
+    """
     reg = _registro(tmp_path, monkeypatch)
     p1 = write_teardown_record(reg)
     p2 = write_teardown_record(reg)
     assert p1 != p2, "dos tandas cayeron en el mismo archivo"
     assert len(list((tmp_path / "desmontajes").glob("*.json"))) == 2
+
+
+def test_la_segunda_tanda_no_borra_el_contenido_de_la_primera(
+        tmp_path, monkeypatch, reloj_de_pared_congelado):
+    """El daño real no es el nombre repetido: es que `os.replace` pisa en silencio. Lo que se
+    pierde es una tanda entera de auditoría, sin error ni aviso."""
+    reg = _registro(tmp_path, monkeypatch)
+    primera = dict(reg, modo="TANDA_A")
+    segunda = dict(reg, modo="TANDA_B")
+    p1 = write_teardown_record(primera)
+    write_teardown_record(segunda)
+    assert p1.exists(), "la segunda tanda borró el archivo de la primera"
+    assert json.loads(p1.read_text(encoding="utf-8"))["modo"] == "TANDA_A"
 
 
 def test_registro_none_no_escribe_nada(tmp_path, monkeypatch):
@@ -106,3 +127,49 @@ def test_la_db_no_se_toca(tmp_path, monkeypatch):
     antes = hashlib.sha256(db.read_bytes()).hexdigest()
     write_teardown_record(_registro(tmp_path, monkeypatch))
     assert hashlib.sha256(db.read_bytes()).hexdigest() == antes
+
+
+# --- Reserva del nombre ----------------------------------------------------------------------
+# `reservar_rutas` es la autoridad única sobre "cómo se llama un artefacto de audit/ sin pisar a
+# otro". Antes esa decisión estaba escrita dos veces (bitácora y censo) y mal las dos.
+
+def test_la_reserva_ocupa_el_nombre_en_el_disco(tmp_path, reloj_de_pared_congelado):
+    """La reserva no es un cálculo, es un hecho en el filesystem: el archivo queda creado (vacío)
+    en el mismo paso en que se elige el nombre. Eso es lo que hace que un segundo escritor —otro
+    hilo, u otro proceso— no pueda elegir el mismo."""
+    (ruta,) = reservar_rutas(tmp_path / "d", "desmontaje")
+    assert ruta.exists() and ruta.read_bytes() == b""
+
+
+def test_el_juego_de_hermanos_se_toma_entero_o_ninguno(tmp_path, reloj_de_pared_congelado):
+    """El censo escribe `.json` y `.md` bajo un mismo sello. Si el `.md` del primer candidato ya
+    está tomado, el par entero se corre al siguiente número: repartirse el par dejaría dos
+    reportes a medias, cada uno con la mitad del otro."""
+    carpeta = tmp_path / "c"
+    carpeta.mkdir()
+    # Tomamos de antemano solo el hermano `.md` del primer candidato.
+    sello = f"{reloj_de_pared_congelado.now():%Y%m%d_%H%M%S_%f}"
+    ocupado = carpeta / f"{sello}_censo_roster.md"
+    ocupado.write_text("reporte previo", encoding="utf-8")
+
+    js, md = reservar_rutas(carpeta, "censo_roster", ("json", "md"))
+
+    assert js.stem == md.stem, "los hermanos deben compartir sello"
+    assert md != ocupado, "el par pisó un reporte que ya existía"
+    assert ocupado.read_text(encoding="utf-8") == "reporte previo"
+    assert not (carpeta / f"{sello}_censo_roster.json").exists(), \
+        "quedó reservado el .json del candidato que se descartó"
+
+
+def test_la_reserva_se_rinde_en_vez_de_girar_para_siempre(
+        tmp_path, monkeypatch, reloj_de_pared_congelado):
+    """Con todos los nombres ocupados el lazo tiene que terminar. Un bucle infinito acá cuelga el
+    cierre de una tanda, que es justo el momento en que el usuario está esperando el toast."""
+    monkeypatch.setattr("app.core.unique_paths.MAX_INTENTOS", 2)  # el tope vive en la primitiva compartida
+    carpeta = tmp_path / "d"
+    carpeta.mkdir()
+    sello = f"{reloj_de_pared_congelado.now():%Y%m%d_%H%M%S_%f}"
+    for n in ("", "_2"):
+        (carpeta / f"{sello}_desmontaje{n}.json").write_text("x", encoding="utf-8")
+    with pytest.raises(FileExistsError):
+        reservar_rutas(carpeta, "desmontaje")

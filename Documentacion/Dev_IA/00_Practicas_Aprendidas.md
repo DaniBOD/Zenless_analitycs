@@ -119,6 +119,35 @@ Sacarlas bajó el acierto de 93,3 % a 91,5 %.
 **antes y después** de cualquier cambio. Una métrica nueva se valida contra la vieja antes de
 decidir con ella. Contar referencias **no** es medir cobertura.
 
+### C2 · Un reloj declara una unidad, no una granularidad. Y un sello de tiempo no es un ID.
+
+Apareció **dos veces**, disfrazada de cosas distintas:
+
+| caso | lo que declaraba | lo que hacía |
+|---|---|---|
+| bench de desmontaje | `thread_time` con `resolution=1e-07` | avanzaba de a **15,625 ms** (tick del scheduler) |
+| nombres en `audit/` y backups | `%f` — seis dígitos de microsegundos | avanzaba de a **un tick del timer global** |
+
+En Windows la granularidad del reloj de pared **no es una propiedad de la app**: es global y
+mutable (15,625 ms por defecto; baja a ~1 ms sólo mientras otro proceso la sube con
+`timeBeginPeriod`). Un test que pasa hoy puede estar pasando por lo que el usuario tiene abierto.
+
+El caso de `audit/` llegó como flake (~1 de cada 30) y era **pérdida de datos**: dos bitácoras de
+desmontaje con el mismo nombre y `os.replace` pisando en silencio. Medido con el timer en 1,0 ms:
+**14 %** de colisión entre dos escrituras seguidas; con el timer por defecto, casi 100 %. Y en los
+respaldos RNF-01 el sello era al **segundo**, o sea un millón de veces más grosero — lo que
+sobrevivía no era "un backup menos" sino un archivo que **dice** ser el estado previo y ya trae la
+escritura adentro.
+
+**Cómo aplicarlo:** el sello es para que un humano ubique la corrida, **nunca** para garantizar
+unicidad. Pedir el nombre a `app.core.unique_paths`, que reserva con `O_CREAT | O_EXCL` — crear
+*sólo si no existe* en un paso indivisible; `if existe:` seguido de escribir son **dos** pasos y
+entre medio cabe otro escritor. Para medir tiempo, `perf_counter` + mínimo de lotes cortos, o
+contar llamadas. Y antes de correr un test flaky en bucle, **sacale el azar** (congelar el reloj):
+40 corridas verdes de un test probabilístico no distinguen "arreglado" de "tuve suerte".
+
+Ver `2026-08-19_FIX_Unicidad_de_nombres_en_audit.md` y `2026-08-20_FIX_Unicidad_del_backup_RNF-01.md`.
+
 ---
 
 ## D · Entorno y empaquetado

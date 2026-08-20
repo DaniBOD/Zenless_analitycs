@@ -659,15 +659,15 @@ class MonitorController(QObject):
         de captura. Gitignoreado (db/danibod_zzz_v2.backup_*.db). Best-effort: si
         falla (permiso/espacio) se loguea pero no bloquea el arranque.
         """
-        import shutil
-        from datetime import datetime
         try:
             src = Path(db_path)
             if not src.exists():
                 return
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            dst = src.with_name(f"{src.stem}.backup_session_{ts}.db")
-            shutil.copy2(src, dst)
+            # Dos arranques dentro del mismo segundo (relanzar la app, o el .exe y un script de
+            # QA a la vez) caían en el mismo nombre y `copy2` pisaba sin avisar. `respaldar_db`
+            # reserva el nombre de forma atómica.
+            from app.db.connection import respaldar_db
+            dst = respaldar_db(src, "session")
             log.info("Backup de sesión RNF-01: %s", dst)
         except Exception:
             log.exception("No se pudo crear backup de sesión (se continúa)")

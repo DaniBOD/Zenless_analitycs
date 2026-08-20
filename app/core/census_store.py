@@ -30,10 +30,8 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 import sqlite3
 from collections.abc import Iterable, Sequence
-from datetime import datetime
 from pathlib import Path
 
 from app.core.census import CoverageRow, MenuSighting, RosterCensus
@@ -309,10 +307,10 @@ def marcar_huerfanos_en_dominio(
         return 0
 
     marca = f"no_visto_en_censo_{fecha}"
-    # Hora local: el sello del backup es para ubicarlo a mano, igual que en apply_migration.
-    sello = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
-    backup = destino.with_name(f"{destino.stem}.backup_precenso_{sello}.db")
-    shutil.copy2(destino, backup)
+    # El nombre del backup NO puede colgar del reloj: dos cierres del mismo segundo caían en el
+    # mismo archivo y `copy2` pisaba el estado previo sin avisar. `respaldar_db` es la autoridad.
+    from app.db.connection import respaldar_db
+    backup = respaldar_db(destino, "precenso")
 
     con = sqlite3.connect(destino, isolation_level=None)
     marcadas = 0

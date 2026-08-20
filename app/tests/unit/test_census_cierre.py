@@ -12,8 +12,10 @@ Dos cosas se protegen acá:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -71,6 +73,22 @@ def test_el_reporte_deja_json_y_markdown_sin_temporales(audit):
     assert js.exists() and md.exists()
     assert list(js.parent.glob("*.tmp")) == []
     assert json.loads(js.read_text(encoding="utf-8"))["schema"] == "censo_roster/1"
+
+
+def test_dos_pasadas_en_el_mismo_tick_no_se_pisan(audit, reloj_de_pared_congelado):
+    """Mismo defecto que la bitácora de desmontaje: el sello de tiempo es el único discriminador
+    del nombre, y su granularidad la fija el timer global de Windows, no esta app. Dos pasadas
+    cerradas dentro del mismo tick escribían el mismo par json/md y la segunda pisaba a la
+    primera en silencio."""
+    a = _censo(); a.observe(_ok("Ellen"), ts=1.0)
+    js_a, md_a = write_census_report(a.cerrar(ts=2.0))
+    b = _censo(); b.observe(_ok("Aria"), ts=1.0)
+    js_b, md_b = write_census_report(b.cerrar(ts=2.0))
+
+    assert js_a != js_b and md_a != md_b, "dos pasadas cayeron en el mismo par de archivos"
+    assert js_a.exists() and md_a.exists(), "la segunda pasada borró los archivos de la primera"
+    assert json.loads(js_a.read_text(encoding="utf-8"))["vistos"] == ["Ellen"]
+    assert "Ellen" in md_a.read_text(encoding="utf-8")
 
 
 def test_el_reporte_dice_explicitamente_que_NO_prueba(audit):
@@ -164,3 +182,27 @@ def test_un_nombre_que_no_esta_en_agents_no_rompe_el_cierre(dominio):
     n = marcar_huerfanos_en_dominio(["Aria", "Fulano Inexistente"], fecha="2026-08-16")
     assert n == 1
     assert "no_visto_en_censo" in _notas(dominio)["Aria"]
+
+
+def _sha(p) -> str:
+    return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+
+
+def test_dos_marcas_en_el_mismo_segundo_no_pisan_el_backup(dominio, reloj_de_pared_congelado):
+    """RNF-01: el backup existe para probar el estado PREVIO a la escritura.
+
+    Con el nombre colgado sólo del sello al segundo, dos marcas dentro del mismo tick del reloj
+    caen en el mismo archivo y `copy2` pisa sin avisar. Lo que sobrevive no es "un backup de
+    menos": es una copia tomada DESPUÉS de la primera escritura, archivada con el nombre que
+    afirma ser el estado previo — exactamente la evidencia que RNF-01 existe para conservar.
+    """
+    previo = _sha(dominio)
+    marcar_huerfanos_en_dominio(["Aria"], fecha="2026-08-16")
+    marcar_huerfanos_en_dominio(["Astra Yao"], fecha="2026-08-17")
+
+    backups = sorted(dominio.parent.glob("*.backup_precenso_*.db"))
+    assert [p.name for p in backups] == [
+        "danibod_zzz_v2.backup_precenso_20260819_143012.db",
+        "danibod_zzz_v2.backup_precenso_20260819_143012_2.db",
+    ], "el segundo backup pisó al primero en vez de correrse a un nombre libre"
+    assert _sha(backups[0]) == previo, "el backup más viejo ya no contiene el estado previo"

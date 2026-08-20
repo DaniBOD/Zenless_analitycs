@@ -11,16 +11,15 @@ Uso:
 """
 import argparse
 import json
-import shutil
 import sqlite3
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from app.db.connection import get_connection
+from app.db.connection import get_connection, respaldar_db
 from app.db.repositories import AgentRepo, ArchetypeRepo, DiscSetRepo, InventoryDiscRepo
 from app.core.score_normalizer import ScoringContext
 from app.core.recommender import recomendar, recommendation_to_json
@@ -76,8 +75,7 @@ def run_batch(dry_run: bool = False, verbose: bool = False) -> dict:
         return stats
 
     # --- Write ---
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    shutil.copy(str(DB_PATH), str(DB_PATH.parent / f"danibod_zzz_v2.backup_premig_{ts}.db"))
+    respaldar_db(DB_PATH, "premig")   # nombre reservado, no colgado del reloj
 
     con_w = sqlite3.connect(str(DB_PATH))
     fecha = date.today().isoformat()

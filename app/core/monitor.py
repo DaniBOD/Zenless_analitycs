@@ -2064,11 +2064,11 @@ class Monitor:
             return
         try:
             import cv2
-            from datetime import datetime
-            from pathlib import Path
-            p = Path("audit") / "s23_parse_fallo"
-            p.mkdir(parents=True, exist_ok=True)
-            f = p / f"s23_{datetime.now():%Y%m%d_%H%M%S}.png"
+            # Dos arreglos en el mismo lugar: `Path("audit")` era relativo al CWD, que en el
+            # `.exe` es el del acceso directo —el dump caía en cualquier parte, o no caía—; y el
+            # sello al segundo no separaba dos fallos seguidos. `audit_paths` resuelve las dos.
+            from app.core.audit_paths import reservar_rutas, resolve_audit_dir
+            (f,) = reservar_rutas(resolve_audit_dir() / "s23_parse_fallo", "s23", ("png",))
             cv2.imwrite(str(f), frame)
             log.info("[S23] frame guardado para diagnóstico: %s", f)
         except Exception:
@@ -4784,8 +4784,12 @@ class Monitor:
             base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/AppData/Local")
             dump_dir = Path(base) / "DaniBOD_ZZZ_Analytics" / "debug_frames"
             dump_dir.mkdir(parents=True, exist_ok=True)
+            # La confianza en el nombre da entropía pero no unicidad: dos frames del mismo
+            # segundo con la misma conf se pisaban. La reserva atómica sí la garantiza.
+            from app.core.unique_paths import candidatos_numerados, reservar
             ts = time.strftime("%Y%m%d_%H%M%S")
-            path = dump_dir / f"{state.code}_{ts}_conf{state.confidence:.2f}.png"
+            (path,) = reservar(candidatos_numerados(
+                dump_dir, f"{state.code}_{ts}_conf{state.confidence:.2f}", ("png",)))
             # cv2.imwrite no tolera paths con caracteres especiales — usar imencode + tofile
             import numpy as np
             buf = cv2.imencode(".png", frame)[1]

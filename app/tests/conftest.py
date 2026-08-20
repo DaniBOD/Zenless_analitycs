@@ -150,3 +150,34 @@ def mem_db():
     con.commit()
     yield con
     con.close()
+
+
+@pytest.fixture
+def reloj_de_pared_congelado(monkeypatch):
+    """Congela `datetime.now()` en los módulos que nombran artefactos con un sello de tiempo.
+
+    No es azúcar de test: es la única forma de medir lo que importa. La granularidad del reloj de
+    pared en Windows (`GetSystemTimeAsFileTime`) es una propiedad **global y mutable** del sistema
+    — 15,625 ms por defecto, y baja a ~1 ms sólo mientras algún otro proceso la sube con
+    `timeBeginPeriod`. Un test que escribe dos veces seguidas y compara nombres no mide el código:
+    mide **qué tenía abierto el usuario**. Medido el 2026-08-19 con el timer global en 1,0 ms: dos
+    `write_teardown_record` seguidas caían en el mismo nombre el 14 % de las veces; con el timer
+    por defecto, casi siempre.
+
+    Congelar el reloj lleva "dentro del mismo tick" a su límite — que es exactamente lo que ocurre
+    en un equipo con el timer en su valor por defecto. Y de paso saca el azar: 40 corridas verdes
+    de un test probabilístico no distinguen "arreglado" de "tuve suerte".
+    """
+    import importlib
+    from datetime import datetime as _dt
+
+    class _Congelado(_dt):
+        @classmethod
+        def now(cls, tz=None):
+            # Naive a propósito: es lo que devuelve el `datetime.now()` que se está sustituyendo.
+            return _dt(2026, 8, 19, 14, 30, 12, 123456)  # noqa: DTZ001
+
+    for mod in ("app.core.audit_paths", "app.core.teardown_batch", "app.core.census",
+                "app.core.census_store", "app.core.roster_declaration", "app.db.connection"):
+        monkeypatch.setattr(importlib.import_module(mod), "datetime", _Congelado, raising=False)
+    return _Congelado

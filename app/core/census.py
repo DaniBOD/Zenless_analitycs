@@ -57,7 +57,6 @@ import logging
 import os
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -495,20 +494,17 @@ def write_census_report(registro: dict | None) -> tuple[Path, Path] | None:
     if not registro:
         return None
     try:
-        from app.core.audit_paths import resolve_audit_dir
-        carpeta = resolve_audit_dir() / "censos"
-        carpeta.mkdir(parents=True, exist_ok=True)
-        # Hora local a propósito: el sello es para que un humano ubique la corrida en su día.
-        sello = f"{datetime.now():%Y%m%d_%H%M%S_%f}_censo_roster"  # noqa: DTZ005
-        salidas = []
-        for ext, texto in (("json", json.dumps(registro, ensure_ascii=False, indent=2)),
-                           ("md", _markdown(registro))):
-            destino = carpeta / f"{sello}.{ext}"
-            tmp = destino.with_suffix(".tmp")
+        from app.core.audit_paths import reservar_rutas, resolve_audit_dir
+        # Hora local a propósito: el sello es para que un humano ubique la corrida en su día. Pero
+        # el sello NO es lo que garantiza que dos pasadas no se pisen — eso lo hace la reserva
+        # atómica, y el par json/md se toma entero o ninguno. Ver `reservar_rutas`.
+        rutas = reservar_rutas(resolve_audit_dir() / "censos", "censo_roster", ("json", "md"))
+        for destino, texto in zip(rutas, (json.dumps(registro, ensure_ascii=False, indent=2),
+                                          _markdown(registro))):
+            tmp = destino.with_name(destino.name + ".tmp")
             tmp.write_text(texto, encoding="utf-8")
             os.replace(tmp, destino)
-            salidas.append(destino)
-        return salidas[0], salidas[1]
+        return rutas[0], rutas[1]
     except Exception as e:  # noqa: BLE001 — el reporte nunca puede tumbar el cierre de la pasada
         log.warning("no se pudo escribir el reporte del censo: %s", e)
         return None

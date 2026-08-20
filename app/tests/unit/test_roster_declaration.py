@@ -297,3 +297,25 @@ def test_el_tooltip_del_bloqueo_dice_como_salir(dominio):
     assert "NO SE PUEDE DESTILDAR" in tip
     assert "prueba de posesión" in tip
     assert "Discos" in tip, "tiene que decir dónde se deshace"
+
+
+def _sha(p) -> str:
+    import hashlib
+    from pathlib import Path as _P
+    return hashlib.sha256(_P(p).read_bytes()).hexdigest()
+
+
+def test_dos_declaraciones_en_el_mismo_segundo_no_pisan_el_backup(
+        dominio, reloj_de_pared_congelado):
+    """Mismo defecto que en el cierre del censo, y la misma consecuencia: el archivo que queda
+    con nombre de `predeclaracion` fue copiado DESPUÉS de la primera escritura."""
+    previo = _sha(dominio)
+    declarar({"Ellen"}, catalogo=_catalogo(), fecha="2026-08-17")
+    declarar({"Ellen", "Aria"}, catalogo=_catalogo(), fecha="2026-08-17")
+
+    backups = sorted(dominio.parent.glob("*.backup_predeclaracion_*.db"))
+    assert [p.name for p in backups] == [
+        "danibod_zzz_v2.backup_predeclaracion_20260819_143012.db",
+        "danibod_zzz_v2.backup_predeclaracion_20260819_143012_2.db",
+    ], "el segundo backup pisó al primero en vez de correrse a un nombre libre"
+    assert _sha(backups[0]) == previo, "el backup más viejo ya no contiene el estado previo"

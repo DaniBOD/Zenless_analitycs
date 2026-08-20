@@ -369,13 +369,12 @@ def write_teardown_record(registro: dict | None) -> Path | None:
     if not registro:
         return None
     try:
-        from app.core.audit_paths import resolve_audit_dir
-        carpeta = resolve_audit_dir() / "desmontajes"
-        carpeta.mkdir(parents=True, exist_ok=True)
-        # Marca con microsegundos: dos tandas seguidas no pueden pisarse.
-        nombre = f"{datetime.now():%Y%m%d_%H%M%S_%f}_desmontaje.json"
-        destino = carpeta / nombre
-        tmp = destino.with_suffix(".tmp")
+        from app.core.audit_paths import reservar_rutas, resolve_audit_dir
+        # El nombre lo reserva `audit_paths`, no lo arma el sello: el reloj de pared solo separa
+        # dos tandas si alcanza a avanzar entre una y otra, y su granularidad es del sistema, no
+        # nuestra. Medido: colisionaba el 14 % de las veces. Ver `reservar_rutas`.
+        (destino,) = reservar_rutas(resolve_audit_dir() / "desmontajes", "desmontaje")
+        tmp = destino.with_name(destino.name + ".tmp")
         tmp.write_text(json.dumps(registro, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(tmp, destino)
         return destino
