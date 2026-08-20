@@ -1,0 +1,187 @@
+{
+  "Discos_Triggers/01_Pantalla_Resultado_Desafio/Ejemplo_1.png": {
+    "passing": [
+      [
+        "S2",
+        1.0,
+        "s2_resultado_desafio.png"
+      ],
+      [
+        "S2",
+        0.865,
+        "s2_resultado_desafio_evento.png"
+      ]
+    ],
+    "s12": [
+      "S12",
+      1.0,
+      "s2_resultado_desafio.png"
+    ]
+  },
+  "Discos_Triggers/02_Detalle_Disco_Desde_Resultado/Ejemplo_1.png": {
+    "passing": [
+      [
+        "S3",
+        1.0,
+        "s3_modal_detalle_drop.png"
+      ]
+    ],
+    "s12": [
+      "S12",
+      1.0,
+      "s3_modal_detalle_drop.png"
+    ]
+  },
+  "Discos_Triggers/05_Upgrade_PRE_nivel0/Ejemplo_1.png": {
+    "passing": [
+      [
+        "S10",
+        0.859,
+        "s10_modal_upgrade.png"
+      ]
+    ],
+    "s12": [
+      "S12",
+      0.859,
+      "s10_modal_upgrade.png"
+    ]
+  },
+  "Discos_Triggers/08_Pantallas_Menu_Transicion/Pantalla_patrulla_de_area(opcional).png": {
+    "passing": [],
+    "s12": [
+      "S12",
+      0.709,
+      "s2_resultado_desafio.png"
+    ]
+  },
+  "Discos_Triggers/09_Inventario_discos_general/Ejemplo_9.png": {
+    "passing": [
+      [
+        "S30",
+        0.984,
+        "s9_inventario_general.png"
+      ],
+      [
+        "S9",
+        0.984,
+        "s9_inventario_general.png"
+      ]
+    ],
+    "s12": [
+      "S12",
+      0.984,
+      "s9_inventario_general.png"
+    ]
+  },
+  "Discos_Triggers/12_Desmontaje/Ejemplo_1.png": {
+    "passing": [
+      [
+        "S11",
+        1.0,
+        "s11_desmontaje.png"
+      ]
+    ],
+    "s12": [
+      "S12",
+      1.0,
+      "s11_desmontaje.png"
+    ]
+  },
+  "Discos_Triggers/13_Seleccion_set_farmeo/Ejemplo_1.png": {
+    "passing": [
+      [
+        "S13",
+        1.0,
+        "s13_seleccion_set_farmeo.png"
+      ],
+      [
+        "S2",
+        0.903,
+        "s2_resultado_desafio.png"
+      ],
+      [
+        "S2",
+        0.87,
+        "s2_resultado_desafio_evento.png"
+      ]
+    ],
+    "s12": [
+      "S12",
+      1.0,
+      "s13_seleccion_set_farmeo.png"
+    ]
+  },
+  "Discos_Triggers/14_Slots_equipamiento/Ejemplo_Slot1_1.png": {
+    "passing": [
+      [
+        "S26",
+        1.0,
+        "s17_personalizacion_pistas.png"
+      ],
+      [
+        "S17",
+        1.0,
+        "s17_personalizacion_pistas.png"
+      ]
+    ],
+    "s12": [
+      "S12",
+      1.0,
+      "s17_personalizacion_pistas.png"
+    ]
+  },
+  "Triggers_Generales/Falsos_positivos/Menu_Pausa_1.png": {
+    "passing": [],
+    "s12": [
+      "S12",
+      0.59,
+      "s13_seleccion_set_farmeo.png"
+    ]
+  },
+  "Triggers_Generales/Falsos_positivos/Guia_Rapida_2.png": {
+    "passing": [
+      [
+        "S2",
+        0.844,
+        "s2_resultado_desafio.png"
+      ],
+      [
+        "S2",
+        0.803,
+        "s2_resultado_desafio_evento.png"
+      ]
+    ],
+    "s12": [
+      "S12",
+      0.844,
+      "s2_resultado_desafio.png"
+    ]
+  },
+  "Triggers_Generales/Falsos_positivos/Modo_foto_1.png": {
+    "passing": [],
+    "s12": [
+      "S12",
+      0.578,
+      "s13_seleccion_set_farmeo.png"
+    ]
+  },
+  "Triggers_Generales/Falsos_positivos/Eventos_3.png": {
+    "passing": [
+      [
+        "S2",
+        0.905,
+        "s2_resultado_desafio.png"
+      ],
+      [
+        "S2",
+        0.85,
+        "s2_resultado_desafio_evento.png"
+      ]
+    ],
+    "s12": [
+      "S12",
+      0.905,
+      "s2_resultado_desafio.png"
+    ]
+  }
+}

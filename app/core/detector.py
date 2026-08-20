@@ -38,6 +38,33 @@ TEMPLATES_DIR = Path(__file__).parent.parent / "resources" / "templates"
 # Threshold global por defecto
 MATCH_THRESHOLD = 0.85
 
+# --- Pase grueso del matcheo de templates (Dev_IA 2026-08-19) --------------------------------
+# `cv2.matchTemplate` hace el trabajo pesado del lado de la IMAGEN (integrales + correlación por
+# bloques con DFT sobre el frame entero) y lo RECOMPUTA en cada llamada. Medido: ~106 ms por
+# llamada sobre un frame de 3,7 Mpx **sin importar el tamaño del template** — uno de 8×8 cuesta lo
+# mismo que uno de 1022×431. Con 31 templates eran ~3,1 s por frame, el 83 % del ciclo del monitor.
+#
+# El arreglo NO es bajar la resolución del match (eso obligaría a recalibrar los 26 umbrales de
+# THRESHOLD_BY_STATE): el pase grueso solo LOCALIZA, y el score que decide se sigue calculando a
+# RESOLUCIÓN COMPLETA sobre el píxel original, dentro de un ROI chico.
+_COARSE_SCALE = 0.25          # escala del pase que localiza
+_COARSE_PAD = 24              # px (full-res) de margen del ROI de confirmación
+_COARSE_MARGIN = 0.15         # cuánto por debajo de su umbral puede estar un template en el pase
+                              #   grueso y todavía merecer confirmación. El peor positivo del
+                              #   corpus quedó a 0.029 de su umbral ⇒ ~5× de holgura.
+_COARSE_MIN_PIXELS = 1_000_000  # por debajo de esto el frame va directo: no hay nada que ahorrar
+_COARSE_MIN_TMPL = 8          # px; un template más chico que esto al 1/4 no discrimina ⇒ directo
+_COARSE_PEAKS = 3             # picos del mapa grueso que se confirman por template. Con UNO solo
+                              #   alcanza el 99 % de las veces (la distancia entre el argmax grueso
+                              #   y el real es p50 = 1 px), pero llegó a 167 px en un caso: ahí el
+                              #   ROI mira el lugar equivocado y el score sale bajo. Tres picos
+                              #   cierran ese agujero por ~4 ms cada uno.
+_COARSE_DIAG_TOP = 3          # templates que se confirman SIEMPRE, aunque no lleguen al shortlist,
+                              #   para que el diagnóstico de S12 sea fiel. No es cosmético: esa
+                              #   confianza decide en `monitor` si un frame resetea la identidad
+                              #   latcheada (umbral 0.50). Con top-1 hubo 1 cruce de ese umbral en
+                              #   102 frames; con top-3, ninguno.
+
 # Thresholds dinámicos por estado (más permisivos para pantallas informativas,
 # más estrictos para captura crítica)
 THRESHOLD_BY_STATE: dict[str, float] = {
@@ -2055,6 +2082,126 @@ class ScreenDetector:
 
     # ---- Capa 1: Template matching -----------------------------------------
 
+    # -- Pase grueso: localizar barato, confirmar caro pero chico ------------
+
+    @staticmethod
+    def _gray_tmpl(entry: dict) -> np.ndarray:
+        """Gris del template, cacheado en la propia entrada. Perezoso a propósito: varios tests
+        reemplazan `_templates` en caliente con entradas recién armadas."""
+        g = entry.get("gray")
+        if g is None:
+            img = entry["img"]
+            g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+            entry["gray"] = g
+        return g
+
+    @classmethod
+    def _small_tmpl(cls, entry: dict) -> "np.ndarray | None":
+        """Template reducido para el pase grueso, o None si al achicarlo deja de discriminar."""
+        if "small" not in entry:
+            s = cv2.resize(cls._gray_tmpl(entry), None, fx=_COARSE_SCALE, fy=_COARSE_SCALE,
+                           interpolation=cv2.INTER_AREA)
+            entry["small"] = s if min(s.shape[:2]) >= _COARSE_MIN_TMPL else None
+        return entry["small"]
+
+    @staticmethod
+    def _picos(mapa: np.ndarray, k: int, radio_y: int, radio_x: int) -> list[tuple[int, int]]:
+        """Hasta `k` máximos locales del mapa de respuesta, con supresión de no-máximos.
+
+        Devuelve posiciones (x, y). Muta `mapa` — el llamador no lo reusa."""
+        picos: list[tuple[int, int]] = []
+        for _ in range(k):
+            _, val, _, loc = cv2.minMaxLoc(mapa)
+            if val <= -1.0:
+                break
+            picos.append((int(loc[0]), int(loc[1])))
+            x0, y0 = max(0, loc[0] - radio_x), max(0, loc[1] - radio_y)
+            x1 = min(mapa.shape[1], loc[0] + radio_x + 1)
+            y1 = min(mapa.shape[0], loc[1] + radio_y + 1)
+            mapa[y0:y1, x0:x1] = -1.0
+        return picos
+
+    @staticmethod
+    def _confirmar(gray_frame: np.ndarray, gray_tmpl: np.ndarray,
+                   picos: list[tuple[int, int]]) -> float:
+        """Score a RESOLUCIÓN COMPLETA, mirando solo un ROI alrededor de cada pico grueso.
+
+        Es un máximo sobre un SUBCONJUNTO de las posiciones que barría el match global, así que
+        **solo puede quedar por debajo, nunca por encima**: este camino no puede inventar un falso
+        positivo. El riesgo posible es el contrario (perder un match real por mirar donde no es), y
+        para eso están los `_COARSE_PEAKS`."""
+        th, tw = gray_tmpl.shape[:2]
+        H, W = gray_frame.shape[:2]
+        mejor = 0.0
+        for lx, ly in picos:
+            cx, cy = int(lx / _COARSE_SCALE), int(ly / _COARSE_SCALE)
+            x0, y0 = max(0, cx - _COARSE_PAD), max(0, cy - _COARSE_PAD)
+            x1, y1 = min(W, cx + tw + _COARSE_PAD), min(H, cy + th + _COARSE_PAD)
+            roi = gray_frame[y0:y1, x0:x1]
+            if roi.shape[0] < th or roi.shape[1] < tw:
+                continue
+            val = float(cv2.minMaxLoc(cv2.matchTemplate(roi, gray_tmpl, cv2.TM_CCOEFF_NORMED))[1])
+            if val > mejor:
+                mejor = val
+        return mejor
+
+    def _scores_por_archivo(self, gray_frame: np.ndarray) -> dict[str, float]:
+        """Confianza por ARCHIVO de template (no por estado: 31 entradas usan 27 archivos, y
+        S23/S25/S29 comparten uno solo — matchearlo tres veces es calcular tres veces el mismo
+        número).
+
+        Un archivo queda FUERA del dict cuando no entra en el frame o cuando el pase grueso lo
+        descartó; el llamador lo saltea igual que antes se salteaba un template más grande que el
+        frame."""
+        fh, fw = gray_frame.shape[:2]
+        usar_grueso = (fh * fw) >= _COARSE_MIN_PIXELS
+        small_frame = (cv2.resize(gray_frame, None, fx=_COARSE_SCALE, fy=_COARSE_SCALE,
+                                  interpolation=cv2.INTER_AREA) if usar_grueso else None)
+
+        # Umbral más PERMISIVO entre los estados que declaran cada archivo: el shortlist no puede
+        # descartar por el umbral de S25 algo que a S23 le habría alcanzado.
+        umbral: dict[str, float] = {}
+        for entry in self._templates:
+            thr = THRESHOLD_BY_STATE.get(entry["code"], self._default_threshold)
+            n = entry["name"]
+            umbral[n] = thr if n not in umbral else min(umbral[n], thr)
+
+        scores: dict[str, float] = {}
+        gruesos: dict[str, tuple[list[tuple[int, int]], float, np.ndarray]] = {}
+
+        for entry in self._templates:
+            n = entry["name"]
+            if n in scores or n in gruesos:
+                continue
+            gray_tmpl = self._gray_tmpl(entry)
+            th, tw = gray_tmpl.shape[:2]
+            if th > fh or tw > fw:
+                continue                      # no entra en el frame (invariante viejo)
+
+            small_tmpl = self._small_tmpl(entry) if usar_grueso else None
+            if small_tmpl is None or small_tmpl.shape[0] > small_frame.shape[0] \
+                    or small_tmpl.shape[1] > small_frame.shape[1]:
+                scores[n] = float(cv2.minMaxLoc(
+                    cv2.matchTemplate(gray_frame, gray_tmpl, cv2.TM_CCOEFF_NORMED))[1])
+                continue
+
+            mapa = cv2.matchTemplate(small_frame, small_tmpl, cv2.TM_CCOEFF_NORMED)
+            tope = float(cv2.minMaxLoc(mapa)[1])
+            picos = self._picos(mapa, _COARSE_PEAKS,
+                                max(1, small_tmpl.shape[0] // 2), max(1, small_tmpl.shape[1] // 2))
+            gruesos[n] = (picos, tope, gray_tmpl)
+
+        # A confirmar: los que el pase grueso deja cerca de su umbral, MÁS los mejores en bruto —
+        # estos últimos no van a pasar ningún umbral, pero sostienen el diagnóstico de S12.
+        a_confirmar = {n for n, (_, tope, _) in gruesos.items() if tope >= umbral[n] - _COARSE_MARGIN}
+        a_confirmar |= {n for n, _ in sorted(gruesos.items(), key=lambda kv: -kv[1][1])[:_COARSE_DIAG_TOP]}
+
+        for n in a_confirmar:
+            picos, _, gray_tmpl = gruesos[n]
+            scores[n] = self._confirmar(gray_frame, gray_tmpl, picos)
+
+        return scores
+
     def _template_candidates(self, frame: np.ndarray) -> tuple[list[ScreenState], ScreenState]:
         """Template matching con threshold dinámico por estado. Devuelve
         `(candidatos, s12_diag)`:
@@ -2065,24 +2212,28 @@ class ScreenDetector:
             (p.ej. el template de S2 matchea la pantalla S13 a ~0.90 por chrome común)
             eclipse al match legítimo más bajo (S13) y produzca un parpadeo S13↔S12.
           - `s12_diag`: estado S12 con la confianza del mejor match global (diagnóstico
-            cuando ningún template supera su umbral).
+            cuando ningún template supera su umbral). **Ojo: no es cosmético** — `monitor` lo usa
+            para decidir si un frame no-detalle resetea la identidad latcheada (umbral 0.50).
+
+        El scoring lo hace `_scores_por_archivo`: un pase grueso a 1/4 que LOCALIZA y una
+        confirmación a resolución COMPLETA dentro de un ROI chico. Las confianzas que salen de acá
+        son las mismas que salían del match global —por eso `THRESHOLD_BY_STATE` no se tocó—, con
+        una sola diferencia acotada: pueden quedar por debajo, nunca por encima. Ver Dev_IA
+        2026-08-19 y `app/tests/unit/test_detector_template_pipeline.py`.
         """
         gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+        fh, fw = gray_frame.shape[:2]
+
+        scores = self._scores_por_archivo(gray_frame)
 
         overall_best_conf = 0.0
         overall_best_name = ""
         passing: list[ScreenState] = []
 
-        fh, fw = gray_frame.shape[:2]
         for entry in self._templates:
-            tmpl = entry["img"]
-            gray_tmpl = cv2.cvtColor(tmpl, cv2.COLOR_BGR2GRAY) if tmpl.ndim == 3 else tmpl
-            th, tw = gray_tmpl.shape[:2]
-            if th > fh or tw > fw:
-                continue
-
-            result = cv2.matchTemplate(gray_frame, gray_tmpl, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, _ = cv2.minMaxLoc(result)
+            max_val = scores.get(entry["name"])
+            if max_val is None:
+                continue          # no entra en el frame, o el pase grueso lo descartó
 
             if max_val > overall_best_conf:
                 overall_best_conf = max_val

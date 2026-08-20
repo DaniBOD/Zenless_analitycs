@@ -189,13 +189,48 @@ El peor positivo de todo el corpus quedó a **−0,029** de su umbral en el pase
 (`s10_modal_upgrade` sobre un frame pre-max). Con margen **0,15** hay ~5× de holgura, y el
 shortlist queda en 6,2 templates por frame de media (p95 = 11).
 
-### Riesgo residual, honesto
+### Riesgo residual — cerrado de entrada, no dejado como opción
 
 La distancia entre el argmax grueso y el argmax full-res es p50 = 1 px, p95 = 9 px — pero **llegó
-a 167 px** en un caso. Ahí el ROI podría estar mirando el lugar equivocado. En el corpus no perdió
-nada (el score del ROI igual superó el umbral), pero es el único punto donde esto podría fallar.
-Si se quiere cinturón además de tirantes: confirmar los top-K picos del mapa grueso en vez del
-argmax solo. Cuesta ~4 ms por pico extra.
+a 167 px** en un caso. Ahí el ROI mira el lugar equivocado y el score sale bajo.
+
+Este doc proponía los top-K picos como cinturón opcional. **Se implementó desde el principio**
+(decisión de Daniel): en un módulo load-bearing donde el proyecto ya invirtió una fase entera en
+endurecer falsos positivos, pagar ~4 ms por pico para eliminar el único modo de falla conocido no
+es una relación discutible.
+
+Y al implementarlo apareció una **segunda razón, independiente y más fuerte**: el diagnóstico de
+S12 la necesitaba (§4.1).
+
+### 4.1 · El diagnóstico de S12 no era cosmético
+
+`s12_diag` reporta la confianza del mejor match global "por si a nadie le alcanza el umbral". Se
+lo trató como un dato de log — y no lo es: [`monitor.py`](../../app/core/monitor.py) lo usa para
+decidir si un frame no-detalle **resetea la identidad latcheada** (`_DETAIL_RESET_MIN_CONF = 0.50`).
+Es el mecanismo que evita el latch sostenido: un fundido de transición (conf ~0) no debe resetear,
+una pantalla real sí.
+
+**Y el máximo global exacto es incompatible con el arreglo**: conocerlo exige matchear los 31
+templates a resolución completa, que es justo lo que se eliminó. No hay forma de preservarlo.
+
+Medido sobre los 102 frames, comparando contra el valor viejo en los 22 donde el diagnóstico manda:
+
+| variante | cruces del umbral 0.50 | max \|dif\| |
+|---|---|---|
+| solo el mejor pico | **1** ⚠️ | 0,0906 |
+| máximo del pase grueso | **1** ⚠️ | 0,0906 |
+| solo los confirmados del shortlist | **1** ⚠️ | 0,5194 |
+| **top-3 del pase grueso, confirmados** | **0** ✅ | 0,0648 |
+
+El cruce era real: `Modo_Libre_3.png` pasaba de 0,553 (resetea el latch) a 0,493 (no resetea).
+
+Por eso se confirman **siempre** los `_COARSE_DIAG_TOP = 3` mejores del pase grueso, aunque no
+lleguen al shortlist. Con eso el valor reportado queda **sandwicheado** entre el máximo del top-3
+(que nunca cruzó) y el máximo global real (que es la referencia) ⇒ **cero cruces por construcción**,
+no por suerte.
+
+Lo que sí se garantiza y quedó fijado en tests: el diagnóstico **solo puede subestimar** (el ROI
+barre un subconjunto), y un diagnóstico inflado —el peligroso— es imposible.
 
 ---
 
@@ -210,12 +245,40 @@ Proyección del ciclo S9: **~4,05 s → ~1,3 s** (170 ms de templates + 331 de u
 **Orden acordado, tres entregas separadas:**
 
 1. Re-medir con la máquina quieta y dejarlo escrito — **este doc**. ✅
-2. **El refactor solo** — coarse-to-fine + dedup por archivo en `_template_candidates`. Con TDD:
-   test que fija "candidatos idénticos al camino viejo" sobre el corpus, después la suite de
-   detector completa + el QA negativo de 33 FP.
-3. **El caché del OCR del header, aparte** — por llamada, no global.
+2. **El refactor solo** — coarse-to-fine + dedup por archivo + picos múltiples. ✅ (abajo)
+3. **El caché del OCR del header, aparte** — por llamada, no global. ⏳
 
 Queda pendiente además corregir la cota de frescura del doc de latencia (§3).
+
+---
+
+## 6 · Resultado del paso 2 (implementado)
+
+`_template_candidates`: **3083 ms → 183,5 ms (16,8×)**. Medido con el instrumental QA-06, máquina
+quieta:
+
+| pantalla | antes | después | |
+|---|---|---|---|
+| S17 detalle disco | 3391 ms | **169 ms** | 20,0× |
+| S12 transición | 3443 ms | **196 ms** | 17,6× |
+| S10 modal upgrade | 3223 ms | **206 ms** | 15,6× |
+| S9 inventario discos | 3650 ms | **788 ms** | 4,6× |
+
+**S9 se queda atrás a propósito:** eliminado el pase de templates, lo que domina su ciclo es el
+OCR del header corriendo dos veces (§2) — 586 de sus 788 ms. Es exactamente el paso 3.
+
+Verificación: **1698 unit + 79 del QA negativo de FP + 28 de integración/regresión, 0 fallos.**
+
+Lo que fija `app/tests/unit/test_detector_template_pipeline.py`:
+
+- El coste se mide **contando llamadas, no cronometrando** (un assert de tiempo en Windows es
+  flake conocido): cero `matchTemplate` sobre imágenes de ≥1 Mpx, y ningún archivo de template
+  matcheado más de `1 + _COARSE_PEAKS` veces.
+- Los candidatos salen **idénticos** a un baseline congelado con la implementación vieja.
+- El diagnóstico de S12 solo puede subestimar y no cambia de lado del umbral 0.50.
+- Un frame adversario donde el pase grueso apunta al lugar equivocado: **se le rompió el test a
+  propósito** (con 1 pico reporta 0,928 contra un máximo real de 1,000) para verificar que tiene
+  dientes antes de darlo por bueno.
 
 ---
 
