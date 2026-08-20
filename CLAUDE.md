@@ -10,7 +10,24 @@
 
 ## 0. Lectura de contexto — antes de tocar nada
 
-En este orden, leé estos 3 archivos:
+En este orden, leé estos 4 archivos:
+
+0. **[`Documentacion/Dev_IA/00_Practicas_Aprendidas.md`](./Documentacion/Dev_IA/00_Practicas_Aprendidas.md)** — **empezá por acá.** No es teoría: cada regla salió de un error concreto de este proyecto, y varias se repitieron disfrazadas de problemas distintos. Los titulares, para que no haya excusa de no haberlo abierto:
+
+   | | |
+   |---|---|
+   | **A1** | Medir antes de afirmar. Un número heredado **no** es una medición. |
+   | **A2** | El silencio no es un aprobado — puede ser que ese código nunca corrió. |
+   | **A3** | Verificar el **efecto**, no la intención. Rompé el test a propósito. |
+   | **A4** | Verificar el estado, no deducirlo (los folders no nombran el estado). |
+   | **B1** | Una sola autoridad por pregunta. Dos definiciones de lo mismo es una de más. |
+   | **B2** | Abstenerse no debe costar el dato entero. Y no borres por ausencia. |
+   | **B3** | Un audit no muta su objeto de estudio (`prune=False`, sha256 antes/después). |
+   | **C1** | Medí contra un baseline validado, antes y después. No inventes métricas. |
+   | **D1** | Todo lo que la app lee vive **dentro de `app/`** (si no, muere empaquetado). |
+   | **D2** | Una red que en dev nunca se ejerce, nunca se testea. |
+   | **E1** | Una investigación sin archivo no se puede revisar ni retomar. |
+   | **E3** | Un cambio por vez, y el diagnóstico primero. |
 
 1. **[`project-context-IA.md`](./project-context-IA.md)** (~300 líneas) — snapshot maestro. Estado de la DB, RFs, decisiones cerradas, glosario. Es el archivo *autoritativo*.
 2. **[`Documentacion/Roadmap_Implementacion/Roadmap_Motor_Captura_Scoring.md`](./Documentacion/Roadmap_Implementacion/Roadmap_Motor_Captura_Scoring.md)** — Fase 2 (motor de captura + scoring). Define los 7 sub-fases con criterios de aceptación duros por hito. **Esta es tu hoja de ruta**.
