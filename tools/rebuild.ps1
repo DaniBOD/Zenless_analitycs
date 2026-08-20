@@ -19,10 +19,70 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$exePath  = Join-Path $repoRoot "app\build\dist\DaniBOD_ZZZ_Analytics\DaniBOD_ZZZ_Analytics.exe"
 $specPath = Join-Path $repoRoot "app\build\main.spec"
 $workDir  = Join-Path $repoRoot "app\build\work"
 $distDir  = Join-Path $repoRoot "app\build\dist"
+
+# 0a) MAX_PATH. Windows caps a full path at 260 chars unless LongPathsEnabled is on.
+#     PySide6 ships absurdly deep qml paths: the longest RELATIVE path inside the
+#     bundle measured 185 chars (a .cpp.obj under
+#     PySide6\qml\Qt\labs\assetdownloader\objects-RelWithDebInfo\...). Add the dist
+#     root and that is the real budget:
+#
+#         main repo    44 + 185 = 229   fits, by 31
+#         a worktree   85 + 185 = 270   DOES NOT FIT
+#
+#     The failure is nasty: COLLECT dies with a FileNotFoundError naming a file that
+#     is right there, because the problem is LENGTH, not absence. It cost a whole
+#     build to diagnose on 2026-08-19, and the conclusion was left as a note to
+#     remember ("build from the main repo") -- which is the kind of note that fails
+#     the day nobody remembers. So the script measures it instead.
+#
+#     When the budget does not fit, the build is redirected to a short but STABLE
+#     root: %LOCALAPPDATA%, never %TEMP% -- temp gets swept and the desktop shortcut
+#     would rot pointing at nothing. Re-pointing the shortcut is what this script
+#     already exists to do, so the redirect costs nothing.
+#
+#     $LongestBundleRelPath is a CONSTANT on purpose: it can only be measured AFTER a
+#     build, so deriving it would be circular. Re-measure if PySide6 gets deeper:
+#         Get-ChildItem -Recurse -File $distDir |
+#             ForEach-Object { $_.FullName.Length - $distDir.Length } |
+#             Sort-Object -Descending | Select-Object -First 1
+$MaxPath = 260
+$LongestBundleRelPath = 185
+$LongPathsOn = $false
+try {
+    $lp = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' `
+                           -Name LongPathsEnabled -ErrorAction Stop
+    $LongPathsOn = ($lp.LongPathsEnabled -eq 1)
+} catch {
+    # The value may not exist on older installs. Assume OFF, the conservative side:
+    # at worst we redirect a build that would have fitted anyway.
+}
+
+$needed = $distDir.Length + 1 + $LongestBundleRelPath
+if ($LongPathsOn) {
+    Write-Host "MAX_PATH  : LongPathsEnabled=1, no effective limit." -ForegroundColor DarkGray
+} elseif ($needed -gt $MaxPath) {
+    $shortRoot = Join-Path $env:LOCALAPPDATA "zzb_build"
+    $distDir = Join-Path $shortRoot "dist"
+    $workDir = Join-Path $shortRoot "work"
+    Write-Host "MAX_PATH  : repo path does NOT fit ($needed > $MaxPath chars)." -ForegroundColor Yellow
+    Write-Host "            Typical when building from a worktree. Redirecting to:" -ForegroundColor Yellow
+    Write-Host "            $shortRoot" -ForegroundColor Yellow
+    Write-Host "            The desktop shortcut will point there." -ForegroundColor Yellow
+} else {
+    $margin = $MaxPath - $needed
+    if ($margin -lt 40) {
+        Write-Host "MAX_PATH  : fits by only $margin chars. Tight -- if PySide6 gets deeper" -ForegroundColor Yellow
+        Write-Host "            this breaks with a misleading FileNotFoundError." -ForegroundColor Yellow
+    } else {
+        Write-Host "MAX_PATH  : ok ($needed/$MaxPath chars, $margin to spare)." -ForegroundColor DarkGray
+    }
+}
+
+# The .exe lands wherever $distDir ended up, not where we assumed before measuring.
+$exePath = Join-Path $distDir "DaniBOD_ZZZ_Analytics\DaniBOD_ZZZ_Analytics.exe"
 
 Write-Host "=== DaniBOD ZZZ Analytics - Rebuild ===" -ForegroundColor Cyan
 Write-Host "Repo root: $repoRoot"
