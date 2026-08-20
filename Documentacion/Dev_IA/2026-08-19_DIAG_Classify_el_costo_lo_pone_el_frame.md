@@ -245,10 +245,12 @@ Proyección del ciclo S9: **~4,05 s → ~1,3 s** (170 ms de templates + 331 de u
 **Orden acordado, tres entregas separadas:**
 
 1. Re-medir con la máquina quieta y dejarlo escrito — **este doc**. ✅
-2. **El refactor solo** — coarse-to-fine + dedup por archivo + picos múltiples. ✅ (abajo)
-3. **El caché del OCR del header, aparte** — por llamada, no global. ⏳
+2. **El refactor solo** — coarse-to-fine + dedup por archivo + picos múltiples. ✅ (§6)
+3. **El caché del OCR del header, aparte** — por llamada, no global. ✅ (§7)
 
-Queda pendiente además corregir la cota de frescura del doc de latencia (§3).
+La cota de frescura del doc de latencia (§3) quedó corregida **con el número post-paso-3**, no con
+los 3,5 s: publicarla antes de terminar habría sido equivocarse por segunda vez en la misma
+dirección (un número heredado que nadie volvió a medir).
 
 ---
 
@@ -279,6 +281,82 @@ Lo que fija `app/tests/unit/test_detector_template_pipeline.py`:
 - Un frame adversario donde el pase grueso apunta al lugar equivocado: **se le rompió el test a
   propósito** (con 1 pico reporta 0,928 contra un máximo real de 1,000) para verificar que tiene
   dientes antes de darlo por bueno.
+
+---
+
+## 7 · Resultado del paso 3 — el caché de la lectura del header
+
+**La premisa se verificó antes de escribir una línea de caché.** El diagnóstico (§2) afirmaba
+"mismo recorte, mismo OCR", pero eso se había escrito ANTES del refactor del paso 2, que movió cosas
+en `detector.py`. Se comprobó contra el código actual espiando el backend de OCR durante un
+`classify` real:
+
+```
+llamadas al OCR del header durante UN classify: 2
+  1. shape=(79, 895, 3) args=(lang=spa, psm=7)  sha256=5a1ef0f0...f05c
+  2. shape=(79, 895, 3) args=(lang=spa, psm=7)  sha256=5a1ef0f0...f05c
+  PREMISA CONFIRMADA: mismo recorte byte a byte y mismos argumentos
+```
+
+Si hubieran diferido en un píxel, compartir la lectura habría devuelto un resultado que no
+corresponde — y **eso no se ve en los tiempos, se ve en los datos**.
+
+De paso: `parser_disc_s17.py` tiene su PROPIA `_S9_HEADER_ROI` con otros valores. El caché es de
+**esta función**, no "del header" como concepto.
+
+### Se cachea la lectura, no el veredicto
+
+Los dos verifies sacan conclusiones **opuestas** del mismo texto:
+
+```
+texto leído: 'Pistas de disco [ 339 /30001'
+  _verify_s9  -> (True,  'txt=pistas-de-disco')
+  _verify_s30 -> (False, 'txt=no-match')
+```
+
+Un caché del veredicto le daría a uno la respuesta del otro, y se rompería en silencio el día que
+uno cambie cómo interpreta el texto.
+
+### El ciclo de vida ES la invalidación
+
+Un `ContextVar` que `classify` abre y cierra con un `with`, con el `reset` en un `finally`. No es un
+caché de módulo con invalidación ni un `lru_cache` sobre el frame: dura exactamente una invocación.
+`ContextVar` y no global para que el monitor y la UI no compartan lectura entre hilos. Además guarda
+el frame junto al texto y compara por identidad (`is`), así que ni siquiera dentro de la misma
+invocación puede contestar sobre otro frame.
+
+### Los tests, rotos a propósito
+
+El test que manda no es "no re-OCReó dentro del mismo classify" —eso mide la optimización— sino que
+**un classify posterior con otro frame vuelve a leer**, verificado por el sha256 del recorte que
+recibe el OCR. Se probó que tienen dientes con dos roturas deliberadas:
+
+| rotura | tests que la agarran |
+|---|---|
+| el caché no se cierra (sin `finally: reset`) | **4 de 5** |
+| caché de módulo sin guarda de identidad (la implementación ingenua) | **5 de 5** |
+
+### Resultado
+
+| pantalla | original | tras paso 2 | **tras paso 3** | total |
+|---|---|---|---|---|
+| **S9 inventario discos** | 3650 ms | 788 ms | **446 ms** | **8,2×** |
+| S17 detalle disco | 3391 ms | 169 ms | **160 ms** | 21,2× |
+| S10 modal upgrade | 3223 ms | 206 ms | **189 ms** | 17,1× |
+| S12 transición | 3443 ms | 196 ms | **181 ms** | 19,1× |
+
+Instrumental QA-06: **p50 = 189 ms, p99 = 547 ms** (n=39).
+
+Ciclo S9 completo: **4,05 s → ~1,0 s**. Para los 405 discos del censo, **~30 min → ~7 min**.
+
+### Un flake ajeno que apareció en la corrida completa
+
+`test_desmontaje_audit::test_dos_tandas_no_se_pisan` falló 1 vez. **No es de este cambio** (ni el
+test ni `teardown_batch.py` tocan el detector) y falla ~1 de cada 30 corridas aisladas: el nombre
+del archivo de auditoría se arma solo con `datetime.now()`, que en esta máquina avanza de a **337 µs**
+(medido: salto mínimo no nulo sobre 1,3 M de muestras). Dos tandas que se cierran en la misma
+ventana **se pisan** — es pérdida de datos, no solo un test nervioso. `census.py:502` usa el mismo
+patrón. Queda señalado aparte en vez de mezclarlo acá.
 
 ---
 

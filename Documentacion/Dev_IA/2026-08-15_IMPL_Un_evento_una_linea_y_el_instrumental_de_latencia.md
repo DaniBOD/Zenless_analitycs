@@ -40,9 +40,34 @@ realmente la pantalla*, así que propuso cronometrar los intervalos entre logs, 
 apenas salta uno. El método funciona y da una cota superior — pero mezcla su tiempo de reacción con
 el del sistema.
 
-**Lo que lo destraba:** `classify` corre en **cada tick rápido (~109 ms)**, no a la cadencia. El
-primer frame en que se ve el estado nuevo *es* el cambio de pantalla, con ese error acotado. Eso el
-sistema sí lo sabe, sin que nadie cronometre.
+**Lo que lo destraba:** `classify` corre en el loop rápido, no a la cadencia. El primer frame en
+que se ve el estado nuevo *es* el cambio de pantalla, con un error acotado por **el período del
+loop más lo que tarde `classify`**. Eso el sistema sí lo sabe, sin que nadie cronometre.
+
+> ### ⚠️ Corrección 2026-08-19 — la cota que decía este párrafo estaba mal por 32×
+>
+> La versión original decía *"`classify` corre en cada tick rápido (~109 ms)"* y de ahí se leía que
+> la cota de frescura era ~109 ms. **Los 109 ms son el período nominal del loop**
+> (`monitor.py`: 100 ms redondeados por la granularidad de `GetTickCount64`), no el costo de
+> `classify`. Nadie había medido `classify`. Cuando se lo midió, costaba **~3,5 s** — el término
+> dominante era justamente el que faltaba.
+>
+> Y el número volvió a moverse enseguida: el arreglo del pase de templates y el caché de la lectura
+> del header (Dev_IA 2026-08-19) lo bajaron a lo de abajo. **Medido con el instrumental, máquina
+> quieta, 39 muestras sobre 4 pantallas, 2026-08-19:**
+>
+> | | ms |
+> |---|---|
+> | `classify` p50 | **189** |
+> | `classify` p99 | **547** |
+> | peor pantalla (S9, p50) | **446** |
+>
+> ⇒ **cota de frescura ≈ 0,2 s típica, ~0,55 s en la cola** (más el período del loop).
+>
+> **Cómo NO repetir esto una tercera vez:** el número de arriba también va a envejecer. La
+> autoridad no es este párrafo, es el instrumental — `metrics.resumen()` sobre la superficie
+> `detector`, con `DANIBOD_METRICS=1`. Antes de citar la cota en cualquier lado, leerla de ahí.
+> Un número heredado que nadie volvió a medir ya se publicó dos veces en este mismo doc.
 
 **El límite honesto:** el CONTENIDO (disco, engine) no se mira en el loop rápido sino dentro del
 handler, **a la cadencia (500-4000 ms)**. Para un cambio de contenido sin cambio de pantalla, el

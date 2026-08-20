@@ -11,8 +11,10 @@ State machine para validación de transiciones anti-FP.
 """
 from __future__ import annotations
 
+import contextvars
 import re
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -1744,9 +1746,50 @@ _RE_S9_DISCOS = re.compile(r"pistas\s+de\s+disco", re.I)
 _RE_S9_ARMAS = re.compile(r"lificador", re.I)
 
 
+# Lectura del header cacheada **por invocación de `classify`**. No es un caché de módulo con
+# invalidación ni un `lru_cache` sobre el frame: el ciclo de vida ES la invalidación, y lo
+# gobierna `_lecturas_de_una_clasificacion()` abajo. Fuera de una clasificación vale `None` y la
+# función lee siempre, como antes.
+#
+# Es un `ContextVar` y no un global para que dos hilos (monitor + UI) no compartan lectura.
+_lectura_header: contextvars.ContextVar = contextvars.ContextVar("_lectura_header", default=None)
+
+
+@contextmanager
+def _lecturas_de_una_clasificacion():
+    """Abre y CIERRA el caché de lecturas caras. Vive exactamente una invocación de `classify`.
+
+    El `reset` va en un `finally`: si la clasificación revienta, el caché se cierra igual. Un
+    caché que sobrevive a su invocación no se nota en los tiempos —sigue siendo rápido— se nota
+    en los DATOS, contestando sobre el frame anterior."""
+    token = _lectura_header.set({})
+    try:
+        yield
+    finally:
+        _lectura_header.reset(token)
+
+
 def _read_inventory_header(frame: np.ndarray) -> str | None:
     """Texto del título del inventario, o None si no se pudo leer. Lo comparten `_verify_s9` y
-    `_verify_s30`: el template dice "hay una grilla de inventario" y el título dice de QUÉ."""
+    `_verify_s30`: el template dice "hay una grilla de inventario" y el título dice de QUÉ.
+
+    En un `classify` de S9 los dos verifies corren (S30 primero, falla, después S9) y mandan al
+    OCR **el mismo recorte byte a byte** — verificado por sha256, no por lectura del código. Eran
+    ~330 ms pagados dos veces, la mitad del costo del ciclo S9 una vez arreglado el matcheo de
+    templates (Dev_IA 2026-08-19).
+
+    Lo que se cachea es la lectura CRUDA, no el veredicto: los dos verifies sacan conclusiones
+    OPUESTAS del mismo texto (S30 exige ver "amplificador" y falla cerrado; S9 solo bloquea si lo
+    ve, y ante basura deja pasar). Un caché del veredicto le daría a uno la respuesta del otro.
+    """
+    cache = _lectura_header.get()
+    if cache is not None:
+        guardado = cache.get("inventory_header")
+        # Identidad del objeto, no del contenido: guardar el frame en la tupla lo mantiene vivo,
+        # así que `is` no puede confundirse con otro que reusó su id.
+        if guardado is not None and guardado[0] is frame:
+            return guardado[1]
+
     ocr = _get_dialog_verify_ocr()
     if ocr is None:
         return None
@@ -1757,9 +1800,13 @@ def _read_inventory_header(frame: np.ndarray) -> str | None:
         if crop.size == 0:
             return None
         text, _ = ocr.text(crop, psm=7, lang="spa")
-        return text or ""
+        text = text or ""
     except Exception:
         return None
+
+    if cache is not None:
+        cache["inventory_header"] = (frame, text)
+    return text
 
 
 def _verify_s9(frame: np.ndarray) -> tuple[bool, str | None]:
@@ -2356,10 +2403,19 @@ class ScreenDetector:
         """
         Instrumentado (QA-06 §3.1, presupuesto 50 ms) — solo mide con `DANIBOD_METRICS=1`.
 
+        Envoltorio delgado: lo único que agrega es ABRIR y CERRAR el caché de lecturas caras
+        (`_lecturas_de_una_clasificacion`). El ciclo de vida del caché es, literalmente, este
+        `with` — por eso no hace falta invalidarlo ni versionarlo.
+        """
+        with _lecturas_de_una_clasificacion():
+            return self._clasificar(frame)
+
+    def _clasificar(self, frame: np.ndarray) -> ScreenState:
+        """
         Pipeline completo de clasificación multi-capa:
         0. Dark frame filter (pantallas de carga/transición → S12 inmediato)
-        1. Template matching (rápido, ~50ms)
-        2. Verificación secundaria (~30ms)
+        1. Template matching (pase grueso que localiza + confirmación full-res en ROI)
+        2. Verificación secundaria
         2.5 Override por tab-bar (ancla determinista de la familia detalle-PJ)
         3. State machine (transiciones válidas)
         4. HSV fallback solo si template no matchó
