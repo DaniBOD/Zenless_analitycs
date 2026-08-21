@@ -190,3 +190,94 @@ def test_en_readonly_el_disco_libre_tampoco_escribe(db, monkeypatch):
     monkeypatch.setattr(se, "is_readonly", lambda: True)
     _syncer(db).persist_s17_disc(_disco(libre=True))
     assert _filas(db) == [], "read-only es read-only también por este camino"
+
+
+# --- el TERCER desenlace: hay dueño, pero no se lo pudo nombrar --------------------------------
+#
+# Medido en la corrida real del 2026-08-20: 2 de 119 discos (1,7 %) se descartaban ENTEROS por
+# esto — set, slot, nivel, main y los cuatro substats bien leídos, tirados por un solo campo.
+# Sobre los 405 del inventario son ~7, y con la abstención medida del descriptor (4,3 %) el techo
+# real es ~17.
+#
+# Se persisten con la FORMA de un libre (`agente_asignado = NULL`, `equipado = 0`) pero MARCADOS.
+# La marca no es cosmética: sin ella la fila entra al bucket `libres` de `_persist_disco_libre` y
+# el próximo disco genuinamente libre con la misma identidad la pisa con `update_from_parsed` —
+# dos discos distintos fusionados en una fila, en silencio.
+
+_MARCA = "dueno_no_identificado"
+
+
+def _disco_dueno_incierto(subs=None):
+    """Badge PRESENTE (hay avatar) pero el matcher no pudo nombrarlo. Distinto de `equip_libre`
+    (no hay avatar) y distinto de un tile que no se pudo localizar (no se sabe nada)."""
+    d = _disco(libre=False, subs=subs)
+    d.equip_dueno_incierto = True
+    return d
+
+
+def _notas(p):
+    con = sqlite3.connect(str(p))
+    out = [r[0] for r in con.execute("SELECT notas FROM inventory_discs ORDER BY id")]
+    con.close()
+    return out
+
+
+def test_un_disco_con_dueno_INNOMBRABLE_se_persiste_MARCADO(db):
+    """Lo que hoy se pierde. La fila se escribe, y lleva la marca que dice por qué está sin dueño:
+    no es lo mismo 'no lo tiene nadie' que 'no pude leer de quién es' (RNF-02)."""
+    r = _syncer(db).persist_s17_disc(_disco_dueno_incierto())
+    assert r is not None, "el disco ya no se descarta entero"
+    filas = _filas(db)
+    assert len(filas) == 1
+    assert filas[0]["agente_asignado"] is None
+    assert filas[0]["equipado"] == 0
+    assert _MARCA in (_notas(db)[0] or ""), \
+        "sin la marca la fila es indistinguible de un libre genuino"
+
+
+def test_una_fila_MARCADA_no_es_pisada_por_un_libre_genuino(db):
+    """**El test que justifica la marca.** Si la fila marcada entrara al bucket `libres`, este
+    segundo disco —libre de verdad, misma identidad— la actualizaría y los dos quedarían como uno.
+    Con 22 pares gemelos en el inventario real, es un caso alcanzable, no teórico."""
+    _syncer(db).persist_s17_disc(_disco_dueno_incierto())
+    _syncer(db).persist_s17_disc(_disco(libre=True))
+
+    filas = _filas(db)
+    assert len(filas) == 2, "el libre genuino pisó la fila marcada en vez de insertar la suya"
+    notas = _notas(db)
+    assert sum(_MARCA in (n or "") for n in notas) == 1, "la marca se propagó o se perdió"
+
+
+def test_una_relectura_incierta_actualiza_la_fila_y_conserva_la_marca(db):
+    """Dos lecturas inciertas con la misma identidad son ambiguas por construcción: puede ser el
+    mismo disco re-visto (tras un re-arme o un reinicio) o su gemelo. No hay forma de saberlo.
+
+    Se resuelve **igual que los libres**: se actualiza la fila que ya está. Inventar una regla
+    distinta para este caso —insertar siempre— duplicaría en cada re-lectura, y haría que dos
+    casos idénticos se comporten distinto según por qué rama entraron. El techo por gemelos ya lo
+    reporta el censo; no se cierra a la fuerza acá.
+
+    Lo que sí hay que verificar es que la actualización **no borre la marca**: si la borrara, la
+    fila pasaría al bucket de libres en la próxima pasada y volvería a ser pisable."""
+    _syncer(db).persist_s17_disc(_disco_dueno_incierto())
+    _syncer(db).persist_s17_disc(_disco_dueno_incierto())
+    assert len(_filas(db)) == 1, "una re-lectura no puede duplicar la fila"
+    assert _MARCA in (_notas(db)[0] or ""),         "la actualización borró la marca — la fila volvería a parecer un libre genuino"
+
+
+def test_sin_señal_de_badge_SIGUE_sin_escribirse(db):
+    """No-regresión de la guarda que sí protege: un tile que no se pudo localizar no dice nada
+    sobre el dueño. Escribirlo convertiría 'no sé' en dato — que es exactamente lo que la rama
+    original evitaba, y con razón."""
+    d = _disco(libre=False)          # ni libre, ni dueño incierto: sin señal
+    assert _syncer(db).persist_s17_disc(d) is None
+    assert _filas(db) == []
+
+
+def test_la_marca_lleva_FECHA_para_poder_reconciliarlos_despues(db):
+    """El valor de la marca no es sólo el flag: es poder listar 'los que quedaron pendientes de
+    tal pasada'. Mismo formato que `no_visto_en_censo_<fecha>` de census_store."""
+    import re
+    _syncer(db).persist_s17_disc(_disco_dueno_incierto())
+    assert re.search(rf"{_MARCA}_\d{{4}}-\d{{2}}-\d{{2}}", _notas(db)[0] or ""), \
+        f"la nota no tiene la forma esperada: {_notas(db)[0]!r}"

@@ -92,6 +92,12 @@ class DiscParsed:
     # en reject-set/conf-muy-baja entre frames + nunca se identificó dueño). Conservador:
     # ante duda queda False ("dueño incierto") para no marcar libre un disco equipado.
     equip_libre: bool = False
+    # TERCER desenlace, distinto de los otros dos: el badge SÍ está (hay avatar) pero el matcher
+    # no pudo nombrarlo. No es "libre" —alguien lo tiene— ni es "no sé nada" —el tile se localizó
+    # y se leyó—. La distinción importa porque decide si el disco se guarda: hasta el 2026-08-21
+    # este caso caía en el mismo saco que "no se pudo leer" y se descartaba ENTERO, perdiendo set,
+    # slot, nivel y los cuatro substats que sí estaban bien. Medido: 2 de 119 en la corrida real.
+    equip_dueno_incierto: bool = False
     # SWAP entre PJs (S23): hint de ORIGEN cierto cuando el monitor vio el diálogo de
     # sustitución en esta sesión/ventana (el PJ que PIERDE el disco). La persistencia lo
     # usa para mover la fila sin duplicar; None si no hubo diálogo reciente (→ la

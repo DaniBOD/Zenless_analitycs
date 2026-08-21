@@ -69,6 +69,11 @@ class Disc:
     nivel: int
     equipado: int
     agente_asignado: int | None
+    # Por qué la fila está sin dueño, cuando lo está. Dos filas con `agente_asignado` NULL se ven
+    # idénticas en la tabla, y esta nota es lo ÚNICO que separa "no lo tiene nadie" de "alguien lo
+    # tiene y no se pudo leer quién" — distinción que `sync_equip._persist_disco_libre` necesita
+    # para no dejar que un libre genuino pise a un incierto.
+    notas: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -430,11 +435,18 @@ class InventoryDiscRepo:
         set_id: int,
         agente_asignado: int | None = None,
         equipado: int = 0,
+        notas: str | None = None,
     ) -> int:
         """
         Inserta un disco nuevo desde DiscParsed. Devuelve el id insertado.
         `agente_asignado`/`equipado` solo se setean cuando el caller tiene una
         asignación confiable (S17 latch+avatar); por defecto None/0.
+
+        `notas` deja marcada la fila con el MOTIVO de una escritura parcial —hoy sólo
+        `dueno_no_identificado_<fecha>`, misma convención que `no_visto_en_censo_<fecha>` de
+        `census_store`—. No es documentación: `_persist_disco_libre` lee esa marca para NO meter
+        la fila en el bucket de libres, porque una fila que en realidad está equipada no puede ser
+        pisada por el próximo libre con la misma identidad.
         """
         subs = p.subs
         def _sub(i: int):
@@ -451,8 +463,8 @@ class InventoryDiscRepo:
                 sub2, val2, rolls2, unidad2,
                 sub3, val3, rolls3, unidad3,
                 sub4, val4, rolls4, unidad4,
-                nivel, equipado, agente_asignado, descartado)
-               VALUES (?,?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?)""",
+                nivel, equipado, agente_asignado, descartado, notas)
+               VALUES (?,?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?,?)""",
             (
                 set_id, p.slot, p.main_stat_canon or p.main_stat_raw, p.main_valor, p.main_unidad,
                 s1[0], s1[1], s1[2], s1[3],
@@ -460,7 +472,7 @@ class InventoryDiscRepo:
                 s3[0], s3[1], s3[2], s3[3],
                 s4[0], s4[1], s4[2], s4[3],
                 p.nivel, (1 if agente_asignado is not None else equipado),
-                agente_asignado, 0,
+                agente_asignado, 0, notas,
             ),
         )
         return cur.lastrowid  # type: ignore[return-value]
@@ -532,6 +544,10 @@ class InventoryDiscRepo:
             nivel=r["nivel"] or 0,
             equipado=r["equipado"] or 0,
             agente_asignado=r["agente_asignado"],
+            # `.keys()` es a propósito y NO es el SIM118 que ruff cree: `r` es un
+            # `sqlite3.Row`, donde `in` itera VALORES, no columnas. Y el guard existe
+            # porque varios esquemas de test no declaran `notas`.
+            notas=(r["notas"] if "notas" in r.keys() else None),  # noqa: SIM118
         )
 
 

@@ -32,6 +32,27 @@ from app.db.repositories import (
 
 log = logging.getLogger(__name__)
 
+#: Prefijo de la marca que distingue "alguien lo tiene y no sé quién" de un disco realmente libre.
+#: Las dos filas se ven igual en la tabla —`agente_asignado` NULL, `equipado` 0—, así que esta
+#: marca es lo ÚNICO que las separa. Misma convención que `no_visto_en_censo_<fecha>` de
+#: `census_store` y `declarado_por_usuario_<fecha>` de `roster_declaration`.
+MARCA_DUENO_INCIERTO = "dueno_no_identificado"
+
+
+def _marca_dueno_incierto() -> str:
+    """El texto que se escribe en `notas`. Una sola función lo arma y otra lo reconoce, para que
+    el formato no quede escrito en dos lugares que después se separan."""
+    from datetime import date
+    return f"{MARCA_DUENO_INCIERTO}_{date.today():%Y-%m-%d}"      # noqa: DTZ011
+
+
+def _es_dueno_incierto(d) -> bool:
+    """True si la fila fue guardada sin dueño porque no se lo pudo NOMBRAR (no porque esté libre).
+
+    Se busca por prefijo y como subcadena: `notas` es un campo que otros flujos ya concatenan con
+    `' | '`, así que la marca puede no estar sola ni al principio."""
+    return MARCA_DUENO_INCIERTO in (getattr(d, "notas", None) or "")
+
 # Fuzzy de nombre de set (difflib) en _resolve_set_id: umbral alto + margen de
 # ambigüedad (RNF-02). Cutoff 0.86 acepta drops de 1 char ('Fábula'→'Fäbua'≈0.96)
 # y rechaza nombres genuinamente distintos/ambiguos (p.ej. la forma larga de
@@ -390,6 +411,17 @@ class DiscSyncer:
             # La distinción no existía antes: `crop_s9_selected_badge` devolvía None para las dos.
             if getattr(parsed, "equip_libre", False):
                 return self._persist_disco_libre(parsed, set_id, t0)
+            # TERCER desenlace (2026-08-21): el badge ESTÁ —hay avatar— pero ninguna de las dos
+            # superficies pudo nombrarlo. No es "libre" ni es "no sé nada": es un disco leído
+            # entero al que le falta un solo campo. Descartarlo tiraba set, slot, nivel y los
+            # cuatro substats (2 de 119 en la corrida real del 2026-08-20; con la abstención
+            # medida del descriptor, 4,3 %, el techo son ~17 sobre 405).
+            #
+            # Se guarda con la FORMA de un libre pero MARCADO, y la marca es funcional: mantiene
+            # la fila fuera del bucket `libres`, para que el próximo disco genuinamente libre con
+            # la misma identidad no la pise (ver `_persist_disco_libre`).
+            if getattr(parsed, "equip_dueno_incierto", False):
+                return self._persist_disco_libre(parsed, set_id, t0, dueno_incierto=True)
             # DEBUG y no INFO: es el PORQUÉ de una no-escritura, no un evento. Un disco cuyo dueño
             # no se resolvió ya se reporta arriba con su decisión; repetir acá el motivo por cada
             # uno enterraba la línea que sí importa (medido: 4-7 líneas por disco, QA 2026-08-15).
@@ -538,7 +570,8 @@ class DiscSyncer:
         finally:
             con_w.close()
 
-    def _persist_disco_libre(self, parsed: DiscParsed, set_id: int, t0: float) -> SyncResult | None:
+    def _persist_disco_libre(self, parsed: DiscParsed, set_id: int, t0: float,
+                             *, dueno_incierto: bool = False) -> SyncResult | None:
         """Persiste un disco que se AFIRMÓ libre: fila con `agente_asignado = NULL`, `equipado = 0`.
 
         Sin dueño no existe la clave natural `(PJ, slot)`, así que la deduplicación es por
@@ -561,9 +594,18 @@ class DiscSyncer:
         try:
             with con_w:
                 candidatos = repo.find_all_by_identity(parsed, set_id)
-                libres = [d for d in candidatos if d.agente_asignado is None]
                 ocupados = [d for d in candidatos if d.agente_asignado is not None]
-                if not libres and ocupados:
+                # Las filas MARCADAS tienen agente_asignado NULL igual que un libre, pero NO son
+                # libres: alguien las tiene y no se pudo leer quién. Van a un bucket propio para
+                # que un libre genuino con la misma identidad no las actualice — eso las marcaría
+                # libres (falso LIBRE) y fusionaría dos discos distintos en una fila, en silencio.
+                marcadas = [d for d in candidatos
+                            if d.agente_asignado is None and _es_dueno_incierto(d)]
+                libres = [d for d in candidatos
+                          if d.agente_asignado is None and not _es_dueno_incierto(d)]
+                # Cada lectura busca a los de SU clase: incierta ↔ marcadas, libre ↔ libres.
+                mismos = marcadas if dueno_incierto else libres
+                if not mismos and ocupados:
                     log.warning(
                         "Disco visto LIBRE con la identidad de uno EQUIPADO (ids %s, set=%s "
                         "slot=%d) — no se toca ninguna fila: puede ser ese disco recién "
@@ -571,25 +613,29 @@ class DiscSyncer:
                         ", ".join(str(d.id) for d in ocupados), parsed.set_name_raw, parsed.slot,
                     )
                     return None
-                if len(libres) > 1:
+                clase = "de dueño incierto" if dueno_incierto else "libres"
+                if len(mismos) > 1:
                     log.warning(
-                        "Ambigüedad: %d discos libres indistinguibles (ids %s, set=%s slot=%d) — "
+                        "Ambigüedad: %d discos %s indistinguibles (ids %s, set=%s slot=%d) — "
                         "se actualiza el primero; el conteo puede quedar corto.",
-                        len(libres), ", ".join(str(d.id) for d in libres),
+                        len(mismos), clase, ", ".join(str(d.id) for d in mismos),
                         parsed.set_name_raw, parsed.slot,
                     )
-                if libres:
-                    disc_id, trigger = libres[0].id, "libre_update"
+                if mismos:
+                    disc_id = mismos[0].id
+                    trigger = "incierto_update" if dueno_incierto else "libre_update"
                     repo.update_from_parsed(disc_id, parsed)
                 else:
-                    disc_id = repo.insert_from_parsed(parsed, set_id,
-                                                      agente_asignado=None, equipado=0)
-                    trigger = "libre_insert"
+                    disc_id = repo.insert_from_parsed(
+                        parsed, set_id, agente_asignado=None, equipado=0,
+                        notas=_marca_dueno_incierto() if dueno_incierto else None)
+                    trigger = "incierto_insert" if dueno_incierto else "libre_insert"
             bonus_2p_stat, bonus_2p_valor, bonus_4p = self._set_repo.get_bonus(set_id)
             bonus_2p = (f"{bonus_2p_stat} {bonus_2p_valor}".strip()
                         if (bonus_2p_stat or bonus_2p_valor) else None)
             latency_ms = (time.perf_counter() - t0) * 1000
-            log.info("Disco LIBRE persistido id=%d %s set=%s slot=%d nivel=%d %.0fms",
+            log.info("Disco %s persistido id=%d %s set=%s slot=%d nivel=%d %.0fms",
+                     "SIN DUEÑO IDENTIFICADO" if dueno_incierto else "LIBRE",
                      disc_id, trigger, parsed.set_name_raw, parsed.slot, parsed.nivel, latency_ms)
             return SyncResult(
                 disc_id=disc_id, trigger=trigger, recomendacion="(libre)", score_norm=0.0,

@@ -3527,7 +3527,17 @@ class Monitor:
         if self._assign_s9_owner_por_detalle(disc, frame):
             return
         # Sigue sin resolver → desempate por CONTEXTO (helper compartido con S17).
-        self._tiebreak_owner(disc, badge, tag="s9_owner")
+        if self._tiebreak_owner(disc, badge, tag="s9_owner"):
+            return
+        # Nadie pudo nombrarlo, pero el badge ESTÁ: `lectura.estado` es BADGE_CON_DUENO, o sea que
+        # el tile se localizó y la nitidez dice que hay un avatar. Eso es una AFIRMACIÓN —"alguien
+        # lo tiene"— y no la ausencia de dato que justifica descartar. Marcarlo acá es lo que
+        # permite guardar el disco en vez de tirarlo entero: se leyeron bien set, slot, nivel,
+        # main y los cuatro substats, y hasta el 2026-08-21 todo eso se perdía por este campo.
+        # Medido en la corrida real del 2026-08-20: 2 de 119 discos.
+        disc.equip_dueno_incierto = True
+        if self._id_diag_on:
+            log.info("[s9_owner] hay dueño pero ninguna superficie lo nombró — se guarda marcado")
 
     def _assign_s9_owner_por_detalle(self, disc, frame) -> bool:
         """Intenta nombrar al dueño con el avatar del panel de detalle. True si lo logró.
