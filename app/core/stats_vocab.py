@@ -141,12 +141,24 @@ ALIASES: dict[str, str] = {
     "Bono Daño Etéreo":     "Bono Daño Éter",
     "Bono Daño Físico":     "Bono Daño Físico",   # ya canónico, sin alias
 
-    # Bono Daño Viento (Wind DMG) — elemento nuevo del roster (Velina, v2.7+).
-    # El cliente ES rotula el main de Viento como "Bono de daño aéreo"; el
-    # canónico interno sigue la convención "Bono Daño <elemento>". El OCR lo
-    # captura pegado ("Bonode danoaéreo", id=362). Ambas variantes comparten
-    # clave normalizada → un solo destino. Confirmado contra inventory_discs.
+    # Éter y Viento: los DOS rótulos más parecidos del juego, y por eso van juntos.
+    # El cliente ES los escribe "Bono de daño etéreo" y "Bono de daño aéreo" — una
+    # letra de diferencia una vez que `_norm_key` saca acentos y espacios
+    # ('bonodedanoetereo' vs 'bonodedanoaereo'). El canónico interno sigue la
+    # convención "Bono Daño <elemento>", así que ninguna de las dos formas de
+    # pantalla coincide sola.
+    #
+    # Hasta 2026-08-21 había UNA forma de cada uno: "Bono Daño Etéreo" (sin el "de")
+    # y "Bono de daño aéreo" (con el "de"). La forma que faltaba caía al difuso,
+    # donde el otro elemento queda a 0.03 — por debajo de `_FUZZY_MARGIN`— y el
+    # normalizador se abstenía. Cuál de los dos se salvaba dependía de qué prefijo
+    # hubiera leído el OCR; el disco id=24 del censo se guardó con el crudo
+    # 'Bonode dano etéreo' por eso. Se listan las CUATRO para que ninguna dependa
+    # del difuso. (El OCR también los pega: "Bonode dano…" normaliza a la misma
+    # clave, así que una entrada cubre las dos escrituras.)
+    "Bono de daño etéreo":  "Bono Daño Éter",
     "Bono de daño aéreo":   "Bono Daño Viento",
+    "Bono Daño Aéreo":      "Bono Daño Viento",
     "Bonode danoaéreo":     "Bono Daño Viento",
 }
 

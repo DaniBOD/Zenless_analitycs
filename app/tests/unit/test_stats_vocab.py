@@ -158,6 +158,25 @@ class TestIsValidMainForSlot:
         assert is_valid_main_for_slot(5, "Bono Daño Lumiflujo") is False
         assert "Bono Daño Lumen" not in ALL_CANONICAL
 
+    def test_eter_y_viento_resuelven_con_y_sin_el_de(self):
+        """Los dos rótulos más parecidos del juego, y se envenenaban mutuamente.
+
+        El cliente ES escribe "Bono de daño etéreo" y "Bono de daño aéreo": una letra
+        de diferencia después de normalizar acentos y espacios. El alias fijo sólo tenía
+        UNA forma de cada uno —"Bono Daño Etéreo" (sin el "de") y "Bono de daño aéreo"
+        (con el "de")—, así que la forma faltante caía al difuso, donde el otro elemento
+        está a 0.03 de distancia: menos que el margen de ambigüedad. Resultado: el
+        normalizador se abstenía, correctamente, y el disco se guardaba con el texto
+        crudo (id=24 del censo, `Bonode dano etéreo`, que rompía
+        `test_zero_unknowns_in_db`).
+
+        Cuál de los dos se salvaba dependía de qué prefijo hubiera leído el OCR. Este
+        test fija las CUATRO combinaciones para que no vuelva a depender de eso.
+        """
+        for forma in ("Bono de daño {}", "Bono Daño {}", "Bonode dano {}"):
+            assert normalize_stat_name(forma.format("etéreo")) == "Bono Daño Éter", forma
+            assert normalize_stat_name(forma.format("aéreo")) == "Bono Daño Viento", forma
+
     def test_slot6_valid(self):
         assert is_valid_main_for_slot(6, "HP%") is True
         # Slot VI lleva la variante % ("Tasa de Anomalía"), no la flat "Maestría".
