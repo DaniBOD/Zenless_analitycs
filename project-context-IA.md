@@ -104,15 +104,15 @@ Sistema de análisis y optimización de cuenta para ZZZ porque el juego carece d
 
 | RF | Nombre | Estado | Doc fuente |
 |----|--------|--------|------------|
-| RF-01 | Estado completo del roster (45 PJs, stats, armas, discos, thresholds, awakenings) | ✅ Cerrado (gap: 4 awakenings con texto pendiente + Harumasa/N.°11 sin nivel) | README §3.1 |
-| RF-02 | Inventario discos equipados + no equipados | ✅ Cerrado · 332 totales | README §3.1 |
-| RF-03 | Inventario W-Engines | ✅ Cerrado · 50 totales | README §3.1 |
+| RF-01 | Estado completo del roster (45 PJs, stats, armas, discos, thresholds, awakenings) | ✅ Cerrado (gap: 4 awakenings con texto pendiente + Harumasa/N.°11 sin nivel) | `Documentacion/README_Referencia_Fase1_2026-05.md` §3.1 |
+| RF-02 | Inventario discos equipados + no equipados | ✅ Cerrado · 332 totales | `Documentacion/README_Referencia_Fase1_2026-05.md` §3.1 |
+| RF-03 | Inventario W-Engines | ✅ Cerrado · 50 totales | `Documentacion/README_Referencia_Fase1_2026-05.md` §3.1 |
 | RF-04 | Sync automático al cambiar discos en juego | 🟡 Implementado, pendiente QA en juego 2026-05-10 | `Documentacion/RF_Captura_Discos/RF-Logic_Captura_Discos.md` |
 | RF-05 | Sync automático al mejorar discos (PRE/POST) | 🟡 Implementado, pendiente QA en juego 2026-05-10 | mismo doc, §upgrade |
 | RF-06 | Optimizador build por PJ (greedy + bonus pass, top 3) | 🟦 Diseño cerrado | `Documentacion/RF_Optimizador/RF-Logic_Optimizador_Build.md` |
 | RF-07/08/10 | ❌ Descartados de v1 | — | (preservados como IDs vacíos) |
 | RF-09 | OCR híbrido Tesseract (texto) + PaddleOCR (números), interfaz abstracta | 🟦 Diseño cerrado | RF-Captura_Discos §3.1 |
-| RF-11 | UI standalone `.exe` (PySide6 + PyInstaller, tray + toast + panel 5 tabs) | 🟡 Implementado básico (.exe + tray + 5 tabs + toast 4 variants + LivePanel). Pendiente Hito 2.7: set logos + avatares target + click toast→panel | README §3.1 RF-11 |
+| RF-11 | UI standalone `.exe` (PySide6 + PyInstaller, tray + toast + panel 5 tabs) | 🟡 Implementado básico (.exe + tray + 5 tabs + toast 4 variants + LivePanel). Pendiente Hito 2.7: set logos + avatares target + click toast→panel | `Documentacion/README_Referencia_Fase1_2026-05.md` §3.1 RF-11 |
 | RF-12 | Optimizador team-aware (Claude API catalogadora offline + lookup determinista <50 ms) | 🟦 Diseño cerrado | `Documentacion/RF_Optimizador_Equipos/RF-Logic_Optimizador_Equipos.md` |
 | RF-13 | Validación lategame (F11 OCR breakdown DMG) + tier list calibrada vs Prydwen + retro-feedback bayesiano | 🟦 Diseño cerrado | `Documentacion/RF_Lategame_Validation/RF-Logic_Lategame_Validation.md` |
 | RF-14 | Optimizador W-Engines con scoring contextual + build full coordinada con RF-06 | 🟦 Diseño cerrado | `Documentacion/RF_Optimizador_Armas/RF-Logic_Optimizador_Armas.md` |
@@ -178,7 +178,7 @@ RF-14 coordina con RF-06 (build full = arma + 6 discos)
 
 **Bajo umbral críticos:** Miyabi CRIT 51.4/65 · Burnice ER 1.56/1.8 (despertar inactivo) · Soukaku/Lucy/Nekomata/Antón/Harumasa sin arma o subdesarrollados.
 
-Detalle completo: README §5-6.
+Detalle completo: `Documentacion/README_Referencia_Fase1_2026-05.md` §5-6.
 
 ---
 
@@ -203,7 +203,7 @@ Detalle completo: README §5-6.
 
 ```
 D:\Proyectos\Zenless_analitycs\
-├── README.md                              ← doc maestro (1214 líneas)
+├── README.md                              ← portada del repo (GitHub)
 ├── project-context-IA.md                  ← ESTE archivo
 ├── db/
 │   ├── danibod_zzz_v2.db                  ← DB activa
@@ -238,8 +238,8 @@ D:\Proyectos\Zenless_analitycs\
 1. **Antes de proponer cambios al schema:** leer `Documentacion/Modelo_Relacional/README.md`. Cualquier nueva tabla debe respetar la nomenclatura de capas (1-8) y registrarse ahí.
 2. **Antes de aplicar SQL en la DB:** crear backup `db/danibod_zzz_v2.backup_YYYYMMDD_HHMMSS.db`, ejecutar dentro de transacción, correr `PRAGMA integrity_check; PRAGMA foreign_key_check;`.
 3. **Antes de cargar datos de un PJ/W-Engine/Set/Facción nuevos:** seguir `Documentacion/Onboarding_Nuevo_PJ.md` o `Onboarding_Nuevos_Assets.md` (8 / 4-5 pasos respectivamente).
-4. **Nunca inventar valores.** Si una stat o threshold no se valida con fuente, dejar NULL o `pending_capture` con `activo=0`. Documentar en README §6.2 o sección equivalente.
-5. **Cuando se implemente algo nuevo:** actualizar la columna "Estado" del RF correspondiente en README §3.1 + §3.3 + esta tabla §4.
+4. **Nunca inventar valores.** Si una stat o threshold no se valida con fuente, dejar NULL o `pending_capture` con `activo=0`. Documentar en `Documentacion/README_Referencia_Fase1_2026-05.md` §6.2 o sección equivalente.
+5. **Cuando se implemente algo nuevo:** actualizar la columna "Estado" del RF correspondiente en `Documentacion/README_Referencia_Fase1_2026-05.md` §3.1 + §3.3 + esta tabla §4.
 6. **Awakenings:** solo cargar texto desde screenshot in-game del usuario (RNF-02). No inferir desde guías externas.
 7. **Cualquier merge de IDs** (sets/armas/PJs) requiere backup previo + log de filas afectadas en README.
 8. **Para RF-12/14 con Claude API:** respetar `cap_usd_mensual` del usuario, usar prompt caching, registrar cada llamada en `ai_catalog_runs`.
