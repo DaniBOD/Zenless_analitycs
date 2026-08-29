@@ -23,7 +23,7 @@ from app.core.capturer import (
 )
 from app.core.detector import (
     ScreenDetector, ScreenState, TemporalBuffer, AGENT_STATS_STATES,
-    extract_s17_slot, extract_s9_slot, polling_cadence_ms,
+    extract_s17_slot, extract_s9_slot, polling_cadence_ms, s9_selected_tile_pos,
     _deep_detect_s18, detect_active_tab, selected_avatar_x,
     crop_grid_selected_badge, crop_detail_badge,
     read_s9_selected_badge, BADGE_LIBRE, BADGE_NO_LOCALIZADO, _S9_BADGE_NITIDEZ_MIN,
@@ -90,6 +90,11 @@ _S9_CONTADOR_PERIODO_S = 5.0
 # S9 = INVENTARIO GLOBAL de discos: panel derecho = disco seleccionado (parse_disc_s9,
 # reusa S17), dueño = badge del tile resaltado. Diff máx de firma para "mismo disco".
 _S9_SIG_MAX = 3.0
+#: Tolerancia de la componente de POSICIÓN de la firma S9, como fracción del lado del
+#: tile. Medio tile: el paso a un vecino mide casi un tile entero (~175 px sobre ~177,
+#: capturas del 2026-08-29), así que deja 2x de margen contra el salto real y mucho más
+#: contra el jitter del localizador. Fracción y no píxeles para que valga a otra resolución.
+_S9_POS_TOL_F = 0.5
 # Tolerancia de posición x del avatar para considerar "mismo PJ" (avatares
 # adyacentes distan ~0.04-0.05 norm; media-ranura como margen anti-jitter).
 _AVATAR_X_TOL = 0.025
@@ -2715,9 +2720,25 @@ class Monitor:
 
     @staticmethod
     def _s9_disc_signature(frame):
-        """Firma del disco SELECCIONADO en S9 (panel derecho), sin OCR (RNF-06). Dos
-        componentes: título del set (distingue sets) + bloque main/substats (distingue
-        discos del mismo set). None si no se puede leer."""
+        """Firma del disco SELECCIONADO en S9, sin OCR (RNF-06). Tres componentes:
+        título del set (distingue sets) + bloque main/substats (distingue discos del mismo
+        set) + POSICIÓN de la selección en la grilla. None si no se puede leer el panel.
+
+        La tercera nació de la pasada del 2026-08-20: en el grupo de discos que comparten
+        set+slot+main con el anterior, el p90 del intervalo salta a 29 s contra 12 s del resto.
+        Las dos primeras componentes miran **sólo el panel derecho**, así que ahí el único
+        diferenciador queda siendo el texto de los substats — y para un disco GEMELO (mismo set,
+        slot, main Y substats) el panel es idéntico pixel a pixel: la diferencia da exactamente
+        0.00 y ningún umbral puede ayudar. Hay 22 pares así en el inventario real.
+
+        La posición no mira contenido: el recuadro se mueve siempre que te movés. Es el mismo
+        patrón que `_s17_disc_signature` con el anillo del hexágono.
+
+        Medido y descartado: el promedio de píxeles sobre la región de la grilla. Moverse a un
+        tile vecino la cambia apenas 2,33-2,55 (contra 6,26-7,51 del panel para esos mismos
+        pares), porque la media diluye un cambio tan localizado como el recuadro. La posición
+        LOCALIZADA da un salto de ~175 px sobre un tile de ~177 — discreta, sin umbral que
+        calibrar."""
         if frame is None or getattr(frame, "size", 0) == 0:
             return None
         try:
@@ -2733,16 +2754,44 @@ class Monitor:
             sig_b = cv2.cvtColor(
                 cv2.resize(body, (48, 48), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY
             ).astype(np.float32)
-            return (sig_t, sig_b)
+            return (sig_t, sig_b, s9_selected_tile_pos(frame))
         except Exception:
             return None
 
+    @staticmethod
+    def _s9_pos_movio(a, b) -> bool:
+        """True sólo si las dos posiciones existen Y están a más de medio tile.
+
+        Con `None` de cualquier lado devuelve False **a propósito**: no hay tile localizable en 3
+        de las 18 capturas del corpus, y ausencia de posición es ausencia de dato. Si esto
+        devolviera True, un frame sin selección re-armaría por no saber; si la decisión queda en
+        el panel, se comporta como antes de que esta componente existiera (RNF-02).
+
+        La tolerancia sale del lado del propio tile y no de un número de píxeles: el paso a un
+        vecino mide casi un tile entero (~175 px sobre ~177), así que medio tile deja un margen
+        de 2x contra el salto real y de mucho más contra el jitter de la localización (el lado
+        medido varía 167-177 px entre capturas). Y vale igual a otra resolución.
+        """
+        if a is None or b is None:
+            return False
+        lado = max(a[2], b[2])
+        if lado <= 0:
+            return False
+        return max(abs(a[0] - b[0]), abs(a[1] - b[1])) > _S9_POS_TOL_F * lado
+
     def _is_new_s9_disc(self, sig) -> bool:
-        """True si la firma indica que el disco S9 mirado cambió (o no había ancla)."""
+        """True si la firma indica que el disco S9 mirado cambió (o no había ancla).
+
+        OR entre las tres componentes: alcanza con que UNA diga que cambió. El error se sesga a
+        propósito hacia re-armar de más — un re-arme espurio cuesta una re-lectura de ~1 s, uno
+        perdido le cuesta al usuario los 20-60 s que tarda en darse cuenta de que el toast no va
+        a salir. La asimetría es de 20x a 60x.
+        """
         if self._s9_agg_sig is None or sig is None:
             return True
         return (self._sig_component_diff(sig[0], self._s9_agg_sig[0]) > _S9_SIG_MAX
-                or self._sig_component_diff(sig[1], self._s9_agg_sig[1]) > _S9_SIG_MAX)
+                or self._sig_component_diff(sig[1], self._s9_agg_sig[1]) > _S9_SIG_MAX
+                or self._s9_pos_movio(sig[2], self._s9_agg_sig[2]))
 
     @staticmethod
     def _s3_disc_signature(frame):

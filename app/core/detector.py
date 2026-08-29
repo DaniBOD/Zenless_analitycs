@@ -663,6 +663,43 @@ def read_s9_selected_badge(frame: np.ndarray) -> GridBadge:
         return GridBadge(BADGE_NO_LOCALIZADO)
 
 
+def s9_selected_tile_pos(frame: np.ndarray) -> tuple[float, float, float] | None:
+    """Dónde está la selección en la grilla S9: `(cx, cy, lado_del_tile)` o None.
+
+    Es la MISMA localización que usa `read_s9_selected_badge` para saber de qué tile recortar el
+    avatar; acá se expone la posición sola, sin mirar el contenido. Sirve como discriminador de
+    "me moví de disco" **independiente de lo que diga el panel derecho**.
+
+    Por qué hace falta: el panel no puede distinguir dos discos GEMELOS —mismo set, slot, main y
+    substats—, porque frente a ellos es idéntico pixel a pixel. En el inventario real hay 22 pares
+    así. El recuadro de selección, en cambio, se mueve siempre que te movés.
+
+    Se devuelve el lado del tile junto con el centro a propósito: la tolerancia de comparación se
+    deriva de él y no de un número de píxeles fijo, así la misma lógica vale a otra resolución.
+    Medido sobre las capturas del 2026-08-29 a 2559×1439: moverse a un tile vecino corre el centro
+    ~175-183 px con un lado de ~177, o sea **un paso de casi un tile entero**.
+
+    None cuando no hay tile resaltado (pasa en 3 de las 18 capturas del corpus). No es lo mismo
+    que "no se movió": quien compare tiene que abstenerse, no asumir.
+    """
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return None
+    try:
+        bb = _selected_grid_tile_bbox(frame, _S9_GRID_REGION)
+    except Exception:
+        return None
+    if bb is None:
+        return None
+    tx, ty, tw, th = bb
+    if tw <= 0 or th <= 0:
+        return None
+    # `float(...)` en las tres, no sólo en el lado: el bbox viene de OpenCV y sus componentes son
+    # escalares de numpy. Un `np.float64` acá se propaga hasta convertir una comparación booleana
+    # en `numpy.bool_`, que NO es `True` ni `False` por identidad — y un `assert x is True` río
+    # abajo falla sin que nada esté mal en la lógica.
+    return (float(tx) + float(tw) / 2.0, float(ty) + float(th) / 2.0, float(tw))
+
+
 def crop_s9_selected_badge(frame: np.ndarray) -> np.ndarray | None:
     """Badge de dueño del tile seleccionado del INVENTARIO GLOBAL S9 (esquina sup-der,
     a la derecha del nº de slot). Reusa `crop_grid_selected_badge` con la región S9.
