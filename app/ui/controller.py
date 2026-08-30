@@ -21,19 +21,8 @@ from PySide6.QtCore import QObject, QTimer, Signal, Slot
 log = logging.getLogger(__name__)
 
 
-# Ubicaciones comunes del binario tesseract en Windows
-_TESSERACT_CANDIDATES = [
-    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-    os.path.expandvars(r"%LOCALAPPDATA%\Programs\Tesseract-OCR\tesseract.exe"),
-]
-
-
-def _find_tesseract() -> str | None:
-    for c in _TESSERACT_CANDIDATES:
-        if os.path.isfile(c):
-            return c
-    return None
+# La búsqueda de Tesseract y la elección de backend viven en `app.core.ocr_worker`: el proceso
+# hijo del OCR no puede importar la UI, así que la autoridad tuvo que mudarse ahí (regla B1).
 
 
 def _capture_only_focused() -> bool:
@@ -308,28 +297,28 @@ class MonitorController(QObject):
         # determinístico sobre S18 (11/11 stats en los 7 fixtures), resuelve
         # el no-determinismo de Tesseract. Tesseract queda como fallback solo
         # si PaddleOCR no está disponible en el entorno.
-        self._ocr = None
-        try:
-            import paddleocr  # noqa: F401  — verifica disponibilidad antes de elegir
-            from app.core.ocr_paddle import PaddleBackend
-            self._ocr = PaddleBackend(lang="es")
-            log.info("OCR backend: PaddleOCR (primario) — lang=es")
-        except Exception as e:  # ImportError u otro fallo de entorno
-            log.warning(
-                "PaddleOCR no disponible (%s); cayendo a Tesseract fallback",
-                e, exc_info=True,
-            )
-            tess = _find_tesseract()
-            if tess is None:
-                raise RuntimeError(
-                    "Ni PaddleOCR ni Tesseract estan disponibles.\n"
-                    "PaddleOCR es el backend esperado. Reinstalar con:\n"
-                    "    pip install paddlepaddle==2.6.2 paddleocr==2.8.1\n"
-                    "O instalar Tesseract: winget install UB-Mannheim.TesseractOCR"
-                )
-            from app.core.ocr_tesseract import TesseractBackend
-            self._ocr = TesseractBackend(tesseract_cmd=tess)
-            log.info("OCR backend: Tesseract (fallback) — %s", tess)
+        # El OCR corre en un PROCESO APARTE, reciclable (2026-08-29). PaddleOCR pierde 12,46 MB de
+        # commit por inferencia, lineal: el censo completo proyectaba ~11,7 GB y el watchdog de
+        # RNF-06 reiniciaba la app entera dos veces por pasada. Reciclar el objeto se midió y da el
+        # 9 %; lo único que devuelve todo es terminar el proceso.
+        #
+        # La elección de backend (Paddle primero, Tesseract si no) se mudó a
+        # `ocr_worker.construir_backend`, que ahora es su única autoridad: la usan el worker y
+        # también el camino degradado de acá.
+        from app.core.ocr_service import OcrProxy, en_proceso_forzado, set_shared_ocr
+        from app.core.ocr_worker import construir_backend
+        # Chequeo de disponibilidad ACÁ y no en la primera inferencia: si no hay ningún backend, el
+        # usuario tiene que enterarse al arrancar y con instrucciones, no media hora después cuando
+        # el primer disco no se lee. Construirlo es barato —los modelos cargan perezosos— y
+        # `construir_backend` levanta `RuntimeError` con el texto accionable de siempre.
+        construir_backend()
+        self._ocr = OcrProxy()
+        # Registrarlo hace que el DETECTOR use este mismo OCR en vez de construirse otro Paddle.
+        # Sin esto quedaban dos instancias vivas —y la del detector corre sobre toda pantalla que
+        # matchee el template de S17, o sea muchas más inferencias— y la fuga seguía casi igual.
+        set_shared_ocr(self._ocr)
+        log.info("OCR backend: proceso aparte reciclable (%s)",
+                 "EN PROCESO por DANIBOD_OCR_INPROC" if en_proceso_forzado() else "worker")
 
         # Detector
         from app.core.detector import ScreenDetector

@@ -73,6 +73,24 @@ def _setup_file_logging() -> Path | None:
         # Sin file logging es peor pero arranque debe continuar
         return None
 
+
+# --------------------------------------------------------------------------------------- #
+# Desvío a worker de OCR — ANTES de importar Qt, y no es un detalle de estilo.
+#
+# Empaquetado, el hijo que hace el OCR es ESTE MISMO `.exe` con un centinela de argv (no se puede
+# lanzar "el módulo del worker" cuando todo vive dentro del bundle). Si el desvío estuviera después
+# del import de Qt, cada worker levantaría PySide6 —decenas de MB y varios cientos de ms— para no
+# usarlo; y si estuviera después de `main()`, levantaría la ventana.
+#
+# Va antes que nada, incluso antes del logging: el worker no escribe al log a propósito (dos
+# procesos rotando `app.log` se pisan). Ver `app/core/ocr_worker.py`.
+# --------------------------------------------------------------------------------------- #
+from app.core import ocr_ipc as _ocr_ipc  # noqa: I001 — va SOLO y ANTES del bloque de Qt, a propósito
+
+if _ocr_ipc.es_arranque_de_worker():
+    from app.core.ocr_worker import ejecutar as _ejecutar_worker_ocr
+    sys.exit(_ejecutar_worker_ocr())
+
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPalette
 from PySide6.QtNetwork import QLocalServer, QLocalSocket

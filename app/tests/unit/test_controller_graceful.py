@@ -33,7 +33,10 @@ def test_controller_emits_error_when_no_ocr_backend(qapp):
 
     Hito 2.8 (2026-05-31): PaddleOCR pasó a ser el backend primario. El error
     solo ocurre cuando AMBOS backends faltan. Para simularlo: forzar que el
-    import de paddleocr falle + _find_tesseract devuelva None.
+    import de paddleocr falle + la búsqueda de Tesseract devuelva None.
+
+    La elección de backend se mudó a `app.core.ocr_worker` cuando el OCR pasó a correr en otro
+    proceso (2026-08-29): el hijo no puede importar la UI.
     """
     import builtins
     from app.ui.controller import MonitorController
@@ -51,7 +54,7 @@ def test_controller_emits_error_when_no_ocr_backend(qapp):
         return _real_import(name, *args, **kwargs)
 
     with patch("builtins.__import__", side_effect=_fake_import), \
-         patch("app.ui.controller._find_tesseract", return_value=None):
+         patch("app.core.ocr_worker._buscar_tesseract", return_value=None):
         ctrl.start()
 
     assert len(received_errors) == 1, "Debe emitir exactamente 1 error"

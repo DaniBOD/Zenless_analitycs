@@ -1646,6 +1646,16 @@ def _get_panel_verify_ocr():
     angosta de una sola línea se probó y es peor en las dos dimensiones (25/40, mismo tiempo):
     el header no está a un `y` fijo porque los nombres largos envuelven y corren el panel.
     """
+    # Primero el OCR COMPARTIDO de la app. Hasta 2026-08-29 esta función se construía su propio
+    # `PaddleBackend`, así que había DOS motores de Paddle vivos en el proceso — y éste corre sobre
+    # toda pantalla que matchee el template de S17, o sea muchas más inferencias que el parser. Con
+    # la fuga medida en 12,46 MB por inferencia, dejarlo aparte habría hecho que mudar el otro no
+    # sirviera de nada.
+    from app.core.ocr_service import get_shared_ocr
+    compartido = get_shared_ocr()
+    if compartido is not None:
+        return compartido
+    # Sin app alrededor (tests, scripts sueltos) se construye uno local, como siempre.
     global _s26_verify_ocr
     if _s26_verify_ocr is None:
         for mod, cls in (("app.core.ocr_paddle", "PaddleBackend"),
