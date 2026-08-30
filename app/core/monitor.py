@@ -3586,7 +3586,11 @@ class Monitor:
         # Medido en la corrida real del 2026-08-20: 2 de 119 discos.
         disc.equip_dueno_incierto = True
         if self._id_diag_on:
-            log.info("[s9_owner] hay dueño pero ninguna superficie lo nombró — se guarda marcado")
+            # Dice lo que SE OBSERVÓ, no lo que va a pasar. La versión anterior afirmaba "se guarda
+            # marcado" y muchas veces era falso: el warmup nombra al dueño una cadencia después y
+            # el disco termina guardándose con dueño. Medido en la pasada del 2026-08-29 — las 4
+            # veces que salió la línea, la siguiente fue un `match directo`.
+            log.info("[s9_owner] ninguna superficie lo nombró en este ciclo")
 
     def _assign_s9_owner_por_detalle(self, disc, frame) -> bool:
         """Intenta nombrar al dueño con el avatar del panel de detalle. True si lo logró.

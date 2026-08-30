@@ -634,8 +634,16 @@ class DiscSyncer:
             bonus_2p = (f"{bonus_2p_stat} {bonus_2p_valor}".strip()
                         if (bonus_2p_stat or bonus_2p_valor) else None)
             latency_ms = (time.perf_counter() - t0) * 1000
-            log.info("Disco %s persistido id=%d %s set=%s slot=%d nivel=%d %.0fms",
-                     "SIN DUEÑO IDENTIFICADO" if dueno_incierto else "LIBRE",
+            # LIBRE para los dos casos, a pedido de Daniel (2026-08-29). Durante el censo el log es
+            # el metrónomo —se avanza al disco siguiente cuando salta la línea— y dos rótulos
+            # distintos para "el disco quedó guardado sin dueño" obligaban a leer cuál era antes de
+            # seguir. El titular es el mismo porque la ACCIÓN del usuario es la misma.
+            #
+            # La distinción NO se pierde: viaja en `trigger`, que ya se imprime en esta misma línea
+            # (`incierto_insert` / `incierto_update` contra `libre_insert` / `libre_update`), y
+            # sobre todo sigue en la DB, donde es funcional — es lo que mantiene la fila fuera del
+            # bucket `libres` para que un disco genuinamente libre no la pise.
+            log.info("Disco LIBRE persistido id=%d %s set=%s slot=%d nivel=%d %.0fms",
                      disc_id, trigger, parsed.set_name_raw, parsed.slot, parsed.nivel, latency_ms)
             return SyncResult(
                 disc_id=disc_id, trigger=trigger, recomendacion="(libre)", score_norm=0.0,
