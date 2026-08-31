@@ -3626,11 +3626,20 @@ class Monitor:
         conf = (res[1] if isinstance(res, tuple) and len(res) > 1
                 else getattr(res, "conf", 0.0)) or 0.0
         if not nombre:
-            # El dato que falta para calibrar: `conf` y `margin` del detalle cuando se abstiene.
-            # Si la conf viene alta y el margen ancho, el que sobra es el guard.
+            # El dato que falta para calibrar: conf, margen Y EL CANDIDATO. Sin el nombre, un
+            # margen ancho no dice nada — 0.346 con el PJ correcto significa que el guard sobra;
+            # el mismo 0.346 con el equivocado significa lo contrario. Sólo con -IdDiag.
             margin = (res[2] if isinstance(res, tuple) and len(res) > 2
                       else getattr(res, "margin", 0.0)) or 0.0
-            return _no(f"el matcher se abstuvo (conf {conf:.2f}, margen {margin:.3f})")
+            cand = "?"
+            try:
+                crudo = self._identifier.s17_match_detail_full(face)
+                if crudo is not None and crudo.top:
+                    cand = ", ".join(f"{n}:{1 - d:.2f}" for n, d in crudo.top[:3])
+            except Exception:
+                pass
+            return _no(f"el matcher se abstuvo (conf {conf:.2f}, margen {margin:.3f}) "
+                       f"top=[{cand}]")
         disc.agente_asignado_nombre = nombre
         disc.agente_asignado_conf = conf
         if self._id_diag_on:

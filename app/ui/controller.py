@@ -199,6 +199,23 @@ class MonitorController(QObject):
             except Exception:
                 pass
             self._con = None
+        # El OCR ya no es un objeto que el GC se lleve: es un PROCESO con 1-2 GB tomados.
+        # `_init_dependencies` corre en cada `start()`, así que sin esto un stop→start deja el
+        # worker anterior vivo para siempre — la misma memoria que este trabajo vino a controlar,
+        # sólo que fuera de la vista. Medido el 2026-08-30: dos workers a la vez (1040 y 1359 MB)
+        # tras un ciclo de pausa, y 26 procesos al cerrar la app después de varios.
+        if self._ocr is not None:
+            try:
+                cerrar = getattr(self._ocr, "cerrar", None)
+                if cerrar is not None:
+                    cerrar()
+            except Exception:
+                log.exception("Error cerrando el OCR")
+            self._ocr = None
+            # El registro se limpia SIEMPRE, aunque el cierre falle: dejarlo apuntando a un OCR
+            # muerto haría que el detector lo siguiera usando en el próximo arranque.
+            from app.core.ocr_service import set_shared_ocr
+            set_shared_ocr(None)
         self.monitor_stopped.emit()
 
     @Slot()

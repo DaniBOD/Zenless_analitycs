@@ -132,3 +132,39 @@ def test_agent_stats_log_edge_triggered(qapp):
     n3 = len(logs)
     ctrl._on_agent_stats_from_monitor(replace(s1, ataque=2600), st)
     assert len(logs) > n3
+
+
+def test_stop_CIERRA_el_worker_de_ocr(qapp):
+    """Desde que el OCR corre en otro proceso, `self._ocr` no es un objeto que el GC se lleve: es
+    un proceso con 1-2 GB tomados. `_init_dependencies` corre en CADA `start()`, así que un
+    stop→start sin cerrar el anterior deja un worker vivo para siempre.
+
+    Medido el 2026-08-30: dos workers vivos a la vez (1040 y 1359 MB) tras un ciclo de pausa, y 26
+    procesos al cerrar la app después de varios. Es la misma memoria que este trabajo vino a
+    controlar, sólo que fuera de la vista.
+    """
+    from app.core import ocr_service
+    from app.ui.controller import MonitorController
+
+    class _ProxyFalso:
+        def __init__(self):
+            self.cerrado = False
+        def cerrar(self):
+            self.cerrado = True
+
+    class _MonitorFalso:
+        def stop(self):
+            pass
+
+    ctrl = MonitorController()
+    proxy = _ProxyFalso()
+    ctrl._ocr = proxy
+    ctrl._monitor = _MonitorFalso()
+    ocr_service.set_shared_ocr(proxy)
+    try:
+        ctrl.stop()
+        assert proxy.cerrado, "stop() dejó el worker de OCR vivo"
+        assert ctrl._ocr is None
+        assert ocr_service.get_shared_ocr() is None,             "el registro compartido siguió apuntando a un OCR ya cerrado"
+    finally:
+        ocr_service.set_shared_ocr(None)

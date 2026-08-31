@@ -558,6 +558,18 @@ class AgentIdentifier:
         d_text = min(descriptor_distance(q, t, None, q.is_gray) for t in self._det_text_rejects)
         return d_face < d_text
 
+    def s17_match_detail_full(self, face):
+        """El `MatchResult` CRUDO del detalle (name, conf, margin, rejected, top), sin el guard.
+
+        Espejo de `s17_match_full` para la otra superficie. Lo pide el diagnóstico: cuando el
+        rescate por detalle se abstiene hay que poder ver A QUIÉN habría nombrado, porque un margen
+        ancho con el nombre equivocado y uno con el nombre correcto piden decisiones opuestas.
+        `name` ya viene None si el matcher se abstuvo; `top` trae los candidatos best-first.
+        """
+        if face is None or not self._detbadge._refs:
+            return None
+        return self._detbadge.match(face)
+
     def s17_match_detail(self, face, min_sim: float = _S17_GUARD_DEFAULT):
         """Match del detalle-badge contra su librería propia: (nombre|None, conf, margin,
         rejected). Inerte (None, 0, 0, False) hasta que la librería se cosecha. nombre
