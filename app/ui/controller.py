@@ -834,7 +834,11 @@ class MonitorController(QObject):
         """Loguea la extracción completa de un disco equipado S17 (estilo S18)."""
         set_name = disc.set_name_canon or disc.set_name_raw or "?"
         rareza = f" · {disc.rareza}-rank" if disc.rareza in ("S", "A", "B") else ""
-        nivel = f"Nivel {disc.nivel}/15" if disc.nivel else "Nivel ?"
+        # `is not None` y no truthiness: **el nivel 0 es un nivel**, el de un disco recién
+        # dropeado sin mejorar. Con `if disc.nivel` esos discos salían como "Nivel ?" —o sea,
+        # "no lo pude leer"— cuando el dato estaba perfectamente leído. Reportado por Daniel en
+        # el censo del 2026-08-30, pasando por una tanda de discos nivel 0.
+        nivel = f"Nivel {disc.nivel}/15" if disc.nivel is not None else "Nivel ?"
         self.log_message.emit(
             f"[reconocido] S17 disco equipado: {set_name} (slot {disc.slot}) · "
             f"{nivel}{rareza} (conf {disc.confianza_global:.2f})"

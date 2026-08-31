@@ -168,3 +168,30 @@ def test_stop_CIERRA_el_worker_de_ocr(qapp):
         assert ocr_service.get_shared_ocr() is None,             "el registro compartido siguió apuntando a un OCR ya cerrado"
     finally:
         ocr_service.set_shared_ocr(None)
+
+
+def test_un_disco_NIVEL_0_no_se_reporta_como_nivel_desconocido(qapp):
+    """El nivel 0 es un nivel: el de un disco recién dropeado sin mejorar.
+
+    La línea usaba `if disc.nivel`, y 0 es falsy en Python, así que toda una tanda de discos sin
+    mejorar salía como "Nivel ?" — que en este log significa "no lo pude leer". El dato estaba
+    perfectamente leído. Reportado por Daniel el 2026-08-30 pasando por discos nivel 0.
+    """
+    from app.core.parser_disc import DiscParsed
+    from app.ui.controller import MonitorController
+
+    # DiscParsed real y no un stub: así el test no se queda corto cuando la dataclass crece,
+    # y el nivel viaja por el mismo camino que en producción.
+    disco = DiscParsed(
+        set_name_raw="MelodiadeFaeton", set_name_canon="Melodía de Faetón", slot=3,
+        main_stat_raw="DEF", main_stat_canon="DEF", main_valor=48.0, main_unidad="flat",
+        nivel=0, rareza="S", confianza_global=0.95,
+    )
+    ctrl = MonitorController()
+    mensajes: list[str] = []
+    ctrl.log_message.connect(mensajes.append)
+    ctrl._log_s17_extraction(disco)
+
+    reconocido = next(m for m in mensajes if "[reconocido]" in m)
+    assert "Nivel 0/15" in reconocido, f"el nivel 0 se reportó mal: {reconocido!r}"
+    assert "Nivel ?" not in reconocido
