@@ -102,6 +102,29 @@ _DET_REJECT_CACHE: list | None = None
 # que a 0.80 quedan en "dueño incierto", nunca asertados). El guard latch (mismo PJ)
 # es aparte (_S17_GUARD_MIN en monitor, sigue 0.86).
 _S17_GUARD_DEFAULT = 0.80
+#: Guard propio de la superficie de DETALLE. Más bajo que el de la grilla porque **sus escalas no
+#: son la misma**: sobre los fixtures donde ambas aciertan, la confianza del detalle corre -0.042
+#: por debajo. Un solo número para las dos era el de la grilla aplicado a una escala ajena.
+#:
+#: 0.70 sale de un barrido leave-one-out sobre la librería del detalle, no de una corazonada
+#: (73 consultas, 32 clases con >=2 refs distintas tras dedup):
+#:
+#:     guard   acierta   MAL   se abstiene
+#:      0.80        45     1            27
+#:      0.70        56     1            16     <- 11 rescates, CERO errores nuevos
+#:      0.45        56     1            16     <- por debajo de 0.70 no cambia nada
+#:
+#: Las 11 rescatadas son 11 aciertos (Soukaku x2, Manato, Lucía x2, Qingyi x2, Evelyn x2, Dialyn,
+#: Orfia y Magas). Que por debajo de 0.70 no cambie nada dice que no es un filo: lo que frena a las
+#: 16 restantes es el MARGEN, no la confianza.
+#:
+#: El único error de la librería (Seth->Zhao) viene con conf 0.916 — ningún guard lo detiene. Es un
+#: problema de datos de esa clase, no de umbral.
+#:
+#: Corroborado en campo el 2026-08-30: el disco de Soukaku daba `conf 0.79, margen 0.346,
+#: top=[Soukaku, Jane:0.44, Lucía:0.44]` cinco frames seguidos, mientras la GRILLA lo empataba con
+#: Ben a 0.90/0.90 con margen 0.00. El laboratorio y el campo coinciden.
+_DETAIL_GUARD = 0.70
 
 
 def _badge_harvest_enabled() -> bool:
@@ -570,7 +593,7 @@ class AgentIdentifier:
             return None
         return self._detbadge.match(face)
 
-    def s17_match_detail(self, face, min_sim: float = _S17_GUARD_DEFAULT):
+    def s17_match_detail(self, face, min_sim: float = _DETAIL_GUARD):
         """Match del detalle-badge contra su librería propia: (nombre|None, conf, margin,
         rejected). Inerte (None, 0, 0, False) hasta que la librería se cosecha. nombre
         no-None solo si conf≥guard. Señal PRIMARIA en S17 por su localización 100% (vs 73%
