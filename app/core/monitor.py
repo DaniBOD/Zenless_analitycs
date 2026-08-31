@@ -3601,21 +3601,36 @@ class Monitor:
         proyecto es que la PRESENCIA gana a LIBRE y una superficie que no ve nada no alcanza para
         contradecir a otra que sí vio una cara.
         """
+        # Cada `return False` dice POR QUÉ (sólo con -IdDiag). Antes los cuatro caminos —sin
+        # recorte, excepción, o abstención del matcher— salían iguales y en silencio, así que
+        # cuando el rescate no aparecía no se podía saber si es que no había avatar o si el
+        # matcher SÍ tenía la respuesta y un umbral se la comió. Es información que hace falta
+        # justo en el caso que motivó este rescate: Ben vs Soukaku, 1,1× en la grilla contra 8,9×
+        # acá, y aun así el 2026-08-30 no rescató (log de las 23:16, margen 0.00 y se dan vuelta).
+        def _no(motivo: str) -> bool:
+            if self._id_diag_on:
+                log.info("[s9_owner] el DETALLE no rescató: %s", motivo)
+            return False
+
         try:
             face = crop_s9_detail_badge(frame)
-        except Exception:
-            return False
+        except Exception as exc:
+            return _no(f"falló el recorte ({type(exc).__name__})")
         if face is None:
-            return False
+            return _no("sin avatar en el panel de detalle")
         try:
             res = self._identifier.s17_match_detail(face)
-        except Exception:
-            return False
+        except Exception as exc:
+            return _no(f"falló el match ({type(exc).__name__})")
         nombre = res[0] if isinstance(res, tuple) else getattr(res, "name", None)
         conf = (res[1] if isinstance(res, tuple) and len(res) > 1
                 else getattr(res, "conf", 0.0)) or 0.0
         if not nombre:
-            return False
+            # El dato que falta para calibrar: `conf` y `margin` del detalle cuando se abstiene.
+            # Si la conf viene alta y el margen ancho, el que sobra es el guard.
+            margin = (res[2] if isinstance(res, tuple) and len(res) > 2
+                      else getattr(res, "margin", 0.0)) or 0.0
+            return _no(f"el matcher se abstuvo (conf {conf:.2f}, margen {margin:.3f})")
         disc.agente_asignado_nombre = nombre
         disc.agente_asignado_conf = conf
         if self._id_diag_on:
