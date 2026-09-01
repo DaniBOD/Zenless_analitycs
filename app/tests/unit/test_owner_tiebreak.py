@@ -168,3 +168,26 @@ def test_mark_dirty_recarga_indices(tb):
     # Tras mark_dirty, el próximo resolve recarga y la señal equip confirma a Velina.
     tb.mark_dirty()
     assert tb.resolve(d, [("Velina", 0.04), ("Yanagi", 0.06)]) == ("Velina", "equip")
+
+
+# --- Promoción del top-2 con un censo abierto (2026-09-01) ------------------------------------
+#
+# El desempate lee la DB como si fuera una foto TERMINADA: "el top-1 no corre este set / no
+# tiene un disco así" es una afirmación que sólo vale si lo que la DB sabe del top-1 está
+# completo. Durante una pasada de censo eso es falso por construcción — la tabla se está
+# llenando— y la ausencia significa "todavía no llegué", no "no lo tiene". CONFIRMAR al top-1
+# visual con esa evidencia es tolerable (la vista ya lo puso primero); DARLO VUELTA no, porque
+# entonces la decisión la toma entera una ausencia.
+
+def test_con_censo_abierto_no_promueve_el_top2(tb):
+    """Mismo caso que `test_promueve_top2_con_margen_infimo`, pero con la pasada abierta."""
+    r = tb.resolve(_Disc("Punk Primitivo"), [("Velina", 0.10), ("César", 0.12)],
+                   permitir_top2=False)
+    assert r is None
+
+
+def test_con_censo_abierto_sigue_confirmando_el_top1(tb):
+    """La confirmación del top-1 NO se toca: no invierte lo que la vista ya decidió."""
+    r = tb.resolve(_Disc("Punk Primitivo"), [("César", 0.10), ("Velina", 0.13)],
+                   permitir_top2=False)
+    assert r == ("César", "build")

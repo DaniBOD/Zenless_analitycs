@@ -158,11 +158,34 @@ class DiscSetRepo:
             for r in self._con.execute("SELECT id, nombre FROM disc_sets")
         }
 
-    def resolve_id(self, name: str, cutoff: float = 0.86, margin: float = 0.06) -> int | None:
+    # Regla de MARGEN (calibrada 2026-09-01, ver `tools/measure_set_resolver.py`).
+    #
+    # El cutoff absoluto de 0.86 tiraba lecturas INEQUÍVOCAS: `Melodia Faett` sale 0.8148 y su
+    # segundo candidato está a 0.36 de distancia. Es el mismo error estructural que el guard de
+    # identidad — un piso sobre el primer candidato mide otra cosa que la ambigüedad.
+    #
+    # Barrido sobre dos corpus (89 lecturas reales del censo del 2026-08-30 + 3789 corrupciones
+    # sintéticas de los 30 nombres del catálogo): `MAL = 0` en TODAS las combinaciones, el
+    # rescate viene entero de bajar el cutoff (1803 → 1822 detecciones) y el margen sólo se paga
+    # en abstenciones. 0.70/0.75/0.80 dan idéntico resultado ⇒ 0.75 es el medio de la meseta, no
+    # su borde (la lectura genuina más floja está en 0.8148 y la basura más alta en 0.4615).
+    # El margen queda en 0.12 y no en 0.15 porque `metal caótico` compite con `metal eléctrico`
+    # —el par más parecido del catálogo, 0.7692 entre sí— a 0.1474.
+    SET_FUZZY_CUTOFF = 0.75
+    SET_FUZZY_MARGIN = 0.12
+
+    def resolve_id(self, name: str, cutoff: float = SET_FUZZY_CUTOFF,
+                   margin: float = SET_FUZZY_MARGIN) -> int | None:
         """Resuelve un nombre de set (posible ruido OCR) → set_id: exact → fuzzy sin acentos
         (substring sobre `_norm_key`: NFD + quita Mn + minúscula + sin espacios) → difflib con
         guarda de ambigüedad (abstiene si dos sets DISTINTOS empatan dentro del margen; RNF-02:
-        no adivinar). Fuente única para el resolvedor de sets (S4 tienda música + sync_equip)."""
+        no adivinar). Fuente única para el resolvedor de sets (S4 tienda música + sync_equip).
+
+        El ranking se calcula sobre el catálogo ENTERO. La versión anterior pedía candidatos con
+        `get_close_matches(n=3, cutoff=...)` y evaluaba la ambigüedad sólo dentro de esa lista,
+        así que un rival a distancia de margen que quedara 4º —o por debajo del cutoff— no se
+        veía: la guarda dependía de quién hubiera entrado al recorte.
+        """
         if not name:
             return None
         # 1. Exact case-insensitive.
@@ -183,18 +206,22 @@ class DiscSetRepo:
             norm_to.setdefault(sname_n, (sname, s_id))
             if sname_n == name_n or sname_n in name_n or name_n in sname_n:
                 return s_id
-        keys = list(norm_to)
-        matches = difflib.get_close_matches(name_n, keys, n=3, cutoff=cutoff)
-        if not matches:
+        # Ranking completo: 30 nombres cortos, y esto corre una vez por disco persistido (no por
+        # frame), así que el costo es irrelevante frente a poder ver al rival real.
+        ranked = sorted(
+            ((difflib.SequenceMatcher(None, name_n, k).ratio(), k) for k in norm_to),
+            key=lambda t: t[0], reverse=True,
+        )
+        if not ranked:
             return None
-        best_sname, best_sid = norm_to[matches[0]]
-        r_best = difflib.SequenceMatcher(None, name_n, matches[0]).ratio()
-        for m in matches[1:]:
-            if norm_to[m][1] != best_sid:
-                r_m = difflib.SequenceMatcher(None, name_n, m).ratio()
-                if (r_best - r_m) < margin:
-                    return None   # ambiguo → abstenerse
-                break
+        r_best, k_best = ranked[0]
+        best_sid = norm_to[k_best][1]
+        if r_best < cutoff:
+            return None
+        # Margen al mejor candidato de OTRO set (los alias del mismo set no son ambigüedad).
+        rival = next((t for t in ranked[1:] if norm_to[t[1]][1] != best_sid), None)
+        if rival is not None and (r_best - rival[0]) < margin:
+            return None   # ambiguo → abstenerse
         return best_sid
 
     def get_bonus(self, set_id: int) -> tuple[str | None, str | None, str | None]:

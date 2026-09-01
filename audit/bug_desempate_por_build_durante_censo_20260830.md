@@ -1,5 +1,15 @@
 # BUG — el desempate por build se realimenta a sí mismo durante el censo
 
+> ⚠️ **CORREGIDO el 2026-09-01.** El título dice *build* y la señal que disparó fue **`equip`**:
+> `agents.set_4p_id / set_2p_id` están en NULL para los 51 agentes, así que el mapa de builds del
+> tiebreaker se carga VACÍO y esa señal nunca corrió. Los 54 desempates del log son 39 `equip` +
+> 15 `equip_top2`. La diferencia importa: `equip` lee `inventory_discs`, o sea la tabla que el
+> censo construye — el lazo es más directo, no menos. Arreglado (promoción del top-2 apagada con
+> censo abierto) y documentado en
+> [`Dev_IA/2026-09-01_FIX_Dos_umbrales_absolutos_donde_manda_el_margen.md`](../Documentacion/Dev_IA/2026-09-01_FIX_Dos_umbrales_absolutos_donde_manda_el_margen.md).
+> Ahí está también la evidencia que faltaba acá: la regla promovió el **mismo par en las dos
+> direcciones** con 50 minutos de diferencia.
+
 **2026-08-30 23:08.** Reportado por Daniel en vivo: *"estoy parado en un disco equipado en Harumasa
 y lo asigna a Antón"*. Es un **falso positivo**, no una abstención: escribe un dueño equivocado en
 la DB.

@@ -53,13 +53,6 @@ def _es_dueno_incierto(d) -> bool:
     `' | '`, así que la marca puede no estar sola ni al principio."""
     return MARCA_DUENO_INCIERTO in (getattr(d, "notas", None) or "")
 
-# Fuzzy de nombre de set (difflib) en _resolve_set_id: umbral alto + margen de
-# ambigüedad (RNF-02). Cutoff 0.86 acepta drops de 1 char ('Fábula'→'Fäbua'≈0.96)
-# y rechaza nombres genuinamente distintos/ambiguos (p.ej. la forma larga de
-# 'Balada …' vs el alias corto del catálogo ≈0.72).
-_SET_FUZZY_CUTOFF = 0.86
-_SET_FUZZY_MARGIN = 0.06
-
 DB_PATH = Path("db/danibod_zzz_v2.db")
 
 
@@ -376,6 +369,25 @@ class DiscSyncer:
         finally:
             con_w.close()
 
+    @staticmethod
+    def _avisar_desplazamiento(viejo, nuevo_id: int, parsed: DiscParsed) -> None:
+        """Un disco perdió el slot porque otro lo reclamó. Se avisa SIEMPRE, y fuerte.
+
+        Hasta el 2026-09-01 esto pasaba en silencio, y por eso los dos discos que el censo del
+        2026-08-30 le atribuyó mal a Antón desplazaron a los suyos sin dejar rastro en el log:
+        la única señal quedó en la DB (dos filas del mismo PJ en el mismo slot, una con
+        `equipado=0`) y sólo apareció al consultarla a mano, dos días después.
+
+        Es un cambio de estado real y raro —2 en 383 discos—, así que WARNING no hace ruido; y
+        cuando el dueño entrante se leyó mal, ESTA es la línea que lo delata en el momento.
+        """
+        log.warning(
+            "DESPLAZADO: id=%d pierde el slot %s de '%s' — lo reclama id=%d (set=%s). "
+            "Si ese dueño no es el correcto, hay dos discos mal asignados, no uno.",
+            viejo.id, parsed.slot, parsed.agente_asignado_nombre or "?", nuevo_id,
+            parsed.set_name_raw,
+        )
+
     def persist_s17_disc(self, parsed: DiscParsed) -> SyncResult | None:
         """
         Persistencia ENFOCADA de un disco equipado S17 (decisión 2026-06-06):
@@ -486,6 +498,7 @@ class DiscSyncer:
                         # Desplazar el disco viejo del destino en ese slot (si tenía otro).
                         if slot_disc is not None and slot_disc.id != to_move.id:
                             disc_repo_w.set_unequipped(slot_disc.id)
+                            self._avisar_desplazamiento(slot_disc, to_move.id, parsed)
                         # Mover/re-equipar la fila EXISTENTE al destino (una sola fila, sin dup).
                         disc_repo_w.update_assignment(to_move.id, agente_id, equipado=1)
                         disc_id = to_move.id
@@ -501,6 +514,7 @@ class DiscSyncer:
                             parsed, set_id, agente_asignado=agente_id, equipado=1,
                         )
                         trigger = "s17_swap"
+                        self._avisar_desplazamiento(slot_disc, disc_id, parsed)
                     else:
                         # PJ sin disco previo en ese slot y entrante nuevo → alta.
                         disc_id = disc_repo_w.insert_from_parsed(
@@ -758,6 +772,10 @@ class DiscSyncer:
     def _resolve_set_id(self, parsed: DiscParsed) -> int | None:
         """Resuelve set_id desde el nombre del set (posible ruido OCR): exact → fuzzy sin
         acentos → difflib con guarda de ambigüedad. Delega en `DiscSetRepo.resolve_id`
-        (fuente única, compartida con el selector de tienda de música S4)."""
+        (fuente única, compartida con el selector de tienda de música S4).
+
+        Sin cutoff/margen propios A PROPÓSITO: hasta el 2026-09-01 este módulo tenía su copia
+        de los dos números y era la que mandaba acá, así que calibrar el resolvedor en el repo
+        no cambiaba nada en el camino que más lo usa. Una sola autoridad por pregunta."""
         name = parsed.set_name_canon or parsed.set_name_raw
-        return self._set_repo.resolve_id(name, cutoff=_SET_FUZZY_CUTOFF, margin=_SET_FUZZY_MARGIN)
+        return self._set_repo.resolve_id(name)

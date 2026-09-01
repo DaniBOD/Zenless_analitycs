@@ -119,7 +119,8 @@ class OwnerTiebreaker:
                 return "equip"
         return None
 
-    def resolve(self, disc: "DiscParsed", top: list[tuple[str, float]]) -> tuple[str, str] | None:
+    def resolve(self, disc: "DiscParsed", top: list[tuple[str, float]],
+                permitir_top2: bool = True) -> tuple[str, str] | None:
         """Devuelve (nombre, razon) si el contexto confirma un candidato; si no, None.
 
         `top`: candidatos del matcher best-first `[(nombre, distancia), ...]` (MatchResult.top).
@@ -127,6 +128,11 @@ class OwnerTiebreaker:
         no se corrobora, promueve el TOP-2 SOLO si el empate visual es ínfimo (margen <
         _TOP2_MARGIN_MAX) y el contexto corrobora EXCLUSIVAMENTE al top-2 (caso "dueño real
         es el top-2 casi empatado"). RNF-02: corroboración siempre EXCLUSIVA.
+
+        `permitir_top2=False` deja sólo la confirmación del top-1. Lo pone quien sabe que la
+        DB está a medio llenar —hoy, una pasada de censo abierta—: ahí "el top-1 no corre este
+        set" no es un hecho sino un "todavía no llegué a sus discos", y con esa evidencia se
+        puede confirmar lo que la vista ya decidió, pero no darlo vuelta.
         """
         if not top or len(top) < 2:
             return None
@@ -150,7 +156,7 @@ class OwnerTiebreaker:
             return top1, reason
 
         # TOP-2: solo con empate visual ÍNFIMO y corroboración exclusiva sobre el top-1.
-        if (d2 - d1) <= _TOP2_MARGIN_MAX:
+        if permitir_top2 and (d2 - d1) <= _TOP2_MARGIN_MAX:
             reason = self._exclusive_signal(set_id, slot, main, n2, n1)
             if reason:
                 return top2, f"{reason}_top2"

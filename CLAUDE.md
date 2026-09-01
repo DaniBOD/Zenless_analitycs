@@ -20,6 +20,7 @@ En este orden, leé estos 4 archivos:
    | **A2** | El silencio no es un aprobado — puede ser que ese código nunca corrió. |
    | **A3** | Verificar el **efecto**, no la intención. Rompé el test a propósito. |
    | **A4** | Verificar el estado, no deducirlo (los folders no nombran el estado). |
+   | **A5** | Un recorte de la evidencia es otra evidencia. `grep -c` antes de concluir. |
    | **B1** | Una sola autoridad por pregunta. Dos definiciones de lo mismo es una de más. |
    | **B2** | Abstenerse no debe costar el dato entero. Y no borres por ausencia. |
    | **B3** | Un audit no muta su objeto de estudio (`prune=False`, sha256 antes/después). |

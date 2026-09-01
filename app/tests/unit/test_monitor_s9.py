@@ -48,12 +48,15 @@ class _MarginAbstainIdent:
 
 
 class _StubTiebreaker:
-    """Tiebreaker de prueba: devuelve un resultado fijo (o None) sin tocar la DB."""
+    """Tiebreaker de prueba: devuelve un resultado fijo (o None) sin tocar la DB.
+
+    Registra `permitir_top2` porque el monitor lo calcula (censo abierto ⇒ False) y esa
+    decisión no se ve en el resultado: el stub confirma el top-1 pase lo que pase."""
     def __init__(self, ret):
         self._ret = ret
         self.calls = []
-    def resolve(self, disc, top):
-        self.calls.append((disc, top))
+    def resolve(self, disc, top, permitir_top2=True):
+        self.calls.append((disc, top, permitir_top2))
         return self._ret
 
 
@@ -360,3 +363,50 @@ def test_sin_avatar_en_el_detalle_no_se_inventa_dueno(monkeypatch):
     d = _disc_vacio()
     mon._assign_s9_owner(d, fr)
     assert d.agente_asignado_nombre is None
+
+
+# --- La promoción del top-2 con un censo abierto (2026-09-01) ---------------------------------
+
+def _disc_vacio():
+    """`DiscParsed` mínimo: sólo se usa como destinatario del dueño que resuelve el desempate."""
+    from app.core.parser_disc_s17 import DiscParsed
+    return DiscParsed(set_name_raw="Punk Primitivo", set_name_canon=None, slot=4,
+                      main_stat_raw="ATK", main_stat_canon="ATK", main_valor=None,
+                      main_unidad=None, nivel=15, rareza="S")
+
+
+def test_censo_en_curso_no_abre_la_pasada():
+    """`_censo_discos_en_curso` es una CONSULTA: preguntar no puede abrir un censo.
+
+    Es el efecto de costado que el censo del roster enseñó a evitar (QA 2026-08-17): una
+    corrida que arranca sola por una razón que no es "el usuario entró al inventario" declara
+    huérfano lo que nunca miró."""
+    m = _monitor(on_disc=lambda d, st: None)
+    assert m._censo_discos_en_curso() is False
+    assert m.censo_discos is None, "la consulta no debe haber abierto la pasada"
+
+
+@pytest.mark.skipif(not (_S9 / "Ejemplo_1.png").exists(), reason="capturas S9 no presentes")
+def test_s9_con_censo_abierto_prohibe_promover_el_top2():
+    """Recorrer el inventario ABRE la pasada, y desde ahí el desempate no puede dar vuelta
+    al top-1 visual: la DB que usaría como corroboración es la que se está llenando."""
+    from app.core.detector import ScreenState
+    tb = _StubTiebreaker(("Velina", "build"))
+    m = _monitor(on_disc=lambda d, st: None, ident=_MarginAbstainIdent(), tiebreaker=tb)
+    fr = cv2.imdecode(np.fromfile(str(_S9 / "Ejemplo_1.png"), np.uint8), cv2.IMREAD_COLOR)
+    m._dispatch_state(fr, ScreenState("S9", 1.0, "s9_inventario"))
+    assert tb.calls, "el tiebreaker debió ser consultado"
+    assert m._censo_discos_en_curso() is True, "el handler S9 abre la pasada"
+    assert all(c[2] is False for c in tb.calls), "con censo abierto, permitir_top2=False"
+
+
+def test_sin_censo_el_desempate_puede_promover_el_top2():
+    """Fuera de una pasada abierta la promoción sigue disponible: el rescate César/Punk que
+    la justifica (2026-06-26) no se pierde, sólo se apaga mientras la DB está a medio hacer."""
+    tb = _StubTiebreaker(("César", "build_top2"))
+    m = _monitor(on_disc=lambda d, st: None, ident=_MarginAbstainIdent(), tiebreaker=tb)
+    assert m._censo_discos_en_curso() is False
+    disc = _disc_vacio()
+    assert m._tiebreak_owner(disc, badge=object(), tag="s17_owner") is True
+    assert disc.agente_asignado_nombre == "César"
+    assert tb.calls[-1][2] is True, "sin censo, permitir_top2=True"

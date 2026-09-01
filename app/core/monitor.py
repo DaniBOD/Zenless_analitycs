@@ -3666,8 +3666,12 @@ class Monitor:
                 log.info("[%s] sin desempate (conf %.2f, rej=%s) top=[%s]", tag,
                          (r.conf if r else 0.0), (r.rejected if r else "?"), _top_str)
             return False
+        # Con una pasada de censo ABIERTA la DB está a medio llenar, así que "el top-1 no
+        # corre este set" significa "todavía no llegué a sus discos". Con esa evidencia se
+        # puede confirmar al top-1 visual, pero no darlo vuelta (ver `resolve`).
         try:
-            resolved = self._owner_tiebreaker.resolve(disc, r.top)
+            resolved = self._owner_tiebreaker.resolve(
+                disc, r.top, permitir_top2=not self._censo_discos_en_curso())
         except Exception:
             return False
         if resolved:
@@ -3721,6 +3725,13 @@ class Monitor:
     def censo_discos(self):
         """La corrida de censo del inventario, o `None` si nunca se abrió."""
         return self._censo_discos
+
+    def _censo_discos_en_curso(self) -> bool:
+        """¿Hay una pasada de censo de discos abierta? NO la abre (a diferencia de
+        `_censo_discos_abierto`): es una consulta, y abrir un censo como efecto de costado de
+        una decisión de identidad sería justo lo que el censo del roster enseñó a no hacer."""
+        c = self._censo_discos
+        return c is not None and bool(c.abierta)
 
     def _censo_discos_abierto(self):
         """Devuelve la corrida ABIERTA, abriéndola si hace falta. `None` si ya se cerró.

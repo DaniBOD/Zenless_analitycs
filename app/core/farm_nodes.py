@@ -31,7 +31,7 @@ _TITLE_FUZZY_CUTOFF = 0.82
 _TITLE_FUZZY_MARGIN = 0.06
 
 # Fuzzy del NOMBRE del set restringido a los 2 candidatos predichos (S13). El umbral es más
-# permisivo que el resolver global de sync (_SET_FUZZY_CUTOFF=0.86) porque con solo 2 candidatos
+# permisivo que el resolver global (`DiscSetRepo.SET_FUZZY_CUTOFF`) porque con solo 2 candidatos
 # la ambigüedad es casi nula: el OCR puede cambiar una PALABRA entera del nombre ('brillante'→
 # 'radiante') y aun así el set correcto gana por lejos. La guarda de margen abstiene si empatan.
 _PRED_SET_MIN_RATIO = 0.60

@@ -60,6 +60,26 @@ no el que sugiere el nombre.
 
 ---
 
+### A5 · Un recorte de la evidencia es otra evidencia. `grep -c` antes de concluir.
+
+Investigando si el desempate de dueño había escrito mal durante el censo, se corrió
+`grep "desempate" app.log | tail -20`. Las 20 líneas eran todas abstenciones, y de ahí salió la
+conclusión *"el desempate nunca disparó, así que el arreglo planeado no sirve"*. `grep -c` sobre
+el mismo archivo: **54 desempates exitosos**, 11 de ellos dando vuelta al top-1 durante la pasada.
+El pendiente estuvo a punto de descartarse por las últimas 20 líneas de 7107.
+
+Es el mismo error que [C1](#c1--medí-contra-un-baseline-validado-antes-y-después-no-inventes-una-métrica-nueva)
+pero en la lectura, no en la métrica: `head`, `tail` y un `LIMIT` son **muestras**, y una muestra
+no ordenada por relevancia no dice nada sobre el resto. La trampa es que el recorte se siente como
+"el resultado" porque lo devolvió el comando que uno escribió.
+
+**Cómo aplicarlo:** cuando la conclusión sea *"esto nunca pasó"* o *"esto pasa siempre"*, la
+evidencia tiene que ser un **conteo sobre el total** (`grep -c`, `COUNT(*)`, un agrupado), no un
+recorte. Si igual mirás un recorte, decí en voz alta de cuántos es. Y desconfiá especialmente
+cuando el recorte confirma que **no hay que hacer trabajo**: es la dirección en la que uno no
+insiste.
+
+
 ## B · Autoridad de los datos
 
 ### B1 · Una sola autoridad por pregunta. Dos definiciones de lo mismo son una de más.

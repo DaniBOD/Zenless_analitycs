@@ -1920,9 +1920,14 @@ def test_resolve_set_id_distingue_sets_parecidos(syncer_db):
 def test_resolve_set_id_fuzzy_drop_de_letra(syncer_db):
     """
     Regresión QA Yixuan 2026-06-08: el OCR dropea una letra del nombre del set
-    ('Fábula Yunkui'→'Fäbua Yunkui'), que el substring no captura. El fuzzy difflib
-    (cutoff 0.86 + guarda de ambigüedad) lo resuelve, pero NO inventa ante un nombre
-    genuinamente lejano/ambiguo (dos sets 'Balada …' + alias corto del catálogo).
+    ('Fábula Yunkui'→'Fäbua Yunkui'), que el substring no captura. El fuzzy difflib lo
+    resuelve, y sigue sin inventar cuando dos sets DISTINTOS quedan de verdad empatados.
+
+    La forma larga contra el alias corto del catálogo cambió de veredicto el 2026-09-01, y a
+    propósito: mide 0.8000 contra 'Balada rama/espada' —el mismo set, escrito entero— y 0.5581
+    contra 'Balada de aguas blancas', o sea 0.24 de margen. Nunca fue ambigua; la abstención
+    salía sólo de estar 0.06 por debajo de un cutoff absoluto. Que un test afirmara "lejano/
+    ambiguo" sobre un caso con ese margen es el mismo error medido desde el otro lado.
     """
     con = sqlite3.connect(str(syncer_db))
     con.execute("INSERT INTO disc_sets (id, nombre) VALUES (49, 'Fábula Yunkui')")
@@ -1932,8 +1937,11 @@ def test_resolve_set_id_fuzzy_drop_de_letra(syncer_db):
     sync = _make_syncer(syncer_db)
     try:
         assert sync._resolve_set_id(_disc(set_name="Fäbua Yunkui")) == 49  # drop de 'l'
-        # forma larga real vs alias corto + 2º 'Balada' → ambiguo/lejano → None
-        assert sync._resolve_set_id(_disc(set_name="Balada de la rama y la espada")) is None
+        # Forma larga vs alias corto: inequívoca (margen 0.24) → la nombra.
+        assert sync._resolve_set_id(_disc(set_name="Balada de la rama y la espada")) == 25
+        # Y lo que SÍ está empatado entre dos sets distintos sigue sin nombre (RNF-02): esta
+        # lectura pasa el cutoff (0.7778) y muere por MARGEN — 0.0085 entre las dos 'Balada'.
+        assert sync._resolve_set_id(_disc(set_name="Balada de agua y espada")) is None
     finally:
         sync.close()
 
@@ -2146,3 +2154,50 @@ def test_mem_counters_lee_memoria():
     ws, commit = mem_diag.mem_counters()
     assert ws > 0, f"WorkingSet leyó {ws}"
     assert commit > 0, f"commit/private leyó {commit}"
+
+
+# --- El desplazamiento deja de ser mudo (2026-09-01) ------------------------------------------
+
+def test_desplazar_un_disco_avisa_en_el_log(syncer_db, caplog):
+    """Cuando un disco entrante le saca el slot a otro, eso se dice — y fuerte.
+
+    Los dos discos que el censo del 2026-08-30 le atribuyó mal a Antón desplazaron a los suyos
+    sin una sola línea en el log: el `s17_swap` salió idéntico a un alta normal. La única señal
+    quedó en la DB (dos filas del mismo PJ y el mismo slot, una con `equipado=0`) y apareció
+    dos días después, consultándola a mano. Este WARNING es lo que lo habría dicho en el
+    momento — y como también nombra al dueño entrante, delata la atribución equivocada.
+    """
+    import logging
+    sync = _make_syncer(syncer_db)
+    try:
+        primero = _disc(slot=1, set_name="Jazz caótico")
+        primero.agente_asignado_nombre = "Zhu Yuan"
+        primero.agente_asignado_conf = 0.95
+        r1 = sync.persist_s17_disc(primero)
+        assert r1 is not None
+
+        con = sqlite3.connect(str(syncer_db))
+        con.execute("INSERT INTO disc_sets (id, nombre) VALUES (35, 'Nana a la luz cenicienta')")
+        con.commit(); con.close()
+
+        # Mismo PJ, mismo slot, OTRO set → el primero pierde el slot.
+        segundo = _disc(slot=1, set_name="Nana a la luz cenicienta")
+        segundo.subs = [SubstatParsed("DEF", "DEF", 15.0, "flat", 2, 0.95)]
+        segundo.agente_asignado_nombre = "Zhu Yuan"
+        segundo.agente_asignado_conf = 0.95
+        with caplog.at_level(logging.WARNING, logger="app.core.sync_equip"):
+            r2 = sync.persist_s17_disc(segundo)
+        assert r2 is not None and r2.trigger == "s17_swap"
+
+        avisos = [r for r in caplog.records if "DESPLAZADO" in r.getMessage()]
+        assert len(avisos) == 1, "el desplazamiento tiene que dejar exactamente una línea"
+        msg = avisos[0].getMessage()
+        assert f"id={r1.disc_id}" in msg and f"id={r2.disc_id}" in msg
+        assert "Zhu Yuan" in msg, "el dueño entrante es el dato que delata la atribución mala"
+
+        con = sqlite3.connect(str(syncer_db)); con.row_factory = sqlite3.Row
+        r = con.execute("SELECT equipado FROM inventory_discs WHERE id=?", (r1.disc_id,)).fetchone()
+        assert r["equipado"] == 0
+        con.close()
+    finally:
+        sync.close()

@@ -68,6 +68,16 @@ está probado es que el estado actual es imposible: los duplicados no pueden exi
 
 ### De dónde salieron
 
+> ⚠️ **CORREGIDO el 2026-09-01.** No salieron del desempate. El log los tiene asignados por
+> `match directo` —el matcher de la grilla resolviendo solo, sin tiebreaker— a las 23:39:11 con
+> conf 0.91. Tres frames antes, el mismo par se daba vuelta (0.86/0.85, 0.87/0.85, 0.87/0.86) y
+> las tres veces se abstuvo; la cuarta salió con margen suficiente y escribió. Es una lotería de
+> frames entre dos clases que el descriptor no separa, y sigue abierta. Detalle en
+> [`Dev_IA/2026-09-01_FIX_Dos_umbrales_absolutos_donde_manda_el_margen.md`](../Documentacion/Dev_IA/2026-09-01_FIX_Dos_umbrales_absolutos_donde_manda_el_margen.md).
+>
+> El desempate SÍ escribió mal en otro disco (`id=268`, que después se corrigió solo) y dejó uno
+> en pie: **`id=254`**, promovido a Antón por encima de Manato. Sumarlo a lo que hay que mirar.
+
 Del desempate por build, documentado en
 [`bug_desempate_por_build_durante_censo_20260830.md`](./bug_desempate_por_build_durante_censo_20260830.md).
 Antón y Harumasa son indistinguibles para el descriptor en la grilla (se dan vuelta entre frames,
@@ -96,10 +106,12 @@ hay un match bueno, el segundo está lejísimos.
 Colmilludo 15. El agregador reintenta hasta que sale una lectura buena. El costo fue **tiempo** —
 hasta 4 intentos y ~45 s para un disco.
 
-⚠️ Un detalle que conviene no pasar por alto antes de tocar el cutoff: familias como
-`Blues libre Precdom` resuelven con ratio **0.7407**, muy por debajo del cutoff, así que hay **otra
-vía de resolución** (el matcher de logos, `SetBadgeMatcher: 90 refs de 30 sets`). Cualquier cambio
-al resolvedor de texto tiene que medirse sabiendo que no es el único camino.
+⚠️ **CORREGIDO el 2026-09-01.** Acá decía que `Blues libre Precdom` resuelve por "el matcher de
+logos". No: resuelve por el atajo de **substring** del propio resolvedor de texto (`blueslibre`
+está contenido en `blueslibreprecdom`). Y no es un caso raro — **57 de las 89 lecturas** del corpus
+entran por ahí, contra 9 por difflib. El cutoff gobierna el 10 % del camino, no el 100 %.
+
+Medido y calibrado a `0.75 / 0.12` con `tools/measure_set_resolver.py`.
 
 ## 5. Conclusión
 
@@ -116,5 +128,6 @@ Lo que queda:
    inconsistencia dura de los 383 discos.
 2. **Revisar los 7 PJs a 5/6**: puede ser que el slot falte de verdad, o que ese disco esté entre
    los 5 marcados o los 79 libres.
-3. **Desactivar la promoción del top-2 mientras haya un censo abierto** — la causa de (1).
-4. **Regla de margen en el resolvedor de sets**, midiendo también la vía del logo.
+3. ~~**Desactivar la promoción del top-2 mientras haya un censo abierto**~~ — hecho el
+   2026-09-01. No era la causa de (1), pero sí de otro error real (`id=254`).
+4. ~~**Regla de margen en el resolvedor de sets**~~ — hecho el 2026-09-01 (`0.75 / 0.12`).
