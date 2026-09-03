@@ -2201,3 +2201,94 @@ def test_desplazar_un_disco_avisa_en_el_log(syncer_db, caplog):
         con.close()
     finally:
         sync.close()
+
+
+# --- Adoptar la fila marcada 'dueño incierto' en vez de duplicarla (2026-09-01) ---------------
+#
+# Caso real, medido en vivo: el disco `id=127` (Fábula Yunkui slot 5, Bono Daño Éter) estaba
+# guardado sin dueño y marcado `dueno_no_identificado_2026-08-30`. Al abrir a Yixuan en S17, la
+# persistencia INSERTÓ una fila nueva (`id=384`) idéntica en los doce campos de identidad, en vez
+# de ponerle el dueño a la que ya existía. El inventario pasó de 383 a 384 discos.
+#
+# `find_swap_candidates_by_identity` excluye a propósito las filas sin dueño, y para un disco
+# LIBRE el motivo es bueno: entre dos gemelos, adoptar el equivocado hace desaparecer al libre de
+# verdad. Pero la marca de dueño incierto AFIRMA que alguien lo tiene — no hay ningún libre que
+# perder— y existe justamente para poder nombrarlo después. Sin esto, la marca que se agregó para
+# no perder el disco entero garantiza un duplicado.
+
+def _sembrar_fila(db, *, notas, slot=1, set_id=1):
+    """Una fila con la identidad exacta de `_disc()`, sin dueño y desequipada."""
+    con = sqlite3.connect(str(db))
+    cur = con.execute(
+        "INSERT INTO inventory_discs (set_id, slot, main_stat, main_valor, unidad_main, "
+        "sub1, val1, rolls1, unidad1, nivel, equipado, agente_asignado, notas) "
+        "VALUES (?,?,'HP',2200.0,'flat','ATK',38.0,1,'flat',15,0,NULL,?)",
+        (set_id, slot, notas),
+    )
+    con.commit(); rid = cur.lastrowid; con.close()
+    return rid
+
+
+def test_adopta_la_fila_marcada_dueno_incierto(syncer_db):
+    """Se le pone el dueño a la fila que ya existía; NO nace una segunda."""
+    huerfano = _sembrar_fila(syncer_db, notas="dueno_no_identificado_2026-08-30")
+    sync = _make_syncer(syncer_db)
+    try:
+        d = _disc()
+        d.agente_asignado_nombre = "Zhu Yuan"
+        d.agente_asignado_conf = 0.95
+        res = sync.persist_s17_disc(d)
+        assert res is not None
+        assert res.disc_id == huerfano, "tenía que adoptar la fila marcada, no insertar otra"
+    finally:
+        sync.close()
+    con = sqlite3.connect(str(syncer_db)); con.row_factory = sqlite3.Row
+    assert con.execute("SELECT COUNT(*) c FROM inventory_discs").fetchone()["c"] == 1
+    r = con.execute("SELECT agente_asignado, equipado FROM inventory_discs WHERE id=?",
+                    (huerfano,)).fetchone()
+    assert r["agente_asignado"] == 7 and r["equipado"] == 1
+    con.close()
+
+
+def test_no_adopta_un_disco_realmente_libre(syncer_db):
+    """El disco LIBRE se sigue sin tocar: ahí el motivo de la exclusión es bueno.
+
+    Entre dos gemelos indistinguibles —y el inventario real tiene 22 pares— adoptar la fila
+    equivocada haría desaparecer al libre de verdad. Se inserta uno nuevo, como hasta ahora."""
+    libre = _sembrar_fila(syncer_db, notas=None)
+    sync = _make_syncer(syncer_db)
+    try:
+        d = _disc()
+        d.agente_asignado_nombre = "Zhu Yuan"
+        d.agente_asignado_conf = 0.95
+        res = sync.persist_s17_disc(d)
+        assert res is not None and res.disc_id != libre
+    finally:
+        sync.close()
+    con = sqlite3.connect(str(syncer_db)); con.row_factory = sqlite3.Row
+    assert con.execute("SELECT COUNT(*) c FROM inventory_discs").fetchone()["c"] == 2
+    r = con.execute("SELECT agente_asignado, equipado FROM inventory_discs WHERE id=?",
+                    (libre,)).fetchone()
+    assert r["agente_asignado"] is None and r["equipado"] == 0, "el libre queda intacto"
+    con.close()
+
+
+def test_dos_marcados_iguales_no_se_adopta_ninguno(syncer_db):
+    """Con dos filas marcadas e indistinguibles no se elige (RNF-02): se inserta.
+
+    Es la misma guarda que ya tenía el camino de swap —mover sólo si hay EXACTAMENTE UNA— y es
+    lo que hace seguro incluir a los marcados: la ambigüedad se abstiene, no adivina."""
+    a = _sembrar_fila(syncer_db, notas="dueno_no_identificado_2026-08-30")
+    b = _sembrar_fila(syncer_db, notas="dueno_no_identificado_2026-08-30")
+    sync = _make_syncer(syncer_db)
+    try:
+        d = _disc()
+        d.agente_asignado_nombre = "Zhu Yuan"
+        d.agente_asignado_conf = 0.95
+        res = sync.persist_s17_disc(d)
+        assert res is not None and res.disc_id not in (a, b)
+    finally:
+        sync.close()
+    con = sqlite3.connect(str(syncer_db))
+    assert con.execute("SELECT COUNT(*) FROM inventory_discs").fetchone()[0] == 3
+    con.close()

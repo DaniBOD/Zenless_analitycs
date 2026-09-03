@@ -11,6 +11,14 @@ if TYPE_CHECKING:
     from app.core.parser_disc import DiscParsed
 
 
+#: Prefijo de la marca que distingue "alguien lo tiene y no sé quién" de un disco realmente
+#: LIBRE. Las dos filas se ven igual —`agente_asignado` NULL, `equipado` 0—, así que esta marca
+#: es lo ÚNICO que las separa, y la diferencia decide si una fila se puede adoptar
+#: (`find_swap_candidates_by_identity`). Vive acá y no en `sync_equip` porque la consulta que la
+#: usa está en este módulo: el que define el término es el que lo lee.
+MARCA_DUENO_INCIERTO = "dueno_no_identificado"
+
+
 # ---------------------------------------------------------------------------
 # Dataclasses de dominio
 # ---------------------------------------------------------------------------
@@ -394,11 +402,21 @@ class InventoryDiscRepo:
         exclude_disc_id: int | None = None,
     ) -> list["Disc"]:
         """Filas EXISTENTES candidatas a mover/re-equipar al destino (evitar duplicar), cuya
-        identidad COMPLETA coincide con el parseado. DOS orígenes válidos (targeted, RNF-02):
+        identidad COMPLETA coincide con el parseado. TRES orígenes válidos (targeted, RNF-02):
           - EQUIPADO por OTRO PJ  → swap entre PJs (el otro lo pierde).
           - DESEQUIPADO del DESTINO → re-equipar su propio disco desplazado.
-        Deliberadamente NO incluye discos sueltos de otros dueños ni sin dueño (evita robar por
-        colisión de firma). Identidad = (set_id, slot, main, nivel, {substat normalizado + rolls}):
+          - SIN DUEÑO pero MARCADO `dueno_no_identificado` → adoptar (2026-09-01).
+
+        La tercera se agregó midiendo el caso en vivo: el disco de Yixuan estaba guardado con la
+        marca y S17 INSERTÓ una fila nueva idéntica en los doce campos de identidad. La marca
+        AFIRMA que alguien lo tiene, así que no hay ningún disco libre que perder por adoptarla —
+        es justo la reconciliación para la que existe. Sin esto, la marca que se agregó para no
+        perder el disco entero garantiza un duplicado por disco marcado.
+
+        Sigue SIN incluir discos sueltos de otros dueños ni LIBRES: ahí el motivo original vale,
+        porque entre dos gemelos (22 pares en el inventario real) adoptar el equivocado haría
+        desaparecer al libre de verdad. Y la ambigüedad la cubre el caller, que mueve sólo si hay
+        EXACTAMENTE UNO. Identidad = (set_id, slot, main, nivel, {substat normalizado + rolls}):
         incluye NIVEL (entero limpio) y omite VALORES (ruidosos por OCR). Match GRUESO (set+slot+
         nivel) en SQL; fino (main+substats) en Python. El caller mueve solo si hay EXACTAMENTE UNO
         (0 → nuevo; ≥2 → ambiguo → no tocar)."""
@@ -412,9 +430,10 @@ class InventoryDiscRepo:
             "AND (? IS NULL OR id<>?) AND ("
             "  (equipado=1 AND agente_asignado IS NOT NULL AND (? IS NULL OR agente_asignado<>?)) "
             "  OR (equipado=0 AND agente_asignado IS NOT NULL AND agente_asignado=?)"
+            "  OR (agente_asignado IS NULL AND notas LIKE ?)"
             ")",
             (set_id, p.slot, p.nivel, exclude_disc_id, exclude_disc_id,
-             dest_agent_id, dest_agent_id, dest_agent_id),
+             dest_agent_id, dest_agent_id, dest_agent_id, f"%{MARCA_DUENO_INCIERTO}%"),
         ).fetchall()
         out: list["Disc"] = []
         for r in rows:

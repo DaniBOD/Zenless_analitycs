@@ -22,6 +22,7 @@ from app.core.stats_vocab import _norm_key
 from app.db.connection import is_readonly
 from app.core.recommender import Recommendation, recomendar, recommendation_to_json
 from app.db.repositories import (
+    MARCA_DUENO_INCIERTO,
     AgentRepo,
     ArchetypeRepo,
     Disc,
@@ -32,11 +33,9 @@ from app.db.repositories import (
 
 log = logging.getLogger(__name__)
 
-#: Prefijo de la marca que distingue "alguien lo tiene y no sé quién" de un disco realmente libre.
-#: Las dos filas se ven igual en la tabla —`agente_asignado` NULL, `equipado` 0—, así que esta
-#: marca es lo ÚNICO que las separa. Misma convención que `no_visto_en_censo_<fecha>` de
-#: `census_store` y `declarado_por_usuario_<fecha>` de `roster_declaration`.
-MARCA_DUENO_INCIERTO = "dueno_no_identificado"
+# `MARCA_DUENO_INCIERTO` se importa arriba, de `app.db.repositories`: ahí vive la consulta que
+# decide si una fila marcada se puede adoptar, y el que define el término tiene que ser el que lo
+# lee. Misma convención que `no_visto_en_censo_<fecha>` y `declarado_por_usuario_<fecha>`.
 
 
 def _marca_dueno_incierto() -> str:
@@ -505,7 +504,18 @@ class DiscSyncer:
                         # Solo el swap ENTRE PJs cuenta como "move" (dispara el toast); re-equipar
                         # un disco propio desplazado corrige la DB en silencio.
                         moved = cross_pj
-                        trigger = "s17_move" if cross_pj else "s17_reequip"
+                        if cross_pj:
+                            trigger = "s17_move"
+                        elif to_move.agente_asignado is None:
+                            # Fila sin dueño marcada `dueno_no_identificado`: no es re-equipar un
+                            # disco propio desplazado, es ponerle por fin el nombre a uno que se
+                            # guardó sin poder leerlo. Trigger propio para que el log lo diga.
+                            trigger = "s17_adopta"
+                            log.info("ADOPTADO: id=%d estaba sin dueño y marcado — ahora es de "
+                                     "'%s' (slot %s)", to_move.id,
+                                     parsed.agente_asignado_nombre or "?", parsed.slot)
+                        else:
+                            trigger = "s17_reequip"
                     elif slot_disc is not None:
                         # El PJ cambió el disco de este slot (set distinto) y el entrante es
                         # NUEVO: swap-out el viejo (queda en inventario) e inserta el nuevo.
