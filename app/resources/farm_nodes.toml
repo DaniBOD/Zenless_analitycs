@@ -5,7 +5,7 @@
 # tildes/ñ/mayúsculas). Feature display-only → archivo de datos, no DB (RNF-01 no aplica).
 #
 # Doc canónico: Documentacion/Dev_IA/2026-07-08_PLAN_Prediccion_Sets_S13_y_Badge_S2.md §4
-# 14 nodos · 28 sets (2 por nodo). Verificado contra db/danibod_zzz_v2.db (28 sets, 2026-07-08).
+# 15 nodos · 30 sets (2 por nodo). Verificado contra db/danibod_zzz_v2.db (30 sets, 2026-09-05).
 
 [[nodes]]
 titulo_es = "El piloto y el meca rebelde"
@@ -62,3 +62,11 @@ sets_en = ["Hormone Punk", "Fanged Metal"]
 [[nodes]]
 titulo_es = "Un monstruo y un visitante extraños"
 sets_en = ["Swing Jazz", "Chaotic Metal"]
+
+[[nodes]]
+# Nodo nuevo de la v3.1 (capturado en 13_Seleccion_set_farmeo/Ejemplo_7.png). Los 2 sets NO
+# salen del parecido del título: el matcher de logos de la app identificó los dos íconos del
+# nodo contra las 30 clases abiertas y ganaron primeros (Feathered Fate 0.602 con margen 0.138,
+# Thorned Rose 0.456 con margen 0.154). Ver `db/migrations/2026-09-05_24_sets_v31_nombre_en.sql`.
+titulo_es = "Espina veloz y garra desgarradora"
+sets_en = ["Feathered Fate", "Thorned Rose"]

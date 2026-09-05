@@ -34,13 +34,21 @@ def catalog() -> FarmNodeCatalog:
     return FarmNodeCatalog.from_toml(_TOML, _full_set_ids())
 
 
-def test_toml_tiene_14_nodos_de_2_sets():
+def test_toml_bien_formado():
+    """Cada nodo dropea 2 sets, y ni los títulos ni los sets se repiten.
+
+    Un set repetido entre dos nodos no es un typo inofensivo: la predicción de S13 pasaría a
+    restringir el matcher a la pareja equivocada, y sin ruido en el log."""
     nodes = _toml_nodes()
-    assert len(nodes) == 14
+    assert len(nodes) == 15                      # v3.1 (2026-09-05): +1 nodo nuevo
     assert all(len(n["sets_en"]) == 2 for n in nodes)
+    titulos = [n["titulo_es"] for n in nodes]
+    assert len(set(titulos)) == len(titulos), "títulos de nodo repetidos"
+    todos = [en for n in nodes for en in n["sets_en"]]
+    assert len(set(todos)) == len(todos), "un set aparece en más de un nodo"
 
 
-def test_matchea_los_14_titulos_exactos(catalog):
+def test_matchea_todos_los_titulos_exactos(catalog):
     for n in _toml_nodes():
         node = catalog.match_title(n["titulo_es"])
         assert node is not None, n["titulo_es"]
@@ -48,7 +56,7 @@ def test_matchea_los_14_titulos_exactos(catalog):
         assert len(node.sets) == 2
 
 
-def test_resuelve_los_28_en_a_set_id(catalog):
+def test_resuelve_todos_los_en_a_set_id(catalog):
     # Con el mapa completo, ningún set queda sin resolver.
     assert catalog.unresolved == []
     for node in catalog.nodes:
@@ -122,3 +130,64 @@ def test_pred_set_abstiene_si_empatan():
 def test_pred_set_vacio_o_none():
     assert best_predicted_set_id(None, _ENGANOS) is None
     assert best_predicted_set_id("Aria brillante", []) is None
+
+
+# --- Cobertura contra el catálogo real de la DB (2026-09-05) ----------------------------------
+#
+# El nodo de la v3.1 ("Espina veloz y garra desgarradora") estuvo semanas sin cargar y nada lo
+# dijo: `farm_nodes.toml` resuelve por `nombre_en`, los dos sets nuevos tenían ese campo en NULL,
+# y un set que no está en ningún nodo simplemente no se predice — en silencio. Esto lo vuelve
+# ROJO en cuanto un patch agrega sets, que es cuando hace falta enterarse.
+
+_DB = Path(__file__).resolve().parents[3] / "db" / "danibod_zzz_v2.db"
+
+
+def _sets_de_la_db() -> dict[str, int]:
+    import sqlite3
+    con = sqlite3.connect(f"file:{_DB}?mode=ro", uri=True)
+    try:
+        return {r[1]: r[0] for r in con.execute(
+            "SELECT id, nombre_en FROM disc_sets WHERE nombre_en IS NOT NULL")}
+    finally:
+        con.close()
+
+
+@pytest.mark.skipif(not _DB.exists(), reason="DB de dominio no presente")
+def test_todos_los_sets_de_la_db_pertenecen_a_un_nodo():
+    """Cada set del catálogo tiene su nodo. Si sale rojo, llegó un set nuevo sin nodo.
+
+    Mira TODAS las filas, no sólo las que ya tienen `nombre_en`. Filtrar por ese campo sería
+    repetir la ceguera que dejó pasar el caso: los dos sets de la v3.1 entraron con `nombre_en`
+    NULL, y un set sin nombre inglés no puede estar en ningún nodo **por construcción** — así
+    que el test se habría auto-excusado justo en el único caso que tenía que detectar."""
+    import sqlite3
+    con = sqlite3.connect(f"file:{_DB}?mode=ro", uri=True)
+    try:
+        filas = con.execute("SELECT id, nombre, nombre_en FROM disc_sets").fetchall()
+    finally:
+        con.close()
+
+    sin_en = [f"{r[0]} {r[1]}" for r in filas if not r[2]]
+    assert not sin_en, f"sets sin nombre_en (no pueden entrar a ningún nodo): {sin_en}"
+
+    en_nodos = {en for n in _toml_nodes() for en in n["sets_en"]}
+    faltan = sorted(f"{r[0]} {r[1]} ({r[2]})" for r in filas if r[2] not in en_nodos)
+    assert not faltan, f"sets sin nodo de farmeo: {faltan}"
+
+
+@pytest.mark.skipif(not _DB.exists(), reason="DB de dominio no presente")
+def test_todos_los_sets_del_toml_existen_en_la_db():
+    """Y al revés: un `sets_en` que no resuelve deja el nodo a medias, también en silencio."""
+    db = set(_sets_de_la_db())
+    huerfanos = sorted({en for n in _toml_nodes() for en in n["sets_en"]} - db)
+    assert not huerfanos, f"nombres_en del toml que no existen en disc_sets: {huerfanos}"
+
+
+@pytest.mark.skipif(not _DB.exists(), reason="DB de dominio no presente")
+def test_el_nodo_de_la_v31_resuelve_contra_la_db_real():
+    """El caso concreto, con los ids reales: Hado emplumado + Rosa espinosa."""
+    cat = FarmNodeCatalog.from_toml(_TOML, _sets_de_la_db())
+    node = cat.match_title("Espina veloz y garra desgarradora")
+    assert node is not None
+    assert {s.nombre_en for s in node.sets} == {"Feathered Fate", "Thorned Rose"}
+    assert all(s.set_id is not None for s in node.sets)
