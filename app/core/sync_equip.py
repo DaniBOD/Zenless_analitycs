@@ -511,6 +511,7 @@ class DiscSyncer:
                             # disco propio desplazado, es ponerle por fin el nombre a uno que se
                             # guardó sin poder leerlo. Trigger propio para que el log lo diga.
                             trigger = "s17_adopta"
+                            disc_repo_w.limpiar_marca_dueno_incierto(to_move.id)
                             log.info("ADOPTADO: id=%d estaba sin dueño y marcado — ahora es de "
                                      "'%s' (slot %s)", to_move.id,
                                      parsed.agente_asignado_nombre or "?", parsed.slot)

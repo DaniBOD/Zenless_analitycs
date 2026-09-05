@@ -22,7 +22,7 @@ En este orden, leé estos 4 archivos:
    | **A4** | Verificar el estado, no deducirlo (los folders no nombran el estado). |
    | **A5** | Un recorte de la evidencia es otra evidencia. `grep -c` antes de concluir. |
    | **B1** | Una sola autoridad por pregunta. Dos definiciones de lo mismo es una de más. |
-   | **B2** | Abstenerse no debe costar el dato entero. Y no borres por ausencia. |
+   | **B2** | Abstenerse no debe costar el dato entero. No borres por ausencia, y todo estado provisional necesita salida. |
    | **B3** | Un audit no muta su objeto de estudio (`prune=False`, sha256 antes/después). |
    | **C1** | Medí contra un baseline validado, antes y después. No inventes métricas. |
    | **C2** | Un reloj declara una unidad, no una granularidad. Un sello no es un ID. |

@@ -19,6 +19,20 @@ if TYPE_CHECKING:
 MARCA_DUENO_INCIERTO = "dueno_no_identificado"
 
 
+def _sin_marca_dueno_incierto(notas: str | None) -> str | None:
+    """`notas` sin la marca de dueño incierto, conservando lo demás. `None` si no queda nada.
+
+    No alcanza con poner el campo en NULL: otros flujos concatenan sus propias marcas con `' | '`
+    (`no_visto_en_censo_<fecha>`, `declarado_por_usuario_<fecha>`), y borrar el campo entero se
+    llevaría puesto lo que dijo otro. Se saca el token, no el campo.
+    """
+    if not notas:
+        return None
+    partes = [p.strip() for p in notas.split("|")]
+    quedan = [p for p in partes if p and MARCA_DUENO_INCIERTO not in p]
+    return " | ".join(quedan) or None
+
+
 # ---------------------------------------------------------------------------
 # Dataclasses de dominio
 # ---------------------------------------------------------------------------
@@ -468,6 +482,24 @@ class InventoryDiscRepo:
         """Firma de substats para identidad: {(nombre normalizado, rolls)} ordenada."""
         from app.core.stats_vocab import _norm_key
         return tuple(sorted((_norm_key(n or ""), rolls or 0) for n, rolls in pairs))
+
+    def limpiar_marca_dueno_incierto(self, disc_id: int) -> None:
+        """Saca la marca de dueño incierto de una fila que acaba de recibir dueño.
+
+        La marca AFIRMA "alguien lo tiene y no pude leer quién", así que deja de ser cierta en el
+        momento en que se lee el dueño. Sin esto la fila adoptada seguiría contando como incierta
+        para siempre — y ese contador es el que dice cuántas quedan por reconciliar.
+        """
+        r = self._con.execute(
+            "SELECT notas FROM inventory_discs WHERE id=?", (disc_id,)
+        ).fetchone()
+        if r is None:
+            return
+        limpio = _sin_marca_dueno_incierto(r["notas"])
+        if limpio != r["notas"]:
+            self._con.execute(
+                "UPDATE inventory_discs SET notas=? WHERE id=?", (limpio, disc_id)
+            )
 
     def set_unequipped(self, disc_id: int) -> None:
         """Marca un disco como NO equipado (swap-out). Conserva agente_asignado y data."""

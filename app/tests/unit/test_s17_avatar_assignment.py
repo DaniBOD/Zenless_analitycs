@@ -2292,3 +2292,61 @@ def test_dos_marcados_iguales_no_se_adopta_ninguno(syncer_db):
     con = sqlite3.connect(str(syncer_db))
     assert con.execute("SELECT COUNT(*) FROM inventory_discs").fetchone()[0] == 3
     con.close()
+
+
+# --- Al adoptar, la marca se va (2026-09-01) ---------------------------------------------------
+#
+# Medido en vivo el 2026-09-05: la adopción de `id=127` funcionó —dueño Yixuan, equipado, sin fila
+# nueva— pero la fila se quedó con `dueno_no_identificado_2026-08-30`. La marca AFIRMA "alguien lo
+# tiene y no pude leer quién", y eso pasó a ser falso en el momento en que se leyó. El contador de
+# marcados seguía diciendo 5 cuando eran 4, y no iba a bajar nunca: justo el número que dice
+# cuándo terminamos de reconciliarlos.
+
+def test_al_adoptar_se_saca_la_marca(syncer_db):
+    huerfano = _sembrar_fila(syncer_db, notas="dueno_no_identificado_2026-08-30")
+    sync = _make_syncer(syncer_db)
+    try:
+        d = _disc()
+        d.agente_asignado_nombre = "Zhu Yuan"
+        d.agente_asignado_conf = 0.95
+        assert sync.persist_s17_disc(d).disc_id == huerfano
+    finally:
+        sync.close()
+    con = sqlite3.connect(str(syncer_db)); con.row_factory = sqlite3.Row
+    r = con.execute("SELECT agente_asignado, notas FROM inventory_discs WHERE id=?",
+                    (huerfano,)).fetchone()
+    assert r["agente_asignado"] == 7
+    assert r["notas"] is None, "la marca dejó de ser cierta al leerse el dueño"
+    con.close()
+
+
+def test_al_adoptar_sobrevive_el_resto_de_las_notas(syncer_db):
+    """`notas` lo concatenan otros flujos con ' | ': se saca el token, no el campo."""
+    huerfano = _sembrar_fila(
+        syncer_db, notas="no_visto_en_censo_2026-08-01 | dueno_no_identificado_2026-08-30")
+    sync = _make_syncer(syncer_db)
+    try:
+        d = _disc()
+        d.agente_asignado_nombre = "Zhu Yuan"
+        d.agente_asignado_conf = 0.95
+        sync.persist_s17_disc(d)
+    finally:
+        sync.close()
+    con = sqlite3.connect(str(syncer_db))
+    assert con.execute("SELECT notas FROM inventory_discs WHERE id=?",
+                       (huerfano,)).fetchone()[0] == "no_visto_en_censo_2026-08-01"
+    con.close()
+
+
+@pytest.mark.parametrize("entrada, esperado", [
+    ("dueno_no_identificado_2026-08-30", None),
+    ("dueno_no_identificado_2026-08-30 | otra", "otra"),
+    ("otra | dueno_no_identificado_2026-08-30", "otra"),
+    ("a | dueno_no_identificado_2026-08-30 | b", "a | b"),
+    ("nada que ver", "nada que ver"),
+    (None, None),
+    ("", None),
+])
+def test_sin_marca_dueno_incierto(entrada, esperado):
+    from app.db.repositories import _sin_marca_dueno_incierto
+    assert _sin_marca_dueno_incierto(entrada) == esperado

@@ -108,6 +108,21 @@ estaba mojibakeada, no porque sobraran.
 y mezclarlos infla cuentas que después se usan para validar. Ante la duda: NULL, abstención, y
 **renombrar antes que borrar**.
 
+**Y una red de seguridad sin salida es una fuga.** Guardar el disco marcado como *"alguien lo
+tiene y no sé quién"* evitó perder el dato, pero **nada podía reclamar esa fila después**: la
+consulta que busca a qué disco pertenece una captura excluía a propósito toda fila sin dueño. Cada
+vez que se reiniciaba la captura y el disco sí se nombraba, se insertaba una fila nueva. El rescate
+se volvió una fábrica de duplicados — 3 de 5 marcados eran fantasmas.
+
+Cuando agregues un estado *provisional*, la pregunta que casi siempre falta es **quién lo saca de
+ahí**, y que al salir se **borre la marca**: una marca que sobrevive a su propia condición envenena
+el contador que dice cuánto falta (decía 5 cuando eran 4, y no iba a bajar nunca).
+
+**Lo bueno del estado explícito:** una marca es una AFIRMACIÓN, así que se puede **refutar**.
+*"Alguien lo tiene en el slot 6"* se contradice sola si los 51 PJs ya tienen su slot 6 ocupado —
+y eso resolvió los cinco casos sin mirar ninguno de los discos. Una fila `libre` no da ese
+apoyo: dice *"no lo tiene nadie"*, y que otro PJ tenga uno idéntico no la contradice.
+
 ### B3 · Un audit no muta su objeto de estudio.
 
 `AgentIdentifier()` a secas **poda y persiste** al construirse. Dos herramientas de diagnóstico
