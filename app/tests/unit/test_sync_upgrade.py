@@ -280,3 +280,111 @@ def test_pre_max_preview_real_emite_proyectado_al_entrar():
     enter = [d for d in diags if "[mejora]" in d and "proyectado" in d.lower()]
     assert enter, diags
     assert "15" in enter[-1]
+
+
+# --- persistencia: CUÁNDO se escribe (verbo 2, 2026-09-06) --------------------
+#
+# El `UpgradeSyncer` dejó de ser display-only, pero sigue sin tener DB propia: le pide al
+# `DiscSyncer` que migre la fila del disco LIBRE (una sola autoridad para las escrituras de
+# discos). Lo que se testea acá NO es el update —eso vive en `test_update_por_mejora.py`— sino
+# la decisión de cuándo se le pide: sólo en el camino CONFIRMADO por la pantalla posterior.
+
+
+class _SyncerEspia:
+    def __init__(self, explota: bool = False):
+        self.llamadas: list[tuple] = []
+        self._explota = explota
+
+    def actualizar_por_mejora(self, pre, post):
+        self.llamadas.append((pre, post))
+        if self._explota:
+            raise RuntimeError("la DB se cayó")
+        return 7
+
+
+def _pendiente(s, pre_nivel=0, last_nivel=0, target=None):
+    pre = _disc(pre_nivel, [_sub("Defensa", "DEF%", 4.8, 0)], set_name="Rosa espinosa", slot=2)
+    last = _disc(last_nivel, [_sub("Defensa", "DEF%", 4.8, 0)], set_name="Rosa espinosa", slot=2)
+    s._pending = (_Snap(pre_nivel, pre), _Snap(last_nivel, last), target, 0.0)
+    return pre
+
+
+def test_la_confirmacion_persiste_la_mejora():
+    """La pantalla posterior (S17/S5) trae los rolls asentados: recién ahí se escribe."""
+    espia = _SyncerEspia()
+    s = UpgradeSyncer(ocr=None, on_diagnostic=lambda _m: None, disc_syncer=espia)
+    pre = _pendiente(s)
+    final = _disc(3, [_sub("Defensa", "DEF%", 9.6, 1), _sub("Ataque", "ATK", 19, 0)],
+                  set_name="Rosa espinosa", slot=2)
+    s.on_post_upgrade_disc(final, now=0.0)
+    assert len(espia.llamadas) == 1
+    enviado_pre, enviado_post = espia.llamadas[0]
+    assert enviado_pre is pre                      # el PRE es lo que está escrito en la fila
+    assert enviado_post is final and enviado_post.nivel == 3
+
+
+def test_el_resumen_proyectado_no_persiste():
+    """⚠️ El fallback resume con el nivel PROYECTADO del preview, SIN haber visto los rolls
+    finales. Escribir eso dejaría la fila con una identidad que tampoco coincide con la realidad
+    —o sea, el duplicado igual, más los datos pisados— y nada la corrige después."""
+    espia = _SyncerEspia()
+    diags: list[str] = []
+    s = UpgradeSyncer(ocr=None, on_diagnostic=diags.append, disc_syncer=espia)
+    _pendiente(s, target=15)
+    s._flush_pending(confirmado=False)
+    assert any("proyectado" in d.lower() for d in diags), diags   # el resumen sí sale
+    assert espia.llamadas == [], "un POST sin confirmar no se escribe"
+
+
+def test_el_fallback_visto_en_s10_tampoco_persiste():
+    """Mismo criterio para el otro fallback: S10 vio el level-up pero la S17 nunca llegó, así
+    que no hay garantía de que el último roll esté asentado."""
+    espia = _SyncerEspia()
+    diags: list[str] = []
+    s = UpgradeSyncer(ocr=None, on_diagnostic=diags.append, disc_syncer=espia)
+    _pendiente(s, last_nivel=12)
+    s._flush_pending(confirmado=False)
+    assert any("sin confirmar" in d for d in diags), diags
+    assert espia.llamadas == []
+
+
+def test_sin_disc_syncer_sigue_siendo_display_only():
+    """El parámetro es opcional a propósito: sin él, el comportamiento es el de antes."""
+    diags: list[str] = []
+    s = UpgradeSyncer(ocr=None, on_diagnostic=diags.append)
+    _pendiente(s)
+    s.on_post_upgrade_disc(_disc(3, [_sub("Defensa", "DEF%", 9.6, 1)],
+                                 set_name="Rosa espinosa", slot=2), now=0.0)
+    assert any("resumen" in d for d in diags), diags
+
+
+def test_el_resumen_sale_aunque_la_persistencia_falle():
+    """Mismo criterio que el toast del drop: el diagnóstico que el usuario está mirando no puede
+    depender de que la DB colabore."""
+    espia = _SyncerEspia(explota=True)
+    diags: list[str] = []
+    s = UpgradeSyncer(ocr=None, on_diagnostic=diags.append, disc_syncer=espia)
+    _pendiente(s)
+    s.on_post_upgrade_disc(_disc(3, [_sub("Defensa", "DEF%", 9.6, 1)],
+                                 set_name="Rosa espinosa", slot=2), now=0.0)
+    assert espia.llamadas, "se intentó escribir"
+    assert any("resumen" in d and "0→3" in d for d in diags), diags
+
+
+def test_una_mejora_que_no_subio_nivel_no_persiste():
+    espia = _SyncerEspia()
+    s = UpgradeSyncer(ocr=None, on_diagnostic=lambda _m: None, disc_syncer=espia)
+    _pendiente(s)
+    s.on_post_upgrade_disc(_disc(0, [_sub("Defensa", "DEF%", 4.8, 0)],
+                                 set_name="Rosa espinosa", slot=2), now=0.0)
+    assert espia.llamadas == []
+
+
+def test_un_disco_distinto_no_persiste_nada():
+    """El pendiente sólo lo confirma el MISMO disco (set+slot). Otro disco emitido por la misma
+    pantalla no puede disparar una escritura."""
+    espia = _SyncerEspia()
+    s = UpgradeSyncer(ocr=None, on_diagnostic=lambda _m: None, disc_syncer=espia)
+    _pendiente(s)
+    s.on_post_upgrade_disc(_disc(3, [], set_name="Rosa espinosa", slot=5), now=0.0)
+    assert espia.llamadas == []

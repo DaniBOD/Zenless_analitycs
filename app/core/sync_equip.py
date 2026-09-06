@@ -656,6 +656,91 @@ class DiscSyncer:
         finally:
             con_w.close()
 
+    def actualizar_por_mejora(self, pre: DiscParsed, post: DiscParsed) -> int | None:
+        """Migra la fila de un disco LIBRE al estado que dejó una mejora (S10). Devuelve el id
+        actualizado, o `None` si no se tocó nada.
+
+        Segundo verbo del ciclo de vida (2026-09-06). El equipado ya estaba resuelto: después de
+        mejorarlo, la S17 lo reescribe por su clave natural `(PJ, slot)` (`s17_update`). El LIBRE
+        no tiene esa clave, y ahí está la fuga: **subir de nivel cambia la identidad**. Un drop a
+        Nivel 0 tiene 3 substats; a +3 se desbloquea el cuarto y los rolls se mueven. La identidad
+        de dedup incluye nivel, substats y rolls, así que el mismo disco físico ya no matchea su
+        propia fila ⇒ la próxima captura INSERTA una segunda. La fila vieja queda de fantasma para
+        siempre y el inventario crece con discos que no existen.
+
+        El match va contra el **PRE**, que es lo que hay escrito en la fila, y exige
+        **identidad ∧ VALORES** — no sólo identidad. Es la misma razón que en la baja por
+        desmontaje y acá pega todavía más fuerte: lo que se mejora viene de Nivel 0, donde todos
+        los rolls son 0 y la identidad colapsa a (set, slot, main, nombres de substat). Farmeando
+        el mismo nodo se juntan pilas de discos que comparten esa firma, y actualizar al gemelo
+        equivocado le pisa los datos a un disco que el usuario sí tiene.
+
+        Reparto de los candidatos, y por qué cada uno termina donde termina:
+
+          - **exactamente un LIBRE** → se actualiza (`s10_upgrade_update`).
+          - **≥2 libres** → se abstiene y avisa con los ids. Elegir sería acertar la mitad.
+          - **0 libres pero alguno OCUPADO** → no es un error ni hay nada que hacer: el disco
+            está equipado y lo resuelve la S17 que viene detrás por `(PJ, slot)`.
+          - **0 candidatos** → el disco nunca se capturó. La próxima pasada lo inserta.
+
+        Sólo se llama desde el camino CONFIRMADO (`on_post_upgrade_disc`), nunca desde el resumen
+        proyectado: escribir un POST sin confirmar metería substats que después nada corrige, y la
+        fila quedaría con una identidad que tampoco matchea la realidad — o sea, el duplicado
+        igual, más los datos pisados.
+        """
+        if pre is None or post is None or post.nivel <= pre.nivel:
+            return None
+        set_id = self._resolve_set_id(pre) or self._resolve_set_id(post)
+        if set_id is None:
+            log.warning("Mejora: set desconocido '%s' — no se actualiza.", pre.set_name_raw)
+            return None
+        if is_readonly():
+            log.info("[readonly] mejora NO actualiza — set=%s slot=%s nivel %s→%s",
+                     pre.set_name_raw, pre.slot, pre.nivel, post.nivel)
+            return None
+        con_w = sqlite3.connect(str(self._db_path))
+        con_w.row_factory = sqlite3.Row
+        repo = InventoryDiscRepo(con_w)
+        t0 = time.perf_counter()
+        try:
+            with con_w:
+                candidatos = repo.find_all_by_identity(pre, set_id)
+                ocupados = [d for d in candidatos if d.agente_asignado is not None]
+                # Las filas MARCADAS `dueno_no_identificado` tienen dueño NULL pero NO están
+                # libres: alguien las tiene y no se pudo leer quién. Fuera del bucket, igual que
+                # en `_persist_disco_libre`.
+                libres = [d for d in candidatos
+                          if d.agente_asignado is None and not _es_dueno_incierto(d)]
+                libres = [d for d in libres if repo.row_matches_parsed_values(d, pre)]
+                if len(libres) > 1:
+                    log.warning(
+                        "Mejora: %d discos libres indistinguibles para set=%s slot=%s nivel=%s "
+                        "(ids %s) — no se actualiza ninguno; actualizar al gemelo equivocado le "
+                        "pisa los datos a un disco que sí existe.",
+                        len(libres), pre.set_name_raw, pre.slot, pre.nivel,
+                        ", ".join(str(d.id) for d in libres),
+                    )
+                    return None
+                if not libres:
+                    if ocupados:
+                        log.info("Mejora: el disco está equipado (ids %s) — lo actualiza la S17 "
+                                 "por (PJ, slot).", ", ".join(str(d.id) for d in ocupados))
+                    else:
+                        log.info("Mejora: set=%s slot=%s nivel=%s no estaba en la DB — entrará "
+                                 "en la próxima captura.", pre.set_name_raw, pre.slot, pre.nivel)
+                    return None
+                disc_id = libres[0].id
+                repo.update_from_parsed(disc_id, post)
+            log.info("Disco LIBRE actualizado id=%d s10_upgrade_update set=%s slot=%s "
+                     "nivel %d→%d %.0fms", disc_id, pre.set_name_raw, pre.slot,
+                     pre.nivel, post.nivel, (time.perf_counter() - t0) * 1000)
+            return disc_id
+        except Exception:
+            log.exception("Error actualizando el disco mejorado")
+            return None
+        finally:
+            con_w.close()
+
     def _resultado_libre(self, parsed: DiscParsed, set_id: int, disc_id: int,
                          trigger: str, t0: float) -> SyncResult:
         """Log + `SyncResult` de un disco guardado sin dueño. Una sola autoridad para los tres

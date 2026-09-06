@@ -143,13 +143,16 @@ class MonitorController(QObject):
             self.error_occurred.emit(f"Error inesperado: {exc}")
             return
 
-        # Tracking PRE→POST del modal de mejora (S10). Display-only (no escribe DB);
-        # emite diagnósticos por el mismo sink que el resto del monitor.
+        # Tracking PRE→POST del modal de mejora (S10): emite diagnósticos por el mismo sink
+        # que el resto del monitor y, con el `disc_syncer`, migra la fila del disco LIBRE al
+        # estado nuevo cuando la mejora queda confirmada (segundo verbo, 2026-09-06). El
+        # equipado no lo necesita: la S17 posterior lo reescribe por (PJ, slot).
         from app.core.sync_upgrade import UpgradeSyncer
         self._upgrade_syncer = UpgradeSyncer(
             ocr=self._ocr,
             on_diagnostic=self._on_diagnostic_from_monitor,
             set_repo=self._disc_set_repo,
+            disc_syncer=self._disc_syncer,
         )
 
         from app.core.monitor import Monitor

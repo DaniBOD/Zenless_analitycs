@@ -195,3 +195,47 @@ def test_sin_registro_no_se_llama_a_la_baja(qapp):
     ctrl._on_teardown_from_monitor(ev)
 
     assert espia.registros == [] and len(toasts) == 1
+
+
+# --- verbo 2: la mejora del disco libre (2026-09-06) ---------------------------------------
+#
+# El `UpgradeSyncer` no tiene DB propia: le pide al `DiscSyncer` que migre la fila. El cable que
+# los une es UNA línea en `start()`, y si falta, todo lo demás sigue verde mientras el verbo 2
+# nunca corre en la app real — exactamente la forma de fallo que describe la práctica A2 (el
+# silencio no es un aprobado: puede ser que ese código nunca haya corrido).
+
+class _MonitorMudo:
+    def __init__(self, **kw):
+        self.kw = kw
+
+    def start(self):
+        pass
+
+
+def test_el_upgrade_syncer_recibe_el_disc_syncer(qapp, monkeypatch):
+    """`start()` tiene que pasarle el `disc_syncer` al `UpgradeSyncer`. Sin eso el tracking de
+    mejora vuelve a ser display-only en producción, sin que ningún test lo note."""
+    from app.ui.controller import MonitorController
+
+    creado = {}
+
+    class _UpgradeEspia:
+        def __init__(self, **kw):
+            creado.update(kw)
+
+    def _init_fake(self):
+        self._ocr = object()
+        self._detector = object()
+        self._disc_set_repo = object()
+        self._disc_syncer = object()
+
+    monkeypatch.setattr(MonitorController, "_init_dependencies", _init_fake)
+    monkeypatch.setattr("app.core.sync_upgrade.UpgradeSyncer", _UpgradeEspia)
+    monkeypatch.setattr("app.core.monitor.Monitor", _MonitorMudo)
+
+    ctrl = MonitorController()
+    ctrl.start()
+
+    assert "disc_syncer" in creado, "start() no le pasó el disc_syncer al UpgradeSyncer"
+    assert creado["disc_syncer"] is ctrl._disc_syncer
+    assert creado["disc_syncer"] is not None

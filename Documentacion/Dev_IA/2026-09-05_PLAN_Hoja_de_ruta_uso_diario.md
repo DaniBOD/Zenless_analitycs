@@ -12,34 +12,21 @@
 
 ---
 
-## 1. Cada disco farmeado entra a la DB ⬅ EN CURSO
+## 1. Cada disco farmeado entra a la DB ✅ CERRADO 2026-09-06
 
-Hoy el flujo de farmeo (S13 → S2 → S3) es **display-only**: detecta el drop, lo parsea entero y
-lo muestra, pero no escribe. Verificado en la sesión del 2026-09-05: 7 drops de Rosa espinosa y
-Hado emplumado detectados, **0 líneas de persistencia**, DB sin cambios.
+Los **tres verbos** implementados. Detalle en
+[`2026-09-06_FEAT_Los_tres_verbos_la_DB_sigue_al_juego_sola.md`](./2026-09-06_FEAT_Los_tres_verbos_la_DB_sigue_al_juego_sola.md).
 
-**La maquinaria ya existe.** `persist_s17_disc` persiste discos sin dueño desde el 2026-08-18
-(`_persist_disco_libre`): dedup por identidad completa, se abstiene si la identidad choca con un
-disco EQUIPADO (el caso del gemelo) y avisa ante ambigüedad. Así entraron los 79 libres del censo.
-Un drop es un disco **sin dueño por definición** — acaba de caer en la mochila.
+| verbo | trigger | estado |
+|---|---|---|
+| INSERT — el drop entra | `s3_drop_insert` | ✅ validado en vivo (6 drops → 6 filas) |
+| baja — el desmontaje libera | `descartado=1` | ✅ validado en vivo (6 bajas, 384 exacto) |
+| UPDATE — la mejora sigue al libre | `s10_upgrade_update` | ✅ validado en vivo (3 de 4; el 4º se abstuvo por OCR) |
 
-### ⚠️ Dos fugas que hay que resolver para que esto sea correcto
-
-Persistir el drop, solo, hace que la DB **crezca y nunca decrezca**:
-
-1. **Subir de nivel cambia la identidad.** Un drop a Nv0 tiene 3 substats (el 4º se desbloquea a
-   +3). La identidad de dedup incluye nivel y substats, así que el mismo disco físico a Nv15 con
-   4 substats **no matchea su propia fila** ⇒ segunda fila. El flujo de mejora (S10) existe y está
-   validado, pero es display-only: no actualiza la fila.
-2. **Desmontar no borra.** La bitácora de desmontaje (S11/S24/S25) está cerrada y validada, y
-   deja explícitamente la **DB intacta**. Un disco farmeado, guardado y después desmontado queda
-   como fila fantasma para siempre.
-
-Hoy la DB refleja la realidad porque se re-censó desde cero. Sin cerrar estas dos, cada día de
-farmeo la aleja un poco.
-
-**Decisión pendiente de Daniel:** persistir igual y reconciliar con censos periódicos (lo barato),
-o cerrar antes el ciclo de vida (mejora actualiza + desmontaje borra).
+Las dos fugas que este tramo tenía que resolver quedaron cerradas: **subir de nivel cambiaba la
+identidad** (⇒ segunda fila) y **desmontar no borraba** (⇒ fila fantasma). La decisión que estaba
+pendiente de Daniel —reconciliar con censos periódicos vs. cerrar el ciclo de vida— la resolvió
+él: *"Los tres verbos completos"*.
 
 ### Lo que no se puede recuperar
 

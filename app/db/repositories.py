@@ -557,6 +557,28 @@ class InventoryDiscRepo:
         have = self._identity_subs((name, rolls) for name, _v, _u, rolls in d.subs)
         return have == want
 
+    def row_matches_parsed_values(self, d: "Disc", p: "DiscParsed") -> bool:
+        """True si los VALORES de la fila `d` coinciden con los del parseado `p`.
+
+        Complemento de `row_matches_parsed_identity`, y no un lujo: **en Nivel 0 todos los rolls
+        valen 0**, así que la firma de identidad colapsa a (set, slot, main, nombres de substat) y
+        dos discos distintos del mismo set la comparten. Lo único que los separa son los valores.
+        Es la misma lección que obligó a `find_para_baja` a exigir identidad ∧ valores, aplicada
+        acá porque un disco que se está mejorando VIENE de Nivel 0 casi siempre.
+
+        Usa la tolerancia compartida `_cerca`, así que un `None` de cualquier lado NO rechaza: los
+        dos lados salen de OCR de pantallas distintas y la falta de evidencia no es evidencia de
+        diferencia (RNF-02). Eso importa en la práctica: el modal de mejora a veces no lee el valor
+        del main y devuelve `None`.
+        """
+        from app.core.stats_vocab import _norm_key
+        if not self._cerca(d.main_valor, p.main_valor):
+            return False
+        valor_de = {
+            _norm_key(s.nombre_canon or s.nombre_raw or ""): s.valor for s in (p.subs or [])
+        }
+        return all(self._cerca(v, valor_de.get(_norm_key(n))) for n, v, _u, _r in d.subs)
+
     @staticmethod
     def _identity_subs(pairs) -> tuple:
         """Firma de substats para identidad: {(nombre normalizado, rolls)} ordenada."""
@@ -647,7 +669,23 @@ class InventoryDiscRepo:
         )
 
     def update_from_parsed(self, disc_id: int, p: "DiscParsed") -> None:
-        """Actualiza nivel y substats de un disco existente (re-captura post-upgrade)."""
+        """Actualiza nivel, VALOR DEL MAIN y substats de un disco existente (re-captura
+        post-upgrade).
+
+        ⚠️ **El valor del main sube con el nivel.** Hasta el 2026-09-06 este UPDATE no lo tocaba —
+        se escribía sólo en el INSERT— y ningún otro camino lo escribía tampoco. Medido sobre el
+        inventario real: el main es función determinista de (slot, main, nivel), y siempre exacta
+        (ATK en slot 2 vale 79 a Nv0, 268 a Nv12, 316 a Nv15; los 60 discos a Nv15 valen 316 los
+        60). O sea que una fila actualizada a Nv15 conservando el 79 del Nv0 queda internamente
+        contradictoria y el scoring la puntúa con un ataque cuatro veces menor al real.
+
+        No había mordido porque el censo capturó cada disco a su nivel de entonces, pero el
+        segundo verbo del ciclo de vida existe justamente para filas que CAMBIAN de nivel.
+
+        El valor sólo se pisa si el parseado trae uno: un `None` es falta de lectura, no un dato
+        (RNF-02), y sobrescribir con él borraría lo que ya estaba bien. Pasa de verdad — el modal
+        de mejora devolvió `main_valor=None` en vivo el 2026-09-06.
+        """
         subs = p.subs
         def _sub(i: int):
             if i < len(subs):
@@ -656,16 +694,18 @@ class InventoryDiscRepo:
             return None, None, 0, None
 
         s1 = _sub(0); s2 = _sub(1); s3 = _sub(2); s4 = _sub(3)
+        main_sql = "main_valor=?, unidad_main=?, " if p.main_valor is not None else ""
+        main_args = (p.main_valor, p.main_unidad) if p.main_valor is not None else ()
         self._con.execute(
-            """UPDATE inventory_discs SET
-               nivel=?,
+            f"""UPDATE inventory_discs SET
+               nivel=?, {main_sql}
                sub1=?, val1=?, rolls1=?, unidad1=?,
                sub2=?, val2=?, rolls2=?, unidad2=?,
                sub3=?, val3=?, rolls3=?, unidad3=?,
                sub4=?, val4=?, rolls4=?, unidad4=?
                WHERE id=?""",
             (
-                p.nivel,
+                p.nivel, *main_args,
                 s1[0], s1[1], s1[2], s1[3],
                 s2[0], s2[1], s2[2], s2[3],
                 s3[0], s3[1], s3[2], s3[3],

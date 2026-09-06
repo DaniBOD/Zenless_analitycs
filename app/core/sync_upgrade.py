@@ -1,9 +1,15 @@
-"""Sync RF-05 — tracking PRE→POST del modal de MEJORA de disco (S10). DISPLAY-ONLY.
+"""Sync RF-05 — tracking PRE→POST del modal de MEJORA de disco (S10).
 
 Reescrito 2026-07-10: usa el parser espacial `parse_disc_s10` (el path viejo per-ROI
-`parse_modal_detalle` nunca se calibró para este layout) y **no escribe a DB** — solo emite
-diagnósticos. Al entrar al modal captura el disco (PRE); cuando el nivel SUBE tras "Mejorar",
-loguea qué substat ganó roll (diff incremental).
+`parse_modal_detalle` nunca se calibró para este layout). Al entrar al modal captura el disco
+(PRE); cuando el nivel SUBE tras "Mejorar", loguea qué substat ganó roll (diff incremental).
+
+⚠️ **Dejó de ser display-only el 2026-09-06** (segundo verbo del ciclo de vida). Sigue sin tener
+DB propia —toda escritura de discos vive en `DiscSyncer`, una sola autoridad— pero cuando la
+mejora queda CONFIRMADA le pide que migre la fila del disco LIBRE al estado nuevo. El equipado no
+lo necesita: la S17 posterior lo reescribe por `(PJ, slot)`. El libre no tiene esa clave, y como
+subir de nivel le cambia la identidad, sin esto su fila vieja queda de fantasma y la próxima
+captura inserta una segunda. Sin `disc_syncer` el comportamiento es exactamente el de antes.
 
 Estado final autoritativo = la S17 posterior (QA 2026-07-10): al MAXEAR, el juego auto-cierra
 el modal S10 en <1 ciclo de poll, así que el frame MAX (con el último roll asentado) suele NO
@@ -99,12 +105,15 @@ def _roll_diff(pre: DiscParsed, post: DiscParsed) -> dict[str, int]:
 
 
 class UpgradeSyncer:
-    """Trackea el ciclo PRE→POST del modal de upgrade (S10). Display-only (sin DB)."""
+    """Trackea el ciclo PRE→POST del modal de upgrade (S10) y, con `disc_syncer`, persiste la
+    mejora del disco LIBRE cuando queda confirmada."""
 
-    def __init__(self, ocr, on_diagnostic=None, set_repo=None):
+    def __init__(self, ocr, on_diagnostic=None, set_repo=None, disc_syncer=None):
         self._ocr = ocr
         self._on_diagnostic = on_diagnostic
         self._set_repo = set_repo
+        # `DiscSyncer` opcional: sin él, display-only como hasta el 2026-09-06.
+        self._disc_syncer = disc_syncer
         self._pre: _Snap | None = None
         self._last: _Snap | None = None
         self._ref_sig: np.ndarray | None = None   # firma de la barra del último estado aceptado
@@ -248,7 +257,28 @@ class UpgradeSyncer:
             post_parsed, post_nivel = last.parsed, last.nivel
         if post_nivel <= pre.nivel:
             return   # no subió → nada que resumir
+        # Persistir ANTES del resumen y con su propio guard: si la escritura falla, el resumen
+        # sale igual. Es el mismo criterio que el toast del drop — el diagnóstico que el usuario
+        # está mirando no puede depender de que la DB colabore.
+        self._persistir_mejora(pre, post_parsed)
         self._emit_resumen(pre, post_parsed, post_nivel)
+
+    def _persistir_mejora(self, pre: _Snap, post_parsed: DiscParsed) -> None:
+        """Le pide al `DiscSyncer` que migre la fila del disco libre al estado nuevo.
+
+        Sólo desde acá, que es el camino CONFIRMADO por la pantalla posterior (S17 o S5) con los
+        rolls asentados. El fallback `_flush_pending` NO persiste a propósito: su POST es lo último
+        que se vio en S10 —o directamente el nivel PROYECTADO del preview— y escribir substats sin
+        confirmar dejaría la fila con una identidad que tampoco coincide con la realidad. O sea:
+        el duplicado igual, más los datos pisados. Abstenerse deja el estado de antes, que el censo
+        detecta.
+        """
+        if self._disc_syncer is None:
+            return
+        try:
+            self._disc_syncer.actualizar_por_mejora(pre.parsed, post_parsed)
+        except Exception:
+            log.exception("Error persistiendo la mejora (el resumen sale igual)")
 
     def _flush_pending(self, confirmado: bool) -> None:
         """Cierra un pendiente sin confirmación de S17 (fallback): usa lo último visto en S10.
