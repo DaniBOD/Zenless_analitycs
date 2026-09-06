@@ -120,3 +120,26 @@ def test_s3_cambio_de_drop_reemite():
     m._dispatch_state(_load("Ejemplo_3.png"), st)
     assert len(emitted) == 2, f"esperaba 2 emisiones (distinto disco), hubo {len(emitted)}"
     assert {emitted[0][0].slot, emitted[1][0].slot} == {1, 4}
+
+
+# --- El drop nace SUELTO y eso hay que afirmarlo (2026-09-05) ----------------------------------
+#
+# Hasta acá S3 era display-only, así que daba igual quién tuviera el disco. Desde que el drop se
+# persiste, la persistencia necesita saberlo: `_persist_disco_libre` sólo escribe si alguien
+# AFIRMÓ que el disco no lo tiene nadie (`equip_libre`), porque la alternativa —"no pude leer el
+# dueño"— es ausencia de dato y no se escribe.
+#
+# Para un drop la afirmación no viene de leer un badge: viene de la regla del juego. Un disco que
+# acaba de caer está en la mochila, no equipado en nadie. Es la evidencia más fuerte que hay.
+
+@pytest.mark.skipif(not (_S3 / "Ejemplo_1.png").exists(), reason="capturas S3 no presentes")
+def test_s3_afirma_que_el_drop_esta_libre():
+    from app.core.detector import ScreenState
+    emitted = []
+    m = _monitor(on_disc=lambda d, st: emitted.append(d))
+    m._dispatch_state(_load("Ejemplo_1.png"), ScreenState("S3", 1.0, "s3_drop"))
+    assert len(emitted) == 1
+    d = emitted[0]
+    assert d.equip_libre is True, "sin esto la persistencia se abstiene y el drop se pierde"
+    assert d.agente_asignado_nombre is None, "un drop no tiene dueño"
+    assert d.equip_dueno_incierto is False, "no es 'no sé quién': es que no lo tiene nadie"

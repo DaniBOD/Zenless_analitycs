@@ -2350,3 +2350,79 @@ def test_al_adoptar_sobrevive_el_resto_de_las_notas(syncer_db):
 def test_sin_marca_dueno_incierto(entrada, esperado):
     from app.db.repositories import _sin_marca_dueno_incierto
     assert _sin_marca_dueno_incierto(entrada) == esperado
+
+
+# --- El drop de S3 es un EVENTO, no una observación de estado (2026-09-05) ---------------------
+#
+# `_persist_disco_libre` se abstiene cuando la identidad del disco visto LIBRE choca con la de uno
+# EQUIPADO, y hace bien: mirando el inventario no se distingue "es ese mismo disco recién
+# desequipado" de "es su gemelo" (hay 22 pares indistinguibles en el inventario real).
+#
+# Para un DROP esa duda no existe. Un disco acaba de caer en la mochila: la cuenta tiene uno más,
+# lo diga la identidad lo que diga. Por eso `es_drop=True` fuerza el INSERT — y por la misma razón
+# tampoco actualiza una fila libre idéntica: farmear un gemelo de algo que ya tenías da DOS discos,
+# no uno actualizado.
+
+def test_drop_inserta_aunque_choque_con_uno_equipado(syncer_db):
+    """El caso que la observación tiene que abstenerse y el drop no."""
+    sync = _make_syncer(syncer_db)
+    try:
+        equipado = _disc()
+        equipado.agente_asignado_nombre = "Zhu Yuan"
+        equipado.agente_asignado_conf = 0.95
+        r1 = sync.persist_s17_disc(equipado)
+        assert r1 is not None
+
+        # Mismo disco, ahora visto como DROP. Sin `es_drop` esto se abstendría.
+        drop = _disc()
+        drop.equip_libre = True
+        r2 = sync.persist_s17_disc(drop, es_drop=True)
+        assert r2 is not None, "un drop no puede abstenerse: entró un disco a la cuenta"
+        assert r2.disc_id != r1.disc_id
+        assert r2.trigger == "s3_drop_insert"
+    finally:
+        sync.close()
+    con = sqlite3.connect(str(syncer_db)); con.row_factory = sqlite3.Row
+    assert con.execute("SELECT COUNT(*) c FROM inventory_discs").fetchone()["c"] == 2
+    r = con.execute("SELECT agente_asignado, equipado FROM inventory_discs WHERE id=?",
+                    (r2.disc_id,)).fetchone()
+    assert r["agente_asignado"] is None and r["equipado"] == 0, "un drop nace suelto"
+    con.close()
+
+
+def test_sin_es_drop_la_observacion_sigue_absteniendose(syncer_db):
+    """Lo que NO cambia: mirar el inventario y ver un libre igual a uno equipado no toca nada."""
+    sync = _make_syncer(syncer_db)
+    try:
+        equipado = _disc()
+        equipado.agente_asignado_nombre = "Zhu Yuan"
+        equipado.agente_asignado_conf = 0.95
+        assert sync.persist_s17_disc(equipado) is not None
+
+        visto_libre = _disc()
+        visto_libre.equip_libre = True
+        assert sync.persist_s17_disc(visto_libre) is None, "sin es_drop se abstiene"
+    finally:
+        sync.close()
+    con = sqlite3.connect(str(syncer_db))
+    assert con.execute("SELECT COUNT(*) FROM inventory_discs").fetchone()[0] == 1
+    con.close()
+
+
+def test_dos_drops_identicos_son_dos_discos(syncer_db):
+    """Farmear el gemelo de algo que ya tenías suelto da DOS filas, no una actualizada."""
+    sync = _make_syncer(syncer_db)
+    try:
+        ids = []
+        for _ in range(2):
+            d = _disc()
+            d.equip_libre = True
+            res = sync.persist_s17_disc(d, es_drop=True)
+            assert res is not None
+            ids.append(res.disc_id)
+        assert ids[0] != ids[1]
+    finally:
+        sync.close()
+    con = sqlite3.connect(str(syncer_db))
+    assert con.execute("SELECT COUNT(*) FROM inventory_discs").fetchone()[0] == 2
+    con.close()

@@ -3911,6 +3911,12 @@ class Monitor:
             return
         self._s3_emitted_ids.add(identity)
         self._last_emitted_identity = identity
+        # Un drop nace SUELTO, y hay que afirmarlo para que la persistencia lo escriba: sin
+        # `equip_libre` cae en "no pude leer el dueño", que es ausencia de dato y no se guarda.
+        # Acá la afirmación no sale de leer un badge sino de la regla del juego —un disco que
+        # acaba de caer está en la mochila, no equipado en nadie—, que es la evidencia más fuerte
+        # que hay. (S3 fue display-only hasta el 2026-09-05; antes esto daba igual.)
+        merged.equip_libre = True
         log.info(
             "Disco S3 (drop) detectado: set=%s slot=%d main=%s nivel=%d conf=%.2f",
             merged.set_name_canon or merged.set_name_raw, merged.slot,

@@ -707,6 +707,23 @@ class MonitorController(QObject):
                 # Devolver el resultado NO es cosmético: el censo de discos lo usa como identidad
                 # (la fila que se tocó). Sin esto tendría que recalcularla y volvería el desfasaje.
                 return result
+            if state.code == "S3" and self._disc_syncer is not None:
+                # El drop ENTRA a la DB (2026-09-05). Antes S3 era display-only y el disco
+                # farmeado sólo llegaba a la tabla si después lo mirabas en el inventario o lo
+                # equipabas; con ~5 corridas diarias la DB se alejaba sola de la cuenta.
+                #
+                # `es_drop=True` no es cosmético: le dice a la persistencia que esto es un EVENTO
+                # y no una observación de estado, así que inserta aunque la identidad choque con
+                # otro disco (ver `_persist_disco_libre`).
+                #
+                # Y se sigue de largo hasta el payload A PROPÓSITO: el toast del farmeo no puede
+                # depender de que la DB haya escrito. Mismo contrato que el toast de reemplazo
+                # (rediseño 2026-07-20) — por eso el except traga la excepción DESPUÉS de
+                # loguearla: prefiero un drop sin guardar y con toast, que la pantalla muda.
+                try:
+                    self._disc_syncer.persist_s17_disc(disc_parsed, es_drop=True)
+                except Exception:
+                    log.exception("Error persistiendo el drop S3 (el toast sale igual)")
             payload = self._build_payload(disc_parsed, state)
             self.disc_detected.emit(payload)
         except Exception as exc:

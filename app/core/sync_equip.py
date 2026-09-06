@@ -387,7 +387,7 @@ class DiscSyncer:
             parsed.set_name_raw,
         )
 
-    def persist_s17_disc(self, parsed: DiscParsed) -> SyncResult | None:
+    def persist_s17_disc(self, parsed: DiscParsed, *, es_drop: bool = False) -> SyncResult | None:
         """
         Persistencia ENFOCADA de un disco equipado S17 (decisión 2026-06-06):
         upsert disco + asignación con salvaguarda + bono, SIN scoring/optimizer
@@ -421,7 +421,7 @@ class DiscSyncer:
             #
             # La distinción no existía antes: `crop_s9_selected_badge` devolvía None para las dos.
             if getattr(parsed, "equip_libre", False):
-                return self._persist_disco_libre(parsed, set_id, t0)
+                return self._persist_disco_libre(parsed, set_id, t0, es_drop=es_drop)
             # TERCER desenlace (2026-08-21): el badge ESTÁ —hay avatar— pero ninguna de las dos
             # superficies pudo nombrarlo. No es "libre" ni es "no sé nada": es un disco leído
             # entero al que le falta un solo campo. Descartarlo tiraba set, slot, nivel y los
@@ -595,9 +595,45 @@ class DiscSyncer:
         finally:
             con_w.close()
 
+    def _resultado_libre(self, parsed: DiscParsed, set_id: int, disc_id: int,
+                         trigger: str, t0: float) -> SyncResult:
+        """Log + `SyncResult` de un disco guardado sin dueño. Una sola autoridad para los tres
+        caminos que terminan igual (libre observado, dueño incierto, y drop de S3).
+
+        LIBRE es el titular para todos, a pedido de Daniel (2026-08-29). Durante el censo el log es
+        el metrónomo —se avanza al disco siguiente cuando salta la línea— y varios rótulos para "el
+        disco quedó guardado sin dueño" obligaban a leer cuál era antes de seguir. El titular es el
+        mismo porque la ACCIÓN del usuario es la misma.
+
+        La distinción NO se pierde: viaja en `trigger`, que se imprime en esta misma línea
+        (`libre_insert` / `libre_update` / `incierto_insert` / `incierto_update` /
+        `s3_drop_insert`), y sobre todo sigue en la DB, donde es funcional — es lo que mantiene la
+        fila marcada fuera del bucket `libres` para que un disco genuinamente libre no la pise.
+        """
+        bonus_2p_stat, bonus_2p_valor, bonus_4p = self._set_repo.get_bonus(set_id)
+        bonus_2p = (f"{bonus_2p_stat} {bonus_2p_valor}".strip()
+                    if (bonus_2p_stat or bonus_2p_valor) else None)
+        latency_ms = (time.perf_counter() - t0) * 1000
+        log.info("Disco LIBRE persistido id=%d %s set=%s slot=%d nivel=%d %.0fms",
+                 disc_id, trigger, parsed.set_name_raw, parsed.slot, parsed.nivel, latency_ms)
+        return SyncResult(
+            disc_id=disc_id, trigger=trigger, recomendacion="(libre)", score_norm=0.0,
+            agente_nombre=None, latency_ms=round(latency_ms, 1),
+            agente_asignado_nombre=None,
+            set_bonus_2p=bonus_2p, set_bonus_4p=bonus_4p, set_id=set_id,
+        )
+
     def _persist_disco_libre(self, parsed: DiscParsed, set_id: int, t0: float,
-                             *, dueno_incierto: bool = False) -> SyncResult | None:
+                             *, dueno_incierto: bool = False,
+                             es_drop: bool = False) -> SyncResult | None:
         """Persiste un disco que se AFIRMÓ libre: fila con `agente_asignado = NULL`, `equipado = 0`.
+
+        `es_drop=True` (S3, el disco acaba de caer) SALTEA toda la deduplicación e INSERTA siempre.
+        No es un atajo: es que un drop es un **evento**, no una observación de estado. Mirando el
+        inventario, un libre con la identidad de otro disco es ambiguo —el mismo recién desequipado
+        o su gemelo— y por eso el camino normal se abstiene. En un drop no hay ambigüedad posible:
+        la cuenta tiene un disco MÁS, coincida su identidad con lo que sea. Y por lo mismo tampoco
+        actualiza una fila libre idéntica: farmear el gemelo de algo que ya tenías da DOS discos.
 
         Sin dueño no existe la clave natural `(PJ, slot)`, así que la deduplicación es por
         **identidad completa** (`find_all_by_identity`) — y por eso hizo falta arreglarla antes: la
@@ -618,6 +654,12 @@ class DiscSyncer:
         repo = InventoryDiscRepo(con_w)
         try:
             with con_w:
+                if es_drop:
+                    # Un disco entró a la cuenta: se inserta y punto (ver docstring).
+                    disc_id = repo.insert_from_parsed(
+                        parsed, set_id, agente_asignado=None, equipado=0)
+                    trigger = "s3_drop_insert"
+                    return self._resultado_libre(parsed, set_id, disc_id, trigger, t0)
                 candidatos = repo.find_all_by_identity(parsed, set_id)
                 ocupados = [d for d in candidatos if d.agente_asignado is not None]
                 # Las filas MARCADAS tienen agente_asignado NULL igual que un libre, pero NO son
@@ -655,27 +697,7 @@ class DiscSyncer:
                         parsed, set_id, agente_asignado=None, equipado=0,
                         notas=_marca_dueno_incierto() if dueno_incierto else None)
                     trigger = "incierto_insert" if dueno_incierto else "libre_insert"
-            bonus_2p_stat, bonus_2p_valor, bonus_4p = self._set_repo.get_bonus(set_id)
-            bonus_2p = (f"{bonus_2p_stat} {bonus_2p_valor}".strip()
-                        if (bonus_2p_stat or bonus_2p_valor) else None)
-            latency_ms = (time.perf_counter() - t0) * 1000
-            # LIBRE para los dos casos, a pedido de Daniel (2026-08-29). Durante el censo el log es
-            # el metrónomo —se avanza al disco siguiente cuando salta la línea— y dos rótulos
-            # distintos para "el disco quedó guardado sin dueño" obligaban a leer cuál era antes de
-            # seguir. El titular es el mismo porque la ACCIÓN del usuario es la misma.
-            #
-            # La distinción NO se pierde: viaja en `trigger`, que ya se imprime en esta misma línea
-            # (`incierto_insert` / `incierto_update` contra `libre_insert` / `libre_update`), y
-            # sobre todo sigue en la DB, donde es funcional — es lo que mantiene la fila fuera del
-            # bucket `libres` para que un disco genuinamente libre no la pise.
-            log.info("Disco LIBRE persistido id=%d %s set=%s slot=%d nivel=%d %.0fms",
-                     disc_id, trigger, parsed.set_name_raw, parsed.slot, parsed.nivel, latency_ms)
-            return SyncResult(
-                disc_id=disc_id, trigger=trigger, recomendacion="(libre)", score_norm=0.0,
-                agente_nombre=None, latency_ms=round(latency_ms, 1),
-                agente_asignado_nombre=None,
-                set_bonus_2p=bonus_2p, set_bonus_4p=bonus_4p, set_id=set_id,
-            )
+            return self._resultado_libre(parsed, set_id, disc_id, trigger, t0)
         except Exception:
             log.exception("Error persistiendo disco libre")
             return None
