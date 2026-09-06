@@ -761,8 +761,13 @@ class MonitorController(QObject):
 
         Señal propia y no `disc_replaced`/`disc_equipped`: `_build_replacement_payload` resuelve
         logo del set y avatares de dos PJs, y acá no hay ninguno de los dos — es un lote de discos
-        destruidos. Igual que sus hermanos violeta, esto NO afirma nada sobre la DB: la bitácora
-        fue a un archivo y el toast solo reporta lo que se vio en pantalla."""
+        destruidos.
+
+        El TOAST sigue sin afirmar nada sobre la DB: sus números son los que se vieron en pantalla
+        (el contador declarado), no los de las filas que se lograron tocar. Lo que cambió el
+        2026-09-06 es que el flujo ya no es puramente observacional — después de avisar, se da de
+        baja lo desmontado. Sin eso el sistema sólo sabía sumar y la DB se alejaba de la cuenta
+        sola. La baja va en su propio `try` y DESPUÉS: el aviso no puede colgar de que escriba."""
         try:
             self.discs_dismantled.emit({
                 "total": int(ev.get("total") or 0),
@@ -772,6 +777,20 @@ class MonitorController(QObject):
             })
         except Exception:
             log.exception("Error armando el toast de desmontaje")
+
+        # BAJA de las filas (2026-09-06), DESPUÉS del toast y en su propio try. El aviso afirma lo
+        # que se vio en pantalla; la baja es una consecuencia y no puede condicionarlo. Mismo
+        # contrato que el toast de reemplazo y que el drop.
+        #
+        # El docstring de arriba decía que esto "NO afirma nada sobre la DB". Sigue siendo cierto
+        # para el TOAST —los números son los de la pantalla, no los de las filas tocadas—, pero el
+        # flujo ya no es puramente observacional: sin baja el sistema sólo sabe sumar.
+        registro = ev.get("registro")
+        if registro and self._disc_syncer is not None:
+            try:
+                self._disc_syncer.dar_de_baja_desmontados(registro)
+            except Exception:
+                log.exception("Error dando de baja los discos desmontados (el toast ya salió)")
 
     def _on_weapon_seen_from_monitor(self, ev: dict) -> None:
         """El monitor OBSERVÓ el detalle de un W-Engine → un toast por arma (RF-15).

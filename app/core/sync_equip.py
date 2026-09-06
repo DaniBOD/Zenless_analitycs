@@ -595,6 +595,67 @@ class DiscSyncer:
         finally:
             con_w.close()
 
+    def dar_de_baja_desmontados(self, registro: dict) -> dict | None:
+        """Da de baja las filas de los discos que la bitácora de desmontaje registró.
+
+        Tercer verbo del ciclo de vida (2026-09-06). Sin esto el sistema sólo sabe SUMAR: cada
+        disco farmeado entra y ninguno sale, así que la DB se aleja de la cuenta sola —
+        ~10 discos por día de farmeo, casi todos desmontados enseguida.
+
+        ⚠️ **El riesgo acá es el inverso al de insertar.** Un insert de más se corrige en el
+        próximo censo; una baja equivocada le BORRA al usuario un disco que sí tiene. Por eso:
+
+          - se da de baja sólo con **exactamente un** candidato (identidad ∧ valores);
+          - con ≥2 se ABSTIENE y avisa con los ids, en vez de elegir — con gemelos la moneda
+            saldría mal la mitad de las veces (regla que dejó escrita `TeardownBatch._record`);
+          - 0 candidatos NO es un error: se desmontó algo que nunca se capturó.
+
+        La baja es lógica (`descartado=1`, ver `marcar_descartado`), no un DELETE.
+
+        Devuelve el resumen `{dados_de_baja, ambiguos, no_encontrados, faltantes}`, o `None` en
+        read-only. `faltantes` viene del propio registro: son los discos que la bitácora no llegó
+        a leer (selección masiva, scroll), y se reporta para que la tanda parcial se note.
+        """
+        conteo = registro.get("conteo") or {}
+        resumen = {"dados_de_baja": 0, "ambiguos": 0, "no_encontrados": 0,
+                   "faltantes": int(conteo.get("faltantes") or 0)}
+        discos = registro.get("discos") or []
+        if is_readonly():
+            log.info("[readonly] desmontaje NO da de baja — %d disco(s)", len(discos))
+            return None
+        if not discos and not resumen["faltantes"]:
+            return resumen
+        con_w = sqlite3.connect(str(self._db_path))
+        con_w.row_factory = sqlite3.Row
+        repo = InventoryDiscRepo(con_w)
+        try:
+            with con_w:
+                for disco in discos:
+                    candidatos = repo.find_para_baja(disco)
+                    if len(candidatos) == 1:
+                        repo.marcar_descartado(candidatos[0].id)
+                        resumen["dados_de_baja"] += 1
+                    elif len(candidatos) > 1:
+                        resumen["ambiguos"] += 1
+                        log.warning(
+                            "Desmontaje: %d discos indistinguibles para set=%s slot=%s nivel=%s "
+                            "(ids %s) — NO se da de baja ninguno; elegir uno sería borrar el "
+                            "equivocado la mitad de las veces.",
+                            len(candidatos), disco.get("set_id"), disco.get("slot"),
+                            disco.get("nivel"), ", ".join(str(d.id) for d in candidatos),
+                        )
+                    else:
+                        resumen["no_encontrados"] += 1
+            log.info("Desmontaje: %d dados de baja · %d ambiguos · %d no estaban en la DB%s",
+                     resumen["dados_de_baja"], resumen["ambiguos"], resumen["no_encontrados"],
+                     f" · {resumen['faltantes']} sin leer" if resumen["faltantes"] else "")
+            return resumen
+        except Exception:
+            log.exception("Error dando de baja los discos desmontados")
+            return None
+        finally:
+            con_w.close()
+
     def _resultado_libre(self, parsed: DiscParsed, set_id: int, disc_id: int,
                          trigger: str, t0: float) -> SyncResult:
         """Log + `SyncResult` de un disco guardado sin dueño. Una sola autoridad para los tres

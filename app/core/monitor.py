@@ -1605,6 +1605,12 @@ class Monitor:
                     "faltantes": conteo["faltantes"],
                     "modo": registro.get("modo"),
                     "archivo": str(destino) if destino else None,
+                    # El registro ENTERO, para que el controller pueda dar de baja las filas
+                    # (2026-09-06). Los conteos alcanzan para el toast, pero no para saber CUÁLES
+                    # discos se destruyeron: la baja compara identidad ∧ valores contra cada uno.
+                    # Viaja por el evento y no por una escritura de acá a propósito — el monitor
+                    # no toca la DB, y esa separación es lo que deja el flujo andando en readonly.
+                    "registro": registro,
                 })
             except Exception:
                 log.exception("Error en on_teardown (toast de desmontaje)")

@@ -459,6 +459,86 @@ class InventoryDiscRepo:
                 out.append(d)
         return out
 
+    #: Tolerancia al comparar valores de main/substat entre la bitácora de desmontaje y la fila.
+    #: Los dos lados salen de OCR de PANTALLAS DISTINTAS (el panel de desmontaje y el inventario),
+    #: así que exigir igualdad exacta de float perdería discos por un decimal. Es chica a
+    #: propósito: lo que tiene que separar son valores de roll distintos (38.0 vs 57.0), no ruido.
+    TOL_VALOR = 0.1
+
+    @staticmethod
+    def _cerca(a: float | None, b: float | None) -> bool:
+        """¿Dos valores son el mismo? `None` de cualquier lado NO rechaza: es falta de evidencia,
+        no evidencia de diferencia (RNF-02) — la identidad ya tiene que haber coincidido."""
+        if a is None or b is None:
+            return True
+        return abs(float(a) - float(b)) <= InventoryDiscRepo.TOL_VALOR
+
+    def find_para_baja(self, disco: dict) -> list["Disc"]:
+        """Filas candidatas a darse de baja por un disco de la bitácora de desmontaje.
+
+        `disco` es una entrada de `registro["discos"]` (`TeardownBatch._record`). El match es por
+        **identidad ∧ VALORES**, y esa conjunción no es exceso de celo: en **Nivel 0 todos los
+        rolls valen 0**, y casi todo lo que se desmonta es Nivel 0. Ahí la identidad colapsa a
+        (set, slot, main, nombres de substat) y dos discos distintos del mismo set la comparten.
+        Lo único que los separa son los valores. Lo dejó escrito el propio `_record`:
+
+            "el matcher futuro debe usar identidad ∧ valores y, ante ≥2 candidatos, reportar
+             ambigüedad en vez de dar de baja la fila equivocada"
+
+        Devuelve TODOS los candidatos —no el primero— porque el riesgo de este camino es el
+        inverso al de insertar: una baja equivocada le borra al usuario un disco que sí tiene.
+        Quien llame decide, y con ≥2 la única respuesta correcta es abstenerse.
+        """
+        from app.core.stats_vocab import _norm_key
+        set_id, slot, nivel = disco.get("set_id"), disco.get("slot"), disco.get("nivel")
+        if set_id is None or slot is None or nivel is None:
+            return []
+        main = disco.get("main") or {}
+        main_canon = main.get("canon") or main.get("raw")
+        quiero = sorted(
+            (_norm_key(s.get("canon") or s.get("raw") or ""), s.get("rolls") or 0)
+            for s in (disco.get("subs") or [])
+        )
+        valor_de = {
+            _norm_key(s.get("canon") or s.get("raw") or ""): s.get("valor")
+            for s in (disco.get("subs") or [])
+        }
+        rows = self._con.execute(
+            "SELECT * FROM inventory_discs WHERE set_id=? AND slot=? AND nivel=? "
+            "AND (descartado = 0 OR descartado IS NULL)",
+            (set_id, slot, nivel),
+        ).fetchall()
+        out: list["Disc"] = []
+        for r in rows:
+            d = self._row_to_disc(r)
+            if _norm_key(d.main_stat or "") != _norm_key(main_canon or ""):
+                continue
+            if not self._cerca(d.main_valor, main.get("valor")):
+                continue
+            tengo = sorted((_norm_key(n), rolls) for n, _v, _u, rolls in d.subs)
+            if tengo != quiero:
+                continue
+            if not all(self._cerca(v, valor_de.get(_norm_key(n))) for n, v, _u, _r in d.subs):
+                continue
+            out.append(d)
+        return out
+
+    def marcar_descartado(self, disc_id: int) -> None:
+        """Baja lógica de un disco desmontado: la fila deja de existir para todo el sistema.
+
+        `descartado` ya estaba en el esquema con su CHECK y su índice parcial, y **cinco consultas
+        ya la filtran** — pero nadie la escribía nunca en 1: era un soft delete completo y dormido.
+        Es la forma correcta de "queda en blanco y libre": no rompe la FK de
+        `inventory_disc_evaluations` ni recicla ids, que es lo que pasaría borrando la fila.
+
+        Se limpia también dueño y equipado: un disco destruido no puede seguir figurando en el
+        slot de nadie, y si no, la composición de set del PJ seguiría contándolo.
+        """
+        self._con.execute(
+            "UPDATE inventory_discs SET descartado=1, agente_asignado=NULL, equipado=0 "
+            "WHERE id=?", (disc_id,)
+        )
+
     def row_matches_parsed_identity(self, d: "Disc", p: "DiscParsed", set_id: int) -> bool:
         """True si la fila `d` es EL MISMO disco que el parseado `p`, por identidad COMPLETA
         (set, slot, nivel, main, {substat normalizado + rolls}) — misma definición que

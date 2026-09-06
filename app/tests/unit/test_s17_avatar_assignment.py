@@ -2426,3 +2426,108 @@ def test_dos_drops_identicos_son_dos_discos(syncer_db):
     con = sqlite3.connect(str(syncer_db))
     assert con.execute("SELECT COUNT(*) FROM inventory_discs").fetchone()[0] == 2
     con.close()
+
+
+# --- Baja por desmontaje: la decisión, no el matcher (2026-09-06) -----------------------------
+#
+# El matcher (`find_para_baja`) vive en `test_baja_por_desmontaje.py`. Acá se fija lo que hace el
+# syncer con lo que ese matcher devuelve, que es donde está el riesgo real: este es el ÚNICO
+# camino que le SACA discos al usuario. Insertar de más se corrige en el próximo censo; dar de
+# baja la fila equivocada le borra un disco que sí tiene.
+
+def _registro_tanda(discos, faltantes=0):
+    """Registro como el que arma `TeardownBatch.commit`, con lo mínimo que la baja usa."""
+    return {"schema": "desmontaje/1",
+            "conteo": {"declarado": len(discos) + faltantes, "capturados": len(discos),
+                       "faltantes": faltantes},
+            "discos": discos}
+
+
+def _disco_de_bitacora(*, slot=1, main="HP", main_valor=2200.0,
+                       subs=(("ATK", 38.0, 1),), nivel=15, set_id=1):
+    return {
+        "set_id": set_id, "slot": slot, "nivel": nivel,
+        "main": {"canon": main, "raw": main, "valor": main_valor, "unidad": "flat"},
+        "subs": [{"canon": n, "raw": n, "valor": v, "unidad": "flat", "rolls": r}
+                 for n, v, r in subs],
+    }
+
+
+def test_baja_marca_descartado_y_suelta_al_dueno(syncer_db):
+    """Un disco equipado que se desmonta deja de contar Y deja de figurar en el slot del PJ."""
+    sync = _make_syncer(syncer_db)
+    try:
+        d = _disc()
+        d.agente_asignado_nombre = "Zhu Yuan"
+        d.agente_asignado_conf = 0.95
+        res = sync.persist_s17_disc(d)
+        assert res is not None
+        resumen = sync.dar_de_baja_desmontados(_registro_tanda([_disco_de_bitacora()]))
+        assert resumen["dados_de_baja"] == 1
+    finally:
+        sync.close()
+    con = sqlite3.connect(str(syncer_db)); con.row_factory = sqlite3.Row
+    r = con.execute("SELECT descartado, agente_asignado, equipado FROM inventory_discs").fetchone()
+    assert r["descartado"] == 1
+    assert r["agente_asignado"] is None and r["equipado"] == 0, \
+        "un disco destruido no puede seguir en el slot de nadie"
+    con.close()
+
+
+def test_ante_dos_candidatos_no_da_de_baja_ninguno(syncer_db):
+    """⭐ La guarda que importa. Con gemelos indistinguibles la única respuesta correcta es
+    abstenerse: elegir uno tendría 50 % de borrarle al usuario el disco que conservó."""
+    sync = _make_syncer(syncer_db)
+    try:
+        for _ in range(2):
+            d = _disc()
+            d.equip_libre = True
+            assert sync.persist_s17_disc(d, es_drop=True) is not None
+        resumen = sync.dar_de_baja_desmontados(_registro_tanda([_disco_de_bitacora(nivel=15)]))
+        assert resumen["dados_de_baja"] == 0
+        assert resumen["ambiguos"] == 1
+    finally:
+        sync.close()
+    con = sqlite3.connect(str(syncer_db))
+    assert con.execute("SELECT COUNT(*) FROM inventory_discs WHERE descartado=1").fetchone()[0] == 0
+    con.close()
+
+
+def test_un_disco_que_no_esta_en_la_db_no_es_error(syncer_db):
+    """Se desmonta algo que nunca se capturó: se cuenta y se sigue. No es una falla."""
+    sync = _make_syncer(syncer_db)
+    try:
+        resumen = sync.dar_de_baja_desmontados(_registro_tanda([_disco_de_bitacora()]))
+        assert resumen == {"dados_de_baja": 0, "ambiguos": 0, "no_encontrados": 1, "faltantes": 0}
+    finally:
+        sync.close()
+
+
+def test_la_tanda_parcial_se_reporta(syncer_db):
+    """`faltantes > 0` = hubo discos que la bitácora no pudo leer (selección masiva, scroll).
+    Se dan de baja los capturados y el resumen dice que la tanda quedó corta."""
+    sync = _make_syncer(syncer_db)
+    try:
+        assert sync.dar_de_baja_desmontados(
+            _registro_tanda([], faltantes=3))["faltantes"] == 3
+    finally:
+        sync.close()
+
+
+def test_en_readonly_no_se_da_de_baja_nada(syncer_db, monkeypatch):
+    monkeypatch.setenv("DANIBOD_READONLY", "1")
+    sync = _make_syncer(syncer_db)
+    try:
+        d = _disc()
+        d.equip_libre = True
+        # El insert tampoco corre en readonly, así que se siembra la fila a mano.
+        con = sqlite3.connect(str(syncer_db))
+        con.execute("INSERT INTO inventory_discs (set_id, slot, main_stat, main_valor, nivel, "
+                    "sub1, val1, rolls1) VALUES (1,1,'HP',2200.0,15,'ATK',38.0,1)")
+        con.commit(); con.close()
+        assert sync.dar_de_baja_desmontados(_registro_tanda([_disco_de_bitacora()])) is None
+    finally:
+        sync.close()
+    con = sqlite3.connect(str(syncer_db))
+    assert con.execute("SELECT COUNT(*) FROM inventory_discs WHERE descartado=1").fetchone()[0] == 0
+    con.close()

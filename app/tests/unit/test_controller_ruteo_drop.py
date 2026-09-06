@@ -126,3 +126,72 @@ def test_s17_no_se_marca_como_drop(qapp):
     ctrl._on_disc_from_monitor(d, ScreenState("S17", 1.0, "s17"))
 
     assert espia.llamadas == [False]
+
+
+# --- La baja por desmontaje se dispara desde el controller (2026-09-06) ------------------------
+#
+# Mismo contrato que el drop y que el toast de reemplazo: el aviso al usuario afirma lo que se VIO
+# en pantalla y no puede colgar de que la DB haya escrito. La baja corre después y aparte.
+
+class _SyncerBaja:
+    def __init__(self, resultado=None):
+        self.registros = []
+        self._resultado = resultado
+
+    def dar_de_baja_desmontados(self, registro):
+        self.registros.append(registro)
+        return self._resultado
+
+
+def _ev_desmontaje():
+    return {
+        "total": 2, "con_datos": 1, "faltantes": 1, "modo": "manual",
+        "registro": {"conteo": {"declarado": 2, "capturados": 1, "faltantes": 1},
+                     "discos": [{"set_id": 1, "slot": 1, "nivel": 0,
+                                 "main": {"canon": "HP", "valor": 2200.0}, "subs": []}]},
+    }
+
+
+def test_el_desmontaje_da_de_baja_las_filas(qapp):
+    from app.ui.controller import MonitorController
+    ctrl = MonitorController()
+    espia = _SyncerBaja({"dados_de_baja": 1, "ambiguos": 0, "no_encontrados": 0, "faltantes": 1})
+    ctrl._disc_syncer = espia
+
+    ctrl._on_teardown_from_monitor(_ev_desmontaje())
+
+    assert len(espia.registros) == 1
+    assert espia.registros[0]["conteo"]["declarado"] == 2
+
+
+def test_el_toast_del_desmontaje_sale_aunque_la_baja_falle(qapp):
+    """Si la baja revienta, el usuario tiene que ver igual que su tanda se desmontó."""
+    from app.ui.controller import MonitorController
+
+    class _Explota:
+        def dar_de_baja_desmontados(self, registro):
+            raise RuntimeError("DB caída")
+
+    ctrl = MonitorController()
+    ctrl._disc_syncer = _Explota()
+    toasts: list[dict] = []
+    ctrl.discs_dismantled.connect(toasts.append)
+
+    ctrl._on_teardown_from_monitor(_ev_desmontaje())
+
+    assert len(toasts) == 1 and toasts[0]["total"] == 2
+
+
+def test_sin_registro_no_se_llama_a_la_baja(qapp):
+    """Un evento viejo (sin `registro`) no debe hacer nada raro: sólo toast."""
+    from app.ui.controller import MonitorController
+    ctrl = MonitorController()
+    espia = _SyncerBaja()
+    ctrl._disc_syncer = espia
+    toasts: list[dict] = []
+    ctrl.discs_dismantled.connect(toasts.append)
+
+    ev = _ev_desmontaje(); ev.pop("registro")
+    ctrl._on_teardown_from_monitor(ev)
+
+    assert espia.registros == [] and len(toasts) == 1

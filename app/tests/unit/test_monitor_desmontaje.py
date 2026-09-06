@@ -204,3 +204,28 @@ def test_s24_sin_tanda_abierta_avisa_y_no_crashea(mon, caplog):
     caplog.set_level(logging.INFO)
     _paso(mon, _S24)
     assert mon._toasts == []
+
+
+# --- El registro completo viaja al controller (2026-09-06) ------------------------------------
+#
+# Hasta acá `on_teardown` llevaba sólo los CONTEOS (total/con_datos/faltantes/modo), que es todo
+# lo que el toast necesita. Con la baja por desmontaje hace falta además saber CUÁLES discos: la
+# fila se da de baja comparando identidad ∧ valores contra cada uno.
+#
+# Sigue viajando por el mismo evento y no por una escritura del monitor: el monitor no toca la DB
+# (su única lectura es resolver el set_id), y la baja la hace el syncer desde el controller.
+
+def test_el_evento_lleva_el_registro_completo(mon):
+    _paso(mon, _S11, tildes=frozenset(), counter=0)
+    _paso(mon, _S11, tildes=frozenset({(0, 0)}), counter=1, disc=FakeDisc(slot=2))
+    _paso(mon, _S24, materiales=[("Disco original", 1)])
+
+    assert len(mon._toasts) == 1
+    reg = mon._toasts[0].get("registro")
+    assert reg is not None, "sin el registro el controller no puede dar de baja nada"
+    assert len(reg["discos"]) == 1
+    d = reg["discos"][0]
+    assert d["slot"] == 2
+    assert "identidad" in d and "subs" in d, "faltan los datos con los que se matchea la fila"
+    # Y los conteos siguen ahí: el toast no debe depender de la baja.
+    assert mon._toasts[0]["total"] == 1 and mon._toasts[0]["con_datos"] == 1
