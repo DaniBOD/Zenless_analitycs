@@ -88,7 +88,7 @@ def test_pasada_la_cadencia_vuelve_a_leer(monkeypatch):
     monkeypatch.setattr(m, "parse_s9_header_counter", lambda f, o: next(vals, 341))
     mon = _mon()
     mon._anclar_contador_s9(object(), ahora=100.0)
-    mon._anclar_contador_s9(object(), ahora=100.0 + m._S9_CONTADOR_PERIODO_S + 0.1)
+    mon._anclar_contador_s9(object(), ahora=100.0 + m._INV_CONTADOR_PERIODO_S + 0.1)
     assert mon.censo_discos.total == 341
     assert mon.censo_discos.avisos, "un cambio de denominador no puede pasar en silencio"
 

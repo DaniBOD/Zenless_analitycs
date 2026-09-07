@@ -77,8 +77,19 @@ TABLA_AGENTS = "agents"
 AGENTS_NULL: tuple[str, ...] = (
     "nivel", "pv", "ataque", "defensa", "impacto", "prob_critico", "dano_critico",
     "tasa_anomalia", "maestria_anomalia", "tasa_perforacion", "rec_energia",
-    "weapon_id", "weapon_nivel", "weapon_rango", "set_4p_id", "set_2p_id", "disco6_main",
+    "set_4p_id", "set_2p_id", "disco6_main",
 )
+
+#: Columnas MUERTAS: existen, están 0 de 51 con dato y no las lee nadie. La autoridad del arma
+#: equipada es `inventory_weapons` (censo de W-Engines, 2026-09-06), que además guarda cosas que
+#: acá no entran — el refinamiento de un arma SUELTA, y las copias duplicadas.
+#:
+#: Estaban en `AGENTS_NULL`, y ahí decían una mentira: esa tupla afirma "esto lo sabe re-leer el
+#: pipeline de pantalla". Para las tres de arma dejó de ser cierto en el momento en que la
+#: autoridad pasó a otra tabla — un reconstruir las habría vaciado prometiendo que el censo las
+#: rellena, y el censo llena `inventory_weapons`, no éstas. Se vacían igual (son estado observable
+#: de la cuenta), pero clasificadas por lo que son.
+AGENTS_MUERTAS_ARMA: tuple[str, ...] = ("weapon_id", "weapon_nivel", "weapon_rango")
 
 #: Son stats, pero el pipeline NO las lee: el comentario de `sync_agent_stats._STAT_MAP` es
 #: explícito ("no los parsea S18 ... ni mindscape"). Vaciarlas sería perder dato irrecuperable, así
@@ -240,7 +251,10 @@ def rebuild(origen: Path | str, destino: Path | str) -> Reporte:
             # 2. `agents`: filas e ids intactos, columnas observables a NULL.
             if TABLA_AGENTS in reales:
                 cols = _columnas(src, TABLA_AGENTS)
-                a_null = [c for c in AGENTS_NULL if c in cols]
+                # Las muertas se vacían igual que las observables — son estado de la
+                # cuenta. Van en una tupla aparte sólo para no seguir afirmando que el
+                # pipeline las re-lee: la autoridad del arma es `inventory_weapons`.
+                a_null = [c for c in (*AGENTS_NULL, *AGENTS_MUERTAS_ARMA) if c in cols]
                 seleccion = ", ".join(
                     ("NULL" if c in a_null else f'"{c}"') for c in cols
                 )

@@ -34,10 +34,21 @@ Los drops del 2026-09-05 **no se pueden migrar retroactivamente**: el log guarda
 nivel pero **no los substats**, y sin ellos no hay identidad. Entran cuando Daniel recorra el
 inventario.
 
-## 2. Censo de armas / W-Engines
+## 2. Censo de armas / W-Engines 🟡 IMPLEMENTADO, falta la pasada en vivo
 
-El inventario de armas arranca de cero. El parser S30 está cerrado (6 campos, 6/6) y S26/S29
-también. Falta el equivalente al censo de discos: cobertura, dueño, y persistencia.
+Detalle en [`2026-09-06_FEAT_Censo_de_W_Engines_el_inventario_de_armas_existe.md`](./2026-09-06_FEAT_Censo_de_W_Engines_el_inventario_de_armas_existe.md).
+
+`inventory_weapons` existía con **0 filas** y sin repo ni syncer. Ahora hay migración (`_26`),
+`InventoryWeaponRepo`, `WeaponSyncer`, contador del header parametrizado, `DiscCensus`
+generalizado a `InventoryCensus` y reporte de cierre. 73 tests nuevos, 15 sabotajes.
+
+**Lo que v1 escribe:** sólo las armas cuyo dueño se NOMBRA. La lectura de dueño de S30 mide 8/10 y
+el caso que falla *afirma* que un arma está libre siendo de alguien — nombrar es fiable, negar
+dueño no. Lo demás se registra como brecha con su causa.
+
+**Decisión de Daniel:** el inventario primero (57 tiles), y con el número medido se decide si hace
+falta la pasada por las 51 fichas de PJ. Las ~5 armas fuera de catálogo que la pasada descubra
+entran por una migración curada al final.
 
 ## 3. Segundo censo de discos
 

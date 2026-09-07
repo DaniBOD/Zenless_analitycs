@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.census_discs import (
+from app.core.census_inventario import (
     COMPLETA,
     EN_CURSO,
     SIN_ANCLA,

@@ -98,6 +98,34 @@ class Disc:
     notas: str | None = None
 
 
+@dataclass
+class WeaponCatalogEntry:
+    """Fila de `weapons` (el catálogo curado). Liviana, para resolver id ↔ nombre."""
+    id: int
+    nombre: str
+    nombre_en: str | None = None
+    rareza: str | None = None
+
+
+@dataclass
+class InventoryWeapon:
+    """Un W-Engine que el usuario TIENE. Una fila = un arma física.
+
+    `nivel` y `refinamiento` admiten `None` desde la migración `_26`, y eso es el punto: el parser
+    se abstiene de leer las estrellas cuando no ve las cinco, y antes ese `None` se guardaba como
+    "P1" por el DEFAULT. NULL significa **no se pudo leer**, no un valor.
+    """
+    id: int
+    weapon_id: int
+    nivel: int | None
+    refinamiento: int | None
+    agente_asignado: int | None
+    equipado: int
+    descartado: int
+    origen_evidencia: str | None = None
+    notas: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Repositorios
 # ---------------------------------------------------------------------------
@@ -339,6 +367,24 @@ class AgentRepo:
             if a.nombre == nombre:
                 return a
         return None
+
+    def get_id_by_nombre(self, nombre: str | None) -> int | None:
+        """Id del PJ por nombre exacto, SIN levantar el caché de scoring.
+
+        `get_by_nombre` devuelve el `Agent` completo, y para armarlo `_load()` lee
+        `disc_archetypes`, `agent_score_thresholds` y `agent_substat_preferences` — la vista de
+        SCORING del agente. Quien sólo necesita saber a qué id corresponde un nombre (la
+        persistencia de armas, por ejemplo) no tiene por qué arrastrar el esquema de scoring de
+        discos: acoplarlo así hace que una tabla que falte del otro lado del modelo rompa una
+        escritura que no la usa.
+
+        Sigue viviendo en `AgentRepo` a propósito: la autoridad sobre "quién es este PJ" es una
+        sola (B1). Lo que cambia es el costo, no el dueño.
+        """
+        if not nombre:
+            return None
+        r = self._con.execute("SELECT id FROM agents WHERE nombre = ?", (nombre,)).fetchone()
+        return r["id"] if r else None
 
 
 class InventoryDiscRepo:
@@ -862,3 +908,129 @@ class OptimizerRepo:
             "ORDER BY fecha_calculado DESC LIMIT 1",
             (agente_id,),
         ).fetchone()
+
+
+class WeaponRepo:
+    """Catálogo de W-Engines (`weapons`). Sólo lectura: **nunca da de alta**.
+
+    Que falte un arma no es un bug a tapar acá. El catálogo tiene 42 armas de menos y completarlo
+    es una pasada curada aparte (`audit/weapons_catalog_20260728.md`), porque `weapons.nombre` es el
+    nombre ESPAÑOL in-game y no hay wiki accesible que lo publique — la única vía real es capturarlo
+    en pantalla. Dar de alta una fila acá con lo que devuelva el OCR repetiría exactamente el pecado
+    original del catálogo, que fue emparejar por parecido.
+
+    **Y no resuelve nombres difusos, a propósito.** `DiscSetRepo.resolve_id` existe porque el parser
+    de discos deja el nombre crudo; el de armas ya canoniza contra el catálogo con `match_catalogo`
+    (difflib a 0.84 + el colapso de tokens i/l/1 que impide que "Modelo III" resuelva a "Modelo
+    II"). Repetir esa resolución acá sería una segunda autoridad, y peor (B1).
+    """
+
+    def __init__(self, con: sqlite3.Connection):
+        self._con = con
+
+    def get_id_by_nombre(self, nombre: str | None) -> int | None:
+        """Id del arma por nombre EXACTO (`weapons.nombre` es UNIQUE). `None` = no está."""
+        if not nombre:
+            return None
+        r = self._con.execute(
+            "SELECT id FROM weapons WHERE nombre = ?", (nombre,)
+        ).fetchone()
+        return r["id"] if r else None
+
+    def get_by_id(self, weapon_id: int) -> "WeaponCatalogEntry | None":
+        r = self._con.execute(
+            "SELECT id, nombre, nombre_en, rareza FROM weapons WHERE id = ?", (weapon_id,)
+        ).fetchone()
+        if r is None:
+            return None
+        return WeaponCatalogEntry(
+            id=r["id"], nombre=r["nombre"], nombre_en=r["nombre_en"], rareza=r["rareza"])
+
+
+class InventoryWeaponRepo:
+    """Las armas que el usuario TIENE (`inventory_weapons`). SQL puro, sin política.
+
+    Todas las búsquedas excluyen `descartado = 1`: una baja lógica deja la fila fuera del sistema
+    entero, igual que en `InventoryDiscRepo`.
+    """
+
+    def __init__(self, con: sqlite3.Connection):
+        self._con = con
+
+    def find_equipped_by_agent(self, agente_id: int) -> "InventoryWeapon | None":
+        """El arma que lleva un PJ. Clave NATURAL de este inventario: un PJ equipa exactamente un
+        W-Engine, y desde la migración `_26` eso es un índice único parcial, no una esperanza."""
+        r = self._con.execute(
+            "SELECT * FROM inventory_weapons WHERE agente_asignado = ? AND equipado = 1 "
+            "AND descartado = 0 LIMIT 1", (agente_id,)
+        ).fetchone()
+        return self._row_to_weapon(r) if r else None
+
+    def find_by_weapon(self, weapon_id: int) -> list["InventoryWeapon"]:
+        """TODAS las filas de ese modelo de arma — equipadas y libres.
+
+        Devuelve una lista y no una fila porque los duplicados son NORMALES acá: se guardan copias
+        como material de refinamiento. Quien llame decide qué hacer con ellas.
+        """
+        rows = self._con.execute(
+            "SELECT * FROM inventory_weapons WHERE weapon_id = ? AND descartado = 0 ORDER BY id",
+            (weapon_id,)
+        ).fetchall()
+        return [self._row_to_weapon(r) for r in rows]
+
+    def insert(self, weapon_id: int, *, nivel: int | None, refinamiento: int | None,
+               agente_asignado: int | None, equipado: int,
+               origen_evidencia: str, notas: str | None = None) -> int:
+        cur = self._con.execute(
+            """INSERT INTO inventory_weapons
+               (weapon_id, nivel, refinamiento, agente_asignado, equipado,
+                descartado, origen_evidencia, notas)
+               VALUES (?,?,?,?,?,0,?,?)""",
+            (weapon_id, nivel, refinamiento, agente_asignado, equipado,
+             origen_evidencia, notas),
+        )
+        return cur.lastrowid  # type: ignore[return-value]
+
+    def update_estado(self, inv_id: int, *, nivel: int | None,
+                      refinamiento: int | None) -> None:
+        """Refresca nivel y refinamiento de una fila existente.
+
+        Un `None` NO pisa lo que ya había: es falta de lectura, no evidencia de que el dato cambió
+        (RNF-02). Es la misma regla que `InventoryDiscRepo.update_from_parsed` aplica al valor del
+        main — regla que ahí hizo falta arreglar en vivo, así que acá nace puesta.
+        """
+        sets, args = [], []
+        if nivel is not None:
+            sets.append("nivel = ?")
+            args.append(nivel)
+        if refinamiento is not None:
+            sets.append("refinamiento = ?")
+            args.append(refinamiento)
+        if not sets:
+            return
+        args.append(inv_id)
+        self._con.execute(
+            f"UPDATE inventory_weapons SET {', '.join(sets)} WHERE id = ?", args)
+
+    def update_assignment(self, inv_id: int, agente_id: int | None, equipado: int) -> None:
+        self._con.execute(
+            "UPDATE inventory_weapons SET agente_asignado = ?, equipado = ? WHERE id = ?",
+            (agente_id, equipado, inv_id),
+        )
+
+    @staticmethod
+    def _row_to_weapon(r: sqlite3.Row) -> "InventoryWeapon":
+        # `.keys()` a propósito: en un `sqlite3.Row`, `in` itera VALORES, no columnas. El guard
+        # existe porque algún esquema de test puede no declarar las columnas nuevas.
+        cols = r.keys()
+        return InventoryWeapon(
+            id=r["id"],
+            weapon_id=r["weapon_id"],
+            nivel=r["nivel"],
+            refinamiento=r["refinamiento"],
+            agente_asignado=r["agente_asignado"],
+            equipado=r["equipado"] or 0,
+            descartado=(r["descartado"] or 0) if "descartado" in cols else 0,
+            origen_evidencia=(r["origen_evidencia"] if "origen_evidencia" in cols else None),
+            notas=(r["notas"] if "notas" in cols else None),
+        )

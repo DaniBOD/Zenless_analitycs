@@ -8,9 +8,13 @@ Lo que distingue a S30 de S26, y es el contrato que fijan estos tests:
 
   · **No emite toast.** Recorrer una grilla es lectura, no novedad — el criterio de Daniel es que
     un toast avisa de CAMBIOS. En S26 abrir un arma sí emite; acá no debe emitir nunca.
-  · **No escribe la DB.** Observación pura, igual que S26.
+  · **Ya no es observación pura.** Hasta el 2026-09-06 este handler no escribía nada; ahora
+    persiste el arma (censo de W-Engines) por un callback PROPIO, separado de `on_weapon_seen`.
+    Sin ese callback el comportamiento es exactamente el de antes.
 """
 from __future__ import annotations
+
+from typing import ClassVar
 
 import numpy as np
 import pytest
@@ -36,6 +40,8 @@ class FakeWeapon:
         self.stat_avanzado_unidad = "%"
         self.pill_bbox = (1944, 546, 2139, 579)
         self.confianza, self.notas = 0.98, []
+        # Lo declara el `WeaponParsed` real y el handler lo ESCRIBE (`d.dueno =`).
+        self.dueno = None
 
 
 @pytest.fixture
@@ -386,3 +392,58 @@ def test_s30_registra_a_quien_estuvo_cerca_cuando_se_abstiene(mon, caplog):
     diag = [r.getMessage() for r in caplog.records if "[id_diag/arma]" in r.getMessage()]
     assert len(diag) == 1, diag
     assert "pantalla=S30" in diag[0] and "Harumasa" in diag[0] and "abstuvo" in diag[0]
+
+
+# --- Persistencia y censo (2026-09-06) ----------------------------------------------------------
+
+def _ident(nombre):
+    class _Res:
+        name, conf = nombre, 0.92
+
+    class _Ident:
+        surfaces: ClassVar[dict] = {
+            "detail": type("S", (), {"match": staticmethod(lambda c: _Res())})()
+        }
+
+        @staticmethod
+        def _canonical_name(n):
+            return n
+    return _Ident()
+
+
+def test_el_dueno_resuelto_llega_a_la_persistencia(mon):
+    """⚠️ El handler resolvía el dueño en una variable LOCAL y lo usaba sólo para armar el string
+    del log. Todo lo que consumiera el `WeaponParsed` —la persistencia, el censo— lo veía en
+    `None`, así que el syncer se habría abstenido SIEMPRE y el censo no habría registrado un solo
+    dueño. Sin este test, ese fallo es completamente mudo."""
+    vistas = []
+    mon._on_weapon_detected = vistas.append
+    mon._identifier = _ident("Vivian")
+    _paso(mon, _S30, badge=_badge())
+    assert vistas, "la persistencia no se llamó"
+    assert vistas[0].dueno == "Vivian"
+
+
+def test_el_arma_observada_entra_al_censo(mon):
+    mon._identifier = _ident("Vivian")
+    _paso(mon, _S30, badge=_badge())
+    assert mon.censo_armas is not None and mon.censo_armas.registrados == 1
+    assert mon.censo_armas.con_dueno == 1
+
+
+def test_si_la_persistencia_revienta_el_log_y_el_censo_siguen(mon):
+    """Mismo criterio que el toast del drop: el diagnóstico que el usuario está mirando durante una
+    pasada de 57 tiles no puede depender de que la DB colabore."""
+    def _explota(_d):
+        raise RuntimeError("la DB se cayó")
+    mon._on_weapon_detected = _explota
+    _paso(mon, _S30)
+    assert _lineas(mon), "el log se apagó"
+    assert mon.censo_armas.registrados == 1
+
+
+def test_sin_callback_el_handler_se_comporta_como_antes(mon):
+    """El callback es opcional a propósito: sin él, display-only como hasta el 2026-09-06."""
+    assert mon._on_weapon_detected is None
+    _paso(mon, _S30)
+    assert _lineas(mon)

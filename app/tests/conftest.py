@@ -73,6 +73,45 @@ def _domain_db_untouched():
     )
 
 
+_MIG_INVW = (
+    Path(__file__).resolve().parents[2] / "db" / "migrations"
+    / "2026-09-06_26_inventory_weapons_v1.sql"
+)
+
+
+def ddl_inventory_weapons() -> list[str]:
+    """Las sentencias de creación de `inventory_weapons`, leídas del `.sql` de la migración `_26`.
+
+    Se leen y NO se retipean: un DDL copiado a mano en un test es una segunda autoridad del esquema
+    (B1). La migración podría cambiar y los tests seguirían verdes contra una tabla que ya no
+    existe así — que es exactamente lo que hay que evitar en la tabla donde vive un índice único
+    parcial y dos columnas sin DEFAULT a propósito.
+
+    La migración construye `inventory_weapons_new` y después la renombra (SQLite no sabe sacar un
+    DEFAULT de otra forma); acá no hay tabla vieja, así que se toma el `CREATE TABLE` con el nombre
+    final más los dos índices.
+    """
+    sys.path.insert(0, str(_MIG_INVW.parents[2] / "app" / "scripts" / "qa"))
+    try:
+        from apply_migration import split_statements
+    finally:
+        sys.path.pop(0)
+    out: list[str] = []
+    for st in split_statements(_MIG_INVW.read_text(encoding="utf-8")):
+        # `split_statements` arrastra los comentarios previos a cada sentencia, así que el texto
+        # suele empezar con `--`. Sin saltearlos el filtro no engancha ni un índice, y el esquema
+        # de prueba sale SIN restricciones — pasando en verde todos los tests que las verifican.
+        cuerpo = "\n".join(
+            ln for ln in st.splitlines() if not ln.lstrip().startswith("--")
+        ).lstrip()
+        head = cuerpo.upper()
+        if head.startswith("CREATE TABLE INVENTORY_WEAPONS_NEW"):
+            out.append(cuerpo.replace("inventory_weapons_new", "inventory_weapons"))
+        elif head.startswith(("CREATE UNIQUE INDEX", "CREATE INDEX")):
+            out.append(cuerpo)
+    return out
+
+
 @pytest.fixture
 def mem_db():
     """DB SQLite en memoria con tablas mínimas para scoring tests."""

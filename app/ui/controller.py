@@ -102,6 +102,7 @@ class MonitorController(QObject):
         self._disc_set_repo = None
         self._scoring_ctx = None
         self._disc_syncer = None
+        self._weapon_syncer = None
         self._owner_tiebreaker = None
         self._farm_session = None
         self._farm_node_catalog = None
@@ -167,6 +168,7 @@ class MonitorController(QObject):
             on_replacement=self._on_replacement_from_monitor,
             on_teardown=self._on_teardown_from_monitor,
             on_weapon_seen=self._on_weapon_seen_from_monitor,
+            on_weapon_detected=self._on_weapon_detected_from_monitor,
             on_agent_detail=self._on_agent_detail_from_monitor,
             set_repo=self._disc_set_repo,
             on_ram_critical=self.ram_critical.emit,   # watchdog RNF-06 → main thread
@@ -196,6 +198,12 @@ class MonitorController(QObject):
             except Exception:
                 pass
             self._disc_syncer = None
+        if self._weapon_syncer is not None:
+            try:
+                self._weapon_syncer.close()
+            except Exception:
+                pass
+            self._weapon_syncer = None
         if self._con is not None:
             try:
                 self._con.close()
@@ -372,6 +380,11 @@ class MonitorController(QObject):
         resolved_db = self._db_path or get_db_path()
         self._backup_db_session(resolved_db)
         self._disc_syncer = DiscSyncer(db_path=Path(resolved_db))
+        # Persistencia del W-Engine observado (S30 → inventory_weapons). Se construye DESPUÉS
+        # del backup de sesión de arriba y NO agrega uno propio: RNF-01 acá es por sesión, no
+        # por syncer.
+        from app.core.sync_weapon import WeaponSyncer
+        self._weapon_syncer = WeaponSyncer(db_path=Path(resolved_db))
         # Persistencia EN VIVO de stats base de agente (S18 → agents). Mismo patrón
         # que el disc syncer: write propio + guard readonly. Usa el backup de sesión
         # ya hecho arriba (RNF-01).
@@ -794,6 +807,23 @@ class MonitorController(QObject):
                 self._disc_syncer.dar_de_baja_desmontados(registro)
             except Exception:
                 log.exception("Error dando de baja los discos desmontados (el toast ya salió)")
+
+    def _on_weapon_detected_from_monitor(self, parsed):
+        """Persiste un W-Engine observado y DEVUELVE el resultado.
+
+        Devolverlo no es cosmético: el censo de armas usa la fila que se tocó como identidad, que
+        es la única autoridad sobre "¿esta arma ya la conté?". Mismo contrato que `on_disc`.
+
+        Sin syncer (arranque incompleto) devuelve `None` y el censo cae a la identidad del parser,
+        marcada como provisoria.
+        """
+        if self._weapon_syncer is None:
+            return None
+        try:
+            return self._weapon_syncer.persist_s30_weapon(parsed)
+        except Exception:
+            log.exception("Error persistiendo el W-Engine (el log y el censo siguen)")
+            return None
 
     def _on_weapon_seen_from_monitor(self, ev: dict) -> None:
         """El monitor OBSERVÓ el detalle de un W-Engine → un toast por arma (RF-15).

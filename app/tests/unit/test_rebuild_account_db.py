@@ -21,6 +21,7 @@ import pytest
 
 from app.scripts.rebuild_account_db import (
     AGENTS_ARRASTRADAS,
+    AGENTS_MUERTAS_ARMA,
     AGENTS_NULL,
     CATALOGO,
     INVESTIGACION,
@@ -240,6 +241,38 @@ def test_clasificar_tablas_cubre_las_31_de_la_db_real():
 def test_las_listas_de_agents_no_se_pisan():
     """Una columna no puede estar a la vez en 'se vacía' y en 'se arrastra'."""
     assert set(AGENTS_NULL) & set(AGENTS_ARRASTRADAS) == set()
+    assert set(AGENTS_MUERTAS_ARMA) & set(AGENTS_ARRASTRADAS) == set()
+    assert set(AGENTS_MUERTAS_ARMA) & set(AGENTS_NULL) == set()
+
+
+def test_las_columnas_de_arma_se_siguen_vaciando(tmp_path):
+    """Sacarlas de `AGENTS_NULL` NO puede convertirlas en columnas que se arrastran.
+
+    Se movieron a una tupla propia el 2026-09-06 porque `AGENTS_NULL` afirma "esto lo sabe re-leer
+    el pipeline de pantalla", y para el arma equipada dejó de ser cierto: la autoridad pasó a
+    `inventory_weapons`. Pero siguen siendo estado observable de la cuenta, así que un reconstruir
+    tiene que vaciarlas igual. Sin este test, mover la tupla y olvidarse de sumarla al vaciado
+    conserva datos de la cuenta vieja sin que nada avise.
+    """
+    src = tmp_path / "origen.db"
+    con = sqlite3.connect(str(src))
+    con.executescript(
+        "CREATE TABLE agents (id INTEGER PRIMARY KEY, nombre TEXT, nivel INTEGER, "
+        "weapon_id INTEGER, weapon_nivel INTEGER, weapon_rango INTEGER, mindscape INTEGER);"
+        "INSERT INTO agents VALUES (1, 'Ellen', 60, 7, 60, 5, 2);"
+    )
+    con.commit()
+    con.close()
+    dst = tmp_path / "destino.db"
+    rebuild(src, dst)
+    con = sqlite3.connect(str(dst))
+    fila = con.execute(
+        "SELECT weapon_id, weapon_nivel, weapon_rango, nivel, mindscape FROM agents"
+    ).fetchone()
+    con.close()
+    assert fila[:3] == (None, None, None), "las columnas de arma tienen que quedar en NULL"
+    assert fila[3] is None, "las observables siguen vaciándose"
+    assert fila[4] == 2, "las arrastradas se conservan (control del test)"
 
 
 def test_las_constantes_no_se_solapan_entre_grupos():

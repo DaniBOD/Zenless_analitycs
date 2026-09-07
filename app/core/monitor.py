@@ -85,7 +85,7 @@ _REDISPATCH_STATES = frozenset({
 # Cadencia de lectura del contador del header S9 (`Pistas de disco [339/3000]`). Es un OCR dentro
 # de un handler CONTINUO: leerlo por frame es justo lo que RNF-06 prohíbe, y el denominador cambia
 # poquísimo. 5 s alcanza para notar que farmeaste o desmontaste a mitad de pasada.
-_S9_CONTADOR_PERIODO_S = 5.0
+_INV_CONTADOR_PERIODO_S = 5.0
 
 # S9 = INVENTARIO GLOBAL de discos: panel derecho = disco seleccionado (parse_disc_s9,
 # reusa S17), dueño = badge del tile resaltado. Diff máx de firma para "mismo disco".
@@ -369,6 +369,11 @@ class Monitor:
         # un lote de discos destruidos, no un swap.
         on_teardown: Callable[[dict], None] | None = None,
         on_weapon_seen: Callable[[dict], None] | None = None,
+        # Persistencia del arma observada. SEPARADO de `on_weapon_seen` a propósito: ese se
+        # emite en cada lectura que pasa el dedup del LOG, y colgar la escritura de ahí
+        # ascendería una guarda de logging a guarda de escritura. Devuelve el resultado para
+        # que el censo use la FILA como identidad, igual que `on_disc`.
+        on_weapon_detected: Callable[..., object] | None = None,
         on_agent_detail: Callable[[ScreenState, str | None, bool, str | None], None] | None = None,
         agent_identifier: AgentIdentifier | None = None,
         on_ram_critical: Callable[[], None] | None = None,
@@ -401,6 +406,7 @@ class Monitor:
         self._on_replacement = on_replacement
         self._on_teardown = on_teardown
         self._on_weapon_seen = on_weapon_seen
+        self._on_weapon_detected = on_weapon_detected
         # Censo de cuenta: OPCIONAL y apagado por defecto. La app se usa la enorme mayoría del
         # tiempo sin censar, y ese camino no debe pagar nada ni cambiar de conducta. A diferencia
         # de `TeardownBatch`, no se construye perezoso: abrir una corrida decide la reanudación
@@ -482,8 +488,16 @@ class Monitor:
         self._s9_warming: bool = False     # maduró pero el dueño no resolvió → reintentar badge
         # Censo del inventario: a diferencia del roster, acá HAY denominador en pantalla, así que
         # la corrida se abre sola (hay disparador claro) y sabe cuánto le falta sin preguntar.
-        self._censo_discos = None          # DiscCensus, perezoso
+        self._censo_discos = None          # InventoryCensus, perezoso
         self._s9_contador_ts: float = 0.0  # última lectura del header
+        # El inventario de ARMAS tiene su propio contador (`Amplificadores [57/2000]`) en la
+        # misma línea del header. Mismo patrón, corrida aparte.
+        self._censo_armas = None
+        self._s30_contador_ts: float = 0.0
+        # Armas vistas que el catálogo no tiene, con TODO lo que el parser sí leyó. Es la
+        # entrada de la migración curada que las da de alta: el nombre español de pantalla es
+        # el dato que ninguna wiki accesible publica. Clave por nombre crudo, para no repetir.
+        self._armas_sin_catalogo: dict[str, dict] = {}
         # --- S3 (modal de drop farmeado): mismo patrón aggregator/dedup, sin dueño ni warmup ---
         self._s3_aggregator = DiscAggregator()
         self._s3_agg_sig = None            # firma-ancla del modal de drop que se fusiona
@@ -3748,7 +3762,7 @@ class Monitor:
         donde una segunda corrida declaraba huérfanos a los PJs de la primera.
         """
         if self._censo_discos is None:
-            from app.core.census_discs import DiscCensus
+            from app.core.census_inventario import DiscCensus
             c = DiscCensus()
             c.ensure_open(ts=time.time())
             self._censo_discos = c
@@ -3767,7 +3781,7 @@ class Monitor:
         if censo is None:
             return
         ahora = time.time() if ahora is None else ahora
-        if ahora - self._s9_contador_ts < _S9_CONTADOR_PERIODO_S:
+        if ahora - self._s9_contador_ts < _INV_CONTADOR_PERIODO_S:
             return
         self._s9_contador_ts = ahora
         try:
@@ -3806,7 +3820,7 @@ class Monitor:
         confirmada = isinstance(disc_id, int) and disc_id > 0
         identidad = ("fila", disc_id) if confirmada else self._disc_identity(disc)
         try:
-            from app.core.census_discs import DiscSighting
+            from app.core.census_inventario import DiscSighting
             nuevo = censo.observe(DiscSighting(
                 identidad=identidad,
                 libre=bool(getattr(disc, "equip_libre", False)),
@@ -3841,6 +3855,135 @@ class Monitor:
         if r["excedente"]:
             log.warning("[censo-discos] %d identidades por ENCIMA del contador del header — "
                         "contador viejo o dos pasadas mezcladas", r["excedente"])
+        return r
+
+    # --- Censo del inventario de armas --------------------------------------------------------
+
+    @property
+    def censo_armas(self):
+        """La corrida de censo del inventario de armas, o `None` si nunca se abrió."""
+        return self._censo_armas
+
+    def _censo_armas_abierto(self):
+        """Devuelve la corrida ABIERTA, abriéndola si hace falta. `None` si ya se cerró.
+
+        Mismas dos reglas que el censo de discos: se abre sola —hay disparador claro, estás en el
+        inventario de amplificadores— y **no se reabre después de cerrada**, porque volver a la
+        pantalla tras cerrar no debe empezar a contar sobre lo ya reportado sin que se note.
+        """
+        if self._censo_armas is None:
+            from app.core.census_inventario import InventoryCensus
+            c = InventoryCensus(entidad="armas")
+            c.ensure_open(ts=time.time())
+            self._censo_armas = c
+            log.info("[censo-armas] pasada abierta")
+            return c
+        return self._censo_armas if self._censo_armas.abierta else None
+
+    def _anclar_contador_s30(self, frame, ahora: float | None = None) -> None:
+        """Lee `Amplificadores [N/2000]` y fija el denominador, con CADENCIA PROPIA.
+
+        Es un OCR dentro de un handler continuo, así que leerlo por frame es lo que RNF-06 prohíbe;
+        y el denominador cambia poquísimo. Releer alguna vez sí hace falta: reciclar o sacar un
+        arma durante la pasada lo mueve, y quedarse con el viejo daría cobertura falsa.
+
+        La capacidad se pasa explícita (`CAPACIDAD_ARMAS`) y ES el ancla de la lectura: con la de
+        discos, este mismo header no se lee — lo que impide que una pantalla se haga pasar por la
+        otra.
+        """
+        censo = self._censo_armas_abierto()
+        if censo is None:
+            return
+        ahora = time.time() if ahora is None else ahora
+        if ahora - self._s30_contador_ts < _INV_CONTADOR_PERIODO_S:
+            return
+        self._s30_contador_ts = ahora
+        try:
+            from app.core.parser_inventory_header import (
+                CAPACIDAD_ARMAS,
+                parse_inventory_counter,
+            )
+            n = parse_inventory_counter(frame, self._ocr, CAPACIDAD_ARMAS)
+        except Exception:
+            log.debug("[censo-armas] no se pudo leer el contador", exc_info=True)
+            return
+        previos = set(censo.avisos)
+        censo.anclar_total(n, ts=ahora)
+        for a in censo.avisos:
+            if a not in previos:
+                log.warning("[censo-armas] %s", a)
+
+    def _censar_arma(self, d, resultado=None) -> None:
+        """Registra un arma emitida por S30 en la corrida de censo.
+
+        **Quién decide si el arma es nueva: la persistencia.** La identidad es la FILA que el
+        syncer tocó, no un recálculo — es la lección que el censo de discos pagó en vivo: cuando el
+        censo calculaba identidad por su cuenta, el OCR del nombre se leía distinto entre pasadas y
+        el mismo ítem entraba dos veces (contador en 10, DB en 8).
+
+        Sin fila real se cae a la identidad del parser y queda marcado PROVISORIO. Y acá eso pesa
+        más que en discos: la identidad del parser de un arma **colapsa las copias siempre**, no
+        de casualidad, porque dos copias del mismo W-Engine son idénticas en todo campo observable.
+
+        ⚠️ `inv_id = -1` es el placeholder del camino read-only y NO es una fila: tomarlo como
+        identidad metería todas las armas en un solo cubo.
+        """
+        censo = self._censo_armas_abierto()
+        if censo is None:
+            return
+        from app.core.census_inventario import Sighting
+        inv_id = getattr(resultado, "inv_id", None) if resultado is not None else None
+        confirmada = isinstance(inv_id, int) and inv_id > 0
+        if confirmada:
+            identidad = ("fila", inv_id)
+        else:
+            identidad = ("arma", d.nombre_canon or d.nombre_raw, d.nivel, d.refinamiento)
+        nuevo = censo.observe(
+            Sighting(identidad=identidad, libre=False, dueno=d.dueno,
+                     confirmada=confirmada, en_catalogo=bool(d.nombre_canon)),
+            ts=time.time(),
+        )
+        if not d.nombre_canon and d.nombre_raw:
+            self._armas_sin_catalogo.setdefault(d.nombre_raw, {
+                "nombre_raw": d.nombre_raw, "rareza": d.rareza, "nivel": d.nivel,
+                "nivel_max": d.nivel_max, "atk_base": d.atk_base,
+                "stat": (f"{d.stat_avanzado_canon} {d.stat_avanzado_valor:g}"
+                         f"{d.stat_avanzado_unidad or ''}"
+                         if d.stat_avanzado_canon and d.stat_avanzado_valor is not None else None),
+            })
+        if nuevo:
+            n, total = censo.progreso
+            log.info("[censo-armas] %d/%s", n, total if total is not None else "?")
+
+    def cerrar_censo_armas(self) -> dict | None:
+        """Cierra la pasada del inventario de armas y devuelve el resumen, o `None` si no había.
+
+        El desglose importa más que el total: la brecha de armas tiene DOS causas distintas y
+        confundirlas haría el número inútil — las que no se pudieron nombrar (el badge se abstuvo)
+        y las que están fuera del catálogo curado, que no se pueden persistir aunque se hayan visto.
+        """
+        censo = self._censo_armas
+        if censo is None or not censo.abierta:
+            log.info("[censo-armas] no hay ninguna pasada abierta que cerrar")
+            return None
+        censo.cerrar(ts=time.time())
+        r = censo.resumen()
+        log.info("[censo-armas] pasada cerrada — %d/%s registradas · %d con dueño · %d sin "
+                 "resolver · %d fuera de catálogo", r["registrados"],
+                 r["total_pantalla"] or "?", r["con_dueno"], r["sin_resolver"],
+                 r["fuera_de_catalogo"])
+        if r["motivo_incompleto"]:
+            log.warning("[censo-armas] %s", r["motivo_incompleto"])
+        if r["excedente"]:
+            log.warning("[censo-armas] %d identidades por ENCIMA del contador del header — "
+                        "contador viejo o dos pasadas mezcladas", r["excedente"])
+        # El reporte es lo único que sobrevive a la pasada. Importa sobre todo por las armas fuera
+        # de catálogo: su nombre español leído de pantalla es el dato que ninguna wiki publica, y
+        # perderlo significa volver a recorrer el inventario entero.
+        from app.core.census_inventario import write_weapon_census_report
+        rutas = write_weapon_census_report(r, list(self._armas_sin_catalogo.values()))
+        if rutas:
+            log.info("[censo-armas] → %s", rutas[1])
         return r
 
     def _reset_s9_disc_tracking(self) -> None:
@@ -4560,6 +4703,12 @@ class Monitor:
             weapon_panel_signature_s30,
         )
 
+        # El contador del header abre la corrida y fija el denominador. Va ANTES del gate de
+        # firma —y no después— porque entrar al inventario ya es el disparador del censo: si
+        # colgara del panel, un usuario que entra y no toca ningún tile no abriría pasada.
+        # Tiene cadencia propia (`_INV_CONTADOR_PERIODO_S`), así que no es un OCR por frame.
+        self._anclar_contador_s30(frame)
+
         sig = weapon_panel_signature_s30(frame)
         if sig and sig == self._s30_panel_sig:
             return                      # panel quieto: ni stall ni OCR, es el camino normal
@@ -4594,6 +4743,15 @@ class Monitor:
             # "hay alguien, no sé quién" es una salida legítima, no un fallo: `BadgeSurface` separa
             # presencia de nombrado a propósito, y la librería del detalle todavía tiene PJs flacos.
             tenencia = f"la tiene {dueno}" if dueno else "con dueño (sin identificar)"
+        # El dueño resuelto vuelve al objeto parseado. S26 ya lo hacía (`d.tenencia, d.dueno =
+        # clasificar_tenencia(...)`); acá vivía sólo en una local y en el string del log, así que
+        # todo lo que consumiera el `WeaponParsed` —la persistencia, el censo— lo veía en None.
+        #
+        # `tenencia` NO se copia, y no es olvido: la de S26 es un vocabulario de cuatro valores
+        # (`equipada|otro_pj|libre|incierto`) y la de acá es una cadena para mostrar. Pisar el
+        # campo con la cadena haría que un consumidor comparara contra valores que nunca van a
+        # coincidir — y el que importa es justo el que S30 no puede afirmar: `libre`.
+        d.dueno = dueno
         # Diagnóstico ANTES del dedup de log: la línea de S30 se emite una sola vez por arma, pero
         # el diagnóstico habla de CADA evaluación del badge — que es lo que se quiere medir.
         # S30 no cosecha (ver `_maybe_harvest_weapon_owner`): acá solo se observa.
@@ -4630,6 +4788,24 @@ class Monitor:
             if n.startswith("rareza_discrepa_atk"):
                 log.warning("[S30] ⚠ %s", n)
                 self._diag(f"[S30] ⚠ {n}")
+
+        # --- Persistencia + censo (2026-09-06) ---
+        # Va DESPUÉS del dedup por contenido a propósito, y la diferencia con S26 es real: acá
+        # el dedup compara los campos LEÍDOS, así que contenido idéntico es literalmente la
+        # misma lectura y no hay nada nuevo que escribir. (En S26 la escritura no puede colgar
+        # de su dedup, que mezcla tenencia y dueño con los datos del arma.)
+        #
+        # El censo se registra DESPUÉS de persistir porque la identidad es la FILA que el
+        # syncer tocó — la autoridad es una sola. El censo de discos pagó esa lección en vivo:
+        # calculando identidad por su cuenta, el OCR del nombre se leía distinto entre pasadas
+        # y el mismo ítem entraba dos veces (contador en 10, DB en 8).
+        resultado = None
+        if self._on_weapon_detected is not None:
+            try:
+                resultado = self._on_weapon_detected(d)
+            except Exception:
+                log.exception("Error persistiendo el arma (el log y el censo siguen)")
+        self._censar_arma(d, resultado)
 
     def _parece_panel_de_arma(self, d) -> bool:
         """¿Lo que se parseó puede ser un W-Engine? Falso ⇒ el handler se calla del todo.
@@ -5478,12 +5654,21 @@ class Monitor:
         Es también el único momento en que el censo escribe la DB de dominio, y solo para anotar
         (RNF-01 + gate de readonly dentro de `marcar_huerfanos_en_dominio`).
         """
-        # La hotkey es una sola y hay dos censos. El del inventario se cierra primero si está
-        # abierto: es el que tiene contador, así que cerrarlo produce un número verificable.
+        # La hotkey es una sola y hay TRES censos. Los de inventario se cierran primero: son los
+        # que tienen contador, así que cerrarlos produce un número verificable. El del roster va
+        # último porque su cierre es el caro — declara huérfanos y escribe la DB de dominio.
+        cerro_inventario = False
         if self._censo_discos is not None and self._censo_discos.abierta:
             self.cerrar_censo_discos()
-            if self._census is None or not self._census.abierta:
-                return None
+            cerro_inventario = True
+        if self._censo_armas is not None and self._censo_armas.abierta:
+            self.cerrar_censo_armas()
+            cerro_inventario = True
+        # Si ya se cerró un inventario y no hay censo de roster abierto, la F8 ya hizo su trabajo:
+        # salir acá evita el "no hay ninguna pasada abierta que cerrar" que contradiría al log que
+        # se acaba de emitir.
+        if cerro_inventario and (self._census is None or not self._census.abierta):
+            return None
         censo = self._census
         if censo is None or not censo.abierta:
             log.info("[censo] no hay ninguna pasada abierta que cerrar")
