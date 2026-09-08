@@ -28,6 +28,17 @@ Y la guarda que en discos protege ese caso —un libre que choca con una fila EQ
 **no sirve al principio de una pasada de censo**, porque todavía no hay filas contra las cuales
 chocar. Por eso acá la abstención es previa, no reactiva.
 
+## Las armas son FUNGIBLES, y eso cambia qué cuenta como conflicto
+
+Un disco es único: sus substats salen de una tirada, así que dos filas iguales casi siempre son un
+duplicado a corregir. Un W-Engine no — dos copias del mismo son **idénticas en todo campo
+observable**, y de las A de gacha estándar es normal tener varias.
+
+Por eso el único invariante que se defiende es *un PJ lleva un arma sola* (bucket B + el índice
+único parcial de la migración `_26`). Que un arma aparezca en dos PJs **no** es un conflicto: son
+dos copias, y van dos filas. La v1 se abstenía ahí y la pasada del 2026-09-08 mostró el costo —
+'Última cena' salió en Gatillo, Koleda y Lycaon, y se escribió una sola.
+
 `origen_evidencia` deja registrado en la fila cuál de los tres caminos la respalda: ninguna otra
 cosa permite reconstruirlo después.
 """
@@ -171,22 +182,42 @@ class WeaponSyncer:
             )
             return None
 
-        # C · el arma ya figura equipada por OTRO PJ. Mover sobre una lectura equivocada le SACA el
-        #     arma a un PJ que sí la tiene — destructivo e invisible. Se abstiene y se avisa.
+        # C · el arma ya figura equipada por OTRO PJ: es una COPIA, y se inserta como fila nueva.
+        #
+        #     La v1 se abstenía acá, leyendo el choque como "una de las dos lecturas del badge
+        #     está mal". La pasada del 2026-09-08 mostró que la premisa era falsa: 'Última cena'
+        #     salió equipada por Gatillo, Koleda y Lycaon, y sólo se escribió la primera. Los
+        #     W-Engines son FUNGIBLES —dos copias son idénticas en todo campo observable— así que
+        #     tener varias de una A estándar es lo normal, no un síntoma.
+        #
+        #     El invariante que sí hay que defender es *un PJ lleva un arma sola*, y de ese ya se
+        #     ocupan el bucket B y el índice único parcial de la migración `_26`. Pedir además que
+        #     un arma tenga un solo dueño era más estricto que el invariante — y encima incoherente:
+        #     ante el MISMO badge mal leído, si el arma no estaba en otro PJ el bucket D insertaba
+        #     igual. La guarda sólo tapaba un subconjunto de los errores que decía cubrir, al precio
+        #     de perder todas las copias legítimas.
+        #
+        #     Lo que NO cambia: la fila ajena no se toca. Mover sobre una lectura equivocada le saca
+        #     el arma a un PJ que sí la tiene (destructivo e invisible); insertar de más se corrige
+        #     en el próximo censo. Es la misma asimetría que gobierna `dar_de_baja_desmontados`.
         ajenas = [w for w in repo.find_by_weapon(weapon_id)
                   if w.equipado == 1 and w.agente_asignado is not None
                   and w.agente_asignado != agente_id]
-        if ajenas:
-            log.warning(
-                "Conflicto: '%s' ya figura equipada por otro PJ (filas %s) y esta lectura la pone "
-                "en %s — no se mueve nada. O hubo un swap que no se vio, o son dos copias; mover "
-                "sobre la lectura equivocada le saca el arma a quien sí la tiene.",
-                nombre, ", ".join(str(w.id) for w in ajenas), agente_nombre,
-            )
-            return None
 
         # D · nada matchea: es un arma que la DB no tenía.
         inv_id = repo.insert(weapon_id, nivel=p.nivel, refinamiento=p.refinamiento,
                              agente_asignado=agente_id, equipado=1,
                              origen_evidencia="s30_badge")
+        if ajenas:
+            # Se avisa igual, en INFO y no en WARNING: una copia es un hecho del inventario, no un
+            # problema. Se nombran las filas hermanas porque son la única pista de que el badge
+            # PODRÍA haberse equivocado — quien revise el censo decide mirando la pantalla.
+            log.info(
+                "Copia: '%s' ya figuraba en otro PJ (filas %s) y esta lectura la pone en %s — se "
+                "inserta como fila nueva, la otra no se toca. Los W-Engines son fungibles: tener "
+                "dos copias es normal. Si en realidad es una sola, sobra una fila y la saca el "
+                "próximo censo.",
+                nombre, ", ".join(str(w.id) for w in ajenas), agente_nombre,
+            )
+            return _ok(inv_id, "s30_insert_copia")
         return _ok(inv_id, "s30_insert")

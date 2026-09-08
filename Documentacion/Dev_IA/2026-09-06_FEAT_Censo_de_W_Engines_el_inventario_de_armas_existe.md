@@ -248,12 +248,59 @@ Arma persistida id=1 s30_insert Engranaje infernal · Dialyn · Nv60 · P2
 
 ### Dos cosas a mirar de cerca
 
-- **Un `Conflicto:`** es el índice único haciendo su trabajo. Dos formas: *"X ya figura con
-  weapon_id=N"* (dos tiles nombraron al mismo PJ) o *"ya figura equipada por otro PJ"* (o hubo un
-  swap que no se vio, o son dos copias). En los dos casos **no se escribe ninguna** y quedan los
-  ids en el log — es la abstención por diseño, no un fallo.
-- **El excedente sobre el contador.** Si las identidades registradas superan las 57 del header,
-  sale un WARNING. Significa que una copia se contó dos veces, y el contador manda.
+- **Un `Conflicto:`** (WARNING) es el índice único haciendo su trabajo: *"X ya figura con
+  weapon_id=N"* significa que dos tiles nombraron al mismo PJ, y como un PJ lleva un arma sola,
+  una de las dos lecturas está mal sin forma de saber cuál. **No se escribe ninguna** y quedan los
+  ids en el log — abstención por diseño, no un fallo.
+- **Una `Copia:`** (INFO) es otra cosa y no es un problema: el arma ya figuraba en otro PJ y se
+  inserta igual como fila nueva. Ver la corrección del 2026-09-08 más abajo.
+- **El excedente sobre el contador.** Si las identidades registradas superan las que declara el
+  header, sale un WARNING. Significa que una copia se contó dos veces, y el contador manda.
+
+## La pasada en vivo del 2026-09-08, y la premisa que refutó
+
+Dos cosas que sólo se veían corriendo.
+
+### El contador dice 185, no 57
+
+`[censo-armas] N/185`. El 57 salía de una captura vieja de `Amplificadores [57/2000]`. No cambia
+nada del diseño —el contador se lee de pantalla justamente para no depender de un número
+heredado (A1)— pero sí la escala de la pasada.
+
+### Bucket C era más estricto que el invariante
+
+El log mostró `Última cena` equipada por **Gatillo, Koleda y Lycaon**, y se escribió una sola: las
+otras dos salieron por el bucket C con un WARNING que decía *"una de las dos lecturas del badge
+está mal"*. **La premisa era falsa.** Los W-Engines son fungibles: dos copias son idénticas en todo
+campo observable, y de una A de gacha estándar tener varias es lo normal, no un síntoma.
+
+El invariante que hay que defender es *un PJ lleva un arma sola*, y de ese ya se ocupan el bucket B
+y el índice único parcial. Pedir además que un arma tenga un solo dueño no lo protegía de nada —
+y era **incoherente**: ante el mismo badge mal leído, si el arma no estaba ya en otro PJ el bucket D
+insertaba igual. La guarda tapaba un subconjunto arbitrario de los errores que decía cubrir, al
+precio de perder todas las copias legítimas.
+
+Ahora C **inserta como fila nueva** y avisa en INFO (`Copia:`), nombrando las filas hermanas porque
+son la única pista de que el badge *podría* haberse equivocado. Lo que no cambia: la fila ajena no
+se toca. Mover sobre una lectura equivocada le saca el arma a un PJ que sí la tiene —destructivo e
+invisible—; insertar de más se corrige en el próximo censo. Es la misma asimetría de
+`dar_de_baja_desmontados`.
+
+Dos tests fijan las dos mitades, y el segundo existe **porque el primero solo no alcanza**: que se
+inserte la copia no dice nada sobre si la fila vieja sobrevivió intacta.
+
+| test | qué fija |
+|---|---|
+| `test_una_segunda_copia_del_mismo_engine_entra_como_fila_nueva` | se escribe, y con trigger `s30_insert_copia` para poder contarlas aparte |
+| `test_una_segunda_copia_no_le_saca_el_arma_al_primer_pj` | la fila que ya estaba queda idéntica, nivel y refinamiento incluidos |
+
+**El gemelo libre sigue siendo invisible, y es correcto.** Daniel reportó que su segunda
+`Última cena` LIBRE no dispara. El gate `weapon_panel_signature_s30` hashea dos bandas que viven
+enteras en el panel derecho (`x ≥ 0.72`): la grilla no entra a propósito, porque el rectángulo que
+la incluía se comía el arte animada y el gate no cortaba nunca. El matiz que importa: el badge del
+dueño **sí** cae en la banda B, así que copias con dueños distintos re-disparan (por eso salieron
+las tres de arriba). Lo invisible es el par idéntico *incluyendo la tenencia*. Como las libres no se
+escriben en v1, el costo es sólo de conteo y se reporta como brecha.
 
 ## Queda abierto
 

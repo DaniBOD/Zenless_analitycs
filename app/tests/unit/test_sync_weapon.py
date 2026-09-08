@@ -163,15 +163,41 @@ def test_el_pj_ya_figura_con_otra_arma_no_se_pisa(db):
     assert filas[0]["weapon_id"] == 1, "la fila que ya estaba no se toca"
 
 
-def test_un_arma_de_otro_pj_no_se_roba(db):
-    """Bucket C. Mover sobre la lectura equivocada le SACA el arma a un PJ que sí la tiene:
-    destructivo e invisible. Insertar de más se corrige en el próximo censo."""
+def test_una_segunda_copia_del_mismo_engine_entra_como_fila_nueva(db):
+    """Bucket C. Dos PJs con el MISMO W-Engine no es un conflicto: es tener dos copias.
+
+    La v1 se abstenía acá, y la pasada en vivo del 2026-09-08 mostró el costo: Daniel tiene
+    'Última cena' equipada por Gatillo, Koleda y Lycaon, y sólo se escribió la primera. Las
+    otras dos se descartaron con un warning que decía 'una de las dos lecturas está mal'.
+
+    Las armas son FUNGIBLES —dos copias son idénticas en todo campo observable— así que tener
+    varias es lo normal en las A de gacha estándar. El invariante real es *un PJ lleva un arma
+    sola*, y de ese ya se ocupan el bucket B y el índice único parcial; pedir además que un
+    arma tenga un solo dueño es más estricto que el invariante.
+    """
     sync = _syncer(db)
-    de_jane = sync.persist_s30_weapon(_arma("Engranaje infernal", dueno="Jane"))
-    assert sync.persist_s30_weapon(_arma("Engranaje infernal", dueno="Grace")) is None
+    de_jane = sync.persist_s30_weapon(_arma("Última cena", dueno="Jane"))
+    de_grace = sync.persist_s30_weapon(_arma("Última cena", dueno="Grace"))
+    assert de_grace is not None, "la segunda copia se escribe, no se descarta"
+    assert de_grace.trigger == "s30_insert_copia", (
+        "el trigger la distingue de un alta común: la pasada tiene que poder contarlas aparte")
     filas = _filas(db)
-    assert len(filas) == 1
-    assert filas[0]["id"] == de_jane.inv_id and filas[0]["agente_asignado"] == 5
+    assert len(filas) == 2
+    assert {f["agente_asignado"] for f in filas} == {5, 6}
+    assert de_jane.inv_id != de_grace.inv_id
+
+
+def test_una_segunda_copia_no_le_saca_el_arma_al_primer_pj(db):
+    """La garantía que TIENE que sobrevivir al cambio de arriba: insertar una copia no toca la
+    fila que ya estaba. Mover sobre una lectura equivocada le sacaría el arma a un PJ que sí la
+    tiene — destructivo e invisible. Insertar de más se corrige en el próximo censo."""
+    sync = _syncer(db)
+    de_jane = sync.persist_s30_weapon(_arma("Última cena", dueno="Jane", nivel=60,
+                                            refinamiento=5))
+    antes = [f for f in _filas(db) if f["id"] == de_jane.inv_id][0]
+    sync.persist_s30_weapon(_arma("Última cena", dueno="Grace", nivel=10, refinamiento=1))
+    despues = [f for f in _filas(db) if f["id"] == de_jane.inv_id][0]
+    assert despues == antes, "la fila de Jane queda intacta, incluido su nivel/refinamiento"
 
 
 # --- readonly ----------------------------------------------------------------------------------
