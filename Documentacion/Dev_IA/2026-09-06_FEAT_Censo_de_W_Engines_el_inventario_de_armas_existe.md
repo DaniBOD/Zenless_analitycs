@@ -204,6 +204,57 @@ Incluye una sección **"Lo que esta corrida NO prueba"**, misma doctrina que el 
 | lint | 0 findings nuevos en 8 de 9 archivos tocados; +2 en `controller.py`, y son repeticiones de patrones que el archivo ya usa (`BLE001`, `S110`) copiados del bloque hermano del `DiscSyncer` |
 | RNF-01 | app cerrada verificada con `tasklist` **antes** de escribir; ensayo contra copia; backup `backup_premig_20260906_224003`; 7 smoke checks; `foreign_key_check` y `integrity_check` ok |
 
+## Estado al cerrar la sesión del 2026-09-06
+
+Todo lo de arriba está **commiteado y pusheado** (`737da77`), con la suite en verde
+(2635 passed, 17 skipped, 1 xfailed, 42:58). La DB tiene el esquema nuevo y **cero filas**:
+
+```
+inventory_weapons : 0 filas · 2 índices (idx_invw_pj_equipada, idx_invw_weapon)
+weapons           : 59 filas (catálogo, completo)
+integrity ok · foreign_key_check sin violaciones
+```
+
+**La pasada en vivo no se corrió todavía.** Es lo primero que sigue.
+
+### Cómo se corre
+
+1. Lanzar la app con `powershell -ExecutionPolicy Bypass -File tools/qa_launch.ps1 -FromSource`
+   (la lanza Claude, no Daniel: si la lanza Daniel, la virtualización del contenedor MSIX hace
+   que la shell lea una copia congelada del log y no se vea nada).
+2. Abrir el **inventario de amplificadores** — la pantalla del header `Amplificadores [57/2000]`.
+3. Recorrer los tiles **uno por uno**. Lo que se lee es el panel derecho, así que cada tile hay
+   que seleccionarlo; no alcanza con que esté a la vista.
+4. Cerrar con **F8**.
+
+### Qué tiene que aparecer en el log
+
+```
+[censo-armas] pasada abierta
+Arma persistida id=1 s30_insert Engranaje infernal · Dialyn · Nv60 · P2
+[censo-armas] 1/57
+...
+[censo-armas] pasada cerrada — N/57 registradas · N con dueño · N sin resolver · N fuera de catálogo
+[censo-armas] → ...\audit\censos\<TS>_censo_armas.md
+```
+
+### Los números que deciden el tramo siguiente
+
+| número | qué significa | qué desbloquea |
+|---|---|---|
+| **con dueño** | las que se persistieron | si es la mayoría, la pasada por las 51 fichas de PJ no hace falta |
+| **sin resolver** | el badge no las nombró | si son muchas, la segunda pasada por S26 sí vale |
+| **fuera de catálogo** | se esperan ~5 | el reporte las lista con su nombre español de pantalla; con eso se arma la migración curada que las da de alta |
+
+### Dos cosas a mirar de cerca
+
+- **Un `Conflicto:`** es el índice único haciendo su trabajo. Dos formas: *"X ya figura con
+  weapon_id=N"* (dos tiles nombraron al mismo PJ) o *"ya figura equipada por otro PJ"* (o hubo un
+  swap que no se vio, o son dos copias). En los dos casos **no se escribe ninguna** y quedan los
+  ids en el log — es la abstención por diseño, no un fallo.
+- **El excedente sobre el contador.** Si las identidades registradas superan las 57 del header,
+  sale un WARNING. Significa que una copia se contó dos veces, y el contador manda.
+
 ## Queda abierto
 
 - **La pasada en vivo**: recorrer los 57 tiles. Con ese número se decide si hace falta la pasada por

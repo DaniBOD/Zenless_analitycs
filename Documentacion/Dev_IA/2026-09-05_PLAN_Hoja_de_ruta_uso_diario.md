@@ -36,19 +36,22 @@ inventario.
 
 ## 2. Censo de armas / W-Engines 🟡 IMPLEMENTADO, falta la pasada en vivo
 
-Detalle en [`2026-09-06_FEAT_Censo_de_W_Engines_el_inventario_de_armas_existe.md`](./2026-09-06_FEAT_Censo_de_W_Engines_el_inventario_de_armas_existe.md).
+Detalle en
+[`2026-09-06_FEAT_Censo_de_W_Engines_el_inventario_de_armas_existe.md`](./2026-09-06_FEAT_Censo_de_W_Engines_el_inventario_de_armas_existe.md).
 
-`inventory_weapons` existía con **0 filas** y sin repo ni syncer. Ahora hay migración (`_26`),
-`InventoryWeaponRepo`, `WeaponSyncer`, contador del header parametrizado, `DiscCensus`
-generalizado a `InventoryCensus` y reporte de cierre. 73 tests nuevos, 15 sabotajes.
+`inventory_weapons` existía desde la Fase 1 con **0 filas y sin un solo repo ni syncer**. La
+captura ya estaba lista y medida (`parse_weapon_s30`: 60/60 campos sobre las 10 capturas reales);
+faltaba toda la escritura. Ahora están la migración `_26`, los repos, el `WeaponSyncer`, el
+contador del header compartido con discos, el censo (`InventoryCensus`) y el reporte de cierre.
 
-**Lo que v1 escribe:** sólo las armas cuyo dueño se NOMBRA. La lectura de dueño de S30 mide 8/10 y
-el caso que falla *afirma* que un arma está libre siendo de alguien — nombrar es fiable, negar
-dueño no. Lo demás se registra como brecha con su causa.
+**Regla de v1: se escribe lo que se NOMBRA, nunca lo que se declara libre.** Sale de una medición
+—los 6 que el badge nombra salen los 6 bien, y el que falla AFIRMA libre un arma que es de Grace—
+y de que la guarda que en discos cubre ese caso no sirve al principio de una pasada, porque no hay
+filas contra las cuales chocar.
 
-**Decisión de Daniel:** el inventario primero (57 tiles), y con el número medido se decide si hace
-falta la pasada por las 51 fichas de PJ. Las ~5 armas fuera de catálogo que la pasada descubra
-entran por una migración curada al final.
+Queda: **correr la pasada** por los 57 tiles y, con los números que dé, decidir si hace falta la
+segunda pasada por las 51 fichas de PJ. Las ~5 armas fuera de catálogo salen listadas en el
+reporte para armar la migración curada.
 
 ## 3. Segundo censo de discos
 
