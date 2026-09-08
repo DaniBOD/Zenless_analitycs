@@ -95,11 +95,37 @@ sola (RNF-02): la migración se revisa a mano.
 | Temploala granizadaestelifera | de Miyabi |
 | Tetera esmeraldina | de Qingyi |
 | Viajeestruendoso CRASH | |
-| X Cuter | de Pulchra |
+| ~~X Cuter~~ | **FALSO — es `Cúter`, de Pulchra, y está en el catálogo.** Ver la corrección de abajo |
 
-El prefijo `X ` aparece en dos de ellas y **no es el motivo del rechazo** (las dos faltan de verdad
-en `weapons`), pero conviene mirarlo: es un token espurio a la izquierda del nombre, probablemente
-el botón de cerrar del panel entrando al ROI.
+> ⚠️ **Corrección (misma fecha, tras la segunda pasada).** La frase que estaba acá —*"el prefijo `X `
+> no es el motivo del rechazo, las dos faltan de verdad en `weapons`"*— **era falsa**, y la escribí
+> sin medirla. Al probar `match_catalogo` contra las 59 filas reales, `X Cuter` resuelve a **Cúter**
+> y `X Uitima cena` (de la segunda pasada) a **Última cena**. Las dos estaban en el catálogo desde
+> siempre.
+>
+> Son **6 huecos reales, no 7**, y el costo no fue sólo un fantasma en esta tabla: son **dos filas
+> de `inventory_weapons` que no se escribieron**, una de ellas la de Pulchra.
+>
+> Lo que ninguno de los dos casos mostraba por separado: **ningún defecto solo rompe el match.**
+> `Uitima cena` (la confusión l→i) resuelve, y `X Última cena` (el glifo) también; hacen falta los
+> dos en la misma lectura para caer debajo del corte de 0.84. Por eso las 10 capturas de fixture,
+> que leen limpio, no lo reproducen.
+>
+> Arreglado en `parser_weapon_s26.match_catalogo` con un **segundo intento** sin el carácter suelto
+> de la izquierda, que sólo corre si el primero devolvió None: puede agregar matches donde no había,
+> nunca cambiar uno que ya resolvía. Acotado a un token de un carácter: ninguna de las 59 filas tiene
+> un primer token de ≤2 caracteres, así que el recorte no puede tapar un nombre legítimo.
+>
+> **Segunda corrección, y esta la destapó un sabotaje.** Escribí que no aflojaba el corte *"porque
+> cruzaría Modelo II con Modelo III"*. Es falso: normalizados miden **0.977** de similitud, muy por
+> encima de 0.84, así que el corte nunca fue lo que los separa — los salva el match EXACTO, porque
+> `_norm_nombre` colapsa los romanos ambiguos y 'Modelo ll' cae justo sobre 'Modelo II'. Con corte
+> 0.70 siguen resolviendo bien. El motivo REAL para preferir el segundo intento es que aflojar el
+> corte mueve toda comparación: el sabotaje midió que con 0.70 `XY Uitima cena` empieza a resolver.
+> El docstring del test que afirmaba lo contrario quedó corregido también.
+>
+> **Sigue abierto de dónde sale la `X`.** El arreglo es de tolerancia, no de causa. La pista es que
+> una de las cuatro lecturas con `X ` era el panel de la propia app; pide un frame que lo reproduzca.
 
 ## Dos hallazgos que no son del censo
 

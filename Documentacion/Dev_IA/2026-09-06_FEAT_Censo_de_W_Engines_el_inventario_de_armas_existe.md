@@ -308,11 +308,12 @@ escriben en v1, el costo es sólo de conteo y se reporta como brecha.
 > [`audit/censo_armas_20260908.md`](../../audit/censo_armas_20260908.md): **28 filas escritas**,
 > 53/185 identidades, sólo rangos S y A.
 
-- **Segunda pasada, corta**, por Última cena, Llanto mielgo, Cañón bombástico y Rotor de cañón:
-  recupera las 9 filas que el bucket C viejo descartó. Barata porque el bucket A convierte cada
-  relectura en un `update`.
+- ~~Segunda pasada por los 4 engines duplicados~~ **HECHA el 2026-09-08**: las 9 filas entraron,
+  `inventory_weapons` quedó en **37**. Cerrada con F8, reporte en `audit/censos/`.
 - **Los tiles de rango B**, sin recorrer.
-- **La migración curada del catálogo** — ~7 armas, con su nombre español ya capturado de pantalla
+- **La migración curada del catálogo** — **6** armas, no 7: `Cúter` (de Pulchra) y `Última cena`
+  estaban en el catálogo y salieron listadas como huecos porque el nombre traía un glifo suelto a
+  la izquierda. Corregido en `match_catalogo`; el resto sigue con su nombre español de pantalla
   en el audit. Ninguna se da de alta sola.
 - **El resumen del censo vive sólo detrás de F8.** Parar el monitor o cerrar la app lo descarta en
   silencio: ni reporte, ni desglose, ni un aviso de que se perdió. El audit del 2026-09-08 existe

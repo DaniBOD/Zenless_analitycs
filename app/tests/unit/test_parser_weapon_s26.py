@@ -350,11 +350,72 @@ def test_al_maximo_distingue_los_dos_regimenes():
 
 def test_el_fuzzy_no_cruza_los_modelos_de_repercusion():
     """El caso más filoso del catálogo: 'Modelo II' y 'Modelo III' difieren en una letra, y el
-    OCR devuelve 'll' y 'lll'. Si el corte fuera más laxo, se cruzarían — y serían dos armas
-    distintas reportadas como la misma."""
+    OCR devuelve 'll' y 'lll'.
+
+    ⚠️ **No es el corte lo que los separa**, aunque el docstring de este test lo dijera hasta el
+    2026-09-08. Normalizados miden **0.977** de similitud — muy por encima de 0.84 — así que un
+    corte más laxo NO los cruza: con 0.70 siguen resolviendo bien. Lo que los salva es el match
+    EXACTO, porque `_norm_nombre` colapsa los romanos ambiguos y 'Modelo ll' cae justo sobre
+    'Modelo II' sin llegar nunca al fuzzy. Lo destapó un sabotaje que bajó el corte esperando ver
+    este test en rojo y puso rojo otro.
+    """
     cat = ["Repercusión - Modelo I", "Repercusión - Modelo II", "Repercusión - Modelo III"]
     assert match_catalogo("Repercusion - Modelo ll", cat) == "Repercusión - Modelo II"
     assert match_catalogo("Repercusión- Modelo lll", cat) == "Repercusión - Modelo III"
+
+
+# --- El glifo suelto a la izquierda del nombre -------------------------------------------------
+#
+# En la pasada del 2026-09-08 aparecieron cuatro lecturas con una `X ` de más al principio:
+# 'X Uitima cena', 'X Cuter', 'X Inocencia sacrificada' y 'X Monitor: OFF granajeinfernal 385 305
+# 0/385' — esta última es el panel de la PROPIA app, o sea que algo ajeno entra al ROI del nombre.
+# Ninguna de las 10 capturas de fixture lo reproduce, así que la causa (¿ícono de tipo? ¿ventana
+# encima?) pide un frame nuevo. Lo que sí se puede acotar es la TOLERANCIA.
+
+def test_un_glifo_suelto_a_la_izquierda_no_saca_al_arma_del_catalogo():
+    """El caso medido: `Última cena` está en el catálogo y salió reportada como si faltara.
+
+    Lo notable es que **ningún defecto solo alcanza para romperlo**: 'Uitima cena' (la confusión
+    l→i) matchea, y 'X Última cena' (el glifo) también. Juntos empujan la similitud debajo del
+    corte de 0.84. Por eso no había aparecido antes: hacen falta los dos en la misma lectura.
+    """
+    cat = ["Última cena", "Llanto mielgo"]
+    assert match_catalogo("Uitima cena", cat) == "Última cena", "un defecto solo ya se toleraba"
+    assert match_catalogo("X Última cena", cat) == "Última cena", "el otro también"
+    assert match_catalogo("X Uitima cena", cat) == "Última cena", "y ahora los dos juntos"
+
+
+def test_el_glifo_tapaba_dos_armas_del_catalogo_no_una():
+    """Contra el catálogo REAL, el recorte recupera `Última cena` **y** `Cúter` — la segunda estuvo
+    listada como hueco del catálogo en el audit del 2026-09-08 y era de Pulchra. Dos filas que no
+    se escribieron y dos entradas falsas en la tabla de la migración curada."""
+    cat = ["Última cena", "Cúter", "Llanto mielgo"]
+    assert match_catalogo("X Uitima cena", cat) == "Última cena"
+    assert match_catalogo("X Cuter", cat) == "Cúter"
+
+
+def test_recortar_el_glifo_no_inventa_matches():
+    """El recorte es un SEGUNDO intento, no una relajación del corte: sólo puede agregar matches
+    donde antes había None, nunca cambiar uno que ya resolvía. Y lo que de verdad NO está en el
+    catálogo tiene que seguir sin estar — si no, la tabla de la migración curada pierde entradas
+    reales, que es el daño simétrico al que este arreglo repara.
+
+    Las dos de abajo se midieron contra las 59 filas de `weapons` y siguen dando None: una es un
+    hueco real del catálogo, la otra es el panel de la propia app leído como si fuera un arma.
+    """
+    cat = ["Última cena", "Cúter", "Llanto mielgo", "Petrazufre"]
+    assert match_catalogo("X Inocencia sacrificada", cat) is None, "hueco real, sigue siendo hueco"
+    assert match_catalogo("X Monitor: OFF granajeinfernal 385 305 0/385", cat) is None
+
+
+def test_el_recorte_es_de_UN_token_de_UN_caracter():
+    """Acotado a propósito. El catálogo no tiene un solo nombre cuyo primer token sea de ≤2
+    caracteres (medido sobre las 59 filas de `weapons`), así que sacar un carácter suelto no puede
+    tapar un nombre legítimo. Sacar más sí podría: 'Sol exuvia' perdería 'Sol'."""
+    cat = ["Sol exuvia", "Última cena"]
+    assert match_catalogo("Sol exuvia", cat) == "Sol exuvia"
+    assert match_catalogo("XY Uitima cena", cat) is None, "dos caracteres ya no es un glifo suelto"
+    assert match_catalogo("X Y Uitima cena", cat) is None, "ni dos glifos seguidos"
 
 
 # --- Tenencia: ¿la lleva el PJ en pantalla, otro, o está libre? -------------------------------

@@ -263,6 +263,32 @@ def match_catalogo(nombre_raw: str, catalogo: Sequence[str] | None) -> str | Non
 
     Devolver None es un resultado LEGÍTIMO, no un fallo: el catálogo tiene 42 armas de menos,
     así que lo esperable es que aparezcan armas que no están. Se muestra el crudo.
+
+    ## El segundo intento sin el glifo de la izquierda
+
+    En la pasada del 2026-09-08 entraron cuatro lecturas con un carácter suelto de más al
+    principio (`X Uitima cena`, `X Cuter`, `X Inocencia sacrificada`, y una que era **el panel de
+    la propia app**). El costo fue concreto: `Última cena` está en el catálogo y salió listada como
+    si faltara, o sea un fantasma en la tabla que alimenta la migración curada.
+
+    Lo que hacía falta medir es que **ningún defecto solo rompe el match**: `Uitima cena` resuelve
+    y `X Última cena` también; recién los dos juntos caen debajo de 0.84. Por eso el arreglo es un
+    **segundo intento** sin ese carácter, que sólo corre si el primero devolvió None: puede agregar
+    matches donde no había, nunca cambiar uno que ya resolvía. Aflojar el corte, en cambio, mueve
+    TODA comparación — y el sabotaje lo midió: con 0.70, `XY Uitima cena` empieza a resolver, o sea
+    que dos caracteres de basura pasan a ser tolerables.
+
+    ⚠️ Ojo con un argumento que parece bueno y es falso: **el corte NO es lo que separa 'Modelo II'
+    de 'Modelo III'.** Normalizados miden 0.977 de similitud, muy por encima de 0.84 — lo que los
+    salva es el match EXACTO, porque `_norm_nombre` colapsa 'Modelo ll' justo sobre 'Modelo II' y
+    nunca se llega al fuzzy. Con corte 0.70 siguen resolviendo bien.
+
+    Acotado a UN token de UN carácter porque eso es lo que se puede probar seguro: ninguna de las
+    59 filas de `weapons` tiene un primer token de ≤2 caracteres, así que el recorte no puede tapar
+    un nombre legítimo. Sacar más sí podría ('Sol exuvia' perdería 'Sol').
+
+    ⚠️ Esto trata la TOLERANCIA, no la causa. De dónde sale la `X` —ícono de tipo dentro del ROI,
+    o una ventana encima— pide un frame que lo reproduzca: las 10 capturas de fixture leen limpio.
     """
     if not nombre_raw or not catalogo:
         return None
@@ -270,10 +296,20 @@ def match_catalogo(nombre_raw: str, catalogo: Sequence[str] | None) -> str | Non
     if not clave:
         return None
     normalizados = {_norm_nombre(c): c for c in catalogo}
-    if clave in normalizados:
-        return normalizados[clave]
-    cerca = difflib.get_close_matches(clave, list(normalizados), n=1, cutoff=_FUZZY_CUTOFF)
-    return normalizados[cerca[0]] if cerca else None
+
+    def _resolver(k: str) -> str | None:
+        if k in normalizados:
+            return normalizados[k]
+        cerca = difflib.get_close_matches(k, list(normalizados), n=1, cutoff=_FUZZY_CUTOFF)
+        return normalizados[cerca[0]] if cerca else None
+
+    hallado = _resolver(clave)
+    if hallado is not None:
+        return hallado
+    tokens = clave.split()
+    if len(tokens) > 1 and len(tokens[0]) == 1:
+        return _resolver(" ".join(tokens[1:]))
+    return None
 
 
 def weapon_panel_signature_s30(frame: np.ndarray) -> bytes:
