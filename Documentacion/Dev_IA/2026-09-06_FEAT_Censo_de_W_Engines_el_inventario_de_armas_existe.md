@@ -304,8 +304,25 @@ escriben en v1, el costo es sólo de conteo y se reporta como brecha.
 
 ## Queda abierto
 
-- **La pasada en vivo**: recorrer los 57 tiles. Con ese número se decide si hace falta la pasada por
-  las 51 fichas de PJ.
+> Estado al 2026-09-08, después de la primera pasada. Los números y el detalle completo están en
+> [`audit/censo_armas_20260908.md`](../../audit/censo_armas_20260908.md): **28 filas escritas**,
+> 53/185 identidades, sólo rangos S y A.
+
+- **Segunda pasada, corta**, por Última cena, Llanto mielgo, Cañón bombástico y Rotor de cañón:
+  recupera las 9 filas que el bucket C viejo descartó. Barata porque el bucket A convierte cada
+  relectura en un `update`.
+- **Los tiles de rango B**, sin recorrer.
+- **La migración curada del catálogo** — ~7 armas, con su nombre español ya capturado de pantalla
+  en el audit. Ninguna se da de alta sola.
+- **El resumen del censo vive sólo detrás de F8.** Parar el monitor o cerrar la app lo descarta en
+  silencio: ni reporte, ni desglose, ni un aviso de que se perdió. El audit del 2026-09-08 existe
+  porque se pudo reconstruir del log, y eso no siempre va a estar.
+- **La app se lee a sí misma.** Una lectura de la pasada fue el panel de la propia app
+  (`X Monitor: OFF granajeinfernal 385 305 0/385`), con sus contadores de discos adentro. La
+  rechazó el catálogo por casualidad; nada en el pipeline lo impide.
+- **Refs de Zhao** para la superficie `detail`: su `Transmorfer original` sale
+  `con dueño (sin identificar)`. Es la clase floja conocida, y **no** es el mismo bug que el falso
+  LIBRE de abajo — presencia sí, nombre no.
 - **Escribir las armas LIBRES.** Se desbloquea con: la pasada por fichas de PJ (S26 asserta libre
   con *pinza* — badge ausente **y** botón 'equipar'/'reemplazar', dos señales independientes), o
   arreglar la detección del círculo del dueño en S30 (`test_compilador_quimerico_no_esta_libre`

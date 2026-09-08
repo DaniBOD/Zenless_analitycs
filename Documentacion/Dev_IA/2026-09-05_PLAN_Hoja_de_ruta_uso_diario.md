@@ -34,7 +34,7 @@ Los drops del 2026-09-05 **no se pueden migrar retroactivamente**: el log guarda
 nivel pero **no los substats**, y sin ellos no hay identidad. Entran cuando Daniel recorra el
 inventario.
 
-## 2. Censo de armas / W-Engines 🟡 IMPLEMENTADO, falta la pasada en vivo
+## 2. Censo de armas / W-Engines 🟡 PRIMERA PASADA HECHA — 28 filas, falta cerrar la brecha
 
 Detalle en
 [`2026-09-06_FEAT_Censo_de_W_Engines_el_inventario_de_armas_existe.md`](./2026-09-06_FEAT_Censo_de_W_Engines_el_inventario_de_armas_existe.md).
@@ -49,9 +49,18 @@ contador del header compartido con discos, el censo (`InventoryCensus`) y el rep
 y de que la guarda que en discos cubre ese caso no sirve al principio de una pasada, porque no hay
 filas contra las cuales chocar.
 
-Queda: **correr la pasada** por los 57 tiles y, con los números que dé, decidir si hace falta la
-segunda pasada por las 51 fichas de PJ. Las ~5 armas fuera de catálogo salen listadas en el
-reporte para armar la migración curada.
+**La pasada corrió el 2026-09-08** — números y hallazgos en
+[`audit/censo_armas_20260908.md`](../../audit/censo_armas_20260908.md). `inventory_weapons` pasó de
+0 a **28 filas**, 28 PJs de 51, con `integrity_check` ok. El contador del header dice **185**, no
+las 57 de la captura vieja, y se recorrieron sólo los rangos **S y A**.
+
+La pasada refutó una premisa del diseño: el bucket C descartaba un arma que ya figuraba en otro PJ
+leyéndolo como error de badge, y los W-Engines son **fungibles** — el refinamiento lo probó (Sunna
+P3 contra los P5 de Lucía y Yuzuha en el mismo modelo). Arreglado en `6f1a1cb`.
+
+Queda, en este orden: **segunda pasada corta** por los 4 engines duplicados (recupera 9 filas), los
+tiles de **rango B**, y la **migración curada** de las ~7 armas fuera de catálogo, que ya están
+listadas con su nombre español de pantalla.
 
 ## 3. Segundo censo de discos
 
