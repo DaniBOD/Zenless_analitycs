@@ -47,6 +47,21 @@ separa Modelo II de Modelo III"* cuando lo separa el match exacto).
 **Si se borraran los crudos, ¿se podría decidir igual?** Es verificable: se elige una pregunta que
 hoy sólo responde un crudo y se ve si el compacto la contesta. No es "que sea corto".
 
+### Refinamiento que trajo el piloto: medición ≠ constante
+
+De 9 preguntas de prueba contra el compacto de julio, **7 se responden**. Las 2 que no son las dos
+mismas cosa: **constantes que ya viven en el código** (el criterio de píxel de las estrellas, en
+`parser_weapon_s26.py:119`; la geometría de los tiles de S2, en `parser_s2.py`).
+
+Eso afina la regla, y en la dirección de comprimir más:
+
+> Una medición que **se convirtió en una constante del código** no va al compacto: el código es su
+> autoridad, y duplicarla crea la divergencia que este diseño evita. Lo que sí va es **la evidencia
+> que justifica la constante** y **las alternativas que fallaron** — eso no está en ningún lado más.
+
+Ejemplo del propio compacto: `_DISC_STRIP_MIN = 3` está en el código, así que lo que se conserva no
+es el `3` sino *por qué* 3 (farmeo real da 3 en todas las capturas, pantallas sin discos ≤2).
+
 ## Estructura
 
 ```
@@ -120,9 +135,10 @@ resoluble.
 
 ## Plan
 
-1. **Piloto: compacto de julio** (27 documentos, 4.679 líneas). Se mide el ratio y se corre el
-   criterio de aceptación. *Si julio necesita 400 líneas, el diseño está mal y se supo barato.*
-2. Con el número del piloto, decidir si se sigue.
+1. ~~Piloto: compacto de julio~~ **HECHO.** 4.679 líneas → **173**, ratio **27:1** (3,7 % del
+   original). Las 15 mediciones del compacto verificadas una por una contra el crudo; el criterio
+   de aceptación da 7/9, y los 2 que faltan son constantes que viven en el código (ver arriba).
+2. ~~Decidir si se sigue~~ **sí.**
 3. Mudanza histórica: `git mv` de los 76 a `documentacion_cruda/YYYY-MM/` + normalización de nombres.
 4. Compactos de mayo, junio y agosto.
 5. `00_Indice.md`.
