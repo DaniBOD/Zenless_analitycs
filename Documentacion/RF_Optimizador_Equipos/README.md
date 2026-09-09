@@ -4,7 +4,7 @@ Esta carpeta agrupa la documentación de la lógica del optimizador *team-aware*
 
 ## Índice
 
-1. **[RF-Logic_Optimizador_Equipos.md](./RF-Logic_Optimizador_Equipos.md)** — Documento maestro. Define alcance v1 (3 capas: pesos, override de set, sugerir equipo), modelo de datos (`team_synergies`, `team_compositions`, `ai_catalog_runs`), algoritmo runtime, prompts a Claude API (catalogadora), trigger on-demand + automático, performance/costos esperados (~$10/mes), output JSON de ejemplo (caso Ellen + Dialyn → Puffer Electro) y log de decisiones cerradas. **Empezar por aquí.**
+1. **[RF-Logic_Optimizador_Equipos.md](RF-Logic_Optimizador_Equipos.md)** — Documento maestro. Define alcance v1 (3 capas: pesos, override de set, sugerir equipo), modelo de datos (`team_synergies`, `team_compositions`, `ai_catalog_runs`), algoritmo runtime, prompts a Claude API (catalogadora), trigger on-demand + automático, performance/costos esperados (~$10/mes), output JSON de ejemplo (caso Ellen + Dialyn → Puffer Electro) y log de decisiones cerradas. **Empezar por aquí.**
 
 ## Diagramas de flujo (segmentados v4)
 

@@ -179,7 +179,7 @@ pantalla**: en qué PJ estás parado, de quién es cada disco, y de quién es su
 Es un flujo aparte porque depende de tenerlo desbloqueado in-game y equipado, así que
 normalmente ocurre días después del resto del onboarding.
 
-**Protocolo completo:** [`Onboarding_Badges_PJ_Nuevo.md`](./Onboarding_Badges_PJ_Nuevo.md)
+**Protocolo completo:** [`Onboarding_Badges_PJ_Nuevo.md`](Onboarding_Badges_PJ_Nuevo.md)
 
 TL;DR: un screenshot de su Equipamiento para la superficie `row`, y una pasada por sus 6 discos
 con `qa_launch -BadgeHarvest` para `grid` y `detail`. Después **medir que no empeore** con

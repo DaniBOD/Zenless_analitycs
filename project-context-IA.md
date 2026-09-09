@@ -5,7 +5,7 @@
 > **Última verificación contra DB real:** 2026-05-01
 > **Mantener actualizado tras cierre de fase, migración o cambio estructural.**
 >
-> **Módulos transversales:** [Documentacion/QA/](./Documentacion/QA/) (plan maestro + 7 sub-docs cubriendo ETL, scoring, OCR, IA, lategame, performance, regresión por patches).
+> **Módulos transversales:** [Documentacion/QA/](Documentacion/QA) (plan maestro + 7 sub-docs cubriendo ETL, scoring, OCR, IA, lategame, performance, regresión por patches).
 
 ---
 
@@ -297,14 +297,14 @@ D:\Proyectos\Zenless_analitycs\
 
 | Doc | Cubre |
 |-----|-------|
-| [QA/README.md](./Documentacion/QA/README.md) | Plan maestro: 5 capas, matriz cobertura, criterios aceptación, roadmap por fase |
-| [QA-01_ETL_Integridad.md](./Documentacion/QA/QA-01_ETL_Integridad.md) | Smoke test post-DB, baseline filas, constraints CHECK, idempotencia migraciones, política backups, awakenings RNF-02 |
-| [QA-02_Scoring_y_Optimizador.md](./Documentacion/QA/QA-02_Scoring_y_Optimizador.md) | RF-06 + RF-14 golden cases (7 casos scoring + caso "la roca" + build full), validación cruzada Prydwen |
-| [QA-03_OCR_y_Captura.md](./Documentacion/QA/QA-03_OCR_y_Captura.md) | RF-04/05/09 templates detector, golden set OCR (50 capturas con JSON), edge cases visuales, diff PRE/POST upgrade |
-| [QA-04_IA_Catalogadora.md](./Documentacion/QA/QA-04_IA_Catalogadora.md) | RF-12 schema validator, hallucination detection, cap costo, prompt caching, **roadmap modelo local post-v1** (RX 9060 XT 16GB, opciones Ollama/llama.cpp, criterios switch) |
-| [QA-05_Lategame_y_Bayesiano.md](./Documentacion/QA/QA-05_Lategame_y_Bayesiano.md) | RF-13 captura F11, buckets fijos, retro-feedback bayesiano (caso Ellen+Dialyn paso a paso), `congelado=1` |
-| [QA-06_Performance_y_UX.md](./Documentacion/QA/QA-06_Performance_y_UX.md) | Decorator `@measure_latency`, tabla `metrics_latency` (a crear), pipeline disco→toast <500ms, hotkeys globales, multi-monitor |
-| [QA-07_Regresion_Patches.md](./Documentacion/QA/QA-07_Regresion_Patches.md) | Workflow por patch ZZZ (~6 sem): backup → onboarding → re-scrape → recálculo → L4 → docs |
+| [QA/README.md](Documentacion/QA/README.md) | Plan maestro: 5 capas, matriz cobertura, criterios aceptación, roadmap por fase |
+| [QA-01_ETL_Integridad.md](Documentacion/QA/QA-01_ETL_Integridad.md) | Smoke test post-DB, baseline filas, constraints CHECK, idempotencia migraciones, política backups, awakenings RNF-02 |
+| [QA-02_Scoring_y_Optimizador.md](Documentacion/QA/QA-02_Scoring_y_Optimizador.md) | RF-06 + RF-14 golden cases (7 casos scoring + caso "la roca" + build full), validación cruzada Prydwen |
+| [QA-03_OCR_y_Captura.md](Documentacion/QA/QA-03_OCR_y_Captura.md) | RF-04/05/09 templates detector, golden set OCR (50 capturas con JSON), edge cases visuales, diff PRE/POST upgrade |
+| [QA-04_IA_Catalogadora.md](Documentacion/QA/QA-04_IA_Catalogadora.md) | RF-12 schema validator, hallucination detection, cap costo, prompt caching, **roadmap modelo local post-v1** (RX 9060 XT 16GB, opciones Ollama/llama.cpp, criterios switch) |
+| [QA-05_Lategame_y_Bayesiano.md](Documentacion/QA/QA-05_Lategame_y_Bayesiano.md) | RF-13 captura F11, buckets fijos, retro-feedback bayesiano (caso Ellen+Dialyn paso a paso), `congelado=1` |
+| [QA-06_Performance_y_UX.md](Documentacion/QA/QA-06_Performance_y_UX.md) | Decorator `@measure_latency`, tabla `metrics_latency` (a crear), pipeline disco→toast <500ms, hotkeys globales, multi-monitor |
+| [QA-07_Regresion_Patches.md](Documentacion/QA/QA-07_Regresion_Patches.md) | Workflow por patch ZZZ (~6 sem): backup → onboarding → re-scrape → recálculo → L4 → docs |
 
 **Pendientes operativos del propio QA** (consolidados en QA/README §10):
 - Crear migración `2026-05-XX_06_metrics_latency.sql` con tabla `metrics_latency` + decorator `@measure_latency`.

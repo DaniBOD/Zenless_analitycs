@@ -17,9 +17,9 @@
 > `app/ui/tokens.py`, `app/ui/live_panel.py`.
 >
 > Briefs previos vigentes que este NO reemplaza:
-> [`BRIEF_toast_desmontado_y_legibilidad.md`](./BRIEF_toast_desmontado_y_legibilidad.md) (la escala
+> [`BRIEF_toast_desmontado_y_legibilidad.md`](BRIEF_toast_desmontado_y_legibilidad.md) (la escala
 > tipográfica sigue pendiente y aplica a todo lo de acá) y
-> [`BRIEF_card_reemplazado.md`](./BRIEF_card_reemplazado.md).
+> [`BRIEF_card_reemplazado.md`](BRIEF_card_reemplazado.md).
 
 ---
 

@@ -4,7 +4,7 @@ Esta carpeta agrupa la documentación del optimizador de W-Engines por personaje
 
 ## Índice
 
-1. **[RF-Logic_Optimizador_Armas.md](./RF-Logic_Optimizador_Armas.md)** — Documento maestro. Cubre alcance v1 (ranking ideal del catálogo + ranking de inventario disponible + build full coordinada con RF-06), modelado híbrido de pasivas (`weapon_passives_structured` con triggers/modifiers/uptime + texto fallback), perfiles de contenido (`content_profiles` con TTL boss, uptime HP>50%, chain attacks/min, etc.), algoritmo de scoring con uptime contextual (caso paradigmático: "la roca" / Núcleo Fosilizado Precioso → S+ en DA, A en Shiyu, B en HZ), build full RF-06+RF-14, integración con RF-12 (uptime de triggers `team_has_*`) y RF-13 (recalibración bayesiana de `content_profiles` y tier personal), pipeline de scraping Prydwen, output JSON de ejemplo y log de decisiones cerradas. **Empezar por aquí.**
+1. **[RF-Logic_Optimizador_Armas.md](RF-Logic_Optimizador_Armas.md)** — Documento maestro. Cubre alcance v1 (ranking ideal del catálogo + ranking de inventario disponible + build full coordinada con RF-06), modelado híbrido de pasivas (`weapon_passives_structured` con triggers/modifiers/uptime + texto fallback), perfiles de contenido (`content_profiles` con TTL boss, uptime HP>50%, chain attacks/min, etc.), algoritmo de scoring con uptime contextual (caso paradigmático: "la roca" / Núcleo Fosilizado Precioso → S+ en DA, A en Shiyu, B en HZ), build full RF-06+RF-14, integración con RF-12 (uptime de triggers `team_has_*`) y RF-13 (recalibración bayesiana de `content_profiles` y tier personal), pipeline de scraping Prydwen, output JSON de ejemplo y log de decisiones cerradas. **Empezar por aquí.**
 
 ## Diagramas de flujo (segmentados v4)
 

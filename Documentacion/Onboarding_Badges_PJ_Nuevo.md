@@ -7,7 +7,7 @@
 > dueño correcto, la métrica sin moverse, y el lazo del §3 cerrándose en el slot 2 tal cual está
 > descrito. Dejó dos datos útiles, los dos en §3.
 >
-> Esto es **aparte** del [onboarding de datos](./Onboarding_Nuevo_PJ.md) (filas en `agents`,
+> Esto es **aparte** del [onboarding de datos](Onboarding_Nuevo_PJ.md) (filas en `agents`,
 > thresholds, sinergias). Aquel carga lo que el PJ *es*; este enseña a *reconocerlo*.
 >
 > **Tiempo:** ~10 minutos, casi todo navegando el juego.
@@ -35,7 +35,7 @@ Un PJ sin refs **no rompe nada**: la superficie se abstiene, que es el comportam
 
 El PJ tiene que existir en la tabla `agents` con su nombre canónico — las librerías **canonizan el
 label contra el roster antes de guardar**, y un PJ que no está en la DB simplemente no se aprende.
-Si todavía no lo cargaste, hacé primero [`Onboarding_Nuevo_PJ.md`](./Onboarding_Nuevo_PJ.md) §3.
+Si todavía no lo cargaste, hacé primero [`Onboarding_Nuevo_PJ.md`](Onboarding_Nuevo_PJ.md) §3.
 
 Equipale sus 6 discos y su W-Engine. La cosecha solo aprende del **disco equipado**, porque ahí el
 juego mismo confirma de quién es (el botón dice "Desequipar").
@@ -134,7 +134,7 @@ IMANES (a quién van los wrong): Billy Estelar x4
   `tools\clean_lib_refs.py --grid "<PJ>"` y volvé a cosechar ese PJ solo.
 - Los 4 `Billy Estelar` son un límite conocido, no una regresión: Billy y Billy Estelar son el
   mismo personaje con distinto atuendo (ver §7 del
-  [Dev_IA](./Dev_IA/2026-08-02_FIX_Colapso_Librerias_Badges.md)).
+  [Dev_IA](Dev_IA/documentacion_cruda/2026-08/2026-08-02_FIX_Colapso_Librerias_Badges.md)).
 
 Y la salud general de las tres librerías:
 
@@ -200,4 +200,4 @@ nombrando con arte `-ico`.
 ---
 
 *Ver el detalle técnico y las mediciones en
-[`Dev_IA/2026-08-02_FIX_Colapso_Librerias_Badges.md`](./Dev_IA/2026-08-02_FIX_Colapso_Librerias_Badges.md).*
+[`Dev_IA/2026-08-02_FIX_Colapso_Librerias_Badges.md`](Dev_IA/documentacion_cruda/2026-08/2026-08-02_FIX_Colapso_Librerias_Badges.md).*

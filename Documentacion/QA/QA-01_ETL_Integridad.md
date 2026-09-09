@@ -346,7 +346,7 @@ rm /tmp/restore_test.db
 | Diario (cron RF-11) | §1 smoke + comparar `agents`/`weapons`/`disc_sets` contra baseline |
 | Semanal | §3 todos los CHECKs + §7 awakenings stale |
 | Trimestral | §8 test de restauración + auditoría completa de FKs |
-| Por patch ZZZ | Ver [QA-07_Regresion_Patches.md](./QA-07_Regresion_Patches.md) |
+| Por patch ZZZ | Ver [QA-07_Regresion_Patches.md](QA-07_Regresion_Patches.md) |
 
 ---
 

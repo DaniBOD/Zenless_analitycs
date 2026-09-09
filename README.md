@@ -139,7 +139,7 @@ powershell -ExecutionPolicy Bypass -File tools\rebuild.ps1
 ## Reglas no negociables
 
 Cuatro restricciones que atraviesan todo el código. Están enunciadas en
-[`CLAUDE.md`](./CLAUDE.md) y se hacen cumplir en los tests.
+[`CLAUDE.md`](CLAUDE.md) y se hacen cumplir en los tests.
 
 - **RNF-01 · ETL sin fallas.** Toda escritura a la base va con backup previo, transacción y
   `PRAGMA foreign_key_check` + `integrity_check`. Los audits **no mutan** lo que auditan, y se
@@ -158,19 +158,19 @@ El repositorio documenta el proceso, no sólo el resultado.
 
 | dónde | qué hay |
 |---|---|
-| [`Documentacion/Dev_IA/00_Practicas_Aprendidas.md`](./Documentacion/Dev_IA/00_Practicas_Aprendidas.md) | **empezá por acá** — 12 reglas, cada una con el error concreto que la generó |
-| [`Documentacion/Dev_IA/`](./Documentacion/Dev_IA/) | 67 bitácoras de implementación, diagnóstico y QA |
-| [`Documentacion/RF_*/`](./Documentacion/) | diseño cerrado de cada requerimiento funcional |
-| [`Documentacion/Modelo_Relacional/`](./Documentacion/Modelo_Relacional/) | schema canónico y diagrama ER |
-| [`Documentacion/QA/`](./Documentacion/QA/) | plan de pruebas y regresión por parches |
-| [`project-context-IA.md`](./project-context-IA.md) | snapshot maestro del estado |
-| [`CLAUDE.md`](./CLAUDE.md) | instrucciones para el agente que trabaja en el repo |
+| [`Documentacion/Dev_IA/00_Practicas_Aprendidas.md`](Documentacion/Dev_IA/00_Practicas_Aprendidas.md) | **empezá por acá** — 12 reglas, cada una con el error concreto que la generó |
+| [`Documentacion/Dev_IA/`](Documentacion/Dev_IA) | 67 bitácoras de implementación, diagnóstico y QA |
+| [`Documentacion/RF_*/`](Documentacion) | diseño cerrado de cada requerimiento funcional |
+| [`Documentacion/Modelo_Relacional/`](Documentacion/Modelo_Relacional) | schema canónico y diagrama ER |
+| [`Documentacion/QA/`](Documentacion/QA) | plan de pruebas y regresión por parches |
+| [`project-context-IA.md`](project-context-IA.md) | snapshot maestro del estado |
+| [`CLAUDE.md`](CLAUDE.md) | instrucciones para el agente que trabaja en el repo |
 
 Los `Dev_IA/` son lo más interesante para alguien de afuera: varios documentan **hipótesis mías que
 la medición desmintió**, que suelen valer más que el arreglo que salió después.
 
 El README anterior —1214 líneas de diseño de la Fase 1— se archivó en
-[`Documentacion/README_Referencia_Fase1_2026-05.md`](./Documentacion/README_Referencia_Fase1_2026-05.md).
+[`Documentacion/README_Referencia_Fase1_2026-05.md`](Documentacion/README_Referencia_Fase1_2026-05.md).
 
 ## Stack
 

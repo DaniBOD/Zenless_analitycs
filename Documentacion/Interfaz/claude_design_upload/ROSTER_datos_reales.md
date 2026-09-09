@@ -3,7 +3,7 @@
 > Volcado directo de `db/danibod_zzz_v2.db` el **2026-08-17**. Es el dato con el que la pantalla
 > Roster tiene que probarse: distribuciones reales, no una grilla pareja de ejemplo.
 
-> Acompaña a [`BRIEF_roster_y_confirmaciones_pasivas.md`](./BRIEF_roster_y_confirmaciones_pasivas.md).
+> Acompaña a [`BRIEF_roster_y_confirmaciones_pasivas.md`](BRIEF_roster_y_confirmaciones_pasivas.md).
 
 ---
 

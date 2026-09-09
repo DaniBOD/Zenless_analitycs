@@ -4,7 +4,7 @@ Esta carpeta agrupa la documentación de la lógica del optimizador de discos po
 
 ## Índice
 
-1. **[RF-Logic_Optimizador_Build.md](./RF-Logic_Optimizador_Build.md)** — Documento maestro. Define alcance, modelo de datos consumido, algoritmo greedy + bonus pass, scoring engine compartido con RF-04 §11, triggers manual y automático, performance esperada, output de ejemplo y log de decisiones cerradas. **Empezar por aquí.**
+1. **[RF-Logic_Optimizador_Build.md](RF-Logic_Optimizador_Build.md)** — Documento maestro. Define alcance, modelo de datos consumido, algoritmo greedy + bonus pass, scoring engine compartido con RF-04 §11, triggers manual y automático, performance esperada, output de ejemplo y log de decisiones cerradas. **Empezar por aquí.**
 
 ## Diagramas de flujo (segmentados v4)
 

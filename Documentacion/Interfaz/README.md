@@ -6,11 +6,11 @@ Catálogo de pantallas del `.exe` (RF-11) + **mapa de flujos de usuario** que do
 
 - **`README.md`** (este archivo) — pantallas + flujos + hotkeys + principio rector.
 - **[`Brief_Claude_Design.md`](./Brief_Claude_Design.md)** — brief para usar con Claude Design (prompt + paleta + iconos por contexto + pantallas pendientes).
-- **[`referencias_visuales/`](./referencias_visuales/)** — 6 capturas del juego ZZZ + paleta extraída píxel a píxel.
-- **[`splash_arts/`](./splash_arts/)** — destino para splash arts oficiales de los 45 PJs (script de descarga incluido).
-- **[`Facciones_Logos/`](./Facciones_Logos/)** — 13 logos canónicos de facciones del roster + 2 extras.
-- **[`Set_Discos_Logo/`](./Set_Discos_Logo/)** — 26 logos de drive discs renombrados a slug español.
-- **[`Engines_icons/`](./Engines_icons/)** — 38 logos de W-Engines (31 confirmados + 7 tentativos).
+- **[`referencias_visuales/`](referencias_visuales)** — 6 capturas del juego ZZZ + paleta extraída píxel a píxel.
+- **[`splash_arts/`](splash_arts)** — destino para splash arts oficiales de los 45 PJs (script de descarga incluido).
+- **[`Facciones_Logos/`](Facciones_Logos)** — 13 logos canónicos de facciones del roster + 2 extras.
+- **[`Set_Discos_Logo/`](Set_Discos_Logo)** — 26 logos de drive discs renombrados a slug español.
+- **[`Engines_icons/`](Engines_icons)** — 38 logos de W-Engines (31 confirmados + 7 tentativos).
 - **`mockups/`** — exports de Claude Design (toast variantes + panel Captura en vivo ya generados).
 
 ---

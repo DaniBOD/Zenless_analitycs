@@ -505,8 +505,8 @@ Los descartados y los equipados no se re-evalúan (ya no son candidatos activos)
 
 ## 13. Referencias
 
-- Iteración 1 de análisis de capturas: [`Analisis_Capturas_Iteracion_1.md`](./Analisis_Capturas_Iteracion_1.md) (misma carpeta).
-- Catálogo de screenshots requeridos: [`Catalogo_Screenshots_Requeridos.md`](./Catalogo_Screenshots_Requeridos.md) (misma carpeta).
+- Iteración 1 de análisis de capturas: [`Analisis_Capturas_Iteracion_1.md`](Analisis_Capturas_Iteracion_1.md) (misma carpeta).
+- Catálogo de screenshots requeridos: [`Catalogo_Screenshots_Requeridos.md`](Catalogo_Screenshots_Requeridos.md) (misma carpeta).
 - Diagramas de flujo: [`../Diagramas de flujos/`](../Diagramas%20de%20flujos/) — versiones v2 post-capturas.
 - Screenshots originales: `Screenshots_Triggers/Discos_Triggers/` (raíz del proyecto).
 - Schema actual: `db/danibod_zzz_v2.db`.

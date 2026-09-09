@@ -1,7 +1,7 @@
 # Onboarding de assets nuevos (Engines / Sets / Facciones)
 
 **Última actualización:** 2026-04-26
-**Documento hermano:** [`Onboarding_Nuevo_PJ.md`](./Onboarding_Nuevo_PJ.md) (cubre PJs).
+**Documento hermano:** [`Onboarding_Nuevo_PJ.md`](Onboarding_Nuevo_PJ.md) (cubre PJs).
 **Trigger típico:** cada patch de ZZZ trae 1-3 W-Engines nuevos, 0-1 sets nuevos y ocasionalmente facciones nuevas.
 
 Este doc complementa al onboarding de PJs y materializa el RNF-05 (extensibilidad por patches) para los **otros 3 tipos de assets** que el sistema maneja: armas (W-Engines), sets de discos, y facciones.

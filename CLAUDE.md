@@ -12,7 +12,7 @@
 
 En este orden, leé estos 4 archivos:
 
-0. **[`Documentacion/Dev_IA/00_Practicas_Aprendidas.md`](./Documentacion/Dev_IA/00_Practicas_Aprendidas.md)** — **empezá por acá.** No es teoría: cada regla salió de un error concreto de este proyecto, y varias se repitieron disfrazadas de problemas distintos. Los titulares, para que no haya excusa de no haberlo abierto:
+0. **[`Documentacion/Dev_IA/00_Practicas_Aprendidas.md`](Documentacion/Dev_IA/00_Practicas_Aprendidas.md)** — **empezá por acá.** No es teoría: cada regla salió de un error concreto de este proyecto, y varias se repitieron disfrazadas de problemas distintos. Los titulares, para que no haya excusa de no haberlo abierto:
 
    | | |
    |---|---|
@@ -31,11 +31,11 @@ En este orden, leé estos 4 archivos:
    | **E1** | Una investigación sin archivo no se puede revisar ni retomar. |
    | **E3** | Un cambio por vez, y el diagnóstico primero. |
 
-1. **[`project-context-IA.md`](./project-context-IA.md)** (~300 líneas) — snapshot maestro. Estado de la DB, RFs, decisiones cerradas, glosario. Es el archivo *autoritativo*.
-2. **[`Documentacion/Roadmap_Implementacion/Roadmap_Motor_Captura_Scoring.md`](./Documentacion/Roadmap_Implementacion/Roadmap_Motor_Captura_Scoring.md)** — Fase 2 (motor de captura + scoring). Define los 7 sub-fases con criterios de aceptación duros por hito. **Esta es tu hoja de ruta**.
+1. **[`project-context-IA.md`](project-context-IA.md)** (~300 líneas) — snapshot maestro. Estado de la DB, RFs, decisiones cerradas, glosario. Es el archivo *autoritativo*.
+2. **[`Documentacion/Roadmap_Implementacion/Roadmap_Motor_Captura_Scoring.md`](Documentacion/Roadmap_Implementacion/Roadmap_Motor_Captura_Scoring.md)** — Fase 2 (motor de captura + scoring). Define los 7 sub-fases con criterios de aceptación duros por hito. **Esta es tu hoja de ruta**.
 3. **Cuando llegues al hito que toca, leé el RF correspondiente** (`Documentacion/RF_*/RF-Logic_*.md`). Si hay discrepancia entre código y RF, manda el RF.
 
-El `README.md` de la raíz es la **portada del repositorio** (para humanos que llegan de GitHub), no una fuente para vos: no tiene detalle operativo. La referencia profunda de la Fase 1 —las 1214 líneas que antes estaban ahí— quedó archivada en [`Documentacion/README_Referencia_Fase1_2026-05.md`](./Documentacion/README_Referencia_Fase1_2026-05.md); consultala sólo por un detalle puntual, y recordá que su §2 y §12 están desactualizadas.
+El `README.md` de la raíz es la **portada del repositorio** (para humanos que llegan de GitHub), no una fuente para vos: no tiene detalle operativo. La referencia profunda de la Fase 1 —las 1214 líneas que antes estaban ahí— quedó archivada en [`Documentacion/README_Referencia_Fase1_2026-05.md`](Documentacion/README_Referencia_Fase1_2026-05.md); consultala sólo por un detalle puntual, y recordá que su §2 y §12 están desactualizadas.
 
 ---
 

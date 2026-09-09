@@ -4,7 +4,7 @@ Esta carpeta agrupa la documentación del sistema de validación empírica de eq
 
 ## Índice
 
-1. **[RF-Logic_Lategame_Validation.md](./RF-Logic_Lategame_Validation.md)** — Documento maestro. Cubre las 3 capas (registro de runs con OCR del breakdown DMG, tier list calibrada vs Prydwen, retro-feedback bayesiano sobre RF-12), modelo de datos (8 tablas nuevas: `enemies`, `enemy_resistances`, `shiyu_cycles`, `da_cycles`, `lategame_runs`, `lategame_run_damage`, `tier_list_personal`, `prydwen_tier_snapshots`, `team_synergy_adjustments`), pipeline de captura manual con hotkey F11, algoritmo del tier list con buckets fijos, ajuste bayesiano de confianza, scrapers de Hakush.in + Prydwen, performance esperada, output JSON de ejemplo y log de decisiones cerradas. **Empezar por aquí.**
+1. **[RF-Logic_Lategame_Validation.md](RF-Logic_Lategame_Validation.md)** — Documento maestro. Cubre las 3 capas (registro de runs con OCR del breakdown DMG, tier list calibrada vs Prydwen, retro-feedback bayesiano sobre RF-12), modelo de datos (8 tablas nuevas: `enemies`, `enemy_resistances`, `shiyu_cycles`, `da_cycles`, `lategame_runs`, `lategame_run_damage`, `tier_list_personal`, `prydwen_tier_snapshots`, `team_synergy_adjustments`), pipeline de captura manual con hotkey F11, algoritmo del tier list con buckets fijos, ajuste bayesiano de confianza, scrapers de Hakush.in + Prydwen, performance esperada, output JSON de ejemplo y log de decisiones cerradas. **Empezar por aquí.**
 
 ## Diagramas de flujo (segmentados v4)
 

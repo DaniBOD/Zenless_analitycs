@@ -323,7 +323,7 @@ Daniel registra en `Documentacion/QA/evidencia/RF-12/<fecha>_<caso>.md` con:
 - Resultado (estrellas, tiempo).
 - Su criterio (¿la IA acertó?).
 
-Este registro alimenta el bayesiano de RF-13 — ver [QA-05_Lategame_y_Bayesiano.md](./QA-05_Lategame_y_Bayesiano.md).
+Este registro alimenta el bayesiano de RF-13 — ver [QA-05_Lategame_y_Bayesiano.md](QA-05_Lategame_y_Bayesiano.md).
 
 ---
 

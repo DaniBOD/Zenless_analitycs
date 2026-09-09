@@ -1,7 +1,7 @@
 # Assets para Claude Design — qué hay en esta carpeta
 
-> Acompaña a [`BRIEF_roster_y_confirmaciones_pasivas.md`](./BRIEF_roster_y_confirmaciones_pasivas.md)
-> y a [`ROSTER_datos_reales.md`](./ROSTER_datos_reales.md).
+> Acompaña a [`BRIEF_roster_y_confirmaciones_pasivas.md`](BRIEF_roster_y_confirmaciones_pasivas.md)
+> y a [`ROSTER_datos_reales.md`](ROSTER_datos_reales.md).
 
 ## `assets/` — 9.7 MB, 298 archivos
 

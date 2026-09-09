@@ -40,19 +40,19 @@ El proyecto trabaja con **5 capas complementarias**. Cada una atrapa una clase d
 
 | RF | L1 ETL | L2 Unit | L3 Integration | L4 Real | L5 Cruzada | Doc QA |
 |----|:------:|:-------:|:--------------:|:-------:|:----------:|--------|
-| RF-01 (roster) | ✅ | — | — | ✅ | ✅ | [QA-01_ETL_Integridad.md](./QA-01_ETL_Integridad.md) |
-| RF-02 (inventario discos) | ✅ | — | — | ✅ | ✅ | [QA-01_ETL_Integridad.md](./QA-01_ETL_Integridad.md) |
-| RF-03 (inventario armas) | ✅ | — | — | ✅ | ✅ | [QA-01_ETL_Integridad.md](./QA-01_ETL_Integridad.md) |
-| RF-04 (sync equipo) | ✅ | ✅ | ✅ | ✅ | — | [QA-03_OCR_y_Captura.md](./QA-03_OCR_y_Captura.md) |
-| RF-05 (sync upgrade) | ✅ | ✅ | ✅ | ✅ | — | [QA-03_OCR_y_Captura.md](./QA-03_OCR_y_Captura.md) |
-| RF-06 (optimizador build) | — | ✅ | ✅ | ✅ | ✅ | [QA-02_Scoring_y_Optimizador.md](./QA-02_Scoring_y_Optimizador.md) |
-| RF-09 (OCR) | — | ✅ | ✅ | ✅ | — | [QA-03_OCR_y_Captura.md](./QA-03_OCR_y_Captura.md) |
-| RF-11 (UI .exe) | — | — | ✅ | ✅ | — | [QA-06_Performance_y_UX.md](./QA-06_Performance_y_UX.md) |
-| RF-12 (team-aware IA) | ✅ | ✅ | ✅ | ✅ | ✅ | [QA-04_IA_Catalogadora.md](./QA-04_IA_Catalogadora.md) |
-| RF-13 (lategame) | ✅ | ✅ | ✅ | ✅ | ✅ | [QA-05_Lategame_y_Bayesiano.md](./QA-05_Lategame_y_Bayesiano.md) |
-| RF-14 (W-Engines) | ✅ | ✅ | ✅ | ✅ | ✅ | [QA-02_Scoring_y_Optimizador.md](./QA-02_Scoring_y_Optimizador.md) |
-| Transversal latencia | — | ✅ | ✅ | ✅ | — | [QA-06_Performance_y_UX.md](./QA-06_Performance_y_UX.md) |
-| Por patch ZZZ | ✅ | — | ✅ | ✅ | ✅ | [QA-07_Regresion_Patches.md](./QA-07_Regresion_Patches.md) |
+| RF-01 (roster) | ✅ | — | — | ✅ | ✅ | [QA-01_ETL_Integridad.md](QA-01_ETL_Integridad.md) |
+| RF-02 (inventario discos) | ✅ | — | — | ✅ | ✅ | [QA-01_ETL_Integridad.md](QA-01_ETL_Integridad.md) |
+| RF-03 (inventario armas) | ✅ | — | — | ✅ | ✅ | [QA-01_ETL_Integridad.md](QA-01_ETL_Integridad.md) |
+| RF-04 (sync equipo) | ✅ | ✅ | ✅ | ✅ | — | [QA-03_OCR_y_Captura.md](QA-03_OCR_y_Captura.md) |
+| RF-05 (sync upgrade) | ✅ | ✅ | ✅ | ✅ | — | [QA-03_OCR_y_Captura.md](QA-03_OCR_y_Captura.md) |
+| RF-06 (optimizador build) | — | ✅ | ✅ | ✅ | ✅ | [QA-02_Scoring_y_Optimizador.md](QA-02_Scoring_y_Optimizador.md) |
+| RF-09 (OCR) | — | ✅ | ✅ | ✅ | — | [QA-03_OCR_y_Captura.md](QA-03_OCR_y_Captura.md) |
+| RF-11 (UI .exe) | — | — | ✅ | ✅ | — | [QA-06_Performance_y_UX.md](QA-06_Performance_y_UX.md) |
+| RF-12 (team-aware IA) | ✅ | ✅ | ✅ | ✅ | ✅ | [QA-04_IA_Catalogadora.md](QA-04_IA_Catalogadora.md) |
+| RF-13 (lategame) | ✅ | ✅ | ✅ | ✅ | ✅ | [QA-05_Lategame_y_Bayesiano.md](QA-05_Lategame_y_Bayesiano.md) |
+| RF-14 (W-Engines) | ✅ | ✅ | ✅ | ✅ | ✅ | [QA-02_Scoring_y_Optimizador.md](QA-02_Scoring_y_Optimizador.md) |
+| Transversal latencia | — | ✅ | ✅ | ✅ | — | [QA-06_Performance_y_UX.md](QA-06_Performance_y_UX.md) |
+| Por patch ZZZ | ✅ | — | ✅ | ✅ | ✅ | [QA-07_Regresion_Patches.md](QA-07_Regresion_Patches.md) |
 
 ---
 
@@ -99,7 +99,7 @@ Aplican a todos los RFs salvo override explícito en su QA específico.
 | Pruebas reales en juego (L4) | **Daniel** | Continuo durante el uso normal |
 | Captura de regresiones | **Daniel** + IA agente | Cuando aparece comportamiento inesperado |
 | Validación cruzada con fuentes (L5) | Scrapers automáticos + revisión Daniel | Semanal + post-patch |
-| Revisión por patch (L4 + L5) | **Daniel** con checklist [QA-07](./QA-07_Regresion_Patches.md) | Cada patch ZZZ (~6 semanas) |
+| Revisión por patch (L4 + L5) | **Daniel** con checklist [QA-07](QA-07_Regresion_Patches.md) | Cada patch ZZZ (~6 semanas) |
 | Triage de hallazgos | IA agente con consulta a Daniel | On-demand al recibir bug |
 
 **Daniel hace L4** porque las pruebas reales requieren jugar ZZZ con la app corriendo y observar el toast/panel/dashboard. Ningún CI puede simular esto sin violar TOS.
@@ -130,12 +130,12 @@ Sincronizado con el roadmap principal del proyecto.
 
 | Fase | RFs | QA prioritario | Salidas esperadas |
 |------|-----|----------------|-------------------|
-| **Fase 1.x (cerrada)** | RF-01/02/03 + 5 migraciones | L1 ETL sobre DB actual ([QA-01](./QA-01_ETL_Integridad.md)) | Snapshot de checks aplicados a `danibod_zzz_v2.db` 2026-05-01 |
-| **Fase 2** (RF-04/05/06/09/11 base) | Scoring + optimizador + OCR + UI | L2 unit golden cases ([QA-02](./QA-02_Scoring_y_Optimizador.md), [QA-03](./QA-03_OCR_y_Captura.md)) + L4 toasts reales | 50+ unit tests verdes; toast disparado en <500 ms p99 sobre 30 frames reales |
-| **Fase 3** (RF-12) | Team-aware IA | L1 sinergias canónicas + L5 sanity ([QA-04](./QA-04_IA_Catalogadora.md)) | Caso Ellen+Dialyn pasa con confianza ≥0.85; cap mensual respetado |
-| **Fase 4** (RF-13) | Lategame + bayesiano | L2 buckets + L3 pipeline F11 ([QA-05](./QA-05_Lategame_y_Bayesiano.md)) | 20 runs reales validados; tier list reproduce delta vs Prydwen documentado |
-| **Fase 5** (RF-14) | W-Engines | L2 scoring contextual ([QA-02](./QA-02_Scoring_y_Optimizador.md)) | Caso "la roca" ranquea S+ DA / B HZ; armas `trigger_tipo='always'` invariantes a contenido |
-| **Continuo** | Patches ZZZ | L5 + L1 ([QA-07](./QA-07_Regresion_Patches.md)) | Checklist completo por patch sin pérdida de integridad |
+| **Fase 1.x (cerrada)** | RF-01/02/03 + 5 migraciones | L1 ETL sobre DB actual ([QA-01](QA-01_ETL_Integridad.md)) | Snapshot de checks aplicados a `danibod_zzz_v2.db` 2026-05-01 |
+| **Fase 2** (RF-04/05/06/09/11 base) | Scoring + optimizador + OCR + UI | L2 unit golden cases ([QA-02](QA-02_Scoring_y_Optimizador.md), [QA-03](QA-03_OCR_y_Captura.md)) + L4 toasts reales | 50+ unit tests verdes; toast disparado en <500 ms p99 sobre 30 frames reales |
+| **Fase 3** (RF-12) | Team-aware IA | L1 sinergias canónicas + L5 sanity ([QA-04](QA-04_IA_Catalogadora.md)) | Caso Ellen+Dialyn pasa con confianza ≥0.85; cap mensual respetado |
+| **Fase 4** (RF-13) | Lategame + bayesiano | L2 buckets + L3 pipeline F11 ([QA-05](QA-05_Lategame_y_Bayesiano.md)) | 20 runs reales validados; tier list reproduce delta vs Prydwen documentado |
+| **Fase 5** (RF-14) | W-Engines | L2 scoring contextual ([QA-02](QA-02_Scoring_y_Optimizador.md)) | Caso "la roca" ranquea S+ DA / B HZ; armas `trigger_tipo='always'` invariantes a contenido |
+| **Continuo** | Patches ZZZ | L5 + L1 ([QA-07](QA-07_Regresion_Patches.md)) | Checklist completo por patch sin pérdida de integridad |
 
 ---
 
@@ -144,7 +144,7 @@ Sincronizado con el roadmap principal del proyecto.
 1. **Antes de implementar un RF nuevo:** abrir su QA específico, escribir los unit tests planeados como TODO, definir los golden cases en código.
 2. **Durante implementación:** ir marcando golden cases verdes; mantener los que fallan visibles en CI.
 3. **Antes de pasar a "Cerrado en producción":** validar L4 sobre 10+ casos reales con Daniel; documentar capturas como evidencia bajo `Documentacion/QA/evidencia/<RF>/<fecha>/`.
-4. **Tras un patch ZZZ:** seguir [QA-07_Regresion_Patches.md](./QA-07_Regresion_Patches.md) en orden.
+4. **Tras un patch ZZZ:** seguir [QA-07_Regresion_Patches.md](QA-07_Regresion_Patches.md) en orden.
 5. **Si aparece un bug en producción:** crear regresión reproducible (script en `app/tests/regressions/<fecha>_<descripcion>.py`) **antes** de fixear. La regresión queda como L2 perpetuo.
 
 ---
@@ -153,13 +153,13 @@ Sincronizado con el roadmap principal del proyecto.
 
 | Doc | Cubre | Cuándo consultarlo |
 |-----|-------|--------------------|
-| [QA-01_ETL_Integridad.md](./QA-01_ETL_Integridad.md) | L1: schema, FK, integridad, migraciones, backups | Al tocar DB |
-| [QA-02_Scoring_y_Optimizador.md](./QA-02_Scoring_y_Optimizador.md) | L2/L3: RF-06 + RF-14, golden cases scoring, top-3 builds | Al implementar `scoring.py`, `optimizer.py`, `weapon_*` |
-| [QA-03_OCR_y_Captura.md](./QA-03_OCR_y_Captura.md) | L2/L4: RF-04/05/09 OCR híbrido, edge cases visuales | Al implementar `ocr_*`, `sync_*` |
-| [QA-04_IA_Catalogadora.md](./QA-04_IA_Catalogadora.md) | L1/L5: RF-12 sinergias IA, hallucination, cap costo, modelo local roadmap | Al implementar `ai_catalog.py`, `team_optimizer.py` |
-| [QA-05_Lategame_y_Bayesiano.md](./QA-05_Lategame_y_Bayesiano.md) | L2/L3/L5: RF-13 captura F11, tier list, retro-feedback | Al implementar `lategame_capture.py`, `tier_list_calculator.py`, `retro_feedback.py` |
-| [QA-06_Performance_y_UX.md](./QA-06_Performance_y_UX.md) | L4 transversal: presupuestos latencia, RAM, hotkeys, accesibilidad | Al medir cualquier superficie sensible a latencia |
-| [QA-07_Regresion_Patches.md](./QA-07_Regresion_Patches.md) | L1+L4+L5: checklist por patch ZZZ | Cada ~6 semanas al actualizar el juego |
+| [QA-01_ETL_Integridad.md](QA-01_ETL_Integridad.md) | L1: schema, FK, integridad, migraciones, backups | Al tocar DB |
+| [QA-02_Scoring_y_Optimizador.md](QA-02_Scoring_y_Optimizador.md) | L2/L3: RF-06 + RF-14, golden cases scoring, top-3 builds | Al implementar `scoring.py`, `optimizer.py`, `weapon_*` |
+| [QA-03_OCR_y_Captura.md](QA-03_OCR_y_Captura.md) | L2/L4: RF-04/05/09 OCR híbrido, edge cases visuales | Al implementar `ocr_*`, `sync_*` |
+| [QA-04_IA_Catalogadora.md](QA-04_IA_Catalogadora.md) | L1/L5: RF-12 sinergias IA, hallucination, cap costo, modelo local roadmap | Al implementar `ai_catalog.py`, `team_optimizer.py` |
+| [QA-05_Lategame_y_Bayesiano.md](QA-05_Lategame_y_Bayesiano.md) | L2/L3/L5: RF-13 captura F11, tier list, retro-feedback | Al implementar `lategame_capture.py`, `tier_list_calculator.py`, `retro_feedback.py` |
+| [QA-06_Performance_y_UX.md](QA-06_Performance_y_UX.md) | L4 transversal: presupuestos latencia, RAM, hotkeys, accesibilidad | Al medir cualquier superficie sensible a latencia |
+| [QA-07_Regresion_Patches.md](QA-07_Regresion_Patches.md) | L1+L4+L5: checklist por patch ZZZ | Cada ~6 semanas al actualizar el juego |
 
 ---
 

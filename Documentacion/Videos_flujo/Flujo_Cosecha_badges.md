@@ -5,7 +5,7 @@
 **Flujo:** la **cosecha full-roster completa** — para CADA uno de los 47 PJs el recorrido
 canónico `Pj_stats → Equipamiento → Slot 1 … Slot 6`, posando **~10 s por disco**.
 
-A diferencia de [`Flujo_Grillas_Badges.md`](./Flujo_Grillas_Badges.md) (un solo PJ, una sola
+A diferencia de [`Flujo_Grillas_Badges.md`](Flujo_Grillas_Badges.md) (un solo PJ, una sola
 grilla, fixture liviano de 271 MB), este es el **fixture end-to-end pesado**: representa la
 pasada de cosecha entera tal cual se ejecuta en vivo con `qa_launch -BadgeHarvest`. Su razón
 de ser es doble:

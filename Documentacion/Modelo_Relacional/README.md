@@ -2,8 +2,8 @@
 
 **Última actualización:** 2026-04-25
 **Total de tablas:** 30 (5 migraciones aplicables)
-**Diagrama:** [Modelo_Relacional_v1.svg](./Modelo_Relacional_v1.svg) · [PNG](./Modelo_Relacional_v1.png)
-**Script de regeneración:** [render_mr.py](./render_mr.py)
+**Diagrama:** [Modelo_Relacional_v1.svg](Modelo_Relacional_v1.svg) · [PNG](Modelo_Relacional_v1.png)
+**Script de regeneración:** [render_mr.py](render_mr.py)
 
 Este documento describe el modelo relacional completo de la base, post-aplicación de las 5 migraciones (`01_archetypes_and_scoring` ya aplicada; `02..05` pendientes de implementación pero con SQL definitivo en `db/migrations/`).
 

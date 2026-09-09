@@ -384,7 +384,7 @@ Detector debe identificar la pantalla; si no es la esperada:
 - Si Daniel corrige y aprueba, insertar.
 
 ### 7.4 Enemigo no está en `enemies`
-Run en frente con boss recién agregado al juego. Inserción debe permitirlo (FK no requiere existencia de enemigo concreto en `lategame_runs` — el FK es a través de `shiyu_cycles.frentes` JSON). Pero el log debe alertar al patch checklist [QA-07](./QA-07_Regresion_Patches.md).
+Run en frente con boss recién agregado al juego. Inserción debe permitirlo (FK no requiere existencia de enemigo concreto en `lategame_runs` — el FK es a través de `shiyu_cycles.frentes` JSON). Pero el log debe alertar al patch checklist [QA-07](QA-07_Regresion_Patches.md).
 
 ### 7.5 Run con composición no canónica (3 supports, 0 DPS)
 Permitido — Daniel puede experimentar. Pero el `avg_dmg_share_normalized_by_role` puede dividirse por 0 si el rol esperado es DPS. Manejar:
