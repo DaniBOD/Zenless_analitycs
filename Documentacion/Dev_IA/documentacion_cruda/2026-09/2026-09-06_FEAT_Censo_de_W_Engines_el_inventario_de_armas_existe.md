@@ -453,7 +453,12 @@ NULL). Detalle: `audit/weapons_catalog_20260910.md`.
    como una del catálogo; el recorte no puede ninguna de las dos. En campo: 10 de las 12 lecturas
    "fuera del catálogo" del log resuelven, y las 2 restantes no son armas. Detalle en
    `audit/weapons_catalog_20260910.md`.
-3. **Una pasada** por las armas de Anby y Qingyi: ya están en el catálogo y deberían escribirse.
+3. ✅ **Hecha el 2026-09-11, 12:41.** Las 5 armas que el catálogo y el matching ya reconocen, todas
+   con dueño nombrado, entraron como `s30_insert`: Inocencia sacrificada (Anby), Tetera esmeraldina
+   (Qingyi), Cilindro neumático de Bigger (Ben), Templo a la granizada estelífera (Miyabi) y Anhelo
+   marcato (Orfia y Magas). `inventory_weapons` 38 → **43**; reporte
+   `audit/censos/20260911_124216_511537_censo_armas.md` con **0 fuera de catálogo**;
+   `integrity_check` ok, FK limpias, ningún PJ con dos equipadas.
 4. **El frame de transición** que suma 1 al censo (ver abajo).
 5. **Decidir si las libres se escriben**: doble señal en S26 (sin badge **y** botón *equipar*) contra
    aceptar el LIBRE de S30.

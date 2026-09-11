@@ -34,7 +34,7 @@ Los drops del 2026-09-05 **no se pueden migrar retroactivamente**: el log guarda
 nivel pero **no los substats**, y sin ellos no hay identidad. Entran cuando Daniel recorra el
 inventario.
 
-## 2. Censo de armas / W-Engines 🟡 38 filas · catálogo 61 · copias libres resueltas · nombres del catálogo completos
+## 2. Censo de armas / W-Engines 🟡 43 filas · catálogo 61 · 0 fuera de catálogo en la última pasada
 
 Detalle en
 [`2026-09-06_FEAT_Censo_de_W_Engines_el_inventario_de_armas_existe.md`](2026-09-06_FEAT_Censo_de_W_Engines_el_inventario_de_armas_existe.md).
@@ -70,9 +70,10 @@ El mismo día, el texto del arte pegado al nombre (`Anhelo marcato`, `Viaje estr
 sacar armas del catálogo: de 12 lecturas "fuera del catálogo" del log, resuelven 10 (las otras 2 no
 son armas).
 
-Queda, en este orden: una **pasada** por las armas de Anby, Qingyi, Ben, Miyabi y Orfia (las que
-ahora se reconocen y tienen dueño; el Viaje estruendoso se leyó LIBRE, y las libres no se escriben),
-y el **frame de transición** que suma 1 al censo. Orden y detalle en la sección *Estado al cerrar la sesión del 2026-09-10* del doc del censo.
+La pasada por esas armas corrió el 2026-09-11 a las 12:41: las 5 entraron (`inventory_weapons` 38 →
+**43**, filas 39-43), con el censo cerrado por F8, **0 fuera de catálogo** y `integrity_check` ok.
+
+Queda: el **frame de transición** que suma 1 al censo, y la decisión sobre las libres. Orden y detalle en la sección *Estado al cerrar la sesión del 2026-09-10* del doc del censo.
 
 ## 3. Segundo censo de discos
 
