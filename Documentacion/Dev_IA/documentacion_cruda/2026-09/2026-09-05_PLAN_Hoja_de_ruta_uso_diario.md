@@ -34,7 +34,7 @@ Los drops del 2026-09-05 **no se pueden migrar retroactivamente**: el log guarda
 nivel pero **no los substats**, y sin ellos no hay identidad. Entran cuando Daniel recorra el
 inventario.
 
-## 2. Censo de armas / W-Engines 🟡 43 filas · catálogo 61 · 0 fuera de catálogo en la última pasada
+## 2. Censo de armas / W-Engines 🟡 55 filas (44 equipadas + 11 libres) · catálogo 61 · Grace nombrada
 
 Detalle en
 [`2026-09-06_FEAT_Censo_de_W_Engines_el_inventario_de_armas_existe.md`](2026-09-06_FEAT_Censo_de_W_Engines_el_inventario_de_armas_existe.md).
@@ -78,8 +78,12 @@ Daniel, **las libres pasaron a escribirse** — después de arreglar la causa de
 ahora mide el lugar del dueño antes de negarlo (73× de gap; Compilador, de Grace, ya no sale
 libre). Detalle en el doc del censo, *Para retomar*, puntos 4 y 5.
 
-Queda: **una pasada en vivo** que escriba las libres por primera vez (las dos Última cena, entre
-otras) y que vuelva a leer el arma de Grace. Orden y detalle en la sección *Estado al cerrar la sesión del 2026-09-10* del doc del censo.
+**Validado en vivo el 2026-09-11 a las 14:05:** 11 libres escritas (las dos Última cena como copia 0
+y 1), el Compilador quimérico sale `la tiene Grace` y entra equipado (fila 46), y el frame de
+transición apareció una vez y se descartó. `inventory_weapons` 43 → **55**, `integrity_check` ok.
+
+Queda: confirmar con Daniel si las **dos** Rotor de cañón libres son reales, y recorrer el resto del
+inventario (se vieron 13 de 75). Orden y detalle en la sección *Estado al cerrar la sesión del 2026-09-10* del doc del censo.
 
 ## 3. Segundo censo de discos
 

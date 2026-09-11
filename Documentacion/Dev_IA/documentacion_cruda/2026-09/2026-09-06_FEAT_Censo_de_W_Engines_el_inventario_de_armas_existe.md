@@ -481,6 +481,21 @@ NULL). Detalle: `audit/weapons_catalog_20260910.md`.
    especialidad (±10 px); el centro sigue saliendo de Hough y el radio de la constante, así que el
    encuadre es el de la librería. Las libres no llegan al reintento: su nitidez es 0.5.
 
+   **Validación en vivo (2026-09-11, 14:04-14:06).** 13 armas vistas, reporte
+   `audit/censos/20260911_140625_068464_censo_armas.md`:
+
+   | | |
+   |---|---|
+   | Compilador quimérico | `la tiene Grace` → fila 46, `s30_insert` (antes: LIBRE, sin fila) |
+   | libres | 11 filas `s30_libre_insert` (44-45, 47-55), sin dueño |
+   | Última cena libres | copia 0 y copia 1 → filas 47 y 48 |
+   | Rotor de cañón libres | copia 0 y copia 1 → filas 49 y 50 — **a confirmar con Daniel** |
+   | frame de transición | 1 vez (14:05:56), descartado; la lectura siguiente salió entera |
+   | DB | 43 → **55**, `integrity_check` ok, FK limpias |
+
+   No se ejerció en vivo volver a una copia libre ya vista: el dedup del log no emitió una
+   relectura, así que no hay evidencia de que la `s30_libre_vista` funcione fuera de los tests.
+
    Cómo se escriben: una libre no tiene PJ que la identifique, así que su clave es (arma, nivel,
    refinamiento) + el **número de copia** que el monitor calcula desde la posición en la grilla. La
    copia k es la k-ésima fila libre de esa clave (`find_free`, con `IS` por el refinamiento NULL):
