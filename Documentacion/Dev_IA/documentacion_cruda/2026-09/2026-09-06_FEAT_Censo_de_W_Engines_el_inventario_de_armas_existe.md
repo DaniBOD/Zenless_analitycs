@@ -438,15 +438,15 @@ NULL). Detalle: `audit/weapons_catalog_20260910.md`.
 
 ### Para retomar, en este orden
 
-1. **Las capturas que Daniel ofreció**, guardadas en
-   `Screenshots_Triggers/Engines_Triggers/Inventario_general_engines/` como `Ejemplo_13` en adelante,
-   con el arma seleccionada y el panel derecho visible:
-   - el arma de **Ben** — ¿dice `Cilindro neumático de Bigger`? (el OCR lo leyó así 2 veces)
-   - el arma de **Miyabi** — ¿dice `Templo a la granizada estelífera`? (1 lectura)
-   - la de **Qingyi** — `Tetera esmeraldina` tiene una sola lectura
-
-   Leerlas a ojo **y** con `parse_weapon_s30`. Si la pantalla dice el nombre largo, lo que va es una
-   **migración de renombre**: exacta, sin riesgo, y arregla el matching sola.
+1. ✅ **Hecho el 2026-09-11 (mig `_28`).** Las capturas (`Ejemplo_13` a `_15`) dieron la razón al
+   OCR: el catálogo tenía **cortados** `Cilindro neumático de Bigger` y `Templo a la granizada
+   estelífera`. Renombrados, `match_catalogo` resuelve las 4 lecturas crudas (antes ninguna), y las
+   3 capturas quedaron como verdad de tierra en `test_parser_weapon_s30`. `Tetera esmeraldina`:
+   segunda lectura idéntica, confirmada. De paso la captura desmintió el `HP% 20%` de la fila 42
+   (dice **Defensa**) ⇒ `DEF%`, valor NULL. **La lección:** los dos nombres largos ya estaban en el
+   repo (verdad de tierra de S26 desde julio, diálogo de S29); un `grep` del nombre en `app/` antes
+   de la `_27` lo resolvía sin capturas. Detalle y lo que queda de la fila 42:
+   `audit/weapons_catalog_20260910.md`.
 2. **Recién después, la regla del prefijo** para lo que quede (`Anhelo marcato`, `Viaje estruendoso`:
    texto del arte). Medido: resuelve los 4, con **una** colisión en todo el catálogo (`Modelo II` es
    prefijo de `Modelo III`); tomar el más largo la resuelve, con riesgo residual si el ruido empieza

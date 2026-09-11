@@ -49,6 +49,12 @@ _TRUTH = {
     "Ejemplo_4.png": ("Llanto mielgo", "A", 60, 60, 5, 594),
     "Ejemplo_5.png": ("Modelo II", "B", 0, 10, 1, 32),
     "Ejemplo_6.png": ("Caldero de la claridad", "A", 60, 60, 5, 594),
+    # 2026-09-11: las dos que el censo no casaba. El catálogo tenía el nombre CORTADO (mig _28), y
+    # el crudo llega sin espacios ('Cilindroneumätico de Bigger') — el canónico completo es la
+    # prueba de que el renombre resolvió. La Tetera entra con el glifo `X` pegado adelante.
+    "Ejemplo_13.png": ("Cilindro neumático de Bigger", "A", 20, 30, 5, 248),
+    "Ejemplo_14.png": ("Templo a la granizada estelífera", "S", 60, 60, 1, 743),
+    "Ejemplo_15.png": ("Tetera esmeraldina", "S", 50, 50, 1, 595),
 }
 
 
