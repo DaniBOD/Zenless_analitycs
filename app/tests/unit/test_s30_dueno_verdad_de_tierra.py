@@ -109,6 +109,8 @@ _DUENOS: dict[str, str | None] = {
     "Ejemplo_15": "Qingyi",
     # 2026-09-11: la segunda captura del arma de Grace, pedida para cerrar su caso.
     "Ejemplo_16": "Grace",
+    # 2026-09-11: la Réplica de motor estelar de Billy, que en vivo sale "con dueño (sin identificar)".
+    "Ejemplo_17": "Billy",
 }
 _CON_DUENO = tuple(k for k, v in _DUENOS.items() if v is not None)
 # Los tres que recibieron refs nuevas en la cosecha del 2026-08-12.
@@ -286,6 +288,35 @@ def test_a_grace_se_la_nombra(stem):
     _b, r = _badge(stem)
     assert r is not None, f"{stem}: no hubo recorte para nombrar"
     assert r.name == "Grace", f"{stem}: name={r.name} top={r.top[:3]}"
+
+
+@_skip
+@pytest.mark.xfail(strict=True, reason="defecto abierto de LIBRERÍA, no de localización: el círculo "
+                                       "del dueño se localiza a la primera y el top-3 es Ben/Antón/"
+                                       "Manato a 0.42+, sin Billy. Se cierra cosechando a Billy.")
+def test_a_billy_se_lo_nombra():
+    """Distinto de Grace, y por eso va aparte. A Grace no se la veía; a Billy se lo ve y no se lo
+    reconoce: la librería tiene 4 refs suyas repartidas en dos etiquetas (`Billy` 1, `Billy
+    Estelar` 3) y ninguna se parece al badge de hoy.
+
+    El sistema hace lo correcto al abstenerse — margen 0.027 contra el mínimo de 0.04, y el primero
+    del ranking era un error (Ben). Sin la guarda, el arma de Billy se habría escrito a nombre de
+    Ben. Si alguien cosecha refs buenas, este test pasa y avisa que hay que actualizar la tabla."""
+    if _falta("Ejemplo_17"):
+        pytest.skip("falta Ejemplo_17")
+    _b, r = _badge("Ejemplo_17")
+    assert r is not None and r.name == "Billy", f"name={None if r is None else r.name}"
+
+
+@_skip
+def test_a_billy_el_matcher_se_abstiene_en_vez_de_nombrar_a_otro():
+    """El contrato que SÍ se cumple hoy, y el que importa mientras falten refs: con el ranking
+    equivocado, abstenerse. Nombrar a Ben escribiría el arma en el PJ equivocado."""
+    if _falta("Ejemplo_17"):
+        pytest.skip("falta Ejemplo_17")
+    b, r = _badge("Ejemplo_17")
+    assert b is not None and b.present and b.crop is not None, "el badge de Billy se localiza"
+    assert r.name in (None, "Billy"), f"nombró a {r.name}: top={r.top[:3]}"
 
 
 @_skip
