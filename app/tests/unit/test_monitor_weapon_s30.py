@@ -115,6 +115,43 @@ def test_panel_quieto_no_reocrea(mon):
     assert len(_lineas(mon)) == 1
 
 
+def test_un_panel_sin_rareza_es_una_transicion_y_no_cuenta(mon):
+    """El frame de transición: el panel todavía se está dibujando cuando la firma ya cambió.
+
+    Medido en el log (127 lecturas de S30): la rareza vino vacía sólo 2 veces y ninguna era un arma
+    asentada — `Última cena · ? · P? · dueño ?` a mitad de animación, y el panel de la propia app.
+    Esa lectura entraba al censo como identidad provisoria propia (refinamiento `None` ⇒ otra
+    clave) y sumaba 1. La lectura asentada que viene detrás cambia la firma otra vez y se lee bien.
+    El refinamiento NO sirve de criterio: `P?` sale también en paneles asentados y válidos."""
+    llamadas = []
+    mon._on_weapon_detected = llamadas.append
+    _paso(mon, _S30, sig=b"A", weapon=FakeWeapon(rareza=None, refin=None))
+    assert _lineas(mon) == [] and llamadas == [], "a mitad de animación no se reporta ni persiste"
+    _paso(mon, _S30, sig=b"B", weapon=FakeWeapon())
+    assert len(_lineas(mon)) == 1 and len(llamadas) == 1, "el panel asentado sí"
+
+
+def test_una_libre_llega_a_la_persistencia_marcada_y_con_su_numero_de_copia(mon):
+    """El syncer no ve la grilla: el monitor le dice que es libre y QUÉ copia es. Las dos Última
+    cena libres de Daniel (Ejemplo_11/12) sólo se separan por la posición de la selección."""
+    from app.core.parser_weapon_s26 import OwnerBadge
+    vistos = []
+    mon._on_weapon_detected = lambda d: vistos.append((d.tenencia, d.copia))
+    libre = OwnerBadge(present=False, nitidez=0.6)
+    _paso(mon, _S30, sig=b"A", badge=libre, pos=(1304.0, 599.5, 172.0))
+    _paso(mon, _S30, sig=b"A", badge=libre, pos=(1484.0, 599.5, 176.0))
+    _paso(mon, _S30, sig=b"A", badge=libre, pos=(1304.0, 599.5, 172.0))
+    assert vistos == [("libre", 0), ("libre", 1), ("libre", 0)]
+
+
+def test_con_dueno_sin_nombre_no_se_marca_libre(mon):
+    from app.core.parser_weapon_s26 import OwnerBadge
+    vistos = []
+    mon._on_weapon_detected = lambda d: vistos.append(d.tenencia)
+    _paso(mon, _S30, badge=OwnerBadge(present=True, nitidez=60.5, crop=None))
+    assert vistos == ["incierto"]
+
+
 def test_al_cambiar_de_arma_vuelve_a_leer(mon):
     _paso(mon, _S30)
     _paso(mon, _S30, sig=b"B", weapon=FakeWeapon(canon="Llanto mielgo"))

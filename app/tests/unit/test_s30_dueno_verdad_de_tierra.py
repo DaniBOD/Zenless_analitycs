@@ -25,9 +25,11 @@ La causa estaba en el ENCUADRE: el radio del recorte lo decidía Hough, que ater
 | `Ejemplo_2`  | Florescencia         | *(libre)*  | LIBRE ✓ | — |
 | `Ejemplo_5`  | Repercusión Modelo II| *(libre)*  | LIBRE ✓ | — |
 | `Ejemplo_10` | Transmorfer original | Zhao       | top-1 correcto, margen 0.029 ⇒ abstiene | 0.306 |
-| `Ejemplo_7`  | Compilador quimérico | Grace      | **afirma LIBRE** | — |
+| `Ejemplo_7`  | Compilador quimérico | Grace      | presente, sin nombrar *(hasta el 2026-09-11 afirmaba LIBRE)* | — |
 
-**8 de 10 salen bien** (6 nombrados + 2 libres), 1 se abstiene con el ranking correcto y 1 falla.
+**9 de 10 salen bien o se abstienen sin mentir** (6 nombrados + 2 libres + Grace presente), y 1 se
+abstiene con el ranking correcto. Desde el 2026-09-11 se suman las libres `Ejemplo_11/12` y los
+dueños `Ejemplo_13/14/15` (Ben, Miyabi, Qingyi) al contrato "con dueño nunca sale libre".
 Y ya no hay dos regímenes: los seis nombrados caen entre 0.060 y 0.094.
 
 Los márgenes también dejaron de ser frágiles. Jane pasaba con 0.073 y Gatillo con 0.110 —a un
@@ -93,14 +95,21 @@ _DUENOS: dict[str, str | None] = {
     "Ejemplo_8": "Jane",
     "Ejemplo_9": "Nangong Yu",
     "Ejemplo_10": "Zhao",
+    # 2026-09-10/11: las dos Última cena libres de Daniel, y las armas de Ben, Miyabi y Qingyi.
+    "Ejemplo_11": None,
+    "Ejemplo_12": None,
+    "Ejemplo_13": "Ben",
+    "Ejemplo_14": "Miyabi",
+    "Ejemplo_15": "Qingyi",
 }
+_CON_DUENO = tuple(k for k, v in _DUENOS.items() if v is not None)
 # Los tres que recibieron refs nuevas en la cosecha del 2026-08-12.
 _COSECHADOS = ("Ejemplo_8", "Ejemplo_9", "Ejemplo_10")
 # Los que se nombran bien de punta a punta: localizan, rankean y pasan el gate. Eran 4; con el
 # encuadre normalizado (2026-08-14) entran Dialyn —que ANTES nombraba a otro— y Nangong Yu.
 _NOMBRADOS_OK = ("Ejemplo_1", "Ejemplo_3", "Ejemplo_4", "Ejemplo_6", "Ejemplo_8", "Ejemplo_9")
 # Armas realmente libres. Son el control del defecto 3.
-_LIBRES = ("Ejemplo_2", "Ejemplo_5")
+_LIBRES = ("Ejemplo_2", "Ejemplo_5", "Ejemplo_11", "Ejemplo_12")
 
 
 def _load(p: Path) -> np.ndarray:
@@ -241,17 +250,26 @@ def test_engranaje_infernal_ya_no_nombra_a_otro():
 
 
 @_skip
-@pytest.mark.xfail(strict=True, reason="defecto abierto: Hough no localiza el círculo del dueño y "
-                                       "se afirma LIBRE. Misma arma, mismo fallo, el 2026-08-11.")
 def test_compilador_quimerico_no_esta_libre():
-    """El peor de los tres modos: los otros dos se abstienen, este AFIRMA algo falso.
+    """El peor de los modos: los otros se abstienen, este AFIRMABA algo falso. Cerrado 2026-09-11.
 
-    `present=False` significa "el arma no tiene dueño" y se reporta como LIBRE. La distinción está
-    escrita en `read_weapon_owner_badge_s30`: si no se ve NINGÚN círculo se devuelve None ("no pude
-    ver"), pero si se ve el de especialidad y no el del dueño se concluye LIBRE. Acá cae en el
-    segundo caso y concluye mal.
+    Hough veía el círculo de especialidad y no el del dueño, y de "no encontré la cara" se
+    concluía "no hay cara". Medido en el LUGAR del dueño, la cara estaba: nitidez 60.5, dentro del
+    rango de los dueños (51-100) y lejísimos de las libres (0.5-0.7). Salió LIBRE 3 veces en vivo
+    y por eso Grace no tiene fila en `inventory_weapons`.
     """
     if _falta("Ejemplo_7"):
         pytest.skip("falta Ejemplo_7")
     b, _r = _badge("Ejemplo_7")
     assert b is None or b.present, "se afirmó LIBRE un arma que tiene dueño"
+
+
+@_skip
+@pytest.mark.parametrize("stem", _CON_DUENO)
+def test_un_arma_con_dueno_nunca_sale_libre(stem):
+    """El contrato que habilita escribir las libres en la DB: LIBRE es una afirmación, y ninguna
+    de las 11 capturas con dueño puede producirla. "No sé" (None) sí es aceptable."""
+    if _falta(stem):
+        pytest.skip(f"falta {stem}")
+    b, _r = _badge(stem)
+    assert b is None or b.present, f"{stem}: se afirmó LIBRE un arma de {_DUENOS[stem]}"

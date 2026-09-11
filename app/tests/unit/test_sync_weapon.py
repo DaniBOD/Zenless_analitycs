@@ -113,11 +113,73 @@ def test_un_dato_sin_leer_no_pisa_el_que_ya_estaba(db):
 
 # --- lo que NO se escribe, que es el punto de v1 ------------------------------------------------
 
-def test_s30_nunca_afirma_libre(db):
-    """⚠️ El corazón de v1. S30 dice LIBRE con UNA sola señal (el badge), y esa es justo la que se
-    mide mal: `Ejemplo_7` afirma LIBRE y el arma es de Grace. Escribir `agente_asignado = NULL`
-    desde esa lectura es el 'falso LIBRE' que en discos habilitó reemplazos erróneos."""
-    assert _syncer(db).persist_s30_weapon(_arma(dueno=None)) is None
+def test_sin_dueno_y_sin_afirmar_libre_no_escribe(db):
+    """"No sé de quién es" no es "es de nadie". Sólo una libre AFIRMADA se escribe sin dueño."""
+    p = _arma(dueno=None)
+    p.tenencia = "incierto"
+    assert _syncer(db).persist_s30_weapon(p) is None
+    assert _filas(db) == []
+
+
+# --- las libres (2026-09-11) -------------------------------------------------------------------
+#
+# v1 no las escribía porque S30 afirmaba LIBRE el arma de Grace. Desde el 2026-09-11 LIBRE se afirma
+# recién después de MEDIR el lugar del dueño (73× de gap sobre las 15 capturas), y ninguna de las 11
+# con dueño lo produce. Una libre no tiene PJ que la identifique: su clave es (arma, nivel,
+# refinamiento), y las copias idénticas se separan por el número de copia que calcula el monitor.
+
+def _libre(nombre_canon="Última cena", *, nivel=60, refinamiento=5, copia=0):
+    p = _arma(nombre_canon, dueno=None, nivel=nivel, refinamiento=refinamiento)
+    p.tenencia, p.copia = "libre", copia
+    return p
+
+
+def test_una_libre_afirmada_entra_sin_dueno(db):
+    res = _syncer(db).persist_s30_weapon(_libre())
+    assert res is not None and res.trigger == "s30_libre_insert"
+    [f] = _filas(db)
+    assert f["weapon_id"] == 3 and f["agente_asignado"] is None and f["equipado"] == 0
+    assert (f["nivel"], f["refinamiento"]) == (60, 5)
+    assert f["origen_evidencia"] == "s30_libre"
+
+
+def test_volver_a_ver_la_misma_libre_no_la_duplica(db):
+    sync = _syncer(db)
+    primera = sync.persist_s30_weapon(_libre(copia=0))
+    segunda = sync.persist_s30_weapon(_libre(copia=0))
+    assert segunda.trigger == "s30_libre_vista" and segunda.inv_id == primera.inv_id
+    assert len(_filas(db)) == 1
+
+
+def test_dos_copias_libres_son_dos_filas_y_otra_sesion_las_reusa(db):
+    """Las dos Última cena libres de Daniel. La sesión siguiente ve las mismas dos y no agrega:
+    el número de copia es por sesión, las filas son por clave."""
+    s1 = _syncer(db)
+    ids = [s1.persist_s30_weapon(_libre(copia=k)).inv_id for k in (0, 1)]
+    s2 = _syncer(db)
+    otra = [s2.persist_s30_weapon(_libre(copia=k)) for k in (0, 1)]
+    assert [r.inv_id for r in otra] == ids
+    assert {r.trigger for r in otra} == {"s30_libre_vista"}
+    assert len(_filas(db)) == 2
+
+
+def test_una_libre_no_toca_las_equipadas_del_mismo_modelo(db):
+    """Las libres de Daniel son idénticas a las equipadas (Última cena Nv60 P5). Ni se confunden
+    con ellas ni las mueven: la fila de Jane sigue siendo de Jane."""
+    sync = _syncer(db)
+    de_jane = sync.persist_s30_weapon(_arma("Última cena", dueno="Jane", nivel=60, refinamiento=5))
+    antes = [f for f in _filas(db) if f["id"] == de_jane.inv_id][0]
+    res = sync.persist_s30_weapon(_libre(copia=0))
+    assert res.trigger == "s30_libre_insert" and res.inv_id != de_jane.inv_id
+    assert [f for f in _filas(db) if f["id"] == de_jane.inv_id][0] == antes
+    assert len(_filas(db)) == 2
+
+
+def test_readonly_tampoco_escribe_libres(db, monkeypatch):
+    import app.core.sync_weapon as sw
+    monkeypatch.setattr(sw, "is_readonly", lambda: True)
+    res = _syncer(db).persist_s30_weapon(_libre())
+    assert res is not None and res.inv_id == -1
     assert _filas(db) == []
 
 

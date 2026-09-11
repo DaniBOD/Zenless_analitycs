@@ -73,7 +73,13 @@ son armas).
 La pasada por esas armas corrió el 2026-09-11 a las 12:41: las 5 entraron (`inventory_weapons` 38 →
 **43**, filas 39-43), con el censo cerrado por F8, **0 fuera de catálogo** y `integrity_check` ok.
 
-Queda: el **frame de transición** que suma 1 al censo, y la decisión sobre las libres. Orden y detalle en la sección *Estado al cerrar la sesión del 2026-09-10* del doc del censo.
+El mismo día se cerró el frame de transición (un panel sin rareza no cuenta) y, por decisión de
+Daniel, **las libres pasaron a escribirse** — después de arreglar la causa del falso LIBRE: S30
+ahora mide el lugar del dueño antes de negarlo (73× de gap; Compilador, de Grace, ya no sale
+libre). Detalle en el doc del censo, *Para retomar*, puntos 4 y 5.
+
+Queda: **una pasada en vivo** que escriba las libres por primera vez (las dos Última cena, entre
+otras) y que vuelva a leer el arma de Grace. Orden y detalle en la sección *Estado al cerrar la sesión del 2026-09-10* del doc del censo.
 
 ## 3. Segundo censo de discos
 

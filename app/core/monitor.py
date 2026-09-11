@@ -3956,7 +3956,8 @@ class Monitor:
             k = self._ordinal_de_copia(contenido, pos)
             identidad = contenido if k == 0 else contenido + (k,)
         nuevo = censo.observe(
-            Sighting(identidad=identidad, libre=False, dueno=d.dueno,
+            Sighting(identidad=identidad, libre=getattr(d, "tenencia", None) == "libre",
+                     dueno=d.dueno,
                      confirmada=confirmada, en_catalogo=bool(d.nombre_canon)),
             ts=time.time(),
         )
@@ -4769,6 +4770,15 @@ class Monitor:
         if not d.nombre_raw or d.nivel is None:
             self._note_stall("S30/inventario", f"panel ilegible (notas={','.join(d.notas) or '-'})")
             return
+        # Sin rareza el panel está A MEDIO DIBUJAR: la firma cambió porque arrancó la animación, no
+        # porque terminó. Medido en el log (127 lecturas): la rareza vino vacía sólo 2 veces y
+        # ninguna era un arma asentada — `Última cena · ? · P? · dueño ?` y el panel de la propia
+        # app. La primera entraba al censo como identidad propia (refinamiento None ⇒ otra clave)
+        # y sumaba 1. No se reporta ni se persiste: el frame asentado vuelve a cambiar la firma y
+        # se lee entero. El refinamiento NO sirve de criterio: `P?` sale en paneles asentados.
+        if d.rareza is None:
+            self._note_stall("S30/inventario", "panel a medio dibujar (sin rareza)")
+            return
         self._clear_stall("S30/inventario")
 
         # --- Dueño ---
@@ -4798,11 +4808,12 @@ class Monitor:
         # clasificar_tenencia(...)`); acá vivía sólo en una local y en el string del log, así que
         # todo lo que consumiera el `WeaponParsed` —la persistencia, el censo— lo veía en None.
         #
-        # `tenencia` NO se copia, y no es olvido: la de S26 es un vocabulario de cuatro valores
-        # (`equipada|otro_pj|libre|incierto`) y la de acá es una cadena para mostrar. Pisar el
-        # campo con la cadena haría que un consumidor comparara contra valores que nunca van a
-        # coincidir — y el que importa es justo el que S30 no puede afirmar: `libre`.
+        # `tenencia` va con el vocabulario de S26 (`equipada|otro_pj|libre|incierto`), NUNCA con la
+        # cadena de mostrar de arriba. S30 sólo puede afirmar `libre` —desde el 2026-09-11, cuando
+        # `read_weapon_owner_badge_s30` empezó a medir el lugar del dueño antes de negarlo—; con
+        # dueño no sabe si es el PJ en pantalla u otro, así que todo lo demás es `incierto`.
         d.dueno = dueno
+        d.tenencia = "libre" if (badge is not None and not badge.present) else "incierto"
         # Diagnóstico ANTES del dedup de log: la línea de S30 se emite una sola vez por arma, pero
         # el diagnóstico habla de CADA evaluación del badge — que es lo que se quiere medir.
         # S30 no cosecha (ver `_maybe_harvest_weapon_owner`): acá solo se observa.
@@ -4859,6 +4870,11 @@ class Monitor:
         # syncer tocó — la autoridad es una sola. El censo de discos pagó esa lección en vivo:
         # calculando identidad por su cuenta, el OCR del nombre se leía distinto entre pasadas
         # y el mismo ítem entraba dos veces (contador en 10, DB en 8).
+        # Una libre no tiene PJ que la identifique: el syncer necesita saber QUÉ copia es para no
+        # duplicarla. La clave lleva "libre" para que las equipadas del mismo modelo —idénticas en
+        # todo lo demás— no le corran el número.
+        d.copia = (self._ordinal_de_copia(("libre", nombre, d.nivel, d.refinamiento), pos)
+                   if d.tenencia == "libre" else 0)
         resultado = None
         if self._on_weapon_detected is not None:
             try:

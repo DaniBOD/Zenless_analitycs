@@ -978,6 +978,22 @@ class InventoryWeaponRepo:
         ).fetchall()
         return [self._row_to_weapon(r) for r in rows]
 
+    def find_free(self, weapon_id: int, *, nivel: int | None,
+                  refinamiento: int | None) -> list["InventoryWeapon"]:
+        """Las copias LIBRES de un arma con ese nivel y refinamiento, en orden de alta.
+
+        Una libre no tiene PJ que la identifique, así que su clave es (arma, nivel, refinamiento)
+        y las copias idénticas se distinguen por ORDEN: la k-ésima de esta lista es la copia k.
+        `IS` y no `=`: con `=`, un refinamiento ilegible (NULL) no sería igual a nada y cada
+        lectura insertaría otra fila.
+        """
+        rows = self._con.execute(
+            "SELECT * FROM inventory_weapons WHERE weapon_id = ? AND equipado = 0 "
+            "AND agente_asignado IS NULL AND descartado = 0 AND nivel IS ? AND refinamiento IS ? "
+            "ORDER BY id", (weapon_id, nivel, refinamiento)
+        ).fetchall()
+        return [self._row_to_weapon(r) for r in rows]
+
     def insert(self, weapon_id: int, *, nivel: int | None, refinamiento: int | None,
                agente_asignado: int | None, equipado: int,
                origen_evidencia: str, notas: str | None = None) -> int:

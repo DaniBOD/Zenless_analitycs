@@ -52,6 +52,31 @@ def repo(con):
     return InventoryWeaponRepo(con)
 
 
+# --- las libres (2026-09-11) --------------------------------------------------------------------
+
+def _libre(repo, *, nivel=60, refinamiento=5, weapon_id=1):
+    return repo.insert(weapon_id, nivel=nivel, refinamiento=refinamiento, agente_asignado=None,
+                       equipado=0, origen_evidencia="s30_libre")
+
+
+def test_find_free_trae_solo_las_libres_de_esa_clave_en_orden(repo):
+    """Una libre no tiene PJ que la identifique: su clave es (arma, nivel, refinamiento), y las
+    copias de esa clave se distinguen por ORDEN. Las equipadas del mismo modelo no cuentan."""
+    a, b = _libre(repo), _libre(repo)
+    repo.insert(1, nivel=60, refinamiento=5, agente_asignado=5, equipado=1,
+                origen_evidencia="s30_badge")
+    _libre(repo, nivel=0, refinamiento=1)
+    _libre(repo, weapon_id=2)
+    assert [w.id for w in repo.find_free(1, nivel=60, refinamiento=5)] == [a, b]
+
+
+def test_find_free_compara_el_refinamiento_ilegible_con_IS(repo):
+    """Con `=`, NULL no es igual a nada: una libre de refinamiento ilegible no se encontraría
+    nunca y cada lectura insertaría otra fila."""
+    a = _libre(repo, refinamiento=None)
+    assert [w.id for w in repo.find_free(1, nivel=60, refinamiento=None)] == [a]
+
+
 # --- lo que la migración compró ---------------------------------------------------------------
 
 def test_un_pj_no_puede_tener_dos_armas_equipadas(repo, con):

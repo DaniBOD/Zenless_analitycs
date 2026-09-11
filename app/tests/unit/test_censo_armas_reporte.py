@@ -78,6 +78,15 @@ def test_declara_lo_que_la_pasada_NO_prueba(audit):
     assert "LIBRES" in texto and "copias duplicadas" in texto
 
 
+def test_el_reporte_ya_no_dice_que_las_libres_no_se_escriben(audit):
+    """Regresión del 2026-09-11: desde que S30 mide el lugar del dueño, las libres se escriben. Un
+    reporte que siga diciendo "nada sobre las libres" explica una brecha que ya no existe."""
+    _j, md = write_weapon_census_report(_censo().resumen(), _FUERA)
+    texto = md.read_text(encoding="utf-8")
+    assert "Nada sobre las armas LIBRES" not in texto
+    assert "se escriben sin dueño" in texto
+
+
 def test_sin_armas_fuera_de_catalogo_lo_dice_explicito(audit):
     _j, md = write_weapon_census_report(_censo(fuera=0).resumen(), [])
     assert "Ninguna" in md.read_text(encoding="utf-8")

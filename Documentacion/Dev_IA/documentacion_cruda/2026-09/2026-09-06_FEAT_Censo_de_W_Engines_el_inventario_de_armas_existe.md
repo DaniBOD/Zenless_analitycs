@@ -459,9 +459,28 @@ NULL). Detalle: `audit/weapons_catalog_20260910.md`.
    marcato (Orfia y Magas). `inventory_weapons` 38 → **43**; reporte
    `audit/censos/20260911_124216_511537_censo_armas.md` con **0 fuera de catálogo**;
    `integrity_check` ok, FK limpias, ningún PJ con dos equipadas.
-4. **El frame de transición** que suma 1 al censo (ver abajo).
-5. **Decidir si las libres se escriben**: doble señal en S26 (sin badge **y** botón *equipar*) contra
-   aceptar el LIBRE de S30.
+4. ✅ **Hecho el 2026-09-11.** El criterio es **"sin rareza = panel a medio dibujar"**, no "sin
+   refinamiento": en 127 lecturas de S30 del log la rareza vino vacía sólo 2 veces y ninguna era un
+   arma asentada (la transición `Última cena · ? · P? · dueño ?` y el panel de la propia app),
+   mientras que `P?` aparece en paneles asentados y válidos (Petrazufre, Cañón bombástico). El
+   handler no reporta ni persiste ese frame; el asentado vuelve a cambiar la firma y se lee entero.
+5. ✅ **Decidido por Daniel el 2026-09-11: las libres se escriben — pero primero se arregló la causa
+   del falso LIBRE**, que seguía vivo (Compilador quimérico, de Grace, salió LIBRE **3 veces** en
+   campo, y por eso Grace no tenía fila). De "Hough no vio la cara" se concluía "no hay cara". Ahora
+   `read_weapon_owner_badge_s30` **mide el lugar del dueño** (nitidez en un disco anclado a la fila
+   del círculo de especialidad): dueños 51-100, libres 0.5-0.7 — **73× de gap** sobre las 15
+   capturas, y Compilador da 60.5. Sin círculo de especialidad no hay ancla ⇒ "no sé", nunca
+   "libre". Con cara pero sin localizar ⇒ presente **sin recorte** (no se nombra con un encuadre
+   estimado). Ninguna de las 11 capturas con dueño sale libre; las 4 libres reales siguen libres.
+
+   Cómo se escriben: una libre no tiene PJ que la identifique, así que su clave es (arma, nivel,
+   refinamiento) + el **número de copia** que el monitor calcula desde la posición en la grilla. La
+   copia k es la k-ésima fila libre de esa clave (`find_free`, con `IS` por el refinamiento NULL):
+   si existe se reusa (`s30_libre_vista`), si no se inserta sin dueño (`s30_libre_insert`,
+   `origen_evidencia='s30_libre'`). Nunca mueve ni borra; las equipadas idénticas no se tocan.
+   **Límites, dichos en el reporte:** una libre que después se equipa, se sube de nivel o se recicla
+   deja su fila vieja (no se borra por ausencia, B2), y volver a una copia libre tras un scroll
+   puede sumar una fila de más.
 
 ### Cómo arrancar y cerrar una sesión (dos trampas medidas el 09-10)
 
@@ -482,7 +501,8 @@ NULL). Detalle: `audit/weapons_catalog_20260910.md`.
 > [`audit/censo_armas_20260908.md`](../../../../audit/censo_armas_20260908.md): **28 filas escritas**,
 > 53/185 identidades, sólo rangos S y A.
 
-- **Los frames de transición cuentan como un arma más.** En el mismo log del 09-10: una lectura
+- ~~**Los frames de transición cuentan como un arma más.**~~ **Cerrado el 2026-09-11** (ver *Para
+  retomar*, punto 4). Lo que decía: en el mismo log del 09-10, una lectura
   `Última cena · ? · P? · dueño ?` (el pill todavía no estaba dibujado) entró al censo como una
   identidad provisoria propia, porque su refinamiento es `None`. Sobrecuenta de 1 por cada
   transición que alcance a leerse. Es previo al arreglo de copias y va aparte.

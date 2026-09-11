@@ -386,9 +386,12 @@ def _markdown_armas(registro: dict) -> str:
     out += [
         "## Lo que esta corrida NO prueba",
         "",
-        ("- **Nada sobre las armas LIBRES.** v1 escribe sólo lo que NOMBRA: la lectura de dueño "
-         "de S30 mide 8/10 y el caso que falla AFIRMA que un arma está libre siendo de alguien. "
-         "Un arma sin dueño identificado se cuenta en `sin resolver`, no se persiste."),
+        ("- **Las armas LIBRES, sólo como cantidad.** Desde el 2026-09-11 se escriben sin dueño: "
+         "S30 las afirma después de medir el lugar del badge, y ninguna de las 11 capturas con "
+         "dueño sale libre. Pero una libre no tiene más identidad que (arma, nivel, refinamiento) "
+         "y su número de copia: si después se equipa, se sube de nivel o se recicla, su fila vieja "
+         "queda (no se borra por ausencia), y volver a una copia ya vista tras un scroll puede "
+         "sumar una fila de más. Un arma con dueño sin identificar sigue en `sin resolver`."),
         ("- **Las copias duplicadas, sólo por su lugar.** Dos copias del mismo W-Engine son "
          "idénticas en todo campo observable; el censo las separa por dónde está la selección en "
          "la grilla. Si el recuadro no se localiza, cuentan como una; y volver a una copia ya vista "

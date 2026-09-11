@@ -158,6 +158,17 @@ def test_el_censo_no_afirma_libre_ninguna_arma():
     assert mon.censo_armas.sin_resolver == 1
 
 
+def test_una_libre_afirmada_cuenta_como_libre():
+    """Desde el 2026-09-11 S30 sí puede afirmar LIBRE (lo mide en el lugar del dueño). Una libre
+    afirmada no es "sin resolver": mezclarlas inflaría la cuenta de lo que no se pudo leer."""
+    mon = _mon()
+    p = _arma("Última cena")
+    p.tenencia = "libre"
+    mon._censar_arma(p, _Res(40))
+    assert mon.censo_armas.libres == 1
+    assert mon.censo_armas.sin_resolver == 0
+
+
 # --- cierre --------------------------------------------------------------------------------------
 
 def test_el_cierre_reporta_cobertura_contra_el_contador(monkeypatch):

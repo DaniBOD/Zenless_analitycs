@@ -19,14 +19,22 @@ Hay tres pantallas que ven un arma y no dan la misma certeza sobre el dueño:
     los 6 bien; el que falla AFIRMA que un arma está libre y es de Grace.
   · **S29** — el diálogo de sustitución, que el juego escribe en texto.
 
-De ahí la regla de v1: **se escribe lo que se NOMBRA, nunca lo que se declara libre.** Nombrar es
-fiable, negar dueño no — la misma asimetría que ya dejó escrita la práctica *"reportar y aprender
-piden evidencia distinta"*. Un `agente_asignado = NULL` escrito desde una lectura equivocada es el
-"falso LIBRE" que en discos habilitó reemplazos erróneos.
+La regla de v1 era **se escribe lo que se NOMBRA, nunca lo que se declara libre**: S30 afirmaba
+LIBRE el arma de Grace, porque de "Hough no encontró la cara" concluía "no hay cara". Un
+`agente_asignado = NULL` escrito desde esa lectura es el "falso LIBRE" que en discos habilitó
+reemplazos erróneos. Y la guarda de discos —un libre que choca con una EQUIPADA se abstiene— acá no
+sirve: las libres legítimas son idénticas a las equipadas (Última cena Nv60 P5, las dos cosas).
 
-Y la guarda que en discos protege ese caso —un libre que choca con una fila EQUIPADA se abstiene—
-**no sirve al principio de una pasada de censo**, porque todavía no hay filas contra las cuales
-chocar. Por eso acá la abstención es previa, no reactiva.
+**Desde el 2026-09-11 las libres se escriben**, porque la causa se arregló en la lectura y no acá:
+`read_weapon_owner_badge_s30` afirma LIBRE recién después de MEDIR el lugar del dueño (73× de gap
+sobre las 15 capturas; ninguna de las 11 con dueño sale libre). "No sé" sigue sin escribirse.
+
+Una libre no tiene PJ que la identifique. Su clave es (arma, nivel, refinamiento), y las copias
+idénticas se separan por el número de copia que calcula el monitor desde la grilla: la copia k es
+la k-ésima fila libre de esa clave. Así una sesión nueva reusa las filas en vez de sumar.
+
+Lo que esto NO resuelve, y queda dicho en el reporte del censo: una libre que después se equipa,
+se sube de nivel o se recicla deja su fila vieja — no se borra por ausencia (B2).
 
 ## Las armas son FUNGIBLES, y eso cambia qué cuenta como conflicto
 
@@ -117,8 +125,11 @@ class WeaponSyncer:
             log.warning("Arma '%s' canonizada pero sin fila en weapons — no se persiste.", nombre)
             return None
 
-        # 2. Sin dueño NOMBRADO no se escribe. Incluye el caso en que S30 dice LIBRE: esa
-        #    afirmación es justamente la que se mide mal (ver docstring del módulo).
+        # 2. Una libre AFIRMADA tiene su propio camino: no hay PJ que sirva de clave.
+        if p.tenencia == "libre":
+            return self._persist_libre(p, weapon_id, nombre, t0)
+
+        # 3. Sin dueño NOMBRADO no se escribe: "no sé de quién es" no es "es de nadie".
         agente_id = self._agent_repo.get_id_by_nombre(p.dueno)
         if agente_id is None:
             log.info("Arma '%s' sin dueño identificado (dueno=%r) — se registra, no se escribe.",
@@ -145,6 +156,41 @@ class WeaponSyncer:
             return res
         except Exception:
             log.exception("Error persistiendo el arma '%s'", nombre)
+            return None
+        finally:
+            con_w.close()
+
+    def _persist_libre(self, p: WeaponParsed, weapon_id: int, nombre: str,
+                       t0: float) -> WeaponSyncResult | None:
+        """La copia `p.copia` de las libres de (arma, nivel, refinamiento): si ya tiene fila se
+        reusa sin escribir, si no se inserta sin dueño. Nunca mueve ni borra: las equipadas del
+        mismo modelo no se tocan, aunque sean idénticas."""
+        if is_readonly():
+            log.info("[readonly] arma libre NO persiste — %s · Nv%s · P%s · copia %d",
+                     nombre, p.nivel, p.refinamiento, p.copia)
+            return WeaponSyncResult(inv_id=-1, trigger="readonly", weapon_id=weapon_id,
+                                    nombre=nombre)
+        con_w = sqlite3.connect(str(self._db_path))
+        con_w.row_factory = sqlite3.Row
+        repo = InventoryWeaponRepo(con_w)
+        try:
+            with con_w:
+                libres = repo.find_free(weapon_id, nivel=p.nivel, refinamiento=p.refinamiento)
+                if p.copia < len(libres):
+                    res = WeaponSyncResult(inv_id=libres[p.copia].id, trigger="s30_libre_vista",
+                                           weapon_id=weapon_id, nombre=nombre)
+                else:
+                    inv_id = repo.insert(weapon_id, nivel=p.nivel, refinamiento=p.refinamiento,
+                                         agente_asignado=None, equipado=0,
+                                         origen_evidencia="s30_libre")
+                    res = WeaponSyncResult(inv_id=inv_id, trigger="s30_libre_insert",
+                                           weapon_id=weapon_id, nombre=nombre)
+            res.latency_ms = round((time.perf_counter() - t0) * 1000, 1)
+            log.info("Arma libre id=%d %s %s · Nv%s · P%s · copia %d %.0fms", res.inv_id,
+                     res.trigger, nombre, p.nivel, p.refinamiento, p.copia, res.latency_ms)
+            return res
+        except Exception:
+            log.exception("Error persistiendo el arma libre '%s'", nombre)
             return None
         finally:
             con_w.close()

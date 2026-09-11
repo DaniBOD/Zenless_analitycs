@@ -103,6 +103,20 @@ def test_el_default_de_lectura_sigue_siendo_el_de_s26():
         assert inspect.signature(fn).parameters["geom"].default is _S26_PILL
 
 
+def test_sin_ancla_de_especialidad_el_dueno_es_no_se_y_no_libre(monkeypatch):
+    """LIBRE se afirma recién después de MEDIR el lugar del dueño, y ese lugar se ancla a la fila
+    del círculo de especialidad. Si Hough ve un círculo que no es ni la cara ni la especialidad, no
+    hay fila donde medir: la respuesta es "no sé" (None), nunca "libre". Ninguna captura cae acá,
+    por eso se simula lo que devuelve Hough."""
+    import app.core.parser_weapon_s26 as P
+    fr = np.zeros((1439, 2559, 3), np.uint8)
+    pill = (1944, 546, 2139, 579)
+    dx_fuera = 60 - P._S30_OWNER_WIN_DX[0]      # dx=+60: fuera de las dos bandas
+    monkeypatch.setattr(P.cv2, "HoughCircles",
+                        lambda *a, **k: np.array([[[dx_fuera, 40, 25.0]]], np.float32))
+    assert P.read_weapon_owner_badge_s30(fr, pill) is None
+
+
 def test_pillgeometry_es_inmutable():
     with pytest.raises(AttributeError):
         PillGeometry(-26, "x2", (60, 290), "y1", (-8, 45)).badge_dx = 0

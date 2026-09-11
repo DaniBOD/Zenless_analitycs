@@ -218,6 +218,10 @@ class WeaponParsed:
     # "equipada" (la lleva el PJ en pantalla) | "otro_pj" | "libre" | "incierto". Lo llena el
     # monitor con `clasificar_tenencia`, que necesita el latch de identidad y el botón de acción.
     tenencia: str = "incierto"
+    # Qué copia es, entre las que se ven idénticas en la misma visita a S30: 0 la primera. Lo llena
+    # el monitor desde la posición de la selección en la grilla; el syncer lo usa para no duplicar
+    # las libres, que no tienen PJ que las identifique.
+    copia: int = 0
     # Bbox del pill "Nivel N/M". Se expone porque es el ANCLA de todo lo posicional del panel
     # (rareza, refinamiento y el badge del dueño): el monitor lo necesita para recortar el avatar
     # sin volver a OCRizar. None si el pill no se leyó — ahí no se ancla nada.
@@ -560,6 +564,35 @@ def read_weapon_owner_badge(frame: np.ndarray,
 _S30_OWNER_WIN_DX = (-70, 70)     # ventana de búsqueda, relativa a pill.x1
 _S30_OWNER_WIN_DY = (-135, -30)   # relativa a pill.y1; cubre los dos regímenes de nombre
 _S30_OWNER_DX = (10, 45)          # dx ACEPTADO para el centro (deja afuera la especialidad)
+_S30_ESPEC_DX = (-45, -20)        # dx del círculo de especialidad (medido −29..−38)
+
+# ...pero cuando Hough NO ve la cara, la posición sola no alcanza para afirmar LIBRE: hay que mirar
+# el LUGAR. Medido el 2026-09-11 sobre las 15 capturas, con un disco de r=12 en `pill.x1 + 25` y la
+# y del círculo de especialidad (que está siempre, con dueño o sin él):
+#
+#     con dueño (10)    |Laplaciano| 51.1 – 100.3
+#     libres (4)                      0.5 –   0.7        gap ~73×
+#     Ejemplo_7 (Grace)              60.5                ← Hough no la vio; la cara estaba
+#
+# Esto no contradice lo de arriba: el glifo metálico con detalle de cara es el de ESPECIALIDAD, y
+# un disco chico en el lugar del dueño no lo toca (quedan 60 px entre centros).
+_S30_OWNER_SLOT_DX = 25
+_S30_OWNER_DISCO_R = 12
+_S30_OWNER_NITIDEZ_MIN = 20.0     # 29× sobre la libre más alta, 2.5× bajo el dueño más bajo
+
+
+def _nitidez_disco(frame: np.ndarray, cx: int, cy: int, r: int) -> float:
+    """|Laplaciano| medio en un disco. Se calcula sobre un parche con 2 px de margen: el kernel es
+    3×3, así que el interior del disco da lo mismo que sobre el frame entero, a una fracción del
+    costo."""
+    H, W = frame.shape[:2]
+    m = r + 2
+    ya, yb, xa, xb = max(0, cy - m), min(H, cy + m), max(0, cx - m), min(W, cx + m)
+    g = cv2.cvtColor(frame[ya:yb, xa:xb], cv2.COLOR_BGR2GRAY).astype(np.float32)
+    lap = np.abs(cv2.Laplacian(g, cv2.CV_32F))
+    yy, xx = np.mgrid[ya:yb, xa:xb]
+    disco = (xx - cx) ** 2 + (yy - cy) ** 2 < r * r
+    return float(lap[disco].mean()) if disco.any() else 0.0
 
 # Radio del recorte, como fracción del ancho del frame. **Hough LOCALIZA, esta constante ENCUADRA.**
 #
@@ -634,7 +667,21 @@ def read_weapon_owner_badge_s30(frame: np.ndarray,
                 if elegido is None or c[2] > elegido[2]:
                     elegido = c
         if elegido is None:
-            return OwnerBadge(present=False, nitidez=0.0)
+            # Hough no vio la cara. "No la encontré" NO es "no está": así salía el falso LIBRE de
+            # 'Compilador quimérico' (de Grace, 3 veces en vivo). LIBRE se afirma recién después
+            # de MEDIR el lugar del dueño, anclado a la fila del círculo de especialidad.
+            esp = [c for c in circles[0]
+                   if _S30_ESPEC_DX[0] <= int(c[0]) + _S30_OWNER_WIN_DX[0] <= _S30_ESPEC_DX[1]]
+            if not esp:
+                return None     # sin la especialidad no hay ancla: "no sé", nunca "libre"
+            nit = _nitidez_disco(frame, px + _S30_OWNER_SLOT_DX, int(y0 + esp[0][1]),
+                                 _S30_OWNER_DISCO_R)
+            if nit < _S30_OWNER_NITIDEZ_MIN:
+                return OwnerBadge(present=False, nitidez=nit)
+            # Hay cara y Hough no la localizó: presente, SIN recorte. Nombrar con un centro
+            # estimado rompería el encuadre de la librería (`_S30_OWNER_R_F`) — mejor "hay
+            # alguien, no sé quién" que un nombre equivocado.
+            return OwnerBadge(present=True, nitidez=nit, crop=None)
         ccx, ccy = int(x0 + elegido[0]), int(y0 + elegido[1])
         # El radio sale de la constante, NO de `elegido[2]`: ver `_S30_OWNER_R_F`. Del círculo
         # detectado se usa solo el CENTRO, que es lo que Hough resuelve bien acá.
