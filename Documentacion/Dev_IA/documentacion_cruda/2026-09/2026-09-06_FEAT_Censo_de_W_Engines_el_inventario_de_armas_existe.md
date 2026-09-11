@@ -493,8 +493,16 @@ NULL). Detalle: `audit/weapons_catalog_20260910.md`.
    | frame de transición | 1 vez (14:05:56), descartado; la lectura siguiente salió entera |
    | DB | 43 → **55**, `integrity_check` ok, FK limpias |
 
-   No se ejerció en vivo volver a una copia libre ya vista: el dedup del log no emitió una
-   relectura, así que no hay evidencia de que la `s30_libre_vista` funcione fuera de los tests.
+   **El Rotor de más (resuelto el dato, abierta la causa).** Daniel tiene UN Rotor de cañón
+   libre y se quedó parado sobre él; la "segunda copia" (fila 50) salió a las 14:05:54, justo
+   antes de que el panel cambiara a Viaje estruendoso. Hipótesis sin probar: el recuadro de
+   selección salta a la casilla nueva antes de que el panel se redibuje, y "otra casilla + mismo
+   panel" es exactamente lo que parece una copia idéntica. El localizador acierta 16/16 en las
+   capturas quietas, así que no es sospechoso en frío. Se agregó la posición al log (`· @(x,y)`,
+   commit `696a54c`) y la pasada de las **16:21** no lo reprodujo: tres lecturas del Rotor en
+   `@(582,832)`, las tres `s30_libre_vista` sobre la fila 49 — **primera evidencia en vivo de que
+   volver a una libre ya vista no la duplica**. La fila 50 quedó con `descartado = 1` (mig `_29`,
+   baja lógica y reversible). Si el fantasma vuelve, la línea del log trae la casilla.
 
    Cómo se escriben: una libre no tiene PJ que la identifique, así que su clave es (arma, nivel,
    refinamiento) + el **número de copia** que el monitor calcula desde la posición en la grilla. La

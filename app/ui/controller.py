@@ -707,8 +707,10 @@ class MonitorController(QObject):
             if state.code in ("S17", "S9"):
                 # S9 (inventario global) replica la captura de S17: misma persistencia
                 # enfocada (disco + asignación por dueño). Los discos EQUIPADOS (badge
-                # confiable) se upsertean por (PJ, slot); los LIBRES (sin dueño) no se
-                # persisten aún (persist_s17_disc exige PJ confiable; loose = follow-up).
+                # confiable) se upsertean por (PJ, slot); los LIBRES afirmados y los de dueño
+                # incierto también se persisten, sin dueño (`_persist_disco_libre`). Este
+                # comentario decía "los libres no se persisten aún" hasta el 2026-09-11, cuando
+                # ya era falso: el syncer los escribía desde agosto.
                 result = None
                 if self._disc_syncer is not None:
                     result = self._disc_syncer.persist_s17_disc(disc_parsed)
