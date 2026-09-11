@@ -206,3 +206,45 @@ def test_f8_cierra_los_dos_inventarios():
     mon.cerrar_censo()
     assert not mon.censo_discos.abierta
     assert not mon.censo_armas.abierta
+
+
+# --- Copias idénticas (2026-09-10) --------------------------------------------------------------
+#
+# Una copia LIBRE no tiene fila, así que su identidad es la del parser — que colapsa las copias
+# siempre, porque son idénticas en todo campo observable. Lo único que las separa es el lugar de la
+# selección en la grilla.
+
+_X = (1304.0, 599.5, 172.0)
+_Y = (1484.0, 599.5, 176.0)
+
+
+def test_dos_copias_libres_cuentan_dos():
+    mon = _mon()
+    mon._censar_arma(_arma("Última cena"), None, _X)
+    mon._censar_arma(_arma("Última cena"), None, _Y)
+    assert mon.censo_armas.registrados == 2
+
+
+def test_volver_a_la_misma_copia_no_la_cuenta_otra_vez():
+    """Ir y volver entre las dos es lo normal al recorrer la grilla."""
+    mon = _mon()
+    for pos in (_X, _Y, _X, _Y):
+        mon._censar_arma(_arma("Última cena"), None, pos)
+    assert mon.censo_armas.registrados == 2
+
+
+def test_sin_posicion_las_copias_colapsan_como_antes():
+    """Sin posición no se puede saber si es otra copia: ante la duda, la misma (RNF-02)."""
+    mon = _mon()
+    mon._censar_arma(_arma("Última cena"), None, None)
+    mon._censar_arma(_arma("Última cena"), None, None)
+    assert mon.censo_armas.registrados == 1
+
+
+def test_una_copia_con_fila_no_depende_de_la_posicion():
+    """Una copia equipada ya tiene identidad propia: la fila. Verla desde dos lugares —antes y
+    después de un scroll— sigue siendo la misma fila."""
+    mon = _mon()
+    mon._censar_arma(_arma("Última cena", dueno="Koleda"), _Res(33), _X)
+    mon._censar_arma(_arma("Última cena", dueno="Koleda"), _Res(33), _Y)
+    assert mon.censo_armas.registrados == 1

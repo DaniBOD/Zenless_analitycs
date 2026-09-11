@@ -302,12 +302,96 @@ dueño **sí** cae en la banda B, así que copias con dueños distintos re-dispa
 las tres de arriba). Lo invisible es el par idéntico *incluyendo la tenencia*. Como las libres no se
 escriben en v1, el costo es sólo de conteo y se reporta como brecha.
 
+> ⚠️ **Superado el 2026-09-10 por decisión de Daniel**: quiere que el sistema reconozca las dos
+> copias, y además la explicación de arriba estaba incompleta — el gate no era la única capa que
+> se tragaba la segunda copia. Ver la sección siguiente.
+
+## Copias libres idénticas: dónde moría la segunda (2026-09-10)
+
+Daniel tiene cinco `Última cena`: tres equipadas y **dos libres, una al lado de la otra**. Aportó
+dos capturas (`Inventario_general_engines/Ejemplo_11` y `_12`) con cada una seleccionada, y pidió
+que el sistema detecte la primera y después la segunda.
+
+### Tres capas, no una
+
+El 09-08 atribuí todo al gate de la firma. La medición sobre sus dos capturas lo corrigió:
+
+| capa | qué pasaba con la segunda copia |
+|---|---|
+| **gate de firma** | las firmas difieren **0.2** de media (0 píxeles con diferencia visible) contra **10.3** entre dos armas distintas. Es ruido: re-disparar o no era suerte |
+| **dedup por contenido** | `log_sig` es idéntica para dos libres iguales → `return` **antes** de persistir y de censar. Este es el que mataba siempre. Su comentario decía *"contenido idéntico es literalmente la misma lectura"*: **la misma premisa falsa que el bucket C** |
+| **identidad del censo** | para una libre es `(nombre, nivel, refinamiento)`, que el propio docstring admitía que *colapsa las copias siempre* |
+
+El log de la sesión cuadraba exacto con esto: pasaron una lectura degradada y una limpia de la
+misma copia (difieren en `P?`), y la otra copia rebotó en el dedup.
+
+### El arreglo: la posición de la selección, en las tres capas
+
+Lo único que cambia entre dos copias idénticas es **dónde está el recuadro de la grilla**. El
+remedio ya existía para los gemelos de disco (S9, 2026-08-29), y se reusó sin tocarlo:
+
+- `s9_selected_tile_pos` funciona tal cual sobre la pantalla de armas — la grilla de la mochila es
+  la misma. Localiza la selección en **los 12 fixtures de S30**; entre las dos Última cena libres
+  salta **180 px sobre un tile de ~175**.
+- **Gate y dedup**: "otra copia" lo decide `_s9_pos_movio` (más de medio tile), la misma autoridad
+  que ya lo decide para discos (B1).
+- **Censo**: `_ordinal_de_copia` numera las copias idénticas por lugar. La primera conserva su
+  identidad de siempre; sólo la segunda en adelante recibe el sufijo, así ninguna identidad
+  existente cambió.
+
+**Costo:** localizar la selección cuesta **~16 ms por frame** contra 0,6 ms de la firma del panel,
+en cada ciclo de S30. Es el mismo precio que S9 ya paga por el mismo problema.
+
+### Lo que no cambia, a propósito
+
+- **Sin posición, no decide.** Si no hay tile localizable, se comporta como antes. RNF-02: no
+  inventar una pieza que no se vio.
+- **Las libres se reconocen y se cuentan, pero no se escriben.** La regla de v1 sigue: S30 afirma
+  LIBRE falsos (el `Compilador quimérico` de Grace), y escribir un `agente_asignado = NULL` desde
+  esa lectura es el falso LIBRE que en discos habilitó reemplazos erróneos.
+
+### El límite que no tiene arreglo desde la pantalla
+
+Si hacés scroll y volvés a una copia ya vista, aparece en otra posición y **cuenta como una más**.
+Sale como *excedente* sobre el contador del header, que sigue siendo la autoridad del total. Las
+copias de un W-Engine no tienen identidad observable: sólo lugar.
+
+### Verificación
+
+127 tests de armas en 6 archivos, antes y después. **10 tests nuevos**, uno de ellos con los
+píxeles reales de las capturas 11 y 12, sin stubs. Seis sabotajes, cada uno rojo en su test:
+
+| sabotaje | queda rojo |
+|---|---|
+| el gate ignora la posición | `dos_copias_libres_identicas_se_leen_las_dos`, `la_segunda_copia_llega_a_la_persistencia_y_al_censo` |
+| el dedup se traga el contenido idéntico | los mismos dos |
+| el ordinal del censo siempre en 0 | `la_segunda_copia_llega…`, `dos_copias_libres_cuentan_dos`, `volver_a_la_misma_copia_no_la_cuenta_otra_vez` |
+| `None` fuerza relectura en el gate | `panel_quieto_no_reocrea`, `sin_posicion_no_decide` |
+| `None` inventa una copia en el censo | `sin_posicion_las_copias_colapsan_como_antes` |
+| cualquier temblor cuenta como moverse | `el_temblor_del_localizador_no_inventa_una_copia` |
+
+**Dos de esos seis estuvieron mal la primera vez, y los destaparon los propios sabotajes:**
+
+- `test_sin_posicion_no_decide` contaba **líneas de log**, y pasaba con el gate roto: el dedup
+  tapaba la línea repetida mientras el OCR de ~500 ms corría en cada ciclo. Se endureció para que
+  cuente **relecturas del panel**. El nombre prometía más de lo que verificaba.
+- El primer sabotaje de "`None` inventa una copia" usaba `id(object()) % 997 + 1` como ordinal
+  nuevo en cada llamada. CPython reutiliza la dirección del objeto recién liberado, así que las dos
+  llamadas devolvieron **el mismo número**: el sabotaje nunca cambió el comportamiento, y el
+  "ningún test lo atrapó" era un defecto del sabotaje, no del test. Rehecho con un contador.
+
 ## Queda abierto
 
 > Estado al 2026-09-08, después de la primera pasada. Los números y el detalle completo están en
 > [`audit/censo_armas_20260908.md`](../../../../audit/censo_armas_20260908.md): **28 filas escritas**,
 > 53/185 identidades, sólo rangos S y A.
 
+- **Los frames de transición cuentan como un arma más.** En el mismo log del 09-10: una lectura
+  `Última cena · ? · P? · dueño ?` (el pill todavía no estaba dibujado) entró al censo como una
+  identidad provisoria propia, porque su refinamiento es `None`. Sobrecuenta de 1 por cada
+  transición que alcance a leerse. Es previo al arreglo de copias y va aparte.
+- **El contador del header dio 185, 56 y 75** en tres sesiones distintas. Es consistente con que
+  cuente la vista filtrada por rareza; falta que Daniel lo confirme.
 - ~~Segunda pasada por los 4 engines duplicados~~ **HECHA el 2026-09-08**: las 9 filas entraron,
   `inventory_weapons` quedó en **37**. Cerrada con F8, reporte en `audit/censos/`.
 - **Los tiles de rango B**, sin recorrer.

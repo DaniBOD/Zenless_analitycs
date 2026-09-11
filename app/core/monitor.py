@@ -426,6 +426,13 @@ class Monitor:
         # la LÍNEA (sin ella el log se vuelve un heartbeat, QA 2026-08-07).
         self._s30_panel_sig: bytes | None = None
         self._s30_last_log_sig: tuple | None = None
+        # Dónde estaba la SELECCIÓN de la grilla: en la última evaluación y en la última línea.
+        # Hace falta porque dos copias del mismo W-Engine son idénticas en todo el panel derecho
+        # —incluida la tenencia cuando las dos están libres—, así que ni la firma ni el dedup por
+        # contenido las separan. Lo único que cambia al pasar de una a otra es el recuadro de la
+        # grilla. Es el mismo remedio que el gemelo de disco en S9 (2026-08-29).
+        self._s30_pos: tuple | None = None
+        self._s30_last_log_pos: tuple | None = None
         # Votos del DUEÑO acumulados sobre el arma que se está mirando (`_s26_owner_key` la
         # identifica; al cambiar de arma la votación arranca limpia). Nombrar con UN frame
         # suelto daba dueños que oscilaban entre dos PJs con el panel quieto (QA 2026-07-31).
@@ -498,6 +505,9 @@ class Monitor:
         # entrada de la migración curada que las da de alta: el nombre español de pantalla es
         # el dato que ninguna wiki accesible publica. Clave por nombre crudo, para no repetir.
         self._armas_sin_catalogo: dict[str, dict] = {}
+        # Posiciones de grilla ya vistas por CONTENIDO, para separar en el censo copias libres
+        # idénticas (ver `_ordinal_de_copia`). Vive con la corrida: el censo no se reabre.
+        self._armas_pos_por_contenido: dict[tuple, list[tuple]] = {}
         # --- S3 (modal de drop farmeado): mismo patrón aggregator/dedup, sin dueño ni warmup ---
         self._s3_aggregator = DiscAggregator()
         self._s3_agg_sig = None            # firma-ancla del modal de drop que se fusiona
@@ -1238,6 +1248,8 @@ class Monitor:
         if state.code != "S30":
             self._s30_panel_sig = None      # ídem para el inventario
             self._s30_last_log_sig = None
+            self._s30_pos = None
+            self._s30_last_log_pos = None
         # Tanda de desmontaje: se abandona al llegar a CUALQUIER pantalla confirmada que no sea
         # la propia grilla, el modal de commit, o un S12. Va acá arriba y no en el `else` final
         # porque los estados con handler propio (S9, S17, S8…) nunca llegan al `else` — un bug
@@ -3913,7 +3925,7 @@ class Monitor:
             if a not in previos:
                 log.warning("[censo-armas] %s", a)
 
-    def _censar_arma(self, d, resultado=None) -> None:
+    def _censar_arma(self, d, resultado=None, pos=None) -> None:
         """Registra un arma emitida por S30 en la corrida de censo.
 
         **Quién decide si el arma es nueva: la persistencia.** La identidad es la FILA que el
@@ -3924,6 +3936,9 @@ class Monitor:
         Sin fila real se cae a la identidad del parser y queda marcado PROVISORIO. Y acá eso pesa
         más que en discos: la identidad del parser de un arma **colapsa las copias siempre**, no
         de casualidad, porque dos copias del mismo W-Engine son idénticas en todo campo observable.
+        Por eso la identidad provisoria lleva además el ORDINAL de la copia, que sale de dónde
+        estaba la selección en la grilla (ver `_ordinal_de_copia`). La primera copia conserva la
+        identidad de siempre; recién la segunda en adelante recibe el sufijo.
 
         ⚠️ `inv_id = -1` es el placeholder del camino read-only y NO es una fila: tomarlo como
         identidad metería todas las armas en un solo cubo.
@@ -3937,7 +3952,9 @@ class Monitor:
         if confirmada:
             identidad = ("fila", inv_id)
         else:
-            identidad = ("arma", d.nombre_canon or d.nombre_raw, d.nivel, d.refinamiento)
+            contenido = ("arma", d.nombre_canon or d.nombre_raw, d.nivel, d.refinamiento)
+            k = self._ordinal_de_copia(contenido, pos)
+            identidad = contenido if k == 0 else contenido + (k,)
         nuevo = censo.observe(
             Sighting(identidad=identidad, libre=False, dueno=d.dueno,
                      confirmada=confirmada, en_catalogo=bool(d.nombre_canon)),
@@ -3954,6 +3971,30 @@ class Monitor:
         if nuevo:
             n, total = censo.progreso
             log.info("[censo-armas] %d/%s", n, total if total is not None else "?")
+
+    def _ordinal_de_copia(self, contenido: tuple, pos) -> int:
+        """Qué copia es, entre las que se ven IDÉNTICAS: 0 la primera, 1 la segunda...
+
+        Dos copias libres del mismo W-Engine no tienen ningún campo que las separe; lo único que
+        cambia es dónde está la selección en la grilla. "Mismo lugar" lo decide
+        `_s9_pos_movio`, la misma autoridad que ya lo decide para los gemelos de disco (B1).
+
+        Sin posición devuelve 0: no se puede saber si es otra copia, y ante la duda cuenta como la
+        misma — la conducta previa. RNF-02: no inventar una pieza que no se vio.
+
+        ⚠️ Límite conocido y sin arreglo desde la pantalla: si hacés scroll y volvés a una copia ya
+        vista, aparece en otra posición y cuenta como una copia más. Sale como EXCEDENTE sobre el
+        contador del header, que sigue siendo la autoridad del total. Las copias no tienen
+        identidad observable, sólo lugar.
+        """
+        if pos is None:
+            return 0
+        vistas = self._armas_pos_por_contenido.setdefault(contenido, [])
+        for i, p in enumerate(vistas):
+            if not self._s9_pos_movio(p, pos):
+                return i
+        vistas.append(pos)
+        return len(vistas) - 1
 
     def cerrar_censo_armas(self) -> dict | None:
         """Cierra la pasada del inventario de armas y devuelve el resumen, o `None` si no había.
@@ -4710,8 +4751,18 @@ class Monitor:
         self._anclar_contador_s30(frame)
 
         sig = weapon_panel_signature_s30(frame)
-        if sig and sig == self._s30_panel_sig:
-            return                      # panel quieto: ni stall ni OCR, es el camino normal
+        # La firma del panel NO distingue dos copias del mismo W-Engine: medido sobre dos Última
+        # cena libres (Ejemplo_11/12), difieren 0.2 de media contra 10.3 entre armas distintas —
+        # ruido, no señal. Que re-dispare o no era suerte. La posición de la selección sí salta un
+        # tile entero (x 1304 → 1484, lado ~175). `s9_selected_tile_pos` sirve tal cual acá: la
+        # grilla de la mochila es la misma, y localiza la selección en los 12 fixtures de S30.
+        # Cuesta ~16 ms por frame (la firma, 0.6): es el precio que ya paga S9 por lo mismo.
+        pos = s9_selected_tile_pos(frame)
+        movio = self._s9_pos_movio(self._s30_pos, pos)
+        if pos is not None:             # None no decide: se conserva la última posición conocida
+            self._s30_pos = pos
+        if sig and sig == self._s30_panel_sig and not movio:
+            return                      # panel y selección quietos: ni stall ni OCR
         self._s30_panel_sig = sig
 
         d = parse_weapon_s30(frame, self._ocr, catalogo=self._weapon_catalog())
@@ -4772,11 +4823,20 @@ class Monitor:
         # garantiza que lo LEÍDO haya cambiado: cualquier temblor en el panel lo cruza y el log
         # pasaría a ser un heartbeat repitiendo la misma arma (QA 2026-08-07: 110 líneas, 9 armas
         # distintas). El log de este proyecto reporta cambios, no lecturas.
+        #
+        # ⚠️ Corregido el 2026-09-10: "contenido idéntico es la misma lectura" era falso para armas.
+        # Son FUNGIBLES —dos copias son idénticas en todo campo observable—, así que dos Última
+        # cena libres daban la misma `log_sig` y la segunda salía por este `return` sin llegar
+        # nunca a la persistencia ni al censo. Es la misma premisa que tenía el bucket C del
+        # syncer. Contenido idéntico en OTRO tile es otra copia.
         log_sig = (nombre, d.rareza, d.nivel, d.nivel_max, d.refinamiento, d.atk_base, stat,
                    tenencia)
-        if log_sig == self._s30_last_log_sig:
+        otra_copia = self._s9_pos_movio(self._s30_last_log_pos, pos)
+        if log_sig == self._s30_last_log_sig and not otra_copia:
             return
         self._s30_last_log_sig = log_sig
+        if pos is not None:
+            self._s30_last_log_pos = pos
 
         linea = (f"[S30] Inventario W-Engine — {nombre} · {d.rareza or '?'} · "
                  f"Nv {d.nivel}/{d.nivel_max} · P{d.refinamiento or '?'} · "
@@ -4805,7 +4865,7 @@ class Monitor:
                 resultado = self._on_weapon_detected(d)
             except Exception:
                 log.exception("Error persistiendo el arma (el log y el censo siguen)")
-        self._censar_arma(d, resultado)
+        self._censar_arma(d, resultado, pos)
 
     def _parece_panel_de_arma(self, d) -> bool:
         """¿Lo que se parseó puede ser un W-Engine? Falso ⇒ el handler se calla del todo.

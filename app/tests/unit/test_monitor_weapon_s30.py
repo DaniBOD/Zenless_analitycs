@@ -56,11 +56,14 @@ def mon(monkeypatch):
     m._diags, m._toasts = diags, toasts
     # `badge=None` por defecto: sin lectura del avatar el handler dice "dueño ?" y los tests que
     # no hablan del dueño no dependen de él.
-    m._stub = {"weapon": FakeWeapon(), "sig": b"A", "badge": None}
+    m._stub = {"weapon": FakeWeapon(), "sig": b"A", "badge": None, "pos": None}
     monkeypatch.setattr(pw_mod, "parse_weapon_s30",
                         lambda fr, ocr, catalogo=None: m._stub["weapon"])
     monkeypatch.setattr(pw_mod, "weapon_panel_signature_s30", lambda fr: m._stub["sig"])
     monkeypatch.setattr(pw_mod, "read_weapon_owner_badge_s30", lambda fr, pb: m._stub["badge"])
+    # La posición de la selección también se stubbea. Por default `None`, que es lo que devuelve el
+    # localizador real sobre un frame sintético: así los tests que no hablan de copias no cambian.
+    monkeypatch.setattr(mon_mod, "s9_selected_tile_pos", lambda fr: m._stub["pos"])
     monkeypatch.setattr(m, "_weapon_catalog", lambda: ["Última cena"])
     m._identifier = None
     return m
@@ -447,3 +450,88 @@ def test_sin_callback_el_handler_se_comporta_como_antes(mon):
     assert mon._on_weapon_detected is None
     _paso(mon, _S30)
     assert _lineas(mon)
+
+
+# --- Copias idénticas (2026-09-10) --------------------------------------------------------------
+#
+# Daniel tiene cinco Última cena: tres equipadas y DOS LIBRES, una al lado de la otra. Las libres
+# son idénticas en todo el panel derecho, tenencia incluida, así que la segunda moría en dos
+# lugares: el gate de firma (re-disparar dependía del ruido del frame) y el dedup por contenido,
+# que salía por un `return` antes de persistir y de censar. Lo único que las separa es DÓNDE está
+# la selección en la grilla. Las posiciones de abajo son las medidas en sus capturas 11 y 12.
+
+_COPIA_1 = (1304.0, 599.5, 172.0)
+_COPIA_2 = (1484.0, 599.5, 176.0)
+
+
+def test_dos_copias_libres_identicas_se_leen_las_dos(mon):
+    """El caso de Daniel: misma firma del panel, mismo contenido, otro tile."""
+    _paso(mon, _S30, sig=b"A", pos=_COPIA_1, badge=_badge(present=False))
+    _paso(mon, _S30, sig=b"A", pos=_COPIA_2)
+    assert len(_lineas(mon)) == 2, _lineas(mon)
+
+
+def test_la_segunda_copia_llega_a_la_persistencia_y_al_censo(mon):
+    """El log no alcanza: lo que el `return` del dedup se tragaba era la persistencia y el censo,
+    que van DESPUÉS. Verificar la línea sola habría dado verde con el censo todavía roto."""
+    vistas = []
+    mon._on_weapon_detected = vistas.append
+    _paso(mon, _S30, sig=b"A", pos=_COPIA_1, badge=_badge(present=False))
+    _paso(mon, _S30, sig=b"A", pos=_COPIA_2)
+    assert len(vistas) == 2, "la segunda copia no llegó a la persistencia"
+    assert mon.censo_armas.registrados == 2, "el censo colapsó las dos copias en una"
+
+
+def test_el_temblor_del_localizador_no_inventa_una_copia(mon):
+    """El lado medido del tile varía 167-177 px entre capturas y el centro tiembla unos píxeles.
+    La tolerancia es medio tile: quedarse quieto no puede leerse como moverse."""
+    _paso(mon, _S30, sig=b"A", pos=_COPIA_1)
+    _paso(mon, _S30, sig=b"A", pos=(1310.0, 602.0, 170.0))
+    assert len(_lineas(mon)) == 1, _lineas(mon)
+
+
+def test_sin_posicion_no_decide(mon):
+    """En 3 de 18 capturas de S9 no hay tile localizable. Ausencia de posición es ausencia de
+    dato: si forzara una relectura, un frame sin selección inventaría una copia por no saber.
+
+    Cuenta RELECTURAS del panel, no sólo líneas: la primera versión de este test contaba líneas y
+    pasaba igual con el gate roto, porque el dedup por contenido tapaba la línea repetida mientras
+    el OCR de ~500 ms corría en cada ciclo. Lo destapó un sabotaje."""
+    import app.core.parser_weapon_s26 as pw_mod
+    llamadas = {"n": 0}
+
+    def _contando(fr, ocr, catalogo=None):
+        llamadas["n"] += 1
+        return mon._stub["weapon"]
+    pw_mod.parse_weapon_s30 = _contando
+
+    for _ in range(4):
+        _paso(mon, _S30, sig=b"A", pos=None)
+    assert llamadas["n"] == 1, "sin posición, el gate re-OCReó un panel quieto"
+    assert len(_lineas(mon)) == 1
+
+
+def test_salir_de_la_pantalla_olvida_la_posicion(mon):
+    _paso(mon, _S30, pos=_COPIA_1)
+    _paso(mon, _S12)
+    assert mon._s30_pos is None and mon._s30_last_log_pos is None
+
+
+def test_las_capturas_de_daniel_se_distinguen_por_la_seleccion():
+    """Con los píxeles reales, no con stubs: el localizador de S9 encuentra la selección en la
+    pantalla de ARMAS, y entre las dos Última cena libres salta más de medio tile."""
+    from pathlib import Path
+
+    import cv2
+
+    from app.core.detector import s9_selected_tile_pos
+    from app.core.monitor import Monitor
+
+    d = (Path(__file__).resolve().parents[3] / "Documentacion" / "Screenshots_Triggers"
+         / "Engines_Triggers" / "Inventario_general_engines")
+    a, b = d / "Ejemplo_11.png", d / "Ejemplo_12.png"
+    if not (a.exists() and b.exists()):
+        pytest.skip("capturas full-res locales (gitignoreadas)")
+    pa, pb = s9_selected_tile_pos(cv2.imread(str(a))), s9_selected_tile_pos(cv2.imread(str(b)))
+    assert pa is not None and pb is not None, "no localizó la selección en la pantalla de armas"
+    assert Monitor._s9_pos_movio(pa, pb) is True
