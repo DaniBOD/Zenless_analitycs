@@ -4852,7 +4852,12 @@ class Monitor:
         linea = (f"[S30] Inventario W-Engine — {nombre} · {d.rareza or '?'} · "
                  f"Nv {d.nivel}/{d.nivel_max} · P{d.refinamiento or '?'} · "
                  f"ATK base {d.atk_base or '?'} · {stat or 'stat ?'} · {tenencia}"
-                 f"{'' if d.nombre_canon else ' · ⚠ fuera del catálogo'}")
+                 f"{'' if d.nombre_canon else ' · ⚠ fuera del catálogo'}"
+                 # Dónde estaba la selección. Instrumento del 2026-09-11: dos Rotor de cañón
+                 # libres donde Daniel tiene uno, y la "segunda" salió justo antes de cambiar de
+                 # arma. Sin esto no se distingue una copia real de un recuadro que saltó a la
+                 # casilla siguiente antes de que el panel se redibujara.
+                 f"{f' · @({pos[0]:.0f},{pos[1]:.0f})' if pos is not None else ''}")
         log.info(linea)
         self._diag(linea)
         for n in d.notas:

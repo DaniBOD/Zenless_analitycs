@@ -144,6 +144,20 @@ def test_una_libre_llega_a_la_persistencia_marcada_y_con_su_numero_de_copia(mon)
     assert vistos == [("libre", 0), ("libre", 1), ("libre", 0)]
 
 
+def test_la_linea_dice_donde_estaba_la_seleccion(mon):
+    """Instrumento, no arreglo (2026-09-11). La pasada de las 14:05 escribió DOS Rotor de cañón
+    libres y Daniel tiene uno: la "segunda copia" salió justo antes de cambiar de arma. Sin la
+    posición en el log no se puede distinguir una copia real de un recuadro que saltó a la casilla
+    siguiente antes de que el panel se redibujara."""
+    _paso(mon, _S30, pos=(1304.0, 599.5, 172.0))
+    assert "@(1304,600)" in _lineas(mon)[0], _lineas(mon)
+
+
+def test_sin_posicion_la_linea_no_inventa_una(mon):
+    _paso(mon, _S30, pos=None)
+    assert "@(" not in _lineas(mon)[0]
+
+
 def test_con_dueno_sin_nombre_no_se_marca_libre(mon):
     from app.core.parser_weapon_s26 import OwnerBadge
     vistos = []
