@@ -73,12 +73,13 @@ no roles.
 
 - [x] **A** — backup, snapshot de filas, smoke L1
 - [x] **B** — lectura del patch (con las contradicciones de arriba)
-- [ ] **C** — onboarding de Claret: depende de que Daniel la tenga
+- [ ] **C** — onboarding de Claret: depende de que Daniel la tenga (al 2026-09-10, todavía no)
 - [ ] **D** — rebalance de stats: ninguno detectado en las fuentes
 - [ ] **E / F** — **no aplican**: los scrapers de Prydwen, `tier_list_calculator`,
       `weapon_optimizer` y `ai_catalog` son de las Fases 3-5 y no existen
 - [ ] **G** — smoke L1 post-patch + diff de snapshots
-- [ ] **H** — L4: que el detector reconozca la UI de la 3.2 en la primera sesión
+- [~] **H** — **parcial**: en las sesiones del 2026-09-10 sobre la 3.2 se detectaron en vivo S30, S2,
+      S14 y S12, y S30 leyó las armas con sus 6 campos. Falta el resto (S17/S9 de discos, S18, S10…)
 - [ ] **I** — docs
 
 ## Fuentes

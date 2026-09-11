@@ -413,6 +413,62 @@ texto por separado, queda rojo las dos veces.
 docstring, un comentario— sigue diciendo lo anterior con toda seguridad. Al cambiar un
 comportamiento, hay que buscar las frases que lo describen, no sólo el código que lo implementa.
 
+## Estado al cerrar la sesión del 2026-09-10
+
+**Números:** `inventory_weapons` **38** (todas equipadas, `origen_evidencia='s30_badge'`) ·
+`weapons` **61**. Commits `79b7fbf` (copias idénticas), `4721153` (reporte), `a2189a4` (catálogo).
+La app quedó **cerrada** (se cerró para aplicar la migración).
+
+### El catálogo: de los 6 "huecos", sólo 2 eran reales (migración `_27`)
+
+Antes de insertar se buscó cada uno en las 59 filas. `Anhelo marcato`, `Viaje estruendoso`,
+`Cilindro neumático` y `Templo a la granizada` **ya estaban**: el OCR les pegó texto del arte del
+arma (*DESIRE*, *CRASH*) o les comió espacios, y el fuzzy los dejó en 0.76-0.82 contra el corte de
+0.84. Darlos de alta habría duplicado el catálogo. Entraron sólo `Inocencia sacrificada` (Anby, 6
+lecturas a Nv 60) y `Tetera esmeraldina` (Qingyi, 1 lectura a Nv **50** ⇒ ATK y valor del stat en
+NULL). Detalle: `audit/weapons_catalog_20260910.md`.
+
+### Decisiones de Daniel que no están en ningún otro lado
+
+- **Rango B: fuera de alcance por ahora** — los A son asequibles. El `185` del header es el total
+  con los B; el `56` y el `75` eran vistas filtradas por rareza. Pregunta cerrada.
+- **Guardar las libres:** sin decisión ⇒ siguen sin escribirse (regla de v1).
+- **Claret:** se incorpora cuando salga del gacha (`audit/patch_notes_v3.2.md` tiene el riesgo del
+  parser de S18 con la especialidad nueva).
+
+### Para retomar, en este orden
+
+1. **Las capturas que Daniel ofreció**, guardadas en
+   `Screenshots_Triggers/Engines_Triggers/Inventario_general_engines/` como `Ejemplo_13` en adelante,
+   con el arma seleccionada y el panel derecho visible:
+   - el arma de **Ben** — ¿dice `Cilindro neumático de Bigger`? (el OCR lo leyó así 2 veces)
+   - el arma de **Miyabi** — ¿dice `Templo a la granizada estelífera`? (1 lectura)
+   - la de **Qingyi** — `Tetera esmeraldina` tiene una sola lectura
+
+   Leerlas a ojo **y** con `parse_weapon_s30`. Si la pantalla dice el nombre largo, lo que va es una
+   **migración de renombre**: exacta, sin riesgo, y arregla el matching sola.
+2. **Recién después, la regla del prefijo** para lo que quede (`Anhelo marcato`, `Viaje estruendoso`:
+   texto del arte). Medido: resuelve los 4, con **una** colisión en todo el catálogo (`Modelo II` es
+   prefijo de `Modelo III`); tomar el más largo la resuelve, con riesgo residual si el ruido empieza
+   con un trazo vertical (`l`/`1`/`|` se normalizan a `i`).
+3. **Una pasada** por las armas de Anby y Qingyi: ya están en el catálogo y deberían escribirse.
+4. **El frame de transición** que suma 1 al censo (ver abajo).
+5. **Decidir si las libres se escriben**: doble señal en S26 (sin badge **y** botón *equipar*) contra
+   aceptar el LIBRE de S30.
+
+### Cómo arrancar y cerrar una sesión (dos trampas medidas el 09-10)
+
+- La app **la lanza Claude** desde su shell: `powershell -ExecutionPolicy Bypass -File
+  tools/qa_launch.ps1 -FromSource`. Si la lanza Daniel, el contenedor MSIX hace que el shell lea una
+  copia congelada del log.
+- **Cerrar la pasada con F8, nunca con la X.** `closeEvent` hace `QApplication.quit()` sin pasar por
+  `controller.stop()`: la X no cierra el censo (se pierde el reporte) y no deja `Monitor detenido`
+  en el log. **Que esa línea falte no es un crash** — se verificó: salida 0, sin traceback, sin
+  eventos de Windows.
+- Antes de escribir la DB: app cerrada, **verificado** con `tasklist`, y sin `-wal` suelto.
+- Un script largo con heredocs en el shell Bash de esta máquina puede fallar con *unexpected EOF
+  while looking for matching quote* sin que se pueda ver dónde: escribirlo a un archivo y correrlo.
+
 ## Queda abierto
 
 > Estado al 2026-09-08, después de la primera pasada. Los números y el detalle completo están en
@@ -423,12 +479,13 @@ comportamiento, hay que buscar las frases que lo describen, no sólo el código 
   `Última cena · ? · P? · dueño ?` (el pill todavía no estaba dibujado) entró al censo como una
   identidad provisoria propia, porque su refinamiento es `None`. Sobrecuenta de 1 por cada
   transición que alcance a leerse. Es previo al arreglo de copias y va aparte.
-- **El contador del header dio 185, 56 y 75** en tres sesiones distintas. Es consistente con que
-  cuente la vista filtrada por rareza; falta que Daniel lo confirme.
+- ~~El contador del header dio 185, 56 y 75~~ **Cerrado el 2026-09-10**: el 185 es el total con los
+  B; 56 y 75 eran vistas filtradas. Los B quedan fuera por decisión de Daniel.
 - ~~Segunda pasada por los 4 engines duplicados~~ **HECHA el 2026-09-08**: las 9 filas entraron,
   `inventory_weapons` quedó en **37**. Cerrada con F8, reporte en `audit/censos/`.
 - **Los tiles de rango B**, sin recorrer.
-- **La migración curada del catálogo** — **6** armas, no 7: `Cúter` (de Pulchra) y `Última cena`
+- ✅ **Hecha el 2026-09-10** (mig `_27`, 59 → 61) — sólo 2 de los 6 eran reales; ver *Estado al
+  cerrar la sesión del 2026-09-10*. Lo que sigue quedó como historia. **La migración curada del catálogo** — **6** armas, no 7: `Cúter` (de Pulchra) y `Última cena`
   estaban en el catálogo y salieron listadas como huecos porque el nombre traía un glifo suelto a
   la izquierda. Corregido en `match_catalogo`; el resto sigue con su nombre español de pantalla
   en el audit. Ninguna se da de alta sola.

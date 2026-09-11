@@ -34,7 +34,7 @@ Los drops del 2026-09-05 **no se pueden migrar retroactivamente**: el log guarda
 nivel pero **no los substats**, y sin ellos no hay identidad. Entran cuando Daniel recorra el
 inventario.
 
-## 2. Censo de armas / W-Engines 🟡 PRIMERA PASADA HECHA — 28 filas, falta cerrar la brecha
+## 2. Censo de armas / W-Engines 🟡 38 filas · catálogo 61 · copias libres resueltas — faltan las capturas de 2 nombres
 
 Detalle en
 [`2026-09-06_FEAT_Censo_de_W_Engines_el_inventario_de_armas_existe.md`](2026-09-06_FEAT_Censo_de_W_Engines_el_inventario_de_armas_existe.md).
@@ -58,9 +58,14 @@ La pasada refutó una premisa del diseño: el bucket C descartaba un arma que ya
 leyéndolo como error de badge, y los W-Engines son **fungibles** — el refinamiento lo probó (Sunna
 P3 contra los P5 de Lucía y Yuzuha en el mismo modelo). Arreglado en `6f1a1cb`.
 
-Queda, en este orden: **segunda pasada corta** por los 4 engines duplicados (recupera 9 filas), los
-tiles de **rango B**, y la **migración curada** de las ~7 armas fuera de catálogo, que ya están
-listadas con su nombre español de pantalla.
+**Al 2026-09-10:** segunda pasada hecha (las 9 copias entraron), las dos Última cena libres se
+reconocen por separado (validado en vivo), y el catálogo pasó a 61 — de los 6 "huecos", sólo 2 eran
+reales. Los rangos B quedan fuera por decisión de Daniel.
+
+Queda, en este orden: **capturas** de las armas de Ben y Miyabi para confirmar si el catálogo tiene
+sus nombres incompletos (renombre exacto), la **regla del prefijo** para el texto del arte pegado al
+nombre, una **pasada** por las armas de Anby y Qingyi, y el **frame de transición** que suma 1 al
+censo. Orden y detalle en la sección *Estado al cerrar la sesión del 2026-09-10* del doc del censo.
 
 ## 3. Segundo censo de discos
 
