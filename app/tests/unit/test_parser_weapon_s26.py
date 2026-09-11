@@ -418,6 +418,57 @@ def test_el_recorte_es_de_UN_token_de_UN_caracter():
     assert match_catalogo("X Y Uitima cena", cat) is None, "ni dos glifos seguidos"
 
 
+# --- El texto del arte pegado a la DERECHA del nombre ------------------------------------------
+#
+# El arte de algunas armas lleva texto propio (DESIRE, CRASH) y el OCR lo pega al final del
+# nombre. Pasó en la pasada del 2026-09-08: dos armas que ESTÁN en el catálogo salieron listadas
+# como huecos (audit/weapons_catalog_20260910.md). La regla recorta UN token final en MAYÚSCULAS y
+# resuelve el resto con el mismo matching; no compara prefijos, y por eso no puede cruzar
+# 'Modelo II' con 'Modelo III' ni tragarse un arma nueva que empiece como una del catálogo.
+
+def test_el_texto_del_arte_no_saca_al_arma_del_catalogo():
+    """Las dos lecturas reales, tal cual salieron del log: además del arte pegado, el OCR les
+    comió el espacio del medio. Ninguno de los dos defectos se puede corregir con el corte."""
+    cat = ["Anhelo marcato", "Viaje estruendoso", "Última cena"]
+    assert match_catalogo("Anhelomarcato DESRE", cat) == "Anhelo marcato"
+    assert match_catalogo("Viajeestruendoso CRASH", cat) == "Viaje estruendoso"
+
+
+def test_glifo_a_la_izquierda_y_arte_a_la_derecha_en_la_misma_lectura():
+    """Los dos ruidos son independientes (uno entra por la izquierda del ROI, el otro sale del
+    arte), así que nada impide que coincidan."""
+    cat = ["Anhelo marcato", "Última cena"]
+    assert match_catalogo("X Anhelomarcato DESRE", cat) == "Anhelo marcato"
+
+
+def test_un_arma_nueva_que_empieza_como_una_del_catalogo_sigue_siendo_hueco():
+    """El daño simétrico, y el motivo de no usar prefijos: con 'Cúter' en el catálogo, un prefijo
+    puro resolvería 'Cúter afilado' a Cúter — una fila escrita con el arma equivocada y un hueco
+    menos en la migración curada. El nombre real sigue en minúsculas; el arte no."""
+    cat = ["Cúter", "Última cena"]
+    assert match_catalogo("Cúter afilado", cat) is None
+    assert match_catalogo("Última cena especial", cat) is None
+
+
+def test_el_arte_sobre_un_modelo_deja_el_numero_intacto():
+    """El recorte se lleva el arte y le pasa el romano entero al matching de siempre."""
+    cat = ["Repercusión - Modelo II", "Repercusión - Modelo III"]
+    assert match_catalogo("Repercusión - Modelo III CRASH", cat) == "Repercusión - Modelo III"
+    assert match_catalogo("Repercusión - Modelo II CRASH", cat) == "Repercusión - Modelo II"
+
+
+def test_un_romano_no_es_texto_del_arte():
+    """'II' e 'III' son las únicas mayúsculas del catálogo (medido sobre las 61 filas). Recortar
+    un romano deja 'Repercusión - Modelo' suelto, y eso el fuzzy lo acerca a cualquier modelo.
+    Se prueba sobre el recorte directo porque a través de `match_catalogo` no se llega: un modelo
+    del catálogo ya resuelve en el primer intento. Vale para todo romano, no sólo los ambiguos
+    del OCR (i/l/1): 'VII' también lo es."""
+    from app.core.parser_weapon_s26 import _sin_texto_del_arte
+    assert _sin_texto_del_arte("Repercusión - Modelo III") is None
+    assert _sin_texto_del_arte("Repercusión - Modelo VII") is None
+    assert _sin_texto_del_arte("Viajeestruendoso CRASH") == "Viajeestruendoso"
+
+
 # --- Tenencia: ¿la lleva el PJ en pantalla, otro, o está libre? -------------------------------
 #
 # Verdad de tierra a ojo sobre los 40 fixtures (montaje de la ROI anclada, 2026-07-30). LIBRE es

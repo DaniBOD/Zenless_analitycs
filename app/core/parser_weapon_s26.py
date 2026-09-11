@@ -303,13 +303,54 @@ def match_catalogo(nombre_raw: str, catalogo: Sequence[str] | None) -> str | Non
         cerca = difflib.get_close_matches(k, list(normalizados), n=1, cutoff=_FUZZY_CUTOFF)
         return normalizados[cerca[0]] if cerca else None
 
-    hallado = _resolver(clave)
-    if hallado is not None:
-        return hallado
-    tokens = clave.split()
-    if len(tokens) > 1 and len(tokens[0]) == 1:
-        return _resolver(" ".join(tokens[1:]))
+    def _con_glifo(k: str) -> str | None:
+        hallado = _resolver(k)
+        if hallado is not None:
+            return hallado
+        tokens = k.split()
+        if len(tokens) > 1 and len(tokens[0]) == 1:
+            return _resolver(" ".join(tokens[1:]))
+        return None
+
+    hallado = _con_glifo(clave)
+    if hallado is None:
+        sin_arte = _sin_texto_del_arte(nombre_raw)
+        if sin_arte is not None:
+            hallado = _con_glifo(_norm_nombre(sin_arte))
+    return hallado
+
+
+def _sin_texto_del_arte(nombre_raw: str) -> str | None:
+    """El crudo sin su último token si ese token es texto del ARTE del arma, o None.
+
+    El arte de algunas armas lleva texto propio y el OCR lo pega al final del nombre
+    (`Anhelomarcato DESRE`, `Viajeestruendoso CRASH`: las 2 lecturas de ese tipo en 226 líneas de
+    S30 del log). Se reconoce por la CAJA, que es lo único que el nombre real no comparte: los
+    nombres del catálogo van en minúsculas después de la primera palabra, y sus únicas
+    mayúsculas son los romanos de 'Modelo II'/'Modelo III' — que por eso quedan excluidos.
+
+    No compara prefijos a propósito. Con prefijos, 'Modelo II' cabe dentro de 'Modelo III', y un
+    arma NUEVA que empiece como una del catálogo ('Cúter afilado') se resolvería a la vieja: una
+    fila escrita con el arma equivocada y un hueco menos en la migración curada. Recortando el
+    token, el resto pasa por el MISMO matching de siempre y hereda todas sus protecciones.
+
+    Un solo token, de 3 o más letras: el ruido de uno o dos caracteres ya lo absorbe el fuzzy, y
+    recortar más podría comerse una palabra del nombre.
+    """
+    tokens = (nombre_raw or "").split()
+    if len(tokens) < 2:
+        return None
+    ultimo = tokens[-1]
+    if (len(ultimo) >= 3 and ultimo.isalpha() and ultimo.isupper()
+            and not _RE_ROMANO_MAYUS.match(ultimo)):
+        return " ".join(tokens[:-1])
     return None
+
+
+# Todo romano, no sólo los ambiguos del OCR: recortar 'VII' deja 'Repercusión - Modelo' suelto, que
+# el fuzzy acerca a cualquier modelo del catálogo. Si el arte alguna vez fuera una palabra hecha sólo
+# de estas letras (MIX, DIM), se pierde el recorte — el costo seguro: queda listada como hueco.
+_RE_ROMANO_MAYUS = re.compile(r"^[IVXLCDM]+$")
 
 
 def weapon_panel_signature_s30(frame: np.ndarray) -> bytes:

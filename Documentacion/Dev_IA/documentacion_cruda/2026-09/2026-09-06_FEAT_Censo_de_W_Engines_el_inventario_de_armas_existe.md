@@ -447,10 +447,12 @@ NULL). Detalle: `audit/weapons_catalog_20260910.md`.
    repo (verdad de tierra de S26 desde julio, diálogo de S29); un `grep` del nombre en `app/` antes
    de la `_27` lo resolvía sin capturas. Detalle y lo que queda de la fila 42:
    `audit/weapons_catalog_20260910.md`.
-2. **Recién después, la regla del prefijo** para lo que quede (`Anhelo marcato`, `Viaje estruendoso`:
-   texto del arte). Medido: resuelve los 4, con **una** colisión en todo el catálogo (`Modelo II` es
-   prefijo de `Modelo III`); tomar el más largo la resuelve, con riesgo residual si el ruido empieza
-   con un trazo vertical (`l`/`1`/`|` se normalizan a `i`).
+2. ✅ **Hecho el 2026-09-11 — pero no como prefijo.** `match_catalogo` recorta un token final en
+   MAYÚSCULAS (el arte: *DESRE*, *CRASH*; nunca un romano) y resuelve el resto con el matching de
+   siempre. El prefijo cruzaba `Modelo II`/`III` y se habría tragado cualquier arma nueva que empiece
+   como una del catálogo; el recorte no puede ninguna de las dos. En campo: 10 de las 12 lecturas
+   "fuera del catálogo" del log resuelven, y las 2 restantes no son armas. Detalle en
+   `audit/weapons_catalog_20260910.md`.
 3. **Una pasada** por las armas de Anby y Qingyi: ya están en el catálogo y deberían escribirse.
 4. **El frame de transición** que suma 1 al censo (ver abajo).
 5. **Decidir si las libres se escriben**: doble señal en S26 (sin badge **y** botón *equipar*) contra

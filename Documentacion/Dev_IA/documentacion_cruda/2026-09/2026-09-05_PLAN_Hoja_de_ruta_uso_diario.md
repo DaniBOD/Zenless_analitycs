@@ -66,9 +66,13 @@ reales. Los rangos B quedan fuera por decisión de Daniel.
 armas de Ben y Miyabi (`Cilindro neumático de Bigger`, `Templo a la granizada estelífera`):
 renombrados en la mig `_28`, y ahora las 4 lecturas crudas resuelven.
 
-Queda, en este orden: la **regla del prefijo** para el texto del arte pegado al nombre (`Anhelo
-marcato`, `Viaje estruendoso`), una **pasada** por las armas de Anby, Qingyi, Ben y Miyabi, y el
-**frame de transición** que suma 1 al censo. Orden y detalle en la sección *Estado al cerrar la sesión del 2026-09-10* del doc del censo.
+El mismo día, el texto del arte pegado al nombre (`Anhelo marcato`, `Viaje estruendoso`) dejó de
+sacar armas del catálogo: de 12 lecturas "fuera del catálogo" del log, resuelven 10 (las otras 2 no
+son armas).
+
+Queda, en este orden: una **pasada** por las armas de Anby, Qingyi, Ben, Miyabi y Orfia (las que
+ahora se reconocen y tienen dueño; el Viaje estruendoso se leyó LIBRE, y las libres no se escriben),
+y el **frame de transición** que suma 1 al censo. Orden y detalle en la sección *Estado al cerrar la sesión del 2026-09-10* del doc del censo.
 
 ## 3. Segundo censo de discos
 

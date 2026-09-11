@@ -78,7 +78,20 @@ tenía el mismo origen, y la pantalla dice **Defensa**. El nombre del stat es fi
    stat falso. Se resuelven con una lectura del arma a Nv 60, o con una fuente autorizada.
 2. **`nombre_en` de las dos filas renombradas:** la fila 2 conserva `Hailstorm Shrine`; la 42 sigue
    NULL — `Bigger Cylinder` es la hipótesis obvia, pero no se verificó en ninguna fuente.
-3. **Matching tolerante al texto del arte.** Medido: comparar "el nombre del catálogo, sin
+3. ~~**Matching tolerante al texto del arte.**~~ **Aplicado el 2026-09-11, pero NO como prefijo**
+   (ver abajo). Lo que sigue es la propuesta original, como historia.
+
+   **Lo que se aplicó:** `_sin_texto_del_arte` recorta **un token final en MAYÚSCULAS** (3+ letras,
+   que no sea un romano `[IVXLCDM]+`) y el resto pasa por el matching de siempre. Se reconoce el
+   arte por la **caja**: los nombres del catálogo van en minúsculas después de la primera palabra.
+   El prefijo se descartó por dos daños que el recorte no tiene: `Modelo II` cabe dentro de
+   `Modelo III`, y un arma **nueva** que empiece como una del catálogo (`Cúter afilado`) se habría
+   resuelto a la vieja — fila escrita con el arma equivocada y un hueco menos en la curada.
+   **Medido en campo:** de las 12 lecturas distintas que el log de S30 dio "fuera del catálogo",
+   hoy resuelven **10**; las 2 que quedan no son armas (el panel de la propia app, y
+   `X Hadoemplumado (i)` a Nv 15/15 con ATK 2200, sin investigar).
+
+   *Propuesta original:* Medido: comparar "el nombre del catálogo, sin
    espacios, como prefijo de lo leído sin espacios" resuelve **los 4 falsos huecos**, y en todo el
    catálogo produce **una sola colisión**: `Repercusión - Modelo II` es prefijo de `…Modelo III`.
    Tomar el prefijo más largo la resuelve para lecturas limpias, pero queda un riesgo residual si
