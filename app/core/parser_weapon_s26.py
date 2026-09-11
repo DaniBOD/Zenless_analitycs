@@ -580,6 +580,15 @@ _S30_OWNER_SLOT_DX = 25
 _S30_OWNER_DISCO_R = 12
 _S30_OWNER_NITIDEZ_MIN = 20.0     # 29× sobre la libre más alta, 2.5× bajo el dueño más bajo
 
+# Y cuando la nitidez dice "hay cara" pero Hough no la vio, se la busca otra vez con un umbral más
+# bajo — SÓLO en la banda del dueño y en la fila de la especialidad. Es el caso de Grace: su avatar
+# tiene menos contraste en el borde y con `param2=20` no aparece; con 16 sí, en las dos capturas
+# (dx 23 y 25, 2 px bajo la especialidad), y recortada ahí sale primera con margen > 0.2. Con 12 ya
+# aparecen círculos espurios en la banda (dx 40, 55 px más arriba): de ahí la tolerancia de fila.
+# Las libres nunca llegan acá: el reintento corre sólo con la nitidez ya por encima del umbral.
+_S30_OWNER_HOUGH_P2_REINTENTO = 16
+_S30_OWNER_FILA_TOL = 10
+
 
 def _nitidez_disco(frame: np.ndarray, cx: int, cy: int, r: int) -> float:
     """|Laplaciano| medio en un disco. Se calcula sobre un parche con 2 px de margen: el kernel es
@@ -666,6 +675,7 @@ def read_weapon_owner_badge_s30(frame: np.ndarray,
             if _S30_OWNER_DX[0] <= dx <= _S30_OWNER_DX[1]:
                 if elegido is None or c[2] > elegido[2]:
                     elegido = c
+        nit = 0.0
         if elegido is None:
             # Hough no vio la cara. "No la encontré" NO es "no está": así salía el falso LIBRE de
             # 'Compilador quimérico' (de Grace, 3 veces en vivo). LIBRE se afirma recién después
@@ -674,14 +684,28 @@ def read_weapon_owner_badge_s30(frame: np.ndarray,
                    if _S30_ESPEC_DX[0] <= int(c[0]) + _S30_OWNER_WIN_DX[0] <= _S30_ESPEC_DX[1]]
             if not esp:
                 return None     # sin la especialidad no hay ancla: "no sé", nunca "libre"
-            nit = _nitidez_disco(frame, px + _S30_OWNER_SLOT_DX, int(y0 + esp[0][1]),
-                                 _S30_OWNER_DISCO_R)
+            fila = int(esp[0][1])
+            nit = _nitidez_disco(frame, px + _S30_OWNER_SLOT_DX, y0 + fila, _S30_OWNER_DISCO_R)
             if nit < _S30_OWNER_NITIDEZ_MIN:
                 return OwnerBadge(present=False, nitidez=nit)
-            # Hay cara y Hough no la localizó: presente, SIN recorte. Nombrar con un centro
-            # estimado rompería el encuadre de la librería (`_S30_OWNER_R_F`) — mejor "hay
-            # alguien, no sé quién" que un nombre equivocado.
-            return OwnerBadge(present=True, nitidez=nit, crop=None)
+            # Hay cara: se la busca con un umbral más bajo, en su banda y en su fila (ver
+            # `_S30_OWNER_HOUGH_P2_REINTENTO`). El centro sigue saliendo de Hough.
+            otra = cv2.HoughCircles(
+                blur, cv2.HOUGH_GRADIENT, dp=1, minDist=30, param1=100,
+                param2=_S30_OWNER_HOUGH_P2_REINTENTO,
+                minRadius=int(_DET_HOUGH_RMIN_F * W), maxRadius=int(_DET_HOUGH_RMAX_F * W),
+            )
+            for c in ([] if otra is None else otra[0]):
+                dx = int(c[0]) + _S30_OWNER_WIN_DX[0]
+                if (_S30_OWNER_DX[0] <= dx <= _S30_OWNER_DX[1]
+                        and abs(int(c[1]) - fila) <= _S30_OWNER_FILA_TOL
+                        and (elegido is None or c[2] > elegido[2])):
+                    elegido = c
+            if elegido is None:
+                # Ni así: presente, SIN recorte. Nombrar con un centro estimado rompería el
+                # encuadre de la librería (`_S30_OWNER_R_F`) — mejor "hay alguien, no sé quién"
+                # que un nombre equivocado.
+                return OwnerBadge(present=True, nitidez=nit, crop=None)
         ccx, ccy = int(x0 + elegido[0]), int(y0 + elegido[1])
         # El radio sale de la constante, NO de `elegido[2]`: ver `_S30_OWNER_R_F`. Del círculo
         # detectado se usa solo el CENTRO, que es lo que Hough resuelve bien acá.
@@ -690,7 +714,7 @@ def read_weapon_owner_badge_s30(frame: np.ndarray,
         if r >= 8:
             c = frame[max(0, ccy - r):min(H, ccy + r), max(0, ccx - r):min(W, ccx + r)]
             crop = c if c.size else None
-        return OwnerBadge(present=True, nitidez=0.0, crop=crop)
+        return OwnerBadge(present=True, nitidez=nit, crop=crop)
     except Exception:
         return None
 

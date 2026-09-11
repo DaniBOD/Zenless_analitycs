@@ -25,11 +25,17 @@ La causa estaba en el ENCUADRE: el radio del recorte lo decidía Hough, que ater
 | `Ejemplo_2`  | Florescencia         | *(libre)*  | LIBRE ✓ | — |
 | `Ejemplo_5`  | Repercusión Modelo II| *(libre)*  | LIBRE ✓ | — |
 | `Ejemplo_10` | Transmorfer original | Zhao       | top-1 correcto, margen 0.029 ⇒ abstiene | 0.306 |
-| `Ejemplo_7`  | Compilador quimérico | Grace      | presente, sin nombrar *(hasta el 2026-09-11 afirmaba LIBRE)* | — |
+| `Ejemplo_7`  | Compilador quimérico | Grace      | nombrado ✓ *(hasta el 2026-09-11 afirmaba LIBRE)* | 0.090 |
+| `Ejemplo_16` | Compilador quimérico | Grace      | nombrado ✓ *(captura nueva del 2026-09-11)* | 0.090 |
 
-**9 de 10 salen bien o se abstienen sin mentir** (6 nombrados + 2 libres + Grace presente), y 1 se
-abstiene con el ranking correcto. Desde el 2026-09-11 se suman las libres `Ejemplo_11/12` y los
-dueños `Ejemplo_13/14/15` (Ben, Miyabi, Qingyi) al contrato "con dueño nunca sale libre".
+**Grace era LOCALIZACIÓN, no librería**: su avatar tiene menos contraste en el borde y Hough, con
+`param2=20`, no lo ve. Cuando la nitidez del lugar del dueño ya dijo "hay cara", se reintenta con
+16 en la banda y la fila del dueño (`_S30_OWNER_HOUGH_P2_REINTENTO`). Con 12 y sin exigir la fila
+aparece un círculo espurio más grande 55 px arriba y Grace deja de nombrarse: la fila es la guarda.
+
+**9 de 10 se nombran o salen libres bien** (7 nombrados + 2 libres), y 1 —Zhao— se abstiene con el
+ranking correcto. Desde el 2026-09-11 se suman las libres `Ejemplo_11/12` y los dueños
+`Ejemplo_13/14/15/16` (Ben, Miyabi, Qingyi, Grace) al contrato "con dueño nunca sale libre".
 Y ya no hay dos regímenes: los seis nombrados caen entre 0.060 y 0.094.
 
 Los márgenes también dejaron de ser frágiles. Jane pasaba con 0.073 y Gatillo con 0.110 —a un
@@ -101,6 +107,8 @@ _DUENOS: dict[str, str | None] = {
     "Ejemplo_13": "Ben",
     "Ejemplo_14": "Miyabi",
     "Ejemplo_15": "Qingyi",
+    # 2026-09-11: la segunda captura del arma de Grace, pedida para cerrar su caso.
+    "Ejemplo_16": "Grace",
 }
 _CON_DUENO = tuple(k for k, v in _DUENOS.items() if v is not None)
 # Los tres que recibieron refs nuevas en la cosecha del 2026-08-12.
@@ -262,6 +270,22 @@ def test_compilador_quimerico_no_esta_libre():
         pytest.skip("falta Ejemplo_7")
     b, _r = _badge("Ejemplo_7")
     assert b is None or b.present, "se afirmó LIBRE un arma que tiene dueño"
+
+
+@_skip
+@pytest.mark.parametrize("stem", ("Ejemplo_7", "Ejemplo_16"))
+def test_a_grace_se_la_nombra(stem):
+    """El paso siguiente a no mentir: nombrarla. Las dos capturas son de su Compilador quimérico.
+
+    No era la librería: recortada en el lugar correcto, Grace sale primera con 0.09-0.12 contra
+    0.33 de Gatillo (margen > 0.2). Lo que fallaba era LOCALIZAR la cara — su avatar tiene menos
+    contraste en el borde y Hough, con `param2=20`, no la ve; con 16 sí, en la banda del dueño y a
+    la altura del círculo de especialidad, en las dos capturas."""
+    if _falta(stem):
+        pytest.skip(f"falta {stem}")
+    _b, r = _badge(stem)
+    assert r is not None, f"{stem}: no hubo recorte para nombrar"
+    assert r.name == "Grace", f"{stem}: name={r.name} top={r.top[:3]}"
 
 
 @_skip

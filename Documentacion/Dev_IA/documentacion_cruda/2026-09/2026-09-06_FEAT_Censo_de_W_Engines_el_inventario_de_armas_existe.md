@@ -473,6 +473,14 @@ NULL). Detalle: `audit/weapons_catalog_20260910.md`.
    "libre". Con cara pero sin localizar ⇒ presente **sin recorte** (no se nombra con un encuadre
    estimado). Ninguna de las 11 capturas con dueño sale libre; las 4 libres reales siguen libres.
 
+   **Y el mismo día, a Grace se la nombra.** Daniel capturó su arma otra vez (`Ejemplo_16`). La
+   librería no era el problema: recortada en el lugar correcto, Grace sale primera con 0.09-0.12
+   contra 0.33 de Gatillo (margen > 0.2). Fallaba LOCALIZAR la cara: su avatar tiene menos
+   contraste en el borde y Hough, con `param2=20`, no la ve. Cuando la nitidez ya dijo "hay cara",
+   se reintenta con `param2=16` sólo en la banda del dueño y a la altura del círculo de
+   especialidad (±10 px); el centro sigue saliendo de Hough y el radio de la constante, así que el
+   encuadre es el de la librería. Las libres no llegan al reintento: su nitidez es 0.5.
+
    Cómo se escriben: una libre no tiene PJ que la identifique, así que su clave es (arma, nivel,
    refinamiento) + el **número de copia** que el monitor calcula desde la posición en la grilla. La
    copia k es la k-ésima fila libre de esa clave (`find_free`, con `IS` por el refinamiento NULL):
