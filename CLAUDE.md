@@ -31,6 +31,10 @@ En este orden, leé estos 4 archivos:
    | **E1** | Una investigación sin archivo no se puede revisar ni retomar. |
    | **E3** | Un cambio por vez, y el diagnóstico primero. |
 
+   **Y después, [`Documentacion/Dev_IA/00_Indice.md`](Documentacion/Dev_IA/00_Indice.md)** — el mapa de la documentación de desarrollo: qué hay, de qué mes, y si sigue siendo cierto. No leas crudos a ciegas: el índice te dice si un mes tiene **compacto** (leé ese) o está vivo (leé los crudos que te sirvan).
+
+   ⚠️ **Todo documento Dev_IA nuevo nace en `Documentacion/Dev_IA/documentacion_cruda/YYYY-MM/`**, nunca en la raíz de `Dev_IA/`, y se agrega una línea al índice. Los archivos no se mudan después: una ruta que cambia rompe los enlaces que apuntan a ella.
+
 1. **[`project-context-IA.md`](project-context-IA.md)** (~300 líneas) — snapshot maestro. Estado de la DB, RFs, decisiones cerradas, glosario. Es el archivo *autoritativo*.
 2. **[`Documentacion/Roadmap_Implementacion/Roadmap_Motor_Captura_Scoring.md`](Documentacion/Roadmap_Implementacion/Roadmap_Motor_Captura_Scoring.md)** — Fase 2 (motor de captura + scoring). Define los 7 sub-fases con criterios de aceptación duros por hito. **Esta es tu hoja de ruta**.
 3. **Cuando llegues al hito que toca, leé el RF correspondiente** (`Documentacion/RF_*/RF-Logic_*.md`). Si hay discrepancia entre código y RF, manda el RF.

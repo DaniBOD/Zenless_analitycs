@@ -139,10 +139,17 @@ resoluble.
    original). Las 15 mediciones del compacto verificadas una por una contra el crudo; el criterio
    de aceptación da 7/9, y los 2 que faltan son constantes que viven en el código (ver arriba).
 2. ~~Decidir si se sigue~~ **sí.**
-3. Mudanza histórica: `git mv` de los 76 a `documentacion_cruda/YYYY-MM/` + normalización de nombres.
-4. Compactos de mayo, junio y agosto.
-5. `00_Indice.md`.
-6. Actualizar CLAUDE.md §0 para que apunte al índice.
+3. ~~Mudanza histórica~~ **HECHO** (`c0c93d7`). 76 archivos con `git mv`, 154 enlaces re-enlazados
+   por resolución, **0 rotos por la mudanza** (baseline 52 → 51, verificado uno por uno con
+   `tools/check_doc_links.py`). **Los nombres NO se normalizaron**, contra lo que decía este
+   paso: 13 de los 17 "fuera de convención" dicen `Hito_2.8_`, que es información real, y la
+   estructura misma vuelve innecesario el renombre — a los crudos se llega por el compacto, no
+   por nombre de archivo.
+4. Compactos de mayo, junio y agosto — **pendiente**. Mientras falten, esos meses cuentan como
+   vivos y el índice lista sus documentos uno por uno.
+5. ~~`00_Indice.md`~~ **HECHO.**
+6. ~~Actualizar CLAUDE.md §0~~ **HECHO**: el índice entra a la lectura obligatoria, y queda escrita
+   la regla de dónde nace un documento nuevo.
 
 **Septiembre NO se compacta**: está vivo.
 
