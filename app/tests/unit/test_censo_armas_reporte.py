@@ -84,9 +84,9 @@ def test_sin_armas_fuera_de_catalogo_lo_dice_explicito(audit):
 
 
 def test_la_brecha_de_armas_no_habla_de_gemelos(audit):
-    """En discos la causa probable son gemelos que la deduplicación colapsa; en armas, copias que
-    la firma del panel ni siquiera vuelve a mirar. Nombrar la causa de discos sería nombrar la
-    equivocada."""
+    """En discos la causa probable son gemelos que la deduplicación colapsa; en armas, copias del
+    mismo W-Engine vistas sin posición de selección localizable. Nombrar la causa de discos sería
+    nombrar la equivocada."""
     _j, md = write_weapon_census_report(_censo().resumen(), _FUERA)
     texto = md.read_text(encoding="utf-8")
     assert "W-Engine" in texto and "gemelos" not in texto
@@ -105,3 +105,19 @@ def test_un_fallo_al_escribir_no_tumba_el_cierre(audit, monkeypatch):
         raise OSError("disco lleno")
     monkeypatch.setattr(ap, "reservar_rutas", _explota)
     assert write_weapon_census_report(_censo().resumen(), _FUERA) is None
+
+
+def test_el_reporte_no_dice_que_las_copias_son_invisibles(audit):
+    """Regresión del 2026-09-10. El reporte afirmaba que la firma del panel no distinguía dos
+    copias del mismo W-Engine y que ni siquiera volvía a disparar el parser. Desde el arreglo por
+    posición de la selección eso es falso — y el primer reporte tras el arreglo lo seguía diciendo,
+    sobre una pasada donde las dos Última cena libres de Daniel SÍ se contaron por separado.
+
+    Un reporte que explica la brecha con una causa que ya no existe manda a buscar el problema al
+    lugar equivocado. Por eso se fija también la contracara: tiene que decir qué separa a las copias.
+    """
+    _j, md = write_weapon_census_report(_censo().resumen(), _FUERA)
+    texto = md.read_text(encoding="utf-8")
+    assert "ni siquiera vuelve a disparar" not in texto
+    assert "no las distingue" not in texto
+    assert "selección" in texto, "el reporte tiene que decir qué separa a las copias"

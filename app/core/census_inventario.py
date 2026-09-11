@@ -280,10 +280,15 @@ _CAUSA_BRECHA = {
     "discos": ("o no se recorrieron, o son discos gemelos (indistinguibles por identidad) que "
                "el censo cuenta una sola vez"),
     # En armas el colapso NO es de la deduplicación sino de la OBSERVACIÓN: dos copias del mismo
-    # W-Engine son idénticas en todo campo visible, y la firma del panel S30 ni siquiera vuelve a
-    # disparar el parser al saltar de una a otra.
-    "armas": ("o no se recorrieron, o son copias del mismo W-Engine — idénticas en todo campo "
-              "observable, y la firma del panel no las distingue"),
+    # W-Engine son idénticas en todo campo visible. Desde el 2026-09-10 las separa la POSICIÓN de
+    # la selección en la grilla (`Monitor._ordinal_de_copia`); la brecha que queda es la de las
+    # copias vistas sin posición localizable, donde no se puede saber si es otra copia y se cuenta
+    # una sola (RNF-02). Hasta esa fecha este texto decía que la firma del panel no las distinguía:
+    # dejó de ser cierto, y un reporte que explica la brecha con una causa que ya no existe manda a
+    # buscar el problema al lugar equivocado.
+    "armas": ("o no se recorrieron, o hay copias del mismo W-Engine que se vieron sin poder "
+              "localizar la selección de la grilla — sin esa posición, dos copias idénticas "
+              "cuentan como una"),
 }
 
 #: Nombres viejos: el flujo de discos no tiene por qué enterarse de la generalización.
@@ -384,9 +389,10 @@ def _markdown_armas(registro: dict) -> str:
         ("- **Nada sobre las armas LIBRES.** v1 escribe sólo lo que NOMBRA: la lectura de dueño "
          "de S30 mide 8/10 y el caso que falla AFIRMA que un arma está libre siendo de alguien. "
          "Un arma sin dueño identificado se cuenta en `sin resolver`, no se persiste."),
-        ("- **Nada sobre las copias duplicadas.** Dos copias del mismo W-Engine son idénticas "
-         "en todo campo observable, y la firma del panel ni siquiera vuelve a disparar el parser "
-         "al saltar de una a otra."),
+        ("- **Las copias duplicadas, sólo por su lugar.** Dos copias del mismo W-Engine son "
+         "idénticas en todo campo observable; el censo las separa por dónde está la selección en "
+         "la grilla. Si el recuadro no se localiza, cuentan como una; y volver a una copia ya vista "
+         "después de un scroll la cuenta otra vez (sale como excedente sobre el contador)."),
         "- **Nada sobre discos ni sobre el roster.**",
         "",
     ]

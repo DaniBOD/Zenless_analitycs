@@ -380,6 +380,39 @@ píxeles reales de las capturas 11 y 12, sin stubs. Seis sabotajes, cada uno roj
   llamadas devolvieron **el mismo número**: el sabotaje nunca cambió el comportamiento, y el
   "ningún test lo atrapó" era un defecto del sabotaje, no del test. Rehecho con un contador.
 
+### Validación en vivo (2026-09-10, 23:39)
+
+| | |
+|---|---|
+| primera Última cena libre | `LIBRE` · censo **4/75** |
+| segunda Última cena libre | `LIBRE` · censo **5/75** |
+| frame de transición | no apareció |
+| cierre con F8 | **5/75 · 3 con dueño · 2 sin resolver · 2 provisorias** — las dos libres, cada una por su lado |
+| DB | sin cambios: 38 filas, Última cena con sus 3 equipadas; las libres no se escriben |
+
+Reporte: `audit/censos/20260910_234255_760944_censo_armas.md`.
+
+Lo que **no** se ejerció en vivo: volver a la primera copia. Lo esperado ahí no es silencio — sale
+una tercera línea `LIBRE`, porque la selección se movió, pero el censo se queda en 5/75. Lo cubre
+`test_volver_a_la_misma_copia_no_la_cuenta_otra_vez`.
+
+### El primer reporte después del arreglo explicaba la brecha con la causa vieja
+
+Ese mismo reporte decía que faltaban armas porque *"la firma del panel no las distingue"* y, en lo
+que la pasada no prueba, que *"ni siquiera vuelve a disparar el parser al saltar de una a otra"* —
+sobre una corrida donde las dos copias **sí** se contaron por separado. Eran textos fijos en
+`census_inventario.py` que describían el comportamiento anterior, y el arreglo los dejó mintiendo.
+
+Se reescribieron para decir lo que hoy es cierto: las copias se separan por la posición de la
+selección, y lo que queda como límite es la copia vista sin posición localizable (cuenta como una)
+y el scroll (cuenta de más). Un test nuevo, `test_el_reporte_no_dice_que_las_copias_son_invisibles`,
+prohíbe las dos frases viejas y exige que el reporte diga qué separa a las copias; saboteando cada
+texto por separado, queda rojo las dos veces.
+
+**La forma que se repite:** un comportamiento cambia y la prosa que lo explicaba —en un reporte, un
+docstring, un comentario— sigue diciendo lo anterior con toda seguridad. Al cambiar un
+comportamiento, hay que buscar las frases que lo describen, no sólo el código que lo implementa.
+
 ## Queda abierto
 
 > Estado al 2026-09-08, después de la primera pasada. Los números y el detalle completo están en
