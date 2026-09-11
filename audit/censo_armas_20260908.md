@@ -84,6 +84,13 @@ recuperan en la segunda pasada, que es barata porque el bucket A convierte cada 
 
 ## Fuera de catálogo — entrada de la migración curada
 
+> ⚠️ **Corrección del 2026-09-10: de esta lista, sólo 2 eran huecos reales.** Medidas contra las
+> 59 filas de `weapons`, `Anhelomarcato DESRE`, `Viajeestruendoso CRASH`,
+> `Cilindroneumatico de Bigger` y `Temploala granizadaestelifera` **ya estaban en el catálogo**
+> (Anhelo marcato, Viaje estruendoso, Cilindro neumático, Templo a la granizada): el OCR les pegó
+> texto del arte o les comió espacios, y el fuzzy no las alcanzó. Sumado a `X Cuter` (ya corregido
+> abajo), la tabla tenía **5 entradas falsas de 7**. Detalle en `audit/weapons_catalog_20260910.md`.
+
 Nombre español **leído de pantalla**, que es el dato que ninguna wiki da. Ninguna se da de alta
 sola (RNF-02): la migración se revisa a mano.
 
