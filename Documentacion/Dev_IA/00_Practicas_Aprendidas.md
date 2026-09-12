@@ -26,6 +26,13 @@ detector; que había 8 refs contaminadas — eran legítimas y sacarlas empeoró
 viene de un doc, andá a ver si alguien lo midió o si lo dedujo. Y cuando corrijas un número
 heredado, fijate si tu propio cambio ya lo movió otra vez.
 
+**Y medí con la métrica que usa el sistema, no con una parecida** (2026-09-12). Para saber si una
+referencia de avatar estaba mal etiquetada se comparó con una distancia L2 sobre la imagen en
+gris: dio lejos, y la hipótesis correcta se descartó. Con `descriptor_distance` —la que el matcher
+realmente usa— esa misma ref era la más cercana (0.156 contra 0.475) y era la causa del bug. Una
+medición con la métrica equivocada no es media medición: es una refutación falsa, y cuesta más que
+no haber medido, porque cierra la puerta con aire de rigor.
+
 ### A2 · El silencio no es un aprobado.
 
 *"No hay ERROR en el log"* no significa que anduvo: puede significar que **ese código nunca

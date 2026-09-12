@@ -504,6 +504,33 @@ NULL). Detalle: `audit/weapons_catalog_20260910.md`.
    volver a una libre ya vista no la duplica**. La fila 50 quedó con `descartado = 1` (mig `_29`,
    baja lógica y reversible). Si el fantasma vuelve, la línea del log trae la casilla.
 
+6. ✅ **Billy, Zhao y Billy Estelar — cerrados el 2026-09-12.** Tres armas no se podían atribuir y
+   la causa era la LIBRERÍA, no el código. Detalle y números en
+   `audit/latencia_y_badges_20260912.md`.
+
+   - **Billy y Zhao**: cosecha guiada (ficha → arma → botón *Desequipar*, que es lo único que
+     confirma el dueño sin librería). `Réplica de motor estelar` pasó de abstenerse (top `Ben`
+     0.422, margen 0.027) a `la tiene Billy` (0.172, margen 0.250); `Transmorfer original`, de
+     0.306 con margen 0.029 a **0.120** con margen 0.215. **El umbral de margen no se tocó** — y
+     menos mal: es lo único que impidió escribir el arma de Billy a nombre de Ben.
+   - **Billy Estelar**: su `Tránsito herciano` se atribuyó a Billy. No es un atuendo — en `agents`
+     es otro PJ (id 47, S, Disruptivos). La causa: **la ref vieja de la clase `Billy` era la cara
+     de Billy Estelar**, y como una clase se compara con su MEJOR ref, Billy ganaba 0.16 a 0.26 en
+     el arma ajena. Se MOVIÓ la ref a su clase (no se borró) y quedó `Ejemplo_18` → Billy Estelar
+     0.156, margen 0.272. La mig `_30` reasignó la fila 26.
+   - **Lo que destapó el caso fue un veto**: al cosechar desde la ficha de Estelar, el juego decía
+     "Billy Estelar" y el matcher afirmaba "Billy" ⇒ `veto_conflicto`, sin aprender nada. La guarda
+     que evita envenenar una clase es además el mejor detector de clases envenenadas.
+   - **Un error mío que vale documentar:** descarté esta hipótesis una vez con una distancia L2
+     sobre la imagen en gris en vez de `descriptor_distance`. Ver A1 en las prácticas.
+
+   Los tests miden contra un snapshot nuevo
+   (`audit/avatar_detbadge_v2_snapshot_20260912_billy_estelar.npz`): 35 en verde y ningún `xfail`.
+
+7. **La `Réplica de motor estelar` de Billy todavía no tiene fila.** No se inventa: la escribe la
+   próxima pasada que la vea. Hasta la mig `_30` no podía, porque Billy figuraba con el Tránsito y
+   el bucket B se abstenía — correctamente, porque una de las dos lecturas estaba mal.
+
    Cómo se escriben: una libre no tiene PJ que la identifique, así que su clave es (arma, nivel,
    refinamiento) + el **número de copia** que el monitor calcula desde la posición en la grilla. La
    copia k es la k-ésima fila libre de esa clave (`find_free`, con `IS` por el refinamiento NULL):

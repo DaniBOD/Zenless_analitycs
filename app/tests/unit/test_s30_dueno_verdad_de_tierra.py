@@ -27,15 +27,22 @@ La causa estaba en el ENCUADRE: el radio del recorte lo decidía Hough, que ater
 | `Ejemplo_10` | Transmorfer original | Zhao       | top-1 correcto, margen 0.029 ⇒ abstiene | 0.306 |
 | `Ejemplo_7`  | Compilador quimérico | Grace      | nombrado ✓ *(hasta el 2026-09-11 afirmaba LIBRE)* | 0.090 |
 | `Ejemplo_16` | Compilador quimérico | Grace      | nombrado ✓ *(captura nueva del 2026-09-11)* | 0.090 |
+| `Ejemplo_17` | Réplica motor estelar| Billy      | nombrado ✓ *(cosechado el 2026-09-12)* | 0.172 |
+| `Ejemplo_18` | Tránsito herciano    | Billy Estelar | nombrado ✓ *(ref mal etiquetada, movida el 2026-09-12)* | 0.156 |
 
 **Grace era LOCALIZACIÓN, no librería**: su avatar tiene menos contraste en el borde y Hough, con
 `param2=20`, no lo ve. Cuando la nitidez del lugar del dueño ya dijo "hay cara", se reintenta con
 16 en la banda y la fila del dueño (`_S30_OWNER_HOUGH_P2_REINTENTO`). Con 12 y sin exigir la fila
 aparece un círculo espurio más grande 55 px arriba y Grace deja de nombrarse: la fila es la guarda.
 
-**9 de 10 se nombran o salen libres bien** (7 nombrados + 2 libres), y 1 —Zhao— se abstiene con el
-ranking correcto. Desde el 2026-09-11 se suman las libres `Ejemplo_11/12` y los dueños
-`Ejemplo_13/14/15/16` (Ben, Miyabi, Qingyi, Grace) al contrato "con dueño nunca sale libre".
+**Al 2026-09-12 no queda ninguno sin resolver**: los 10 de la tabla se nombran o salen libres
+bien, incluido Zhao —que era el último "ranking bien, margen corto"— y el par Billy / Billy
+Estelar. Las libres `Ejemplo_11/12` y los dueños `Ejemplo_13` a `_18` se suman al contrato "con
+dueño nunca sale libre".
+
+⚠️ El snapshot que miden estos tests (`_SNAP`) es del **2026-09-12** y ya incluye la cosecha de
+Billy y Zhao y la ref movida a `Billy Estelar`. Si alguien vuelve al snapshot viejo, los tres
+tests de esos PJs se ponen rojos **por la razón correcta**: la librería es el arreglo.
 Y ya no hay dos regímenes: los seis nombrados caen entre 0.060 y 0.094.
 
 Los márgenes también dejaron de ser frágiles. Jane pasaba con 0.073 y Gatillo con 0.110 —a un
@@ -82,7 +89,7 @@ from app.core.parser_weapon_s26 import parse_weapon_s30, read_weapon_owner_badge
 _ROOT = Path(__file__).resolve().parents[3]
 _FX = (_ROOT / "Documentacion" / "Screenshots_Triggers" / "Engines_Triggers"
        / "Inventario_general_engines")
-_SNAP = _ROOT / "audit" / "avatar_detbadge_v2_snapshot_20260813_cosecha89.npz"
+_SNAP = _ROOT / "audit" / "avatar_detbadge_v2_snapshot_20260912_billy_estelar.npz"
 
 # Verdad de tierra dictada por Daniel el 2026-08-13, mirando la pantalla. No sale del sistema:
 # es justamente contra lo que se lo mide. `None` = el arma NO tiene dueño (libre).
@@ -109,8 +116,12 @@ _DUENOS: dict[str, str | None] = {
     "Ejemplo_15": "Qingyi",
     # 2026-09-11: la segunda captura del arma de Grace, pedida para cerrar su caso.
     "Ejemplo_16": "Grace",
-    # 2026-09-11: la Réplica de motor estelar de Billy, que en vivo sale "con dueño (sin identificar)".
+    # 2026-09-11: la Réplica de motor estelar de Billy, que en vivo salía "con dueño (sin identificar)".
     "Ejemplo_17": "Billy",
+    # 2026-09-12: Tránsito herciano, de **Billy Estelar**. No es un atuendo de Billy: en `agents`
+    # es otro PJ (id 47, rango S, Disruptivos) con sus propios discos. Es el par que destapó la
+    # ref mal etiquetada.
+    "Ejemplo_18": "Billy Estelar",
 }
 _CON_DUENO = tuple(k for k, v in _DUENOS.items() if v is not None)
 # Los tres que recibieron refs nuevas en la cosecha del 2026-08-12.
@@ -213,24 +224,25 @@ def test_un_arma_sin_dueno_se_reporta_libre(stem):
 
 
 @_skip
-def test_a_zhao_lo_frena_el_MARGEN_y_no_el_ranking():
-    """Diagnóstico clavado como contrato: el dueño correcto está PRIMERO y aun así no se nombra.
+def test_a_zhao_lo_arreglo_la_COSECHA_y_no_aflojar_el_margen():
+    """Cerrado el 2026-09-12. Hasta acá Zhao era el caso "ranking bien, margen corto": su dueño
+    salía PRIMERO (0.306) y aun así se abstenía, porque Nicole quedaba a 0.028.
 
-    Importa distinguirlo porque el remedio es distinto. Si alguien lee "no identifica al dueño" y
-    sale a cambiar el descriptor, está arreglando algo que no está roto: lo que falta es distancia.
+    La tentación era bajar `_MIN_MARGIN`. Habría sido el arreglo equivocado, y hay prueba: ese
+    mismo umbral es lo único que impidió escribir el arma de Billy a nombre de Ben. Lo que
+    faltaba era una ref con el encuadre de HOY — las suyas se cosecharon anchas, antes de que
+    `_DET_CROP_R_F` normalizara el recorte el 2026-08-14.
 
-    Zhao es el ÚNICO que queda acá, y la razón está medida: sus refs se cosecharon con un encuadre
-    ANCHO. Al barrer el radio, Zhao mejora en la dirección contraria a todos los demás — 0.050 a
-    r=27 contra 0.306 a r=21 —. O sea que normalizar la lectura no le alcanza: hay que normalizar
-    también la ref, y eso es el camino de cosecha, que no se tocó.
+    Se cosechó desde su ficha (botón *Desequipar*) y la distancia pasó de 0.306 a **0.120**, con
+    margen 0.215. El umbral no se tocó.
     """
     if _falta("Ejemplo_10"):
         pytest.skip("falta Ejemplo_10")
     _b, r = _badge("Ejemplo_10")
     from app.core.avatar_descriptor import _MIN_MARGIN
-    assert r.top[0][0] == "Zhao"                         # el ranking está bien...
-    assert r.margin < _MIN_MARGIN                        # ...y aun así se abstiene
-    assert r.name is None
+    assert r.name == "Zhao", f"name={r.name} top={r.top[:3]}"
+    assert r.margin >= _MIN_MARGIN, f"margen {r.margin:.3f}"
+    assert _MIN_MARGIN == 0.04, "el umbral NO se tocó para arreglar esto"
 
 
 # --- Los dos defectos abiertos -----------------------------------------------------------------
@@ -291,21 +303,45 @@ def test_a_grace_se_la_nombra(stem):
 
 
 @_skip
-@pytest.mark.xfail(strict=True, reason="defecto abierto de LIBRERÍA, no de localización: el círculo "
-                                       "del dueño se localiza a la primera y el top-3 es Ben/Antón/"
-                                       "Manato a 0.42+, sin Billy. Se cierra cosechando a Billy.")
 def test_a_billy_se_lo_nombra():
-    """Distinto de Grace, y por eso va aparte. A Grace no se la veía; a Billy se lo ve y no se lo
-    reconoce: la librería tiene 4 refs suyas repartidas en dos etiquetas (`Billy` 1, `Billy
-    Estelar` 3) y ninguna se parece al badge de hoy.
+    """Cerrado el 2026-09-12, y hicieron falta DOS arreglos distintos.
 
-    El sistema hace lo correcto al abstenerse — margen 0.027 contra el mínimo de 0.04, y el primero
-    del ranking era un error (Ben). Sin la guarda, el arma de Billy se habría escrito a nombre de
-    Ben. Si alguien cosecha refs buenas, este test pasa y avisa que hay que actualizar la tabla."""
+    1. **Le faltaba su cara.** Billy tenía una sola ref y no era la suya: el top-3 daba
+       Ben/Antón/Manato a 0.42+ y el sistema se abstenía (margen 0.027 contra el mínimo de 0.04).
+       Se cosechó desde su ficha, con el botón *Desequipar* confirmando el dueño ⇒ 0.172, margen
+       0.250.
+    2. **Esa ref vieja era la cara de OTRO PJ** — ver
+       `test_a_billy_estelar_no_se_lo_confunde_con_billy`.
+
+    La abstención previa era lo correcto: sin ella, el arma de Billy se escribía a nombre de Ben.
+    """
     if _falta("Ejemplo_17"):
         pytest.skip("falta Ejemplo_17")
     _b, r = _badge("Ejemplo_17")
     assert r is not None and r.name == "Billy", f"name={None if r is None else r.name}"
+
+
+@_skip
+def test_a_billy_estelar_no_se_lo_confunde_con_billy():
+    """El caso que destapó una ref MAL ETIQUETADA, y el más filoso de la librería.
+
+    `Billy Estelar` no es un atuendo: en `agents` es otro PJ (id 47, rango S, Disruptivos, contra
+    el id 12 de Billy, rango A, Ataque), con sus propios discos y su propia arma. Las dos caras se
+    parecen —el mismo robot con otro diseño— y el 2026-09-11 su `Tránsito herciano` se escribió a
+    nombre de Billy.
+
+    La causa NO era el margen ni el encuadre: la única ref vieja de la clase `Billy` era la cara de
+    Billy Estelar. Medido ref por ref contra este badge, esa ref daba **0.156** y la de Billy
+    **0.475** — y como la distancia de una clase es la de su MEJOR ref, Billy ganaba 0.16 a 0.26.
+
+    Se corrigió MOVIENDO la ref a su clase, no borrándola (B3). Y el veto de cosecha hizo su
+    trabajo: al intentar aprender desde la ficha de Estelar, el matcher afirmaba 'Billy' y la
+    cosecha se vetó en vez de envenenar la segunda clase.
+    """
+    if _falta("Ejemplo_18"):
+        pytest.skip("falta Ejemplo_18")
+    _b, r = _badge("Ejemplo_18")
+    assert r is not None and r.name == "Billy Estelar", f"name={None if r is None else r.name}"
 
 
 @_skip

@@ -70,7 +70,33 @@ El camino que las cosechó es el de `_maybe_harvest_weapon_owner`: ficha del PJ 
 *Desequipar*, con el latch confirmando el nombre (`[cosecha] detalle-badge de 'Billy' desde el
 arma 'Réplica motor estelar'`). **No hubo vetos.**
 
-## 3 · Abierto: Billy vs Billy Estelar
+## 3 · CERRADO el mismo día: era una ref MAL ETIQUETADA
+
+> Lo de abajo quedó como historia del diagnóstico. El desenlace: la única ref vieja de la clase
+> `Billy` era **la cara de Billy Estelar**. Medido ref por ref contra el badge de Estelar
+> (`Ejemplo_18`): esa ref daba **0.156** y la de Billy **0.475**; como la distancia de una clase es
+> la de su MEJOR ref, Billy le ganaba a Estelar en el arma de Estelar.
+>
+> **Cómo se destapó:** la cosecha guiada de Billy Estelar salió `veto_conflicto` — el juego decía
+> "Billy Estelar" (botón *Desequipar*) y el matcher afirmaba "Billy" a 0.09. La guarda evitó
+> aprender la cara bajo la etiqueta equivocada, y ese veto fue la pista.
+>
+> **Arreglo:** la ref se MOVIÓ a `Billy Estelar` (no se borró; backup
+> `avatar_detbadge_v2.backup_prerelabel_20260912_024322.npz`). Verificado releyendo la librería en
+> un proceso limpio: `Ejemplo_17` → Billy 0.172 (margen 0.250), `Ejemplo_18` → Billy Estelar 0.156
+> (margen 0.272). Snapshot para los tests:
+> `audit/avatar_detbadge_v2_snapshot_20260912_billy_estelar.npz`; los 35 tests de verdad de tierra
+> pasan y ya no queda ningún `xfail`.
+>
+> **Dato:** la fila 26 se reasignó a Billy Estelar (mig `_30`). La `Réplica` de Billy sigue sin
+> escribirse: la tiene que ver una pasada, que ahora ya no choca con nada.
+>
+> **Dos hipótesis mías cayeron antes de dar con esta**, y la segunda la descarté con una medición
+> equivocada: comparé las refs con una distancia L2 sobre la imagen en gris en vez de la métrica
+> del matcher, y concluí que la ref vieja no se parecía a Estelar. Con la métrica correcta era
+> justo la que atraía. **La lección: medir con la métrica que usa el sistema, no con una parecida.**
+
+### El diagnóstico, como quedó escrito antes de cerrarlo
 
 Daniel confirmó que `Tránsito herciano` es de **Billy Estelar**, y el sistema la atribuyó a
 **Billy** (fila 26):
