@@ -18,7 +18,7 @@ from typing import Callable
 from app.core.scoring import score_disco
 from app.core.score_normalizer import ScoringContext
 from app.db.repositories import (
-    Agent, AgentDiscRepo, AgentRepo, Archetype, ArchetypeRepo,
+    Agent, AgentRepo, Archetype, ArchetypeRepo,
     Disc, DiscSetRepo, InventoryDiscRepo, OptimizerRepo,
 )
 
@@ -345,7 +345,6 @@ def _compute_swaps(
     target_agent: Agent,
     agent_repo: AgentRepo,
     arch_repo: ArchetypeRepo,
-    agent_disc_repo: AgentDiscRepo,
     set_repo: DiscSetRepo,
     base_scores: dict[int, float],
     ctx: ScoringContext,
@@ -410,7 +409,6 @@ class BuildOptimizer:
         self._arch_repo      = ArchetypeRepo(con)
         self._set_repo       = DiscSetRepo(con)
         self._inv_disc_repo  = InventoryDiscRepo(con)
-        self._agent_disc_repo = AgentDiscRepo(con)
 
     def close(self) -> None:
         self._con.close()
@@ -436,8 +434,11 @@ class BuildOptimizer:
         if arch is None:
             raise ValueError(f"Arquetipo id={agent.arquetipo_primario_id} no encontrado.")
 
-        # Score actual del PJ (baseline)
-        current_discs = self._agent_disc_repo.get_by_agent(agente_id)
+        # Score actual del PJ (baseline) = lo que tiene EQUIPADO. La autoridad es inventory_discs,
+        # la misma que lee la pantalla en vivo (B1). Antes se leía `agent_discs`, vaciada en la
+        # reconstrucción del 2026-08-17 y que nada vuelve a llenar ⇒ baseline 0 y todo delta
+        # inflado por el total de la build (medido 2026-09-12: 51/51 PJs con score_actual=0).
+        current_discs = list(self._inv_disc_repo.find_equipped_by_agent(agente_id).values())
         score_actual = self._build_total_score(current_discs, agent, arch)
 
         # Inventario activo (todos los discos disponibles)
@@ -494,7 +495,7 @@ class BuildOptimizer:
 
             swaps = _compute_swaps(
                 chosen_discs, agent,
-                self._agent_repo, self._arch_repo, self._agent_disc_repo,
+                self._agent_repo, self._arch_repo,
                 self._set_repo, base_scores, self._ctx,
             )
             swaps_disc_ids = {sw["disc_id"] for sw in swaps}

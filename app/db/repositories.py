@@ -457,6 +457,20 @@ class InventoryDiscRepo:
         ).fetchone()
         return self._row_to_disc(r) if r else None
 
+    def find_equipped_by_agent(self, agente_id: int) -> dict[int, "Disc"]:
+        """Build actual de un PJ: `{slot: Disco}` con sus discos equipados (sólo lectura).
+
+        Lo usa el hexágono de la pantalla en vivo. Mismo filtro que `find_equipped_by_agent_slot`.
+        Un slot vacío NO aparece en el dict. Si la DB tuviera dos filas en el mismo slot (no
+        debería), gana el id más alto de forma determinista — la vista no es el lugar para
+        arreglar ese invariante."""
+        rows = self._con.execute(
+            "SELECT * FROM inventory_discs WHERE agente_asignado=? "
+            "AND equipado=1 AND descartado=0 ORDER BY id",
+            (agente_id,),
+        )
+        return {r["slot"]: self._row_to_disc(r) for r in rows}
+
     def find_swap_candidates_by_identity(
         self, p: "DiscParsed", set_id: int, dest_agent_id: int | None,
         exclude_disc_id: int | None = None,
@@ -817,49 +831,6 @@ class EvaluationRepo:
             (disc_id, date.today().isoformat(), trigger, recomendacion, round(score, 6), detalle_json),
         )
         return cur.lastrowid  # type: ignore[return-value]
-
-
-class AgentDiscRepo:
-    """Lee agent_discs (build actual de cada PJ) como lista de Disc."""
-
-    def __init__(self, con: sqlite3.Connection):
-        self._con = con
-
-    def get_by_agent(self, agente_id: int) -> list["Disc"]:
-        rows = self._con.execute(
-            "SELECT * FROM agent_discs WHERE agente_id = ?", (agente_id,)
-        )
-        return [self._row_to_disc(r, agente_id) for r in rows]
-
-    @staticmethod
-    def _row_to_disc(r: sqlite3.Row, agente_id: int) -> "Disc":
-        from app.core.stats_vocab import normalize_stat_name, parse_value
-
-        def sub(i: int) -> "tuple[str, float | None, str | None, int]":
-            name = r[f"sub{i}"]
-            canon = normalize_stat_name(name) if name else None
-            raw_val = r[f"val{i}"]
-            parsed = parse_value(raw_val) if raw_val else None
-            rolls = r[f"sub{i}_up"] or 0
-            if parsed:
-                return (canon or name or "", parsed[0], parsed[1], rolls)
-            return (canon or name or "", None, None, rolls)
-
-        main_canon = normalize_stat_name(r["main_stat"]) if r["main_stat"] else None
-        main_parsed = parse_value(r["main_valor"]) if r["main_valor"] else None
-
-        return Disc(
-            id=r["id"],
-            set_id=r["set_id"],
-            slot=r["slot"],
-            main_stat=main_canon or r["main_stat"],
-            main_valor=main_parsed[0] if main_parsed else None,
-            main_unidad=main_parsed[1] if main_parsed else None,
-            subs=[sub(i) for i in (1, 2, 3, 4) if r[f"sub{i}"]],
-            nivel=r["nivel"] or 0,
-            equipado=1,
-            agente_asignado=agente_id,
-        )
 
 
 class OptimizerRepo:

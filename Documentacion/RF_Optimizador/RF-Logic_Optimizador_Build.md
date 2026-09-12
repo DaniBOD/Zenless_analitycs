@@ -62,7 +62,7 @@ Ambos comparten el `scoring_engine` (sección 5) — la única diferencia es la 
 | `agent_substat_preferences` | Override de pesos por PJ (vacío al inicio, se llena con seed Prydwen) |
 | `agent_score_thresholds` | Cortes `threshold_equip` / `threshold_upgrade` por PJ |
 | `agent_thresholds` | Stats finales objetivo del PJ (CRIT, ATK, ER, etc.) — se usan para verificar viabilidad de build |
-| `agent_discs` | Build actual del PJ (baseline para calcular delta) |
+| `inventory_discs` (`agente_asignado=? AND equipado=1 AND descartado=0`) | Build actual del PJ (baseline para calcular delta). Hasta el 2026-09-12 se leía `agent_discs`, vacía desde la reconstrucción del 2026-08-17 ⇒ baseline siempre 0 — ver `Dev_IA/documentacion_cruda/2026-09/2026-09-12_FIX_El_optimizador_media_contra_una_tabla_vacia.md` |
 | `weapons` | W-Engine equipada del PJ — afecta stats finales proyectados |
 
 ### 3.2 Tabla de salida
