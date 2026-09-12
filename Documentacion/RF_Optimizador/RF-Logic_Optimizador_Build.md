@@ -153,6 +153,8 @@ swap_neto = swap_delta.pj_destino.ganancia − swap_delta.pj_origen.perdida
 
 Sólo se proponen swaps con `swap_neto > 0`. Se respeta una flag `agents.protected_build` (configurable por PJ en `user_config.toml`) para builds "sagradas" que el optimizador no debe tocar.
 
+> **Implementación actual (2026-09-12):** el neto se calcula **disco a disco** (score del disco para el destino − para el origen), no por build como arriba. Un disco ajeno solo es *candidato* si ese neto es > 0 estricto (0 = traslado, no mejora) y el origen no está protegido; el filtro corre antes del bonus pass. Todo disco ajeno que termine en una build lleva `swap_origen`. El neto por build (la definición de arriba) está pendiente. Ver `Dev_IA/documentacion_cruda/2026-09/2026-09-12_FIX_Un_disco_ajeno_solo_entra_si_gana_y_nunca_como_libre.md`.
+
 ### 4.4 Cadenas de swap simples
 
 V1 soporta cadenas de longitud 1 (PJ A → PJ B). Cadenas más largas (A → B → C) quedan diferidas a v2 — su frecuencia esperada es baja y la complejidad combinatoria explota.

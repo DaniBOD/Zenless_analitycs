@@ -340,52 +340,86 @@ def _bonus_pass(
 # Fase 3 — Swap chains longitud 1
 # ---------------------------------------------------------------------------
 
+def _swap_de_disco_ajeno(
+    disc: Disc,
+    target_agent: Agent,
+    score_destino: float,
+    agent_repo: AgentRepo,
+    arch_repo: ArchetypeRepo,
+    ctx: ScoringContext,
+) -> dict | None:
+    """
+    `None` si el disco NO es de otro PJ (libre o del propio destino). Si lo es, el swap que implica
+    moverlo: neto disco a disco = score para el destino − score para el origen. Si no se lo puede
+    mover o puntuar, `motivo` lo dice y `neto` queda en None (RNF-02: no se inventa un número).
+    """
+    if not disc.equipado or disc.agente_asignado is None or disc.agente_asignado == target_agent.id:
+        return None
+    origen = agent_repo.get_by_id(disc.agente_asignado)
+    swap = {
+        "pj_origen_id":  disc.agente_asignado,
+        "pj_origen":     origen.nombre if origen else None,
+        "disc_id":       disc.id,
+        "delta_origen":  None,
+        "delta_destino": round(score_destino, 4),
+        "neto":          None,
+        "motivo":        None,
+    }
+    if origen is None:
+        swap["motivo"] = "origen_inexistente"
+        return swap
+    origen_arch = arch_repo.get_by_id(origen.arquetipo_primario_id)
+    if origen_arch is None:
+        swap["motivo"] = "origen_sin_arquetipo"
+        return swap
+    score_origen = _disc_base_score(disc, origen, origen_arch, ctx)
+    swap["delta_origen"] = round(-score_origen, 4)
+    # Redondeado ANTES de comparar: dos PJs del mismo arquetipo dan el mismo score y el ruido de
+    # coma flotante no debe convertir un traslado (neto 0) en una "mejora".
+    swap["neto"] = round(score_destino - score_origen, 4)
+    if origen.protected_build:
+        swap["motivo"] = "origen_protegido"
+    return swap
+
+
+def _admite_disco_ajeno(swap: dict | None) -> bool:
+    """
+    RF-06 §4.3: un disco de otro PJ solo es candidato si moverlo GANA — neto > 0 estricto. Neto 0
+    es un traslado entre PJs que puntúan igual (sin preferencias propias, el score depende solo
+    del arquetipo: medido 2026-09-12, 72 de 92 discos ajenos mal rotulados eran eso) y no mueve.
+    Origen protegido o sin arquetipo ⇒ no se toca. Un disco libre o propio (`swap is None`) pasa.
+    """
+    return swap is None or (swap["motivo"] is None and swap["neto"] > 0)
+
+
 def _compute_swaps(
     build_discs: dict[int, Disc],
     target_agent: Agent,
     agent_repo: AgentRepo,
     arch_repo: ArchetypeRepo,
-    set_repo: DiscSetRepo,
     base_scores: dict[int, float],
     ctx: ScoringContext,
 ) -> list[dict]:
     """
-    Para cada disco del build propuesto que esté equipado en otro PJ,
-    calcula swap_neto = ganancia_destino - perdida_origen.
-    Solo retorna swaps con neto > 0. Respeta protected_build del PJ origen.
+    Un swap por CADA disco de la build que lleve otro PJ. Sin filtrar: el filtro (neto > 0, origen
+    no protegido) ya se aplicó a los candidatos antes de armar la build, y filtrar acá solo
+    escondía el disco — quedaba en la build con `swap_origen=None`, o sea rotulado "libre".
+    Si aparece uno que el filtro no debió dejar pasar, se reporta igual y se avisa en el log.
     """
     swaps: list[dict] = []
     for disc in build_discs.values():
-        if not disc.equipado or disc.agente_asignado is None:
+        swap = _swap_de_disco_ajeno(
+            disc, target_agent, base_scores.get(disc.id, 0.0), agent_repo, arch_repo, ctx,
+        )
+        if swap is None:
             continue
-        if disc.agente_asignado == target_agent.id:
-            continue
-
-        origen = agent_repo.get_by_id(disc.agente_asignado)
-        if origen is None or origen.protected_build:
-            continue
-
-        origen_arch = arch_repo.get_by_id(origen.arquetipo_primario_id)
-        if origen_arch is None:
-            continue
-
-        # Score del disco para el PJ origen (pérdida si se lo quitamos)
-        score_for_origen = _disc_base_score(disc, origen, origen_arch, ctx)
-
-        # Ganancia para el PJ destino (ya tenemos el score en base_scores)
-        score_for_destino = base_scores.get(disc.id, 0.0)
-
-        neto = score_for_destino - score_for_origen
-        if neto > 0:
-            swaps.append({
-                "pj_origen_id":   origen.id,
-                "pj_origen":      origen.nombre,
-                "disc_id":        disc.id,
-                "delta_origen":   round(-score_for_origen, 4),
-                "delta_destino":  round(score_for_destino, 4),
-                "neto":           round(neto, 4),
-            })
-
+        if not _admite_disco_ajeno(swap):
+            log.warning(
+                "Optimizer PJ=%d: el disco %d de %s entró a la build sin ganar (neto=%s, motivo=%s) "
+                "— se reporta como swap, no como libre.",
+                target_agent.id, disc.id, swap["pj_origen"], swap["neto"], swap["motivo"],
+            )
+        swaps.append(swap)
     return swaps
 
 
@@ -441,34 +475,22 @@ class BuildOptimizer:
         current_discs = list(self._inv_disc_repo.find_equipped_by_agent(agente_id).values())
         score_actual = self._build_total_score(current_discs, agent, arch)
 
-        # Inventario activo (todos los discos disponibles)
-        inv_discs = self._inv_disc_repo.get_all_active()
+        # Inventario activo. Los discos que lleva OTRO PJ compiten solo si moverlos gana (B+D);
+        # se filtra ANTES del greedy y del bonus pass: sacar un disco de una build ya armada
+        # rompería su combinación de sets.
+        inv_discs: list[Disc] = []
+        for disc in self._inv_disc_repo.get_all_active():
+            if disc.equipado and disc.agente_asignado not in (None, agente_id):
+                swap = _swap_de_disco_ajeno(
+                    disc, agent, _disc_base_score(disc, agent, arch, self._ctx),
+                    self._agent_repo, self._arch_repo, self._ctx,
+                )
+                if not _admite_disco_ajeno(swap):
+                    continue
+            inv_discs.append(disc)
 
         # Fase 1: greedy por slot
         candidates, base_scores = _greedy_candidates(inv_discs, agent, arch, self._ctx)
-
-        # Para swaps: también considerar discos equipados en otros PJs
-        equipped_others = [
-            d for d in self._inv_disc_repo.get_all_active()
-            if d.equipado and d.agente_asignado and d.agente_asignado != agente_id
-        ]
-        # Agregar a candidates y base_scores (si no están ya)
-        for disc in equipped_others:
-            if disc.id not in base_scores:
-                if disc.slot < 1 or disc.slot > 6:
-                    continue
-                if disc.slot >= 4 and arch.mains_4:
-                    allowed = getattr(arch, f"mains_{disc.slot}", [])
-                    if allowed and disc.main_stat and disc.main_stat not in allowed:
-                        continue
-                bs = _disc_base_score(disc, agent, arch, self._ctx)
-                base_scores[disc.id] = bs
-                # Append al final de la lista del slot (baja prioridad salvo que sea muy bueno)
-                candidates.setdefault(disc.slot, []).append(disc)
-                # Re-ordenar y truncar
-                slot_scored = [(base_scores[d.id], d) for d in candidates[disc.slot]]
-                slot_scored.sort(key=lambda x: x[0], reverse=True)
-                candidates[disc.slot] = [d for _, d in slot_scored[:K_PER_SLOT]]
 
         # Fase 2: bonus pass
         raw_results = _bonus_pass(candidates, base_scores, agent, arch, self._set_repo, self._ctx)
@@ -495,8 +517,7 @@ class BuildOptimizer:
 
             swaps = _compute_swaps(
                 chosen_discs, agent,
-                self._agent_repo, self._arch_repo,
-                self._set_repo, base_scores, self._ctx,
+                self._agent_repo, self._arch_repo, base_scores, self._ctx,
             )
             swaps_disc_ids = {sw["disc_id"] for sw in swaps}
 
