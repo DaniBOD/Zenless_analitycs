@@ -527,9 +527,29 @@ NULL). Detalle: `audit/weapons_catalog_20260910.md`.
    Los tests miden contra un snapshot nuevo
    (`audit/avatar_detbadge_v2_snapshot_20260912_billy_estelar.npz`): 35 en verde y ningún `xfail`.
 
-7. **La `Réplica de motor estelar` de Billy todavía no tiene fila.** No se inventa: la escribe la
-   próxima pasada que la vea. Hasta la mig `_30` no podía, porque Billy figuraba con el Tránsito y
-   el bucket B se abstenía — correctamente, porque una de las dos lecturas estaba mal.
+7. ✅ **La `Réplica de motor estelar` de Billy entró el 2026-09-12 a las 02:56** (fila 58,
+   `s30_insert`), en cuanto la mig `_30` sacó el conflicto del medio. Antes el bucket B se abstenía
+   — correctamente: una de las dos lecturas estaba mal y no había forma de saber cuál.
+
+8. ✅ **El censo de rangos S y A cerró: 56 de 56.** `inventory_weapons` queda con **56 filas
+   activas** (46 equipadas + 10 libres), que es exactamente el contador del header con el filtro
+   S+A. Los 5 PJs sin arma —Anby, Harumasa, Lucy, Nekomata, Soukaku— Daniel confirmó que **no
+   tienen arma equipada**; lo de rango B sigue fuera de alcance.
+
+9. ⭐ **La copia fantasma quedó PROBADA, y es el scroll.** En la misma pasada entró una segunda
+   `Transmorfer original` libre (fila 57) y Daniel tiene una sola. Con la posición ya en el log:
+
+       02:54:04  Transmorfer original · Nv 0/10 · P1 · LIBRE · @(402,1064)  → reusa la fila 55
+       02:56:31  Transmorfer original · Nv 0/10 · P1 · LIBRE · @(1484,680)  → inserta la fila 57
+
+   Las filas de la grilla caen en y ≈ 367, 600, 831 y 1064: **680 no es el centro de ninguna**, o
+   sea que la grilla estaba scrolleada y el mismo tile apareció en otro lugar. El ordinal de copia
+   sólo sabe de posiciones, así que lo leyó como otra pieza. Es el límite que el reporte ya
+   declaraba, ahora con evidencia — y explica también la fila 50 del Rotor (mig `_29`), que se
+   corrigió a ciegas porque el log todavía no traía la posición.
+
+   Dada de baja con la mig `_31` (lógica, reversible). **La instrumentación del 696a54c se pagó
+   sola: sin la posición en el log, esto seguiría siendo una sospecha.**
 
    Cómo se escriben: una libre no tiene PJ que la identifique, así que su clave es (arma, nivel,
    refinamiento) + el **número de copia** que el monitor calcula desde la posición en la grilla. La

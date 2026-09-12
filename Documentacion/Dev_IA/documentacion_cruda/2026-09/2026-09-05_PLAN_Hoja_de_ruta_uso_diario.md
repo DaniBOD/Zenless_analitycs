@@ -34,7 +34,7 @@ Los drops del 2026-09-05 **no se pueden migrar retroactivamente**: el log guarda
 nivel pero **no los substats**, y sin ellos no hay identidad. Entran cuando Daniel recorra el
 inventario.
 
-## 2. Censo de armas / W-Engines 🟡 55 filas (44 equipadas + 11 libres) · catálogo 61 · Grace nombrada
+## 2. Censo de armas / W-Engines ✅ CERRADO en rangos S y A — 56 filas = el contador del header
 
 Detalle en
 [`2026-09-06_FEAT_Censo_de_W_Engines_el_inventario_de_armas_existe.md`](2026-09-06_FEAT_Censo_de_W_Engines_el_inventario_de_armas_existe.md).
@@ -82,8 +82,18 @@ libre). Detalle en el doc del censo, *Para retomar*, puntos 4 y 5.
 y 1), el Compilador quimérico sale `la tiene Grace` y entra equipado (fila 46), y el frame de
 transición apareció una vez y se descartó. `inventory_weapons` 43 → **55**, `integrity_check` ok.
 
-Queda: confirmar con Daniel si las **dos** Rotor de cañón libres son reales, y recorrer el resto del
-inventario (se vieron 13 de 75). Orden y detalle en la sección *Estado al cerrar la sesión del 2026-09-10* del doc del censo.
+**Cerrado el 2026-09-12:** `inventory_weapons` queda en **56 filas activas** (46 equipadas + 10
+libres), que es exactamente el contador del header con el filtro S+A. Entró la última que faltaba
+—la `Réplica de motor estelar` de Billy— en cuanto se corrigió a quién pertenecía el `Tránsito
+herciano` (era de **Billy Estelar**, otro PJ, y la librería tenía su cara etiquetada como Billy).
+Los 5 PJs sin arma (Anby, Harumasa, Lucy, Nekomata, Soukaku) **no tienen ninguna equipada**.
+
+Dos filas quedaron con `descartado = 1`: copias fantasma de la misma arma vista después de un
+**scroll** (migs `_29` y `_31`). Esa causa se probó con la posición que ahora trae el log.
+
+Queda para más adelante: los tiles de **rango B** (fuera de alcance por decisión de Daniel), la
+**latencia** del inventario (medida en `audit/latencia_y_badges_20260912.md`: el ciclo tarda 1569 ms
+y ~1,1 s todavía no tienen explicación) y que el ordinal de copias **no se confunda con el scroll**.
 
 ## 3. Segundo censo de discos
 
