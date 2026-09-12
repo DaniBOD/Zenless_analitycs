@@ -90,3 +90,4 @@ archivos no se mudan después: una ruta que cambia rompe los enlaces que apuntan
 - [2026-09-06](documentacion_cruda/2026-09/2026-09-06_FEAT_Los_tres_verbos_la_DB_sigue_al_juego_sola.md) — los tres verbos: la DB sigue al juego sola
 - [2026-09-08](documentacion_cruda/2026-09/2026-09-08_SPEC_Compactar_Dev_IA_por_periodo.md) — SPEC de esta misma estructura: compactar Dev_IA por período
 - [2026-09-12](documentacion_cruda/2026-09/2026-09-12_FIX_El_optimizador_media_contra_una_tabla_vacia.md) — el optimizador medía la build actual contra `agent_discs` (vacía): baseline 0 en 51/51 PJs, latente (nada lo dispara en la app)
+- [2026-09-12](documentacion_cruda/2026-09/2026-09-12_DIAG_Swaps_con_neto_negativo_entran_como_discos_libres.md) — DIAG: 92 discos ajenos con neto ≤ 0 entran a la mejor build rotulados "libre" (72 con neto exactamente 0: mismo arquetipo); 4 opciones, sin implementar
