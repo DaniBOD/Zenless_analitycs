@@ -137,7 +137,7 @@ fuente verificada (RNF-02).
    en los mockups, **cuando se implemente el scoring**. Hasta entonces, en blanco.
 3. **El scoring**: depende del tramo 4 (sembrar thresholds). Hasta entonces la vista no lo muestra.
 4. **Las otras pantallas del mockup**: Roster y modal de PJ hechos en la
-   [fase 2](2026-09-13_FEAT_Interfaz_fase_2_roster_y_modal_de_PJ.md); quedan discos, modal de disco y toasts.
+   [fase 2](2026-09-13_FEAT_Interfaz_fase_2_roster_y_modal_de_PJ.md); discos y modal de disco en la [fase 3](2026-09-13_FEAT_Interfaz_fase_3_discos_y_modal_de_disco.md); quedan los toasts.
 5. De §4: los archivos de ícono de Sol Exuvia, Boisterous Echoes e Ice-Jade Teapot; ~~la fila
    duplicada 22/62~~ (unificada, mig `_34`); las pasivas de las filas 5 y 13. Y la familia `W-Engine_29_*` de íconos sin mapear a nombres en español.
 6. De la sesión del optimizador: la tabla `agent_discs` sigue en el esquema, y "el saqueo" (222 discos
