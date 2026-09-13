@@ -1,6 +1,6 @@
 # Interfaz fase 3: la pantalla Discos y el modal de disco
 
-**2026-09-13** · commits `1322c01` → `31e4beb` en main. Viene de la
+**2026-09-13** · commits `1322c01` → `31e4beb` en main. **Probada en vivo por Daniel: "se ve bien".** Viene de la
 [fase 2](2026-09-13_FEAT_Interfaz_fase_2_roster_y_modal_de_PJ.md). Mockups:
 `mockup-exports/22-tab-discos-inventario-completo.png` y `23-modal-disco-detalle.png`.
 
@@ -77,8 +77,13 @@ Otra vez, render offscreen con la DB real y las fuentes de Windows antes de comm
 
 ## Queda abierto
 
-1. **QA en vivo de Daniel**.
+1. ~~QA en vivo de Daniel~~ — hecho el 2026-09-13, aprobada.
 2. La columna SUBS queda angosta en la ventana mínima (tiene tooltip con los 4). Maximizada entra.
 3. El título en mayúsculas pequeñas pierde las tildes en algunas fuentes ("DUENO", "DISTRIBUCION").
 4. Las alternativas muestran hasta 12; si hay más, se sugiere filtrar la tabla.
 5. Pendientes heredados: nombres de stat mezclados y textos de 4 piezas en inglés en el catálogo.
+6. **Visto al levantar la app para el QA, no es de esta fase**: con ZZZ abierto el monitor arranca
+   solo y la ventana queda *Not Responding* entre "ZZZ detectado" y "OCR backend listo" — 19 s esta
+   vez; el log muestra 6 a 41 s en sesiones anteriores. La app quedó en ~580 MB con el monitor
+   activo (no es RAM en reposo; no se midió con el juego cerrado). El arranque del OCR parece correr
+   en el thread de la UI: a diagnosticar aparte, midiendo antes de tocar (A1).
