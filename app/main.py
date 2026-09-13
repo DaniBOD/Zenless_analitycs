@@ -270,6 +270,7 @@ class MainWindow(ShellWindow):
         self.add_view("lategame", make_placeholder(
             "Lategame", "Fase 4 — RF-13 (F11 OCR + tier list bayesiana) pendiente"))
         self._discos_view = build_discos_view(self._ui_con)
+        self._discos_view.disco_pedido.connect(self._abrir_ficha_disco)
         self.add_view("discos", self._discos_view)
         self._roster_view = build_roster_view(self._ui_con)
         self._roster_view.ficha_pedida.connect(self._abrir_ficha_pj)
@@ -306,6 +307,20 @@ class MainWindow(ShellWindow):
             return
         if ficha is not None:
             PjModal(ficha, parent=self).exec()
+
+    def _abrir_ficha_disco(self, disco_id: int):
+        """Click en una fila de Discos → el modal de ese disco. Desde ahí, click en el dueño abre
+        el modal de PJ encima (los dos son modales: al cerrar el de PJ se vuelve al disco)."""
+        if self._ui_con is None:
+            return
+        from app.ui.disco_modal.modal import DiscoModal
+        try:
+            modal = DiscoModal(self._ui_con, disco_id, parent=self)
+        except Exception:
+            log.exception("[discos] no se pudo armar la ficha del disco %s", disco_id)
+            return
+        modal.pj_pedido.connect(self._abrir_ficha_pj)
+        modal.exec()
 
     def _pedir_refresco(self, *_):
         self._refresco.start()
