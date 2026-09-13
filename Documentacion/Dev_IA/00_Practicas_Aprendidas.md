@@ -46,7 +46,10 @@ verificable**. Y separá siempre "no falló" de "no se ejecutó".
 toasts se **salteaban en silencio** en toda suite completa porque otro archivo había creado antes una
 app de Qt sin GUI, y la suite se reportaba verde. El mismo choque hacía que tests nuevos **mataran el
 proceso** al 90 %, sin resumen: sueltos pasaban, sólo fallaban en combinación. Un "N skipped" que no
-se sabe explicar es un hallazgo pendiente, no un detalle.
+se sabe explicar es un hallazgo pendiente, no un detalle. Y un proceso de pytest que muere **sin
+resumen** no es un rojo: es un crash que hay que aislar (widget por widget, con `faulthandler`). Esa
+misma tarde volvió con otra causa: una excepción dentro de un `paintEvent` que PySide convierte en
+*access violation*.
 
 ### A3 · Verificar el EFECTO, no la intención — y romper el test a propósito.
 

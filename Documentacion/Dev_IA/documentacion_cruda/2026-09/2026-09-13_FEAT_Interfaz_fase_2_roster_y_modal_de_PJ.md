@@ -1,6 +1,7 @@
 # Interfaz fase 2: la pantalla Roster y el modal de PJ
 
-**2026-09-13** · commits `d60e73e` → `21efffe` en main. Plan aprobado en la sesión; decisiones de
+**2026-09-13** · commits `d60e73e` → `4984aa6` en main. **Probada en vivo por Daniel: queda como beta**
+("tiene margen de mejora pero como beta está bien"). Plan aprobado en la sesión; decisiones de
 Daniel abajo. Viene de la [fase 1](2026-09-13_FEAT_Interfaz_fase_1_y_lo_que_la_suite_escondia.md).
 
 La fase porta dos diseños de Claude Design que no estaban en Qt: la **Parte B** del diseño v1
@@ -63,7 +64,22 @@ Y una trampa del propio instrumento: **sin fuentes, el offscreen dibuja cada let
 más ancho que el glifo real**. El test de ancho dio 1407 px con la vista ya arreglada; con las fuentes
 registradas, 1076. Un test de medidas de texto tiene que cargar las fuentes reales o se miente.
 
-## 4 · Errores míos
+## 4 · Después de la primera prueba: las celdas crecen
+
+Daniel pidió que las celdas crezcan al maximizar (con el tope de escala en 1.3 quedaba media
+pantalla de aire abajo). El tope subió a **2.2**, y la celda **escala su contenido** — fuentes,
+avatar, logo de facción, rango y casilleros —, porque agrandar sólo el recuadro dejaba el texto de
+8 pt perdido en una caja de 230 px. Maximizada, la grilla de 51 queda en 9 columnas y llena el alto.
+Por debajo de la escala de diseño el contenido no se achica: se esconden líneas (detalle < 0.8,
+avatar < 0.7).
+
+Al hacerlo apareció un **crash, no un rojo**: el tamaño de la esquina rayada pasó a float y
+`range()` dentro de `paintEvent` tiró `TypeError`. **PySide convierte una excepción en
+`paintEvent` en un *access violation*** que mata el proceso de pytest sin resumen — la misma forma
+del crash al 90 % de la fase 1, con otra causa. Se ubicó aislando widget por widget en un script
+con `faulthandler`: el problema estaba al pintar la celda, antes de escalar nada.
+
+## 5 · Errores míos
 
 - **Conté mal las armas sin ícono en la fase 1** ("6, a todas les falta `nombre_en`"): eran 4 sin
   nombre y 2 sin archivo. Lo destapó hacer la migración, no releer el doc.
@@ -71,20 +87,20 @@ registradas, 1076. Un test de medidas de texto tiene que cargar las fuentes real
   (`expected_0 = 1`). Así apareció el duplicado del catálogo.
 - **Un test del modal tenía la premisa equivocada**: esperaba que 2+2+1 discos no dieran sets, pero
   dos pares SON dos bonos de 2 piezas. El código estaba bien.
+- **Al escalar la esquina rayada dejé un float donde `range()` pide int** y la suite murió con un
+  access violation (§4). Un `paintEvent` no perdona: conviene convertir a `int` en el borde.
 - **No vi fallar los tests de datos del roster antes de escribir el módulo** (lo escribí en el mismo
   paso). Se compensó saboteando: descartados, orden de `∞`, "sin leer", el id del click y el formato
   de stats — todos dieron rojo.
 
 ## Queda abierto
 
-1. **QA en vivo de Daniel**: la grilla maximizada y en 1320×820, filtros, y el modal de Yanagi (4+2),
-   Nekomata (5 discos, sin arma), Remielle Dan (sin umbrales, sin logo de facción) y Billy Estelar
-   (atuendo).
+1. ~~QA en vivo de Daniel~~ — hecho el 2026-09-13: **beta aprobada, con margen de mejora**. No se
+   listaron mejoras concretas todavía; se juntan cuando se retome.
 2. **Viento tiene color provisional** (`#6EE7B7`): no hay captura de Velina para muestrearlo.
 3. **Logo de Covenant of Dayat** (Remielle Dan) no existe en el repo.
 4. **Faltan 3 archivos de ícono** de armas (Sol Exuvia, Boisterous Echoes, Ice-Jade Teapot), y las
    filas 5 y 13 de `weapons` tienen stat secundario y pasiva que no coinciden con las fuentes.
-5. **Maximizada queda aire abajo**: la escala de la celda tiene tope 1.3. Se ajusta con lo que Daniel
-   vea en vivo.
+5. ~~Maximizada queda aire abajo~~ — resuelto (§4): tope 2.2 y el contenido escala.
 6. **El "agrupar" de la fila de filtros** del diseño no se portó: la especificación no dice por qué
    se agrupa.
