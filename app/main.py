@@ -269,7 +269,8 @@ class MainWindow(ShellWindow):
             "Histórico", "Historial de evaluaciones — disponible tras Hito 2.3"))
         self.add_view("lategame", make_placeholder(
             "Lategame", "Fase 4 — RF-13 (F11 OCR + tier list bayesiana) pendiente"))
-        self.add_view("discos", build_discos_view())
+        self._discos_view = build_discos_view(self._ui_con)
+        self.add_view("discos", self._discos_view)
         self._roster_view = build_roster_view(self._ui_con)
         self._roster_view.ficha_pedida.connect(self._abrir_ficha_pj)
         self.add_view("roster", self._roster_view)
