@@ -66,7 +66,13 @@ class _Rango(QWidget):
     def __init__(self, rango: str | None):
         super().__init__()
         self.rango = rango or "?"
+        self.escala = 1.0
         self.setFixedSize(26, 16)
+
+    def set_escala(self, s: float) -> None:
+        self.escala = s
+        self.setFixedSize(round(26 * s), round(16 * s))
+        self.update()
 
     def paintEvent(self, _ev):
         p = QPainter(self)
@@ -87,6 +93,7 @@ class _Rango(QWidget):
             r = circ
             p.setPen(QColor(color))
         f = T.font_display(7, bold=True)
+        f.setPointSizeF(7 * self.escala)
         p.setFont(f)
         p.drawText(r, Qt.AlignmentFlag.AlignCenter, self.rango)
         p.end()
@@ -98,23 +105,32 @@ class _Discos(QWidget):
     def __init__(self, n: int):
         super().__init__()
         self.n = n
+        self.escala = 1.0
         # Tamaño FIJO explícito: sin sizeHint el layout le daba 0 px de ancho y los casilleros no
         # se veían (pasó en la primera captura, con los tests en verde porque miraban textos).
         self.setFixedSize(6 * 8 + (16 if n > 6 else 0), 8)
 
+    def set_escala(self, s: float) -> None:
+        self.escala = s
+        self.setFixedSize(round((6 * 8 + (16 if self.n > 6 else 0)) * s), round(8 * s))
+        self.update()
+
     def paintEvent(self, _ev):
         p = QPainter(self)
-        lado, gap = 6, 2
+        s = self.escala
+        lado, gap = 6 * s, 2 * s
         for i in range(6):
             x = i * (lado + gap)
             lleno = i < self.n
             p.setPen(QColor(T.BORDER_STRONG if not lleno else T.YELLOW))
             p.setBrush(QColor(T.YELLOW) if lleno else Qt.BrushStyle.NoBrush)
-            p.drawRect(x, 1, lado - 1, lado - 1)
+            p.drawRect(QRectF(x, s, lado - 1, lado - 1))
         if self.n > 6:
             p.setPen(QColor(T.YELLOW))
-            p.setFont(T.font_mono(6))
-            p.drawText(6 * (lado + gap) + 1, 8, f"+{self.n - 6}")
+            f = T.font_mono(6)
+            f.setPointSizeF(6 * s)
+            p.setFont(f)
+            p.drawText(QPointF(6 * (lado + gap) + 1, 8 * s), f"+{self.n - 6}")
         p.end()
 
 
@@ -155,7 +171,8 @@ class CeldaRoster(QFrame):
         self._faccion.setToolTip(celda.faccion or "")
         fila1.addWidget(self._faccion)
         fila1.addStretch()
-        fila1.addWidget(_Rango(celda.rango))
+        self._rango = _Rango(celda.rango)
+        fila1.addWidget(self._rango)
         if celda.sin_thresholds:
             fila1.addSpacing(9)       # que la esquina rayada no tape el rango
         v.addLayout(fila1)
@@ -194,18 +211,47 @@ class CeldaRoster(QFrame):
             self._nivel = _lbl(f"Nv {celda.nivel}", T.font_mono(7), color)
         fila4.addWidget(self._nivel)
         fila4.addStretch()
-        fila4.addWidget(_Discos(celda.discos))
+        self._discos = _Discos(celda.discos)
+        fila4.addWidget(self._discos)
         v.addLayout(fila4)
 
+        self._escala_contenido = 1.0
+        #: (label, tamaño base en pt) — lo que crece cuando la celda crece.
+        self._fuentes = [(self._nombre, 8), (self._detalle, 6 if celda.variante_de else 7),
+                         (self._nivel, 7)]
         if celda.sin_thresholds:
             self.setToolTip("Le faltan datos: sin umbrales (agent_thresholds) — onboarding a medias.")
 
     # --- escala ---------------------------------------------------------------------------------
 
     def set_escala(self, escala: float) -> None:
-        """Debajo de 0.8 se esconde la línea de detalle: el nombre y el rango tienen prioridad."""
+        """Achicada: debajo de 0.8 se esconde la línea de detalle y debajo de 0.7 el avatar — el
+        nombre y el rango tienen prioridad. Agrandada (ventana maximizada): el CONTENIDO crece con la
+        celda; si sólo creciera el recuadro, quedarían celdas grandes con el texto chico adentro."""
         self._detalle.setVisible(escala >= 0.8)
         self._avatar.setVisible(escala >= 0.7)
+        s = round(max(1.0, escala), 2)
+        if s == self._escala_contenido:
+            return
+        self._escala_contenido = s
+        for lbl, base in self._fuentes:
+            f = lbl.font()
+            f.setPointSizeF(base * s)
+            lbl.setFont(f)
+        lado_av, lado_fac = round(28 * s), round(16 * s)
+        self._avatar.setFixedSize(lado_av, lado_av)
+        pm = _pixmap(agent_avatar_path(self.celda.nombre, "ico"), lado_av, redondo=True)
+        if pm is not None:
+            self._avatar.setPixmap(pm)
+        self._faccion.setFixedSize(lado_fac, lado_fac)
+        pm = _pixmap(faction_logo_path(self.celda.faccion), lado_fac)
+        if pm is not None:
+            self._faccion.setPixmap(pm)
+        self._rango.set_escala(s)
+        self._discos.set_escala(s)
+
+    def escala_contenido(self) -> float:
+        return self._escala_contenido
 
     # --- introspección para tests -----------------------------------------------------------------
 
@@ -226,7 +272,7 @@ class CeldaRoster(QFrame):
         # Esquina rayada ámbar, arriba a la derecha, 13 px.
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w, lado = self.width(), 13
+        w, lado = self.width(), round(13 * self._escala_contenido)   # int: `range` abajo
         tri = QPainterPath()
         tri.moveTo(QPointF(w - lado, 0))
         tri.lineTo(QPointF(w, 0))

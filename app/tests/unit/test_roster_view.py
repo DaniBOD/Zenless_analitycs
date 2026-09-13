@@ -160,6 +160,30 @@ def test_los_casilleros_de_discos_tienen_tamano(vista):
         assert d.width() >= 40 and d.height() > 0, c.celda.nombre
 
 
+def test_maximizada_el_contenido_crece_con_la_celda(qapp):
+    """Si sólo creciera el recuadro, quedarían celdas enormes con el texto de 8 pt adentro.
+
+    Con la DB REAL (51 PJs): en la ventana mínima la celda queda por debajo de su tamaño de diseño,
+    y maximizada tiene de dónde crecer. (Con los 4 PJs de la fixture ya está al tope en 1100×756.)"""
+    from pathlib import Path
+    db = Path(__file__).resolve().parents[3] / "db" / "danibod_zzz_v2.db"
+    real = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    v = RosterView(real)
+    v.resize(1100, 756)
+    v.show()
+    qapp.processEvents()
+    c0 = v.celdas()[0]
+    nombre_chico = c0._nombre.font().pointSizeF()
+    avatar_chico = c0._avatar.width()
+    v.resize(2340, 1328)
+    qapp.processEvents()
+    assert c0.escala_contenido() > 1.5
+    assert c0._nombre.font().pointSizeF() > nombre_chico * 1.4
+    assert c0._avatar.width() > avatar_chico * 1.4
+    v.close()
+    real.close()
+
+
 def test_infinito_va_primero(vista):
     orden = [c.celda.nombre for c in vista.celdas()]
     assert orden[0] == "Pyrois"

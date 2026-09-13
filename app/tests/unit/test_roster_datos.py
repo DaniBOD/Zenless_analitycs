@@ -132,7 +132,18 @@ def test_la_grilla_entra_sin_scroll_en_la_ventana_minima(n):
 
 def test_con_espacio_de_sobra_la_celda_no_crece_sin_limite():
     g = calcular_grilla(4, 2400, 1300)
-    assert g.celda_w <= 122 * 1.3 and g.celda_h <= 96 * 1.3
+    assert g.celda_w <= 122 * 2.2 and g.celda_h <= 96 * 2.2
+
+
+def test_maximizada_las_celdas_crecen_y_llenan_el_alto():
+    """Pedido de Daniel (2026-09-13): con el tope en 1.3 quedaba media pantalla de aire abajo.
+    Con el roster real (51) en el cuerpo maximizado, la grilla ocupa la mayor parte del ALTO."""
+    ancho, alto = 2316, 1116
+    g = calcular_grilla(51, ancho, alto)
+    filas = -(-51 // g.columnas)
+    usado_alto = filas * g.celda_h + (filas - 1) * g.gap
+    assert g.escala > 1.5, g
+    assert usado_alto >= 0.85 * alto, (g, usado_alto)
 
 
 def test_maximizada_la_grilla_no_deja_media_pantalla_vacia():

@@ -146,7 +146,9 @@ def filtrar(celdas: Iterable[CeldaPJ], filtros: Mapping[str, set[str]]) -> list[
 #: Tamaño de celda del diseño y cuánto puede estirarse o achicarse.
 CELDA_W0, CELDA_H0 = 122, 96
 GAP = 6
-ESCALA_MAX = 1.3
+#: Tope de crecimiento. Era 1.3 y maximizada dejaba media pantalla de aire abajo; Daniel pidió
+#: que las celdas crezcan (2026-09-13). El contenido crece con ellas (`CeldaRoster.set_escala`).
+ESCALA_MAX = 2.2
 #: Debajo de esto el nombre y el rango dejan de leerse. La celda esconde el motivo desde 0.8.
 ESCALA_MIN = 0.6
 
