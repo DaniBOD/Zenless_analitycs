@@ -27,16 +27,8 @@ DB_REAL = Path(__file__).resolve().parents[3] / "db" / "danibod_zzz_v2.db"
 
 
 @pytest.fixture
-def con():
-    real = sqlite3.connect(f"file:{DB_REAL}?mode=ro", uri=True)
-    ddl = [r[0] for r in real.execute(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND sql IS NOT NULL "
-        "AND name NOT LIKE 'sqlite_%'")]
-    real.close()
-    c = sqlite3.connect(":memory:")
-    c.row_factory = sqlite3.Row
-    for sql in ddl:
-        c.execute(sql)
+def con(db_esquema_real):
+    c = db_esquema_real
     c.executescript("""
         INSERT INTO disc_sets (id, nombre, nombre_en) VALUES
             (1, 'Jazz Caótico', 'Chaos Jazz'), (2, 'Blues Libre', 'Freedom Blues'),
@@ -59,8 +51,7 @@ def con():
     for slot in (1, 2, 3, 4, 5):                       # Nekomata: 5 discos sueltos
         c.execute("INSERT INTO inventory_discs (set_id, slot, main_stat, nivel, agente_asignado,"
                   " equipado, descartado) VALUES (?, ?, 'x', 9, 2, 1, 0)", ((slot % 3) + 1, slot))
-    yield c
-    c.close()
+    return c
 
 
 # --- datos -------------------------------------------------------------------------------------

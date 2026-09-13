@@ -49,6 +49,29 @@ def pytest_configure(config):
     _QT_APP = QApplication.instance() or QApplication([])
 
 
+@pytest.fixture
+def db_esquema_real():
+    """DB en memoria con el ESQUEMA de `db/danibod_zzz_v2.db` (sólo los CREATE, sin una fila) y
+    `row_factory = sqlite3.Row`, como `get_connection()`.
+
+    Para las pantallas: el test pone sus propias filas, así no depende de lo que Daniel haya
+    capturado hoy, pero sí se rompe si una columna que la UI lee cambia de nombre. La DB real se
+    abre en modo `ro`: no hay forma de que este fixture la escriba.
+    """
+    db = Path(__file__).resolve().parents[2] / "db" / "danibod_zzz_v2.db"
+    real = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    ddl = [r[0] for r in real.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND sql IS NOT NULL "
+        "AND name NOT LIKE 'sqlite_%'")]
+    real.close()
+    con = sqlite3.connect(":memory:")
+    con.row_factory = sqlite3.Row
+    for sql in ddl:
+        con.execute(sql)
+    yield con
+    con.close()
+
+
 @pytest.fixture(autouse=True)
 def _isolate_avatar_library(tmp_path, monkeypatch):
     """

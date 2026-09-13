@@ -933,14 +933,10 @@ class MonitorController(QObject):
     @staticmethod
     def _fmt_sub(s) -> str:
         """Formatea un substat con los rolls entre paréntesis tras el valor:
-        'ATK 38 (+1)' · 'ATK% 3%' · 'Daño Crítico 9.6% (+1)'."""
-        nombre = s.nombre_canon or s.nombre_raw or "?"
-        val = ""
-        if s.valor is not None:
-            unit = "%" if s.unidad == "%" else ""
-            val = f" {s.valor:g}{unit}"
-        roll = f" (+{s.rolls})" if s.rolls else ""
-        return f"{nombre}{val}{roll}"
+        'ATK 38 (+1)' · 'ATK% 3%' · 'Daño Crítico 9.6% (+1)'. La regla vive en `app.ui.formato`:
+        la tabla y el modal de discos la usan también."""
+        from app.ui.formato import formatear_sub
+        return formatear_sub(s.nombre_canon or s.nombre_raw, s.valor, s.unidad, s.rolls)
 
     @staticmethod
     def _tenencia_observada(disc) -> str:
