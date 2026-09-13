@@ -172,6 +172,23 @@ redimensione y haga snap como cualquier ventana de Windows, en sus dos monitores
 - **Las 8 vistas restantes se mudan sin rediseñar.** Si alguna depende de vivir en un `QTabWidget`,
   se ve al mudarla. No se conocen dependencias así.
 
+## Resultado en vivo (2026-09-13)
+
+Daniel probó la app real: **el frameless se arrastra y funciona, pero maximizado fallaba** — franja
+blanca arriba, escritorio por los costados y la barra inferior cortada. En el juego, las lecturas
+llegaron a la vista sin errores.
+
+Se midió antes de tocar nada (`tools/verificar_ventana_maximizada.py`): maximizada por el botón,
+Windows decía `IsZoomed = False` y área cliente **(8,8) 2544×1376**, mientras Qt dibujaba 2560×1392
+en (0,0). El recorte de `WM_NCCALCSIZE` se condicionaba al estado de **Qt** (`isMaximized`), pero
+`showMaximized()` en una ventana frameless no maximiza con Windows: la ajusta al área de trabajo, que
+ya entra justa. Se recortaban 8 px que no sobraban. **Los tres síntomas eran un solo número.**
+
+Arreglo: recortar sólo si `IsZoomed(hwnd)` (`d15c6b2`). El verificador pasa por los dos caminos —el
+botón de Qt y el maximizado nativo— y con la condición vieja falla **en los dos**: el nativo también
+quedaba más grande que el monitor. Lo que el frameless "a mano" hubiera escondido durante semanas,
+acá lo destapó medir los rectángulos en vez de mirar la ventana.
+
 ## Queda abierto
 
 1. **El espacio en blanco de la derecha**: Daniel lo ajusta sobre la marcha (candidatos: agrandar
