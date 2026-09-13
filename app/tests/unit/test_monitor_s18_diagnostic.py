@@ -2,7 +2,7 @@
 Tests para Monitor._process_agent_stats — observabilidad de excepciones.
 
 Verifica que cuando parse_agent_stats falla, el callback `on_diagnostic`
-recibe el mensaje (para que el LivePanel del .exe lo muestre como
+recibe el mensaje (para que la consola de la vista en vivo lo muestre como
 `[diag] error parseando stats S18: ...`), en lugar de quedar en stderr
 suprimido por el .exe windowed.
 

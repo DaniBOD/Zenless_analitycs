@@ -72,7 +72,11 @@ class MonitorController(QObject):
     state_changed = Signal(str, float)       # code (S1-S12), confidence
 
     # Eventos de captura
-    disc_detected = Signal(dict)             # payload listo para LivePanel + Toast
+    disc_detected = Signal(dict)             # payload listo para la vista en vivo + Toast
+    # Disco cuyo dueño está ESCRITO EN LA PANTALLA (S17/S9). Observacional: sin score ni
+    # recomendación. Hasta el 2026-09-12 esa rama hacía `return` después de loguear y la UI no se
+    # enteraba nunca — el disco equipado sólo existía como líneas de log.
+    disc_observed = Signal(dict)
     disc_replaced = Signal(dict)             # swap de disco entre PJs confirmado → toast REEMPLAZADO
     disc_equipped = Signal(dict)             # disco LIBRE equipado a un PJ → toast AHORA EN
     discs_dismantled = Signal(dict)          # tanda de desmontaje cerrada → toast DESMONTADOS
@@ -545,7 +549,7 @@ class MonitorController(QObject):
     def _on_agent_stats_from_monitor(self, stats, state):
         """Stats de agente extraídos desde S18 (Atributos base).
 
-        Emite TRES líneas al LivePanel:
+        Emite TRES líneas a la consola de la vista en vivo:
           [reconocido] S18 perfil agente: <nombre> (conf X.XX)
           [stats] Nv=N PV=X ATK=X ... ER=X
           [completo] / [parcial] estado de la extracción
@@ -697,7 +701,7 @@ class MonitorController(QObject):
     def _on_disc_from_monitor(self, disc_parsed, state):
         """
         El monitor parseó un disco. Calculamos la recomendación y emitimos
-        el payload listo para que LivePanel + Toast lo consuman.
+        el payload listo para que la vista en vivo + Toast lo consuman.
 
         S17 (disco equipado): persistencia ENFOCADA (disco + asignación PJ + bono,
         sin scoring — fase posterior) vía DiscSyncer.persist_s17_disc, y se loguea
@@ -722,6 +726,12 @@ class MonitorController(QObject):
                 # cuando el monitor OBSERVA el cambio de dueño, sin depender de que la persistencia
                 # haya movido una fila. Así sale también en read-only.)
                 self._log_s17_extraction(disc_parsed, result)
+                # A la vista en vivo, DESPUÉS de persistir y loguear, y en su propio try: la
+                # pantalla no puede colgar de que el payload se arme, ni cortar un censo.
+                try:
+                    self.disc_observed.emit(self._build_observed_payload(disc_parsed))
+                except Exception:
+                    log.exception("Error armando el payload de disc_observed (la pasada sigue)")
                 # Devolver el resultado NO es cosmético: el censo de discos lo usa como identidad
                 # (la fila que se tocó). Sin esto tendría que recalcularla y volvería el desfasaje.
                 return result
@@ -851,9 +861,40 @@ class MonitorController(QObject):
                 # decidir si interrumpe: un toast por cada arma mirada no aporta nada.
                 "cambio": bool(ev.get("cambio")),
                 "tenencia_previa": ev.get("tenencia_previa"),
+                # Para la vista en vivo (2026-09-12). El evento no trae `nombre_en`, y el ícono se
+                # resuelve PRIMERO por el nombre inglés: sin buscarlo en el catálogo, de las 34 armas
+                # del inventario con ícono quedaban 3. El toast no lee estas dos claves.
+                "icono": self._icono_de_arma(ev.get("nombre")),
+                "dueno_avatar": self._avatar_ico(ev.get("dueno")),
             })
         except Exception:
             log.exception("Error armando el toast de W-Engine")
+
+    def _icono_de_arma(self, nombre: str | None) -> str | None:
+        """Ruta del ícono del W-Engine, o None. Busca `nombre_en` en el catálogo (sólo lectura) y
+        delega el orden de resolución en `engine_icon_path`. Sin conexión o sin catálogo, igual se
+        intenta por el slug español: el evento sale con o sin ícono, nunca se cae por esto."""
+        from app.core.asset_resolver import engine_icon_path
+        if not nombre:
+            return None
+        nombre_en = None
+        if self._con is not None:
+            try:
+                r = self._con.execute(
+                    "SELECT nombre_en FROM weapons WHERE nombre = ?", (nombre,)).fetchone()
+                nombre_en = r[0] if r else None
+            except Exception:
+                nombre_en = None
+        p = engine_icon_path(nombre, nombre_en)
+        return str(p) if p else None
+
+    @staticmethod
+    def _avatar_ico(nombre: str | None) -> str | None:
+        from app.core.asset_resolver import agent_avatar_path
+        if not nombre:
+            return None
+        p = agent_avatar_path(nombre, variant="ico")
+        return str(p) if p else None
 
     def _build_replacement_payload(self, ev: dict) -> dict:
         """Evento {set_name, set_id, slot, from_name, to_name} → payload del toast (logo del set
@@ -900,6 +941,54 @@ class MonitorController(QObject):
             val = f" {s.valor:g}{unit}"
         roll = f" (+{s.rolls})" if s.rolls else ""
         return f"{nombre}{val}{roll}"
+
+    @staticmethod
+    def _tenencia_observada(disc) -> str:
+        """Cuatro desenlaces del badge, sin colapsar ninguno.
+
+        "alguien lo tiene y no sé quién" (`incierto`) no es lo mismo que "no pude ver el badge"
+        (`sin_leer`), y ninguno de los dos es `libre`. Mismo orden de precedencia que
+        `_log_s17_extraction`, que es la lectura que ya se validó en los censos."""
+        if disc.equip_libre:
+            return "libre"
+        if disc.equip_pj_visual or disc.agente_asignado_nombre:
+            return "equipada"
+        if getattr(disc, "equip_dueno_incierto", False):
+            return "incierto"
+        return "sin_leer"
+
+    def _build_observed_payload(self, disc) -> dict:
+        """DiscParsed de S17/S9 → payload de `disc_observed`. Sólo lecturas.
+
+        A PROPÓSITO no trae score, variante ni PJ sugerido: reporta lo que se vio. El scoring no
+        está calibrado (thresholds en el default) y la vista dibuja el build del dueño REAL."""
+        from app.core.asset_resolver import set_logo_path_by_es
+
+        tenencia = self._tenencia_observada(disc)
+        dueno = (disc.equip_pj_visual or disc.agente_asignado_nombre) if tenencia == "equipada" else None
+        set_name = disc.set_name_canon or disc.set_name_raw or "?"
+        set_logo = None
+        try:
+            p = set_logo_path_by_es(set_name, self._disc_set_repo)
+            set_logo = str(p) if p else None
+        except Exception:
+            pass
+        dueno_avatar = self._avatar_ico(dueno)
+        return {
+            "set":          set_name,
+            "set_logo":     set_logo,
+            "set_tier":     disc.set_active_tier,
+            "slot":         disc.slot,
+            "rareza":       disc.rareza if disc.rareza in ("S", "A", "B") else None,
+            "nivel":        disc.nivel,
+            "main":         disc.main_stat_canon or disc.main_stat_raw or "?",
+            "main_valor":   disc.main_valor,
+            "main_unidad":  disc.main_unidad,
+            "subs_detail":  [self._fmt_sub(s) for s in disc.subs if s.nombre_canon or s.nombre_raw],
+            "dueno":        dueno,
+            "dueno_avatar": dueno_avatar,
+            "tenencia":     tenencia,
+        }
 
     def _log_s17_extraction(self, disc, result=None) -> None:
         """Loguea la extracción completa de un disco equipado S17 (estilo S18)."""
@@ -1053,6 +1142,11 @@ class MonitorController(QObject):
             "rarity":        disc_parsed.rareza if disc_parsed.rareza in ("S", "A", "B") else "S",
             "main":          disc_parsed.main_stat_canon or disc_parsed.main_stat_raw or "?",
             "main_value":    main_value,
+            # Crudos, para la vista en vivo (2026-09-12): el drop decía "Nivel ?" porque este payload
+            # nunca trajo el nivel, y `main_value` es texto redondeado a un decimal. El toast no los lee.
+            "nivel":         disc_parsed.nivel,
+            "main_valor":    disc_parsed.main_valor,
+            "main_unidad":   disc_parsed.main_unidad,
             "subs":          subs_summary,
             "subs_detail":   subs_detail,
             "target":        rec.agente_nombre or "—",

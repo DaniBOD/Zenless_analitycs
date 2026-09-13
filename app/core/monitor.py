@@ -835,7 +835,7 @@ class Monitor:
         al reenfocar el juego, sin necesidad de salir y volver a entrar
         al perfil del PJ.
 
-        Emite un diagnóstico visible en el LivePanel para confirmar
+        Emite un diagnóstico visible en la consola de la vista en vivo para confirmar
         que el re-scan disparó (antes era silencioso, sin feedback).
         """
         if self._thread and self._thread.is_alive():
@@ -5174,7 +5174,7 @@ class Monitor:
         `_maybe_process_agent_stats` pueda decidir si el resultado es
         utilizable y comprometer el dedup.
 
-        Cualquier excepción se reporta al LivePanel vía `_on_diagnostic`
+        Cualquier excepción se reporta a la consola de la vista en vivo vía `_on_diagnostic`
         (con prefijo `[diag] error...`) para que sea visible incluso en
         `.exe --windowed` donde stderr está suprimido.
 
