@@ -108,7 +108,7 @@ def conteos_header(celdas: list[CeldaPJ], no_obtenidos: set[str]) -> dict[str, i
     }
 
 
-def _cumple_estado(c: CeldaPJ, estado: str) -> bool:
+def cumple_estado(c: CeldaPJ, estado: str) -> bool:
     if estado == "faltan_datos":
         return c.sin_thresholds
     if estado == "discos_no_6":
@@ -131,7 +131,7 @@ def filtrar(celdas: Iterable[CeldaPJ], filtros: Mapping[str, set[str]]) -> list[
             if not valores:
                 continue
             if eje == "estado":
-                ok = any(_cumple_estado(c, e) for e in valores)
+                ok = any(cumple_estado(c, e) for e in valores)
             else:
                 ok = getattr(c, eje) in valores
             if not ok:
@@ -176,7 +176,9 @@ def calcular_grilla(n: int, ancho: int, alto: int) -> Grilla:
         if w <= 0 or h <= 0:
             continue
         s = min(w / CELDA_W0, h / CELDA_H0, ESCALA_MAX)
-        if s > mejor_s:
+        # `>=`: entre empates (típico al tope de escala, con la ventana maximizada) gana la de MÁS
+        # columnas. Con `>` ganaba la primera y la grilla dejaba media pantalla vacía.
+        if s >= mejor_s - 1e-9:
             mejor_c, mejor_s = c, s
     cabe = mejor_s >= ESCALA_MIN
     s = max(mejor_s, ESCALA_MIN)

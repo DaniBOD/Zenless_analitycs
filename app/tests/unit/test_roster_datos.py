@@ -135,6 +135,18 @@ def test_con_espacio_de_sobra_la_celda_no_crece_sin_limite():
     assert g.celda_w <= 122 * 1.3 and g.celda_h <= 96 * 1.3
 
 
+def test_maximizada_la_grilla_no_deja_media_pantalla_vacia():
+    """Con la ventana maximizada (cuerpo ~2316×1116) varias cantidades de columnas llegan al tope
+    de escala. Elegir la PRIMERA (7) dejaba la mitad derecha vacía — visto en la captura del
+    2026-09-13. Entre empates gana la que más ancho usa."""
+    ancho, alto = 2316, 1116
+    g = calcular_grilla(51, ancho, alto)
+    usado = g.columnas * g.celda_w + (g.columnas - 1) * g.gap
+    assert usado >= 0.7 * ancho, (g, usado)
+    filas = -(-51 // g.columnas)
+    assert filas * g.celda_h + (filas - 1) * g.gap <= alto
+
+
 def test_debajo_del_piso_lo_dice_en_vez_de_dibujar_celdas_ilegibles():
     g = calcular_grilla(500, *CUERPO_MINIMO)
     assert not g.cabe

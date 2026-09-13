@@ -270,7 +270,8 @@ class MainWindow(ShellWindow):
         self.add_view("lategame", make_placeholder(
             "Lategame", "Fase 4 — RF-13 (F11 OCR + tier list bayesiana) pendiente"))
         self.add_view("discos", build_discos_view())
-        self.add_view("roster", build_roster_view())
+        self._roster_view = build_roster_view(self._ui_con)
+        self.add_view("roster", self._roster_view)
         self.add_view("armas", make_placeholder(
             "Armas", "Fase 5 — RF-14 (W-Engines optimizer) pendiente"))
         self.add_view("equipos", make_placeholder(
