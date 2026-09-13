@@ -262,15 +262,16 @@ Tres categorías por substat: **positivo** (pondera hacia arriba el score), **pe
 
 | Código | Nombre | Mains IV | Mains V | Mains VI | Substats positivos | Substats perjudiciales | Substats intermedios |
 |--------|--------|----------|---------|----------|--------------------|------------------------|----------------------|
-| `ATK_DPS` | Atacante ATK-scaler | Crit Rate, Crit DMG, ATK% | Bono Daño, ATK% | Crit DMG, ATK% | Crit Rate, Crit DMG, ATK%, ATK, PEN | DEF, DEF%, HP, HP%, Maestría | — |
-| `HP_DISRUPT` | Disruptivo HP-scaler | Crit Rate, Crit DMG, HP% | Bono Daño, HP% | Crit DMG, HP% | Crit Rate, Crit DMG, HP%, HP | DEF, DEF%, Maestría, PEN | ATK, ATK% |
-| `ANOMALY` | Anomaly DPS | Maestría Anomalía, ATK% | Bono Daño, ATK% | Maestría Anomalía, ATK% | Maestría Anomalía, ATK%, ATK, PEN | DEF, DEF%, HP, HP%, Crit DMG | Crit Rate |
-| `STUN` | Aturdidor | Crit Rate, Crit DMG, ATK% | ATK% | Impacto | ATK%, ATK, Crit Rate, Crit DMG, PEN | DEF, DEF%, HP, HP%, Maestría | — |
+| `ATK_DPS` | Atacante ATK-scaler | Crit Rate, Crit DMG, ATK% | Bono Daño, ATK% | ATK% | Crit Rate, Crit DMG, ATK%, ATK, PEN | DEF, DEF%, HP, HP%, Maestría | — |
+| `HP_DISRUPT` | Disruptivo HP-scaler | Crit Rate, Crit DMG, HP% | Bono Daño, HP% | HP% | Crit Rate, Crit DMG, HP%, HP | DEF, DEF%, Maestría, PEN | ATK, ATK% |
+| `ANOMALY` | Anomaly DPS | Maestría Anomalía, ATK% | Bono Daño, ATK% | Tasa de Anomalía, ATK% | Maestría Anomalía, ATK%, ATK, PEN | DEF, DEF%, HP, HP%, Crit DMG | Crit Rate |
+| `STUN` | Aturdidor | Crit Rate, Crit DMG, ATK% | Bono Daño, ATK% | Impacto | ATK%, ATK, Crit Rate, Crit DMG, PEN | DEF, DEF%, HP, HP%, Maestría | — |
 | `SUPPORT_ER` | Soporte de energía | ATK%, Crit Rate | ATK%, Bono Daño | Recarga de Energía | ATK%, HP%, Crit Rate, Crit DMG, PEN | DEF, DEF%, Maestría | — |
 | `DEFENSE` | Defensor / Tank | DEF%, HP% | DEF%, HP% | Impacto, DEF%, HP% | DEF%, DEF, HP%, HP | ATK, ATK%, PEN, Maestría | Crit Rate, Crit DMG |
 
 Notas:
 
+- **Correcciones de mains (2026-09-12, mig `_32`):** esta tabla quedó atrás de dos migraciones. La `_08` (2026-05-04) ya había sacado `Crit DMG` de Mains VI de `ATK_DPS`/`HP_DISRUPT` (no es main de slot VI) y agregado los bonos elementales a Mains V de `STUN`; la `_32` cambia Mains VI de `ANOMALY` de *Maestría* a **Tasa de Anomalía** (el main de anomalía de slot VI, §7.2.1) y agrega **Bono Daño Viento** a todo arquetipo que lista bonos elementales. "Bono Daño" = los bonos elementales de `stats_vocab` (Físico, Fuego, Hielo, Eléctrico, Éter, Viento; Lumen no existe). La autoridad de qué main existe en cada slot es `stats_vocab.CANONICAL_MAINS_VARIABLE`, con contrato en `test_disc_archetypes_contrato.py`.
 - En `ATK` / `HP` aparecen tanto la versión % como la plana — ambos existen como substat en ZZZ y ambos contribuyen al scaling, aunque `%` es el más valorado. En el peso del scoring la versión plana pesa típicamente 0.4 y la `%` pesa 1.0.
 - `PEN` está en positivos para `ATK_DPS`, `STUN`, `SUPPORT_ER` y `ANOMALY`; en `HP_DISRUPT` es perjudicial porque los disruptivos ya ignoran defensa por diseño de kit y el roll desperdicia stat útil; en `DEFENSE` es perjudicial porque no aporta a la supervivencia del tank.
 - En `HP_DISRUPT`, `ATK` y `ATK%` quedan en **intermedio** porque sí escalan su daño pero es marginal comparado con HP% — no vale marcarlos perjudiciales pero tampoco positivos.
