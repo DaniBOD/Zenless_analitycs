@@ -184,9 +184,19 @@ class ShellWindow(QMainWindow):
         WM_NCCALCSIZE, WM_NCHITTEST = 0x0083, 0x0084
 
         if msg.message == WM_NCCALCSIZE and msg.wParam:
-            if self.isMaximized():
-                # Maximizada, Windows extiende la ventana más allá del monitor por el grosor del
-                # marco. Sin este recorte, el borde del contenido queda afuera de la pantalla.
+            # Se recorta SÓLO si WINDOWS dice que está maximizada (`IsZoomed`), no si lo dice Qt.
+            #
+            # Un maximizado nativo (doble clic en la barra, Win+↑) agranda la ventana más allá del
+            # monitor por el grosor del marco, y ahí sí hay que recortar. Pero el botón □ llama a
+            # `showMaximized()`, y para una ventana frameless Qt NO maximiza con Windows: la ajusta
+            # al área de trabajo (IsZoomed = False) y ya entra justa.
+            #
+            # La primera versión miraba `self.isMaximized()` y recortaba 8 px por lado una ventana
+            # que no los tenía de más. Medido el 2026-09-13 (Daniel vio franja blanca arriba,
+            # escritorio a los costados y la barra inferior cortada): Windows daba cliente
+            # 2544×1376 en (8,8) y Qt dibujaba 2560×1392 en (0,0). Los tres síntomas, un número.
+            import ctypes
+            if ctypes.windll.user32.IsZoomed(msg.hWnd):
                 self._recortar_maximizada(msg.lParam)
             return True, 0
 
