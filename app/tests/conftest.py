@@ -19,6 +19,36 @@ if os.path.isdir(_PADDLE_SITE) and _PADDLE_SITE not in sys.path:
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
+# --------------------------------------------------------------------------------------- #
+# UNA sola aplicación de Qt para toda la sesión, y es una QApplication (con widgets).
+#
+# En un proceso Qt admite una sola instancia de app, y la PRIMERA que se crea decide el tipo para
+# todos. Cada archivo de test armaba la suya en un fixture: los del controller una
+# `QCoreApplication` (sin GUI), los de toasts y del diálogo del roster una `QApplication`. Como los
+# del controller van antes en orden alfabético, en la suite completa ganaba la core app, y:
+#
+#   - los tests de widgets de los toasts y del diálogo **se salteaban en silencio** ("ya existe una
+#     QCoreApplication") — contaban dentro de los "skipped" de una suite que se reportaba verde;
+#   - los tests del shell nuevo (2026-09-12) no se salteaban: creaban un QWidget sin QApplication,
+#     Qt ABORTABA el proceso y pytest moría sin resumen, con código 127, al 90 % de la suite.
+#     Sueltos pasaban; sólo fallaba en combinación. Se diagnosticó primero como un timeout.
+#
+# `pytest_configure` corre antes de importar cualquier módulo de test, así que nadie llega a crear
+# otra. Una QApplication también ES una QCoreApplication: los tests del controller siguen andando.
+# --------------------------------------------------------------------------------------- #
+_QT_APP = None
+
+
+def pytest_configure(config):
+    global _QT_APP
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PySide6.QtWidgets import QApplication
+    except ImportError:
+        return
+    _QT_APP = QApplication.instance() or QApplication([])
+
+
 @pytest.fixture(autouse=True)
 def _isolate_avatar_library(tmp_path, monkeypatch):
     """
