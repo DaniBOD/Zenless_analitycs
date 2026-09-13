@@ -271,6 +271,7 @@ class MainWindow(ShellWindow):
             "Lategame", "Fase 4 — RF-13 (F11 OCR + tier list bayesiana) pendiente"))
         self.add_view("discos", build_discos_view())
         self._roster_view = build_roster_view(self._ui_con)
+        self._roster_view.ficha_pedida.connect(self._abrir_ficha_pj)
         self.add_view("roster", self._roster_view)
         self.add_view("armas", make_placeholder(
             "Armas", "Fase 5 — RF-14 (W-Engines optimizer) pendiente"))
@@ -289,6 +290,21 @@ class MainWindow(ShellWindow):
             "[auto] Watcher de ZZZ ACTIVO — el monitor arranca solo cuando detecta el juego."
             if enabled else "[auto] Watcher de ZZZ desactivado."
         )
+
+    def _abrir_ficha_pj(self, agente_id: int):
+        """Click en una celda del roster → el modal de ese PJ. La ventana es la dueña de los
+        diálogos: la vista sólo pide la ficha."""
+        if self._ui_con is None:
+            return
+        from app.ui.pj_modal.datos import ficha_pj
+        from app.ui.pj_modal.modal import PjModal
+        try:
+            ficha = ficha_pj(self._ui_con, agente_id)
+        except Exception:
+            log.exception("[roster] no se pudo armar la ficha del PJ %s", agente_id)
+            return
+        if ficha is not None:
+            PjModal(ficha, parent=self).exec()
 
     def _pedir_refresco(self, *_):
         self._refresco.start()
