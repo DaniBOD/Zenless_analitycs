@@ -1,5 +1,5 @@
 """
-Design tokens portados de Documentacion/Interfaz/mockups/Codigos-claude-desing/tokens.css.
+Design tokens portados de Documentacion/Interfaz/mockups/design_handoff_toast_variants/source/tokens.css.
 Centraliza colores, fuentes y constantes visuales para que los widgets PySide6
 queden alineados con los mockups.
 """
@@ -43,6 +43,17 @@ INFO            = "#5BC0EB"
 # AI / RF tags
 PURPLE          = "#9D4EDD"
 PINK            = "#FF4D8A"
+
+# Shell de la ventana (fase 1 de la interfaz, 2026-09-12) — mismos valores que panel.jsx
+BG_SIDEBAR_TOP  = "#0c0c0c"   # gradiente del sidebar, arriba
+BG_SIDEBAR_BOT  = "#050505"   # ... y abajo
+BG_STATUSBAR    = "#070707"
+YELLOW_TINT     = "rgba(255, 203, 5, 0.08)"   # fondo del ítem activo del sidebar
+BG_ROW_HOVER    = "rgba(255, 203, 5, 0.06)"
+
+SIDEBAR_W       = 220
+TITLEBAR_H      = 40
+STATUSBAR_H     = 24
 
 
 # ---------------------------------------------------------------------------

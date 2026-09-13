@@ -1,6 +1,6 @@
 """
 DaniBOD ZZZ Analytics — Entrypoint principal.
-Fase 2 placeholder: ventana con tabs, tray icon y panel de scoring.
+Ventana principal (shell de la interfaz, fase 1), tray icon y cableado del monitor.
 """
 import logging
 import os
@@ -91,410 +91,94 @@ if _ocr_ipc.es_arranque_de_worker():
     from app.core.ocr_worker import ejecutar as _ejecutar_worker_ocr
     sys.exit(_ejecutar_worker_ocr())
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPalette
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
-from PySide6.QtWidgets import (
-    QApplication,
-    QHBoxLayout,
-    QLabel,
-    QMainWindow,
-    QPushButton,
-    QStatusBar,
-    QSystemTrayIcon,
-    QTabWidget,
-    QVBoxLayout,
-    QWidget,
-    QMenu,
-    QFrame,
-    QTableWidget,
-    QTableWidgetItem,
-    QHeaderView,
-    QSplitter,
-    QTextEdit,
-)
+from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Paleta oscura ZZZ
+# Paleta — una sola autoridad: app/ui/tokens.py (los tokens del mockup de Claude Design)
 # ---------------------------------------------------------------------------
-COLORS = {
-    "bg_deep":    "#0d0d12",
-    "bg_surface": "#13141f",
-    "bg_card":    "#1a1b2e",
-    "accent":     "#f7c948",   # amarillo ZZZ
-    "accent2":    "#e86e3a",   # naranja
-    "electric":   "#4a9eff",   # azul eléctrico
-    "text_main":  "#e8e8f0",
-    "text_sub":   "#8888aa",
-    "border":     "#2a2b40",
-    "ok":         "#4ade80",
-    "warn":       "#fbbf24",
-    "danger":     "#f87171",
-}
-
+# Hasta el 2026-09-12 este archivo tenía su PROPIA paleta (`COLORS`: fondo #0d0d12, amarillo
+# #f7c948) además de la de `tokens.py` (#0a0a0a, #FFCB05). Dos respuestas a la misma pregunta (B1).
 
 def apply_dark_palette(app: QApplication):
+    from app.ui import tokens as T
+
     app.setStyle("Fusion")
     palette = QPalette()
     for role, color in [
-        (QPalette.ColorRole.Window,          COLORS["bg_deep"]),
-        (QPalette.ColorRole.WindowText,      COLORS["text_main"]),
-        (QPalette.ColorRole.Base,            COLORS["bg_surface"]),
-        (QPalette.ColorRole.AlternateBase,   COLORS["bg_card"]),
-        (QPalette.ColorRole.Text,            COLORS["text_main"]),
-        (QPalette.ColorRole.Button,          COLORS["bg_card"]),
-        (QPalette.ColorRole.ButtonText,      COLORS["text_main"]),
-        (QPalette.ColorRole.Highlight,       COLORS["accent"]),
-        (QPalette.ColorRole.HighlightedText, COLORS["bg_deep"]),
-        (QPalette.ColorRole.ToolTipBase,     COLORS["bg_card"]),
-        (QPalette.ColorRole.ToolTipText,     COLORS["text_main"]),
+        (QPalette.ColorRole.Window,          T.BG_BASE),
+        (QPalette.ColorRole.WindowText,      T.TEXT_PRIMARY),
+        (QPalette.ColorRole.Base,            T.BG_PANEL),
+        (QPalette.ColorRole.AlternateBase,   T.BG_PANEL_HI),
+        (QPalette.ColorRole.Text,            T.TEXT_PRIMARY),
+        (QPalette.ColorRole.Button,          T.BG_PANEL_HI),
+        (QPalette.ColorRole.ButtonText,      T.TEXT_PRIMARY),
+        (QPalette.ColorRole.Highlight,       T.YELLOW),
+        (QPalette.ColorRole.HighlightedText, T.BG_BASE),
+        (QPalette.ColorRole.ToolTipBase,     T.BG_PANEL_HI),
+        (QPalette.ColorRole.ToolTipText,     T.TEXT_PRIMARY),
     ]:
         palette.setColor(role, QColor(color))
     app.setPalette(palette)
+    # Ojo: NO hay una regla `QWidget { background-color }` genérica, que la hoja vieja sí tenía.
+    # Pintaba un fondo opaco en cada label y tapaba el gradiente del sidebar y el tinte del ítem
+    # activo. El fondo de la ventana ya lo da la paleta; cada superficie del shell pinta el suyo.
     app.setStyleSheet(f"""
-        QMainWindow, QWidget {{
-            background-color: {COLORS['bg_deep']};
-            color: {COLORS['text_main']};
-        }}
-        QTabWidget::pane {{
-            border: 1px solid {COLORS['border']};
-            background: {COLORS['bg_surface']};
-        }}
-        QTabBar::tab {{
-            background: {COLORS['bg_card']};
-            color: {COLORS['text_sub']};
-            padding: 8px 20px;
-            border: 1px solid {COLORS['border']};
-            border-bottom: none;
-        }}
-        QTabBar::tab:selected {{
-            background: {COLORS['bg_surface']};
-            color: {COLORS['accent']};
-            border-top: 2px solid {COLORS['accent']};
-        }}
-        QTabBar::tab:hover {{
-            color: {COLORS['text_main']};
-        }}
+        QWidget {{ color: {T.TEXT_PRIMARY}; }}
         QTableWidget {{
-            background: {COLORS['bg_surface']};
-            gridline-color: {COLORS['border']};
+            background: {T.BG_PANEL};
+            alternate-background-color: {T.BG_PANEL_HI};
+            gridline-color: {T.BORDER_SUBTLE};
             border: none;
         }}
-        QTableWidget::item:selected {{
-            background: {COLORS['accent']};
-            color: {COLORS['bg_deep']};
-        }}
+        QTableWidget::item:selected {{ background: {T.YELLOW}; color: {T.BG_BASE}; }}
         QHeaderView::section {{
-            background: {COLORS['bg_card']};
-            color: {COLORS['text_sub']};
-            border: 1px solid {COLORS['border']};
+            background: {T.BG_PANEL_HI};
+            color: {T.TEXT_MUTED};
+            border: 1px solid {T.BORDER_SUBTLE};
             padding: 4px 8px;
             font-size: 11px;
             text-transform: uppercase;
             letter-spacing: 1px;
         }}
-        QLabel#title {{
-            color: {COLORS['accent']};
-            font-size: 18px;
-            font-weight: bold;
-        }}
-        QLabel#subtitle {{
-            color: {COLORS['text_sub']};
-            font-size: 12px;
-        }}
-        QTextEdit {{
-            background: {COLORS['bg_card']};
-            border: 1px solid {COLORS['border']};
-            color: {COLORS['text_main']};
-            font-family: Consolas, monospace;
-            font-size: 12px;
-        }}
-        QStatusBar {{
-            background: {COLORS['bg_card']};
-            color: {COLORS['text_sub']};
-            border-top: 1px solid {COLORS['border']};
-        }}
+        QLabel#title {{ color: {T.YELLOW}; font-size: 18px; font-weight: bold; }}
+        QLabel#subtitle {{ color: {T.TEXT_MUTED}; font-size: 12px; }}
         QFrame#card {{
-            background: {COLORS['bg_card']};
-            border: 1px solid {COLORS['border']};
+            background: {T.BG_PANEL};
+            border: 1px solid {T.BORDER_SUBTLE};
             border-radius: 8px;
         }}
+        QToolTip {{
+            background: {T.BG_PANEL_HI}; color: {T.TEXT_PRIMARY}; border: 1px solid {T.BORDER_MID};
+        }}
+        QScrollBar:vertical {{ background: {T.BG_DEEP}; width: 10px; margin: 0; }}
+        QScrollBar::handle:vertical {{ background: {T.BORDER_MID}; min-height: 24px; }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
     """)
-
-
-# ---------------------------------------------------------------------------
-# Tabs de contenido (placeholders con datos reales de la DB)
-# ---------------------------------------------------------------------------
-
-def _make_placeholder(title: str, description: str) -> QWidget:
-    w = QWidget()
-    v = QVBoxLayout(w)
-    v.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    lbl = QLabel(title)
-    lbl.setObjectName("title")
-    lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    desc = QLabel(description)
-    desc.setObjectName("subtitle")
-    desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    v.addWidget(lbl)
-    v.addWidget(desc)
-    return w
-
-
-def _build_status_tab() -> QWidget:
-    """Tab de estado del sistema con info real de la DB."""
-    w = QWidget()
-    layout = QVBoxLayout(w)
-    layout.setSpacing(12)
-    layout.setContentsMargins(16, 16, 16, 16)
-
-    title = QLabel("Estado del Sistema")
-    title.setObjectName("title")
-    layout.addWidget(title)
-
-    try:
-        from app.db.connection import get_connection
-        con = get_connection()
-        agents = con.execute("SELECT COUNT(*) FROM agents").fetchone()[0]
-        discos = con.execute("SELECT COUNT(*) FROM inventory_discs WHERE descartado=0 OR descartado IS NULL").fetchone()[0]
-        equipados = con.execute("SELECT COUNT(*) FROM inventory_discs WHERE equipado=1").fetchone()[0]
-        scored = con.execute("SELECT COUNT(*) FROM inventory_discs WHERE score_evaluacion IS NOT NULL").fetchone()[0]
-        evaluaciones = con.execute("SELECT COUNT(*) FROM inventory_disc_evaluations").fetchone()[0]
-        sets = con.execute("SELECT COUNT(*) FROM disc_sets").fetchone()[0]
-        armas = con.execute("SELECT COUNT(*) FROM inventory_weapons").fetchone()[0]
-        con.close()
-        db_ok = True
-    except Exception as e:
-        db_ok = False
-        err = str(e)
-
-    stats_frame = QFrame()
-    stats_frame.setObjectName("card")
-    stats_layout = QVBoxLayout(stats_frame)
-
-    if db_ok:
-        stats = [
-            ("Agentes en roster", str(agents), COLORS["ok"]),
-            ("Discos en inventario", str(discos), COLORS["accent"]),
-            ("Discos equipados", str(equipados), COLORS["electric"]),
-            ("Discos evaluados", f"{scored} / {discos}", COLORS["warn"] if scored < discos else COLORS["ok"]),
-            ("Evaluaciones históricas", str(evaluaciones), COLORS["text_sub"]),
-            ("Sets de discos", str(sets), COLORS["text_sub"]),
-            ("Armas en inventario", str(armas), COLORS["text_sub"]),
-        ]
-    else:
-        stats = [("ERROR DB", err, COLORS["danger"])]
-
-    for label, value, color in stats:
-        row = QWidget()
-        row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(8, 4, 8, 4)
-        lbl = QLabel(label)
-        lbl.setStyleSheet(f"color: {COLORS['text_sub']}; font-size: 13px;")
-        val = QLabel(value)
-        val.setStyleSheet(f"color: {color}; font-size: 14px; font-weight: bold;")
-        val.setAlignment(Qt.AlignmentFlag.AlignRight)
-        row_layout.addWidget(lbl)
-        row_layout.addWidget(val)
-        stats_layout.addWidget(row)
-
-    layout.addWidget(stats_frame)
-
-    # Fase actual
-    fase_frame = QFrame()
-    fase_frame.setObjectName("card")
-    fase_layout = QVBoxLayout(fase_frame)
-    fase_label = QLabel("Fase actual: 2.0 — Saneamiento ETL")
-    fase_label.setStyleSheet(f"color: {COLORS['accent']}; font-size: 13px; font-weight: bold;")
-    hitos_text = QTextEdit()
-    hitos_text.setReadOnly(True)
-    hitos_text.setMaximumHeight(160)
-    hitos_text.setPlainText(
-        "✅  2.0.1  audit_inventory_discs.py — reporte generado\n"
-        "✅  2.0.2  stats_vocab.py — 18/18 tests verdes\n"
-        "🔄  2.0.3  Migración 06 (normalizar columnas) — pendiente\n"
-        "🔄  2.0.4  restandarize_inventory_discs.py — pendiente\n"
-        "🔄  2.0.5  seed_substat_preferences.py — pendiente\n"
-        "🔄  2.1    Scaffold completo — en progreso\n"
-        "🔄  2.2    Scoring engine — en progreso\n"
-    )
-    fase_layout.addWidget(fase_label)
-    fase_layout.addWidget(hitos_text)
-    layout.addWidget(fase_frame)
-    layout.addStretch()
-    return w
-
-
-def _build_discos_tab() -> QWidget:
-    """Tab de inventario de discos con datos reales."""
-    w = QWidget()
-    layout = QVBoxLayout(w)
-    layout.setContentsMargins(12, 12, 12, 12)
-
-    title = QLabel("Inventario de Discos")
-    title.setObjectName("title")
-    layout.addWidget(title)
-
-    table = QTableWidget()
-    table.setColumnCount(9)
-    table.setHorizontalHeaderLabels(["ID", "Set", "Slot", "Main", "Sub1", "Sub2", "Sub3", "Nivel", "Score"])
-    table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-    table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-    table.setAlternatingRowColors(True)
-    table.setSortingEnabled(True)
-    table.verticalHeader().setVisible(False)
-
-    try:
-        from app.db.connection import get_connection
-        con = get_connection()
-        rows = con.execute("""
-            SELECT id.id, ds.nombre, id.slot, id.main_stat, id.sub1, id.sub2, id.sub3,
-                   id.nivel, id.score_evaluacion
-            FROM inventory_discs id
-            LEFT JOIN disc_sets ds ON ds.id = id.set_id
-            WHERE id.descartado = 0 OR id.descartado IS NULL
-            ORDER BY id.slot, ds.nombre
-            LIMIT 200
-        """).fetchall()
-        con.close()
-
-        table.setRowCount(len(rows))
-        for row_idx, r in enumerate(rows):
-            for col_idx, val in enumerate(r):
-                item = QTableWidgetItem("" if val is None else str(val))
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                if col_idx == 8 and val is not None:
-                    try:
-                        score = float(val)
-                        if score >= 0.75:
-                            item.setForeground(QColor(COLORS["ok"]))
-                        elif score >= 0.50:
-                            item.setForeground(QColor(COLORS["warn"]))
-                        else:
-                            item.setForeground(QColor(COLORS["text_sub"]))
-                    except (ValueError, TypeError):
-                        pass
-                table.setItem(row_idx, col_idx, item)
-
-        subtitle = QLabel(f"Mostrando {len(rows)} discos · Scoring aún no ejecutado (Hito 2.3 pendiente)")
-        subtitle.setObjectName("subtitle")
-        layout.insertWidget(1, subtitle)
-    except Exception as e:
-        err_lbl = QLabel(f"Error cargando discos: {e}")
-        err_lbl.setStyleSheet(f"color: {COLORS['danger']};")
-        layout.addWidget(err_lbl)
-
-    layout.addWidget(table)
-    return w
-
-
-def _build_roster_tab() -> QWidget:
-    """Tab del roster de agentes."""
-    w = QWidget()
-    layout = QVBoxLayout(w)
-    layout.setContentsMargins(12, 12, 12, 12)
-
-    title = QLabel("Roster")
-    title.setObjectName("title")
-
-    btn_declarar = QPushButton("Declarar roster…")
-    btn_declarar.setToolTip(
-        "Decí qué personajes tenés. El sistema no puede enumerar solo a los que NO tenés:\n"
-        "en el menú salen en gris y el reconocedor los confunde con uno propio."
-    )
-
-    fila_sup = QHBoxLayout()
-    fila_sup.addWidget(title)
-    fila_sup.addStretch()
-    fila_sup.addWidget(btn_declarar)
-    layout.addLayout(fila_sup)
-
-    table = QTableWidget()
-    table.setColumnCount(8)
-    table.setHorizontalHeaderLabels(["Nombre", "Rang.", "Nivel", "M", "Elemento", "Rol", "CR%", "CDmg%"])
-    table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-    table.setAlternatingRowColors(True)
-    table.setSortingEnabled(True)
-    table.verticalHeader().setVisible(False)
-
-    def _abrir_declaracion():
-        """Abre el diálogo y, si guardó, recarga la tabla: el roster puede haber ganado filas."""
-        from app.ui.roster_declaration_dialog import RosterDeclarationDialog
-        dlg = RosterDeclarationDialog(parent=w)
-        if dlg.exec() and dlg.resultado and dlg.resultado.escribio:
-            _fill_roster_table(table, title)
-
-    btn_declarar.clicked.connect(_abrir_declaracion)
-
-    _fill_roster_table(table, title)
-    layout.addWidget(table)
-    return w
-
-
-def _fill_roster_table(table: QTableWidget, title: QLabel) -> None:
-    """Puebla la tabla desde la DB. Separado de la construcción para poder REFRESCAR después de
-    una declaración, que puede haber creado filas nuevas en `agents`."""
-    table.setSortingEnabled(False)
-    table.setRowCount(0)
-    try:
-        from app.db.connection import get_connection
-        con = get_connection()
-        rows = con.execute("""
-            SELECT nombre, rango, nivel, mindscape, elemento, rol, prob_critico, dano_critico
-            FROM agents ORDER BY rol, nombre
-        """).fetchall()
-        con.close()
-
-        table.setRowCount(len(rows))
-        elem_colors = {
-            "Eléctrico": "#4a9eff",
-            "Hielo":     "#a8d8ea",
-            "Fuego":     "#e86e3a",
-            "Físico":    "#a0a0b0",
-            "Éter":      "#c084fc",
-            # Lumen (v3.1): rosa muestreado del ícono del pill de elemento en
-            # Perfil_agente/atributos_base_ejemplo_15.png (Remielle Dan).
-            "Lumen":     "#e9a0d0",
-            # Falta "Viento" (Velina): sin frame suyo para muestrear el color.
-            # El lookup es `val in elem_colors`, así que hoy sale sin colorear.
-        }
-        for row_idx, r in enumerate(rows):
-            for col_idx, val in enumerate(r):
-                item = QTableWidgetItem("" if val is None else str(val))
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                if col_idx == 4 and val in elem_colors:
-                    item.setForeground(QColor(elem_colors[val]))
-                if col_idx == 6 and val is not None:
-                    try:
-                        cr = float(val)
-                        if cr >= 60:
-                            item.setForeground(QColor(COLORS["ok"]))
-                        elif cr >= 40:
-                            item.setForeground(QColor(COLORS["warn"]))
-                        else:
-                            item.setForeground(QColor(COLORS["danger"]))
-                    except (ValueError, TypeError):
-                        pass
-                table.setItem(row_idx, col_idx, item)
-        title.setText(f"Roster — {len(rows)} agentes")
-    except Exception as e:
-        log.exception("[roster] no se pudo poblar la tabla")
-        title.setText(f"Roster — error al leer la DB: {e}")
-    finally:
-        table.setSortingEnabled(True)
 
 
 # ---------------------------------------------------------------------------
 # Ventana principal
 # ---------------------------------------------------------------------------
+# Fase 1 de la interfaz (2026-09-12): la ventana ES el shell del mockup (barra de título propia,
+# sidebar, stack de vistas, barra inferior) y la pestaña "Live" pasó a ser la vista en vivo. Las
+# demás vistas se mudaron a `app/ui/views/` sin rediseñar. La pestaña "Estado" desapareció: su
+# contenido es la barra inferior. Diseño en Dev_IA 2026-09-12_PLAN_Interfaz_la_pantalla_en_vivo.
 
-class MainWindow(QMainWindow):
+from app.ui.shell.window import ShellWindow  # noqa: E402 — después del desvío del worker de OCR
+
+VERSION = "v0.1.0-dev"
+
+
+class MainWindow(ShellWindow):
     def __init__(self):
-        super().__init__()
-        self.setWindowTitle("DaniBOD ZZZ Analytics  v0.1.0-dev")
-        self.setMinimumSize(1320, 820)
+        from app.db.connection import get_db_path, is_readonly
+        super().__init__(VERSION, db_path=get_db_path(), readonly=is_readonly())
+        self.setWindowTitle(f"DaniBOD ZZZ Analytics  {VERSION}")
         _ico = Path(__file__).parent / "resources" / "icon.ico"
         if _ico.exists():
             self.setWindowIcon(QIcon(str(_ico)))
@@ -502,126 +186,122 @@ class MainWindow(QMainWindow):
         self._setup_tray()
 
     def _setup_ui(self):
-        from app.ui.live_panel import LivePanel
+        from app.db.connection import get_connection
         from app.ui.controller import MonitorController
-        from app.ui.toast import DiscToast, ToastData
+        from app.ui.live.build_provider import BuildProvider
+        from app.ui.live.view import LiveView
+        from app.ui.toast import DiscToast
+        from app.ui.views.discos import build_discos_view
+        from app.ui.views.placeholder import make_placeholder
+        from app.ui.views.roster import build_roster_view
 
-        central = QWidget()
-        self.setCentralWidget(central)
-        v = QVBoxLayout(central)
-        v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(0)
+        # Conexión de LECTURA de la UI: el build del hexágono y los contadores del sidebar. Vive lo
+        # que vive la ventana. Si la DB no abre, la app arranca igual: sin hexágono y sin contadores.
+        self._ui_con = None
+        try:
+            self._ui_con = get_connection()
+        except Exception:
+            log.exception("[ui] sin conexión de lectura: la vista en vivo arranca sin builds")
+        build_fn = BuildProvider(self._ui_con).build_de if self._ui_con else (lambda _n: {})
 
-        # Header
-        header = QFrame()
-        header.setFixedHeight(52)
-        header.setStyleSheet(
-            f"background: {COLORS['bg_card']}; border-bottom: 2px solid {COLORS['accent']};"
-        )
-        hl = QHBoxLayout(header)
-        hl.setContentsMargins(16, 0, 16, 0)
-        logo = QLabel("⚡ DaniBOD ZZZ Analytics")
-        logo.setStyleSheet(
-            f"color: {COLORS['accent']}; font-size: 15px; font-weight: bold; letter-spacing: 1px;"
-        )
-        self._monitor_lbl = QLabel("● Monitor: OFF")
-        self._monitor_lbl.setStyleSheet(f"color: {COLORS['text_sub']}; font-size: 12px;")
-        hl.addWidget(logo)
-        hl.addStretch()
-        hl.addWidget(self._monitor_lbl)
-        v.addWidget(header)
-
-        # ---- Componentes Live (controller + panel + toast) ----
-        self._live_panel = LivePanel()
+        self._live_view = LiveView(build_fn=build_fn)
         self._controller = MonitorController(parent=self)
         self._toast = DiscToast()
+        c, vista, barra = self._controller, self._live_view, self.titlebar
 
-        # Cableado controller → panel
-        self._controller.monitor_started.connect(self._live_panel.on_monitor_started)
-        self._controller.monitor_stopped.connect(self._live_panel.on_monitor_stopped)
-        self._controller.pause_changed.connect(self._live_panel.on_pause_changed)
-        self._controller.state_changed.connect(self._live_panel.on_state_changed)
-        self._controller.disc_detected.connect(self._live_panel.on_disc_detected)
-        self._controller.error_occurred.connect(self._live_panel.on_error)
+        # Estado del monitor → la barra de título y la consola
+        c.monitor_started.connect(vista.on_monitor_started)
+        c.monitor_started.connect(barra.on_monitor_started)
+        c.monitor_stopped.connect(vista.on_monitor_stopped)
+        c.monitor_stopped.connect(barra.on_monitor_stopped)
+        c.pause_changed.connect(vista.on_pause_changed)
+        c.pause_changed.connect(barra.on_pause_changed)
+        c.state_changed.connect(vista.on_state_changed)
+        c.error_occurred.connect(vista.on_error)
+        # Mensajes informativos (cambios de estado, capturas descartadas, etc.) → la consola
+        c.log_message.connect(vista.append_log)
 
-        # Cableado controller → toast
-        self._controller.disc_detected.connect(self._on_disc_show_toast)
-        self._controller.disc_replaced.connect(self._on_disc_show_replacement_toast)
-        self._controller.disc_equipped.connect(self._on_disc_show_equipped_toast)
-        self._controller.discs_dismantled.connect(self._on_show_teardown_toast)
-        self._controller.weapon_seen.connect(self._on_show_weapon_toast)
+        # Lo que se leyó → la card. `disc_observed` es el disco con dueño en pantalla (S17/S9);
+        # `disc_detected` es el drop, del que la vista descarta todo lo que sale del scoring.
+        c.disc_observed.connect(vista.on_disc_observed)
+        c.disc_detected.connect(vista.on_disc_detected)
+        c.weapon_seen.connect(vista.on_weapon_seen)
 
-        # Cableado controller.log_message → live_panel.append_log
-        # (mensajes informativos: cambios de estado, capturas descartadas, etc)
-        self._controller.log_message.connect(self._live_panel.append_log)
-
-        # Cableado toast.clicked → abrir panel principal
+        # Toasts (sin cambios)
+        c.disc_detected.connect(self._on_disc_show_toast)
+        c.disc_replaced.connect(self._on_disc_show_replacement_toast)
+        c.disc_equipped.connect(self._on_disc_show_equipped_toast)
+        c.discs_dismantled.connect(self._on_show_teardown_toast)
+        c.weapon_seen.connect(self._on_show_weapon_toast)
         self._toast.clicked.connect(self._show_and_raise)
 
-        # Auto-detect: el monitor arranca automáticamente cuando ZZZ corre.
-        # El botón "Iniciar captura" sigue disponible como override manual.
-        self._controller.auto_start_enabled.connect(
-            lambda enabled: self._live_panel.append_log(
-                "[auto] Watcher de ZZZ ACTIVO — el monitor arranca solo cuando detecta el juego."
-                if enabled else "[auto] Watcher de ZZZ desactivado."
-            )
-        )
-        # Habilitar auto-detect por default. Override de QA: `DANIBOD_NO_AUTOSTART=1`
-        # arranca la app en reposo (watcher OFF) → la captura NO empieza sola aunque ZZZ
-        # esté abierto; el usuario la activa a mano cuando quiere (botón "Iniciar captura").
+        # Contadores del sidebar: al arrancar y un rato después de cada evento que pudo escribir.
+        # Con debounce: una tanda de censo son decenas de lecturas y cada una no merece 6 COUNTs.
+        # Se conecta a un MÉTODO de esta ventana y no a una lambda: las señales llegan desde el
+        # thread del monitor, y sólo con un receptor QObject Qt las encola al thread de la UI.
+        self._refresco = QTimer(self)
+        self._refresco.setSingleShot(True)
+        self._refresco.setInterval(1500)
+        self._refresco.timeout.connect(self._refrescar_contadores)
+        for senal in (c.disc_observed, c.disc_detected, c.weapon_seen, c.discs_dismantled,
+                      c.disc_replaced, c.disc_equipped):
+            senal.connect(self._pedir_refresco)
+
+        # Auto-detect: el monitor arranca solo cuando ZZZ corre. El botón de la consola sigue
+        # disponible como override manual.
+        c.auto_start_enabled.connect(self._on_auto_start)
         if os.environ.get("DANIBOD_NO_AUTOSTART"):
-            self._live_panel.append_log(
+            vista.append_log(
                 "[auto] Arranque en REPOSO (DANIBOD_NO_AUTOSTART=1) — la captura NO arranca sola. "
                 "Usá 'Iniciar captura' cuando quieras empezar."
             )
         else:
-            self._controller.set_auto_detect(True)
+            c.set_auto_detect(True)
 
-        # Cableado controller → header indicator
-        self._controller.monitor_started.connect(lambda: self._set_header_monitor("ON",  COLORS["ok"]))
-        self._controller.monitor_stopped.connect(lambda: self._set_header_monitor("OFF", COLORS["text_sub"]))
-        self._controller.pause_changed.connect(
-            lambda paused: self._set_header_monitor("PAUSADO" if paused else "ON",
-                                                    COLORS["warn"] if paused else COLORS["ok"])
+        # Vista → controller
+        vista.start_monitor_requested.connect(c.start)
+        vista.stop_monitor_requested.connect(c.stop)
+        vista.pause_toggle_requested.connect(c.toggle_pause)
+
+        # Las 9 vistas del sidebar
+        self.add_view("live", vista)
+        self.add_view("historico", make_placeholder(
+            "Histórico", "Historial de evaluaciones — disponible tras Hito 2.3"))
+        self.add_view("lategame", make_placeholder(
+            "Lategame", "Fase 4 — RF-13 (F11 OCR + tier list bayesiana) pendiente"))
+        self.add_view("discos", build_discos_view())
+        self.add_view("roster", build_roster_view())
+        self.add_view("armas", make_placeholder(
+            "Armas", "Fase 5 — RF-14 (W-Engines optimizer) pendiente"))
+        self.add_view("equipos", make_placeholder(
+            "Equipos", "Fase 3 — RF-12 (IA catalogadora) pendiente"))
+        self.add_view("catalogos", make_placeholder(
+            "Catálogos", "Sets, W-Engines y facciones — pendiente"))
+        self.add_view("config", make_placeholder(
+            "Configuración", "Paths, thresholds, OCR backend, hotkeys"))
+
+        vista.append_log("[init] Monitor inactivo. 'Iniciar captura' o F9 para abrir el panel.")
+        self._refrescar_contadores()
+
+    def _on_auto_start(self, enabled: bool):
+        self._live_view.append_log(
+            "[auto] Watcher de ZZZ ACTIVO — el monitor arranca solo cuando detecta el juego."
+            if enabled else "[auto] Watcher de ZZZ desactivado."
         )
 
-        # Cableado panel → controller
-        self._live_panel.start_monitor_requested.connect(self._controller.start)
-        self._live_panel.stop_monitor_requested.connect(self._controller.stop)
-        self._live_panel.pause_toggle_requested.connect(self._controller.toggle_pause)
+    def _pedir_refresco(self, *_):
+        self._refresco.start()
 
-        # Tabs
-        tabs = QTabWidget()
-        tabs.addTab(_build_status_tab(),       "Estado")
-        tabs.addTab(self._live_panel,           "Live")
-        tabs.addTab(_build_discos_tab(),       "Discos")
-        tabs.addTab(_build_roster_tab(),       "Roster")
-        tabs.addTab(_make_placeholder(
-            "Equipos",
-            "Fase 3 — RF-12 (IA catalogadora) pendiente"
-        ), "Equipos")
-        tabs.addTab(_make_placeholder(
-            "Lategame",
-            "Fase 4 — RF-13 (F11 OCR + tier list bayesiana) pendiente"
-        ), "Lategame")
-        tabs.addTab(_make_placeholder(
-            "Armas",
-            "Fase 5 — RF-14 (W-Engines optimizer) pendiente"
-        ), "Armas")
-        tabs.addTab(_make_placeholder(
-            "Histórico",
-            "Historial de evaluaciones — disponible tras Hito 2.3"
-        ), "Histórico")
-        tabs.addTab(_make_placeholder(
-            "Configuración",
-            "Paths, thresholds, OCR backend, hotkeys"
-        ), "Config")
-        v.addWidget(tabs)
+    def _refrescar_contadores(self):
+        from app.ui.shell.contadores import leer_contadores
+        if self._ui_con is None:
+            return
+        try:
+            self.sidebar.set_counters(leer_contadores(self._ui_con))
+        except Exception:
+            log.exception("[ui] no se pudieron refrescar los contadores")
+        self.statusbar_widget.refresh_db_size()
 
-        # Status bar
-        sb = QStatusBar()
-        sb.showMessage("DaniBOD · UID 1000860143 · Fase 2 en progreso  |  F9 Panel · F10 Pausa · F11 Lategame")
-        self.setStatusBar(sb)
 
     def _setup_tray(self):
         self._tray = QSystemTrayIcon(self)
@@ -658,10 +338,6 @@ class MainWindow(QMainWindow):
             self.show()
         self.raise_()
         self.activateWindow()
-
-    def _set_header_monitor(self, label: str, color: str):
-        self._monitor_lbl.setText(f"● Monitor: {label}")
-        self._monitor_lbl.setStyleSheet(f"color: {color}; font-size: 12px;")
 
     def _on_disc_show_toast(self, payload: dict):
         """Slot: convierte payload del controller a ToastData y muestra el toast."""
