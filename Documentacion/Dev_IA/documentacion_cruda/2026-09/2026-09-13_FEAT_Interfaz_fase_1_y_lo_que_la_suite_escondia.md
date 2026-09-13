@@ -117,14 +117,24 @@ Se revisó antes de integrar: el volcado de la DB de main contra la anterior dif
 exuvia`, `Tetera esmeraldina`. Cobertura hoy: 34 de 40. Completarlos es una migración chica, con
 fuente verificada (RNF-02).
 
+> **Corrección (mismo día, mig `_33`):** el diagnóstico de arriba era impreciso. Sólo a **4** les
+> faltaba `nombre_en`; Sol exuvia y Ecos bulliciosos ya lo tenían y lo que falta es el **archivo**.
+> La `_33` completó Última cena → Steam Oven, Caldero ardiente → The Simmering Pot y Tetera
+> esmeraldina → Ice-Jade Teapot (esta última tampoco tiene archivo). **Cobertura: 36 de 40.**
+> Inocencia sacrificada quedó fuera: su nombre en inglés (Severed Innocence) ya lo tiene la fila 22
+> "Serenidad cortada", del catálogo inicial y sin copias — **dos filas de catálogo para la misma
+> arma**, unificarlas es decisión aparte. Y apareció otro hallazgo sin corregir: las filas 5 y 13
+> tienen stat secundario y pasiva que no coinciden con las fuentes.
+
 ## Queda abierto
 
 1. ~~Daniel confirma el maximizado al reabrir la app~~ — confirmado el 2026-09-13.
-2. **La región derecha de la vista en vivo**, en blanco a propósito: cards de scoring o consola
-   agrandada, se decide sobre la marcha.
+2. **La región derecha de la vista en vivo**: decidido por Daniel el 2026-09-13 — va el scoring como
+   en los mockups, **cuando se implemente el scoring**. Hasta entonces, en blanco.
 3. **El scoring**: depende del tramo 4 (sembrar thresholds). Hasta entonces la vista no lo muestra.
 4. **Las otras pantallas del mockup** (discos, modal de disco, modal de PJ, toasts): fases siguientes.
-5. Los 6 `nombre_en` de §4, y la familia `W-Engine_29_*` de íconos sin mapear a nombres en español.
+5. De §4: los archivos de ícono de Sol Exuvia, Boisterous Echoes e Ice-Jade Teapot; la fila
+   duplicada 22/62 (Severed Innocence); las pasivas de las filas 5 y 13. Y la familia `W-Engine_29_*` de íconos sin mapear a nombres en español.
 6. De la sesión del optimizador: la tabla `agent_discs` sigue en el esquema, y "el saqueo" (222 discos
    ajenos con neto > 0 entran a las builds) quedó diferido como opción C.
 7. Dos worktrees viejos de agosto (`admiring-khorana`, `focused-cartwright`) con cambios sin commitear
