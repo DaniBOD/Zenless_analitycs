@@ -125,6 +125,10 @@ fuente verificada (RNF-02).
 > "Serenidad cortada", del catálogo inicial y sin copias — **dos filas de catálogo para la misma
 > arma**, unificarlas es decisión aparte. Y apareció otro hallazgo sin corregir: las filas 5 y 13
 > tienen stat secundario y pasiva que no coinciden con las fuentes.
+>
+> **Mig `_34` (mismo día, decisión de Daniel):** unificadas. Sobrevive la fila 22 (tenía los datos)
+> con el nombre de pantalla *Inocencia sacrificada*; la 62 se borró tras re-apuntar la única copia
+> (Anby). `weapons` 61 → 60. **Cobertura: 37 de 40.**
 
 ## Queda abierto
 
@@ -133,8 +137,8 @@ fuente verificada (RNF-02).
    en los mockups, **cuando se implemente el scoring**. Hasta entonces, en blanco.
 3. **El scoring**: depende del tramo 4 (sembrar thresholds). Hasta entonces la vista no lo muestra.
 4. **Las otras pantallas del mockup** (discos, modal de disco, modal de PJ, toasts): fases siguientes.
-5. De §4: los archivos de ícono de Sol Exuvia, Boisterous Echoes e Ice-Jade Teapot; la fila
-   duplicada 22/62 (Severed Innocence); las pasivas de las filas 5 y 13. Y la familia `W-Engine_29_*` de íconos sin mapear a nombres en español.
+5. De §4: los archivos de ícono de Sol Exuvia, Boisterous Echoes e Ice-Jade Teapot; ~~la fila
+   duplicada 22/62~~ (unificada, mig `_34`); las pasivas de las filas 5 y 13. Y la familia `W-Engine_29_*` de íconos sin mapear a nombres en español.
 6. De la sesión del optimizador: la tabla `agent_discs` sigue en el esquema, y "el saqueo" (222 discos
    ajenos con neto > 0 entran a las builds) quedó diferido como opción C.
 7. Dos worktrees viejos de agosto (`admiring-khorana`, `focused-cartwright`) con cambios sin commitear
