@@ -5,11 +5,11 @@ pantalla, se dibuja el build de ESE PJ con el slot del disco marcado.
 
 La autoridad es `inventory_discs.agente_asignado` + `equipado`.
 
-⚠️ **No usar `AgentDiscRepo` para esto.** Se documenta como *"build actual de cada PJ"* y lee la
-tabla `agent_discs`, que tiene **0 filas**: habría dibujado un hexágono vacío para siempre sin un
-solo error. No se borró porque **el optimizador depende de él** (`optimizer.py`, `score_actual`) —
-se creyó que nadie lo usaba y fue un grep recortado. Que el optimizador mida el build actual contra
-una tabla vacía es un bug aparte, fuera de la fase de interfaz.
+Existió un `AgentDiscRepo` documentado como *"build actual de cada PJ"* que leía `agent_discs`,
+con **0 filas**: habría dibujado un hexágono vacío para siempre sin un solo error. En esta sesión se
+lo borró creyendo que nadie lo usaba (un grep recortado) y hubo que restaurarlo: lo usaba el
+optimizador, que medía el build actual contra esa tabla vacía. El optimizador se arregló en
+`2fd8606` y ahí sí se borró el repo. Este método es la única autoridad del build de un PJ (B1).
 """
 from __future__ import annotations
 

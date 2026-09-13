@@ -3,8 +3,8 @@
 Existe para que la card no toque la DB: la vista le pide el build a esto y le pasa a la card un
 diccionario ya resuelto.
 
-La autoridad es `inventory_discs` (`InventoryDiscRepo.find_equipped_by_agent`). ⚠️ NO
-`AgentDiscRepo`: lee `agent_discs`, que tiene 0 filas, y dibujaría hexágonos vacíos para siempre.
+La autoridad es `inventory_discs` (`InventoryDiscRepo.find_equipped_by_agent`). La tabla
+`agent_discs` sigue en el esquema pero tiene 0 filas: no leerla (su repo se borró en `2fd8606`).
 
 Se consulta en cada lectura y no se cachea el build, a propósito: una lectura de S17 acaba de
 persistir, y el hexágono tiene que mostrar la DB DESPUÉS de esa escritura. Es una sola consulta.

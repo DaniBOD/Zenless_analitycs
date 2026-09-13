@@ -79,10 +79,15 @@ build vacío para siempre **sin un solo error**.
 > PyInstaller) y el `head` cortó justo la línea que importaba — A5 al pie de la letra. Se restauró
 > desde `HEAD` antes de commitear nada.
 >
-> Y lo que destapó es peor que un repo engañoso: **el optimizador mide el build actual contra una
-> tabla vacía**, así que `score_actual` es siempre 0 y cualquier build le parece una mejora. No es
-> código muerto — lo dispara `sync_equip` al equipar. Queda como tarea aparte: tocarlo cambia lo
-> que el optimizador recomienda, y no es de esta fase.
+> Y lo que destapó es peor que un repo engañoso: **el optimizador medía el build actual contra una
+> tabla vacía**, así que `score_actual` era siempre 0 y cualquier build le parecía una mejora.
+>
+> **Segunda corrección**, sobre la primera: acá decía que *no es código muerto, lo dispara
+> `sync_equip` al equipar*. También era falso, y lo refutó la sesión que hizo el arreglo: el
+> optimizador sólo se agenda desde `DiscSyncer.on_disc_detected`, que la app no llama (el controller
+> usa `persist_s17_disc`); `optimizer_pending_actions` tiene 0 filas y el `app.log` ninguna línea
+> suya. El bug era real pero **latente**. El error fue concluir desde un resultado de grep sin seguir
+> quién llama a quién. Arreglado en `2fd8606`, que además borró `AgentDiscRepo`.
 
 ### Lo que NO se muestra, y por qué
 
@@ -108,7 +113,8 @@ Nada de captura, parseo ni persistencia. Tres cambios:
    pantalla **hoy no llega a la UI**: `_on_disc_from_monitor` hace `return` temprano para `S17`/`S9`
    —persiste, loguea y corta— así que el disco con dueño visible **nunca emitió nada**. La señal es
    observacional (sin score) y se emite junto al logging que ya existe, no en su lugar.
-2. **`AgentDiscRepo` NO se toca** — ver la corrección de arriba: el optimizador depende de él.
+2. **`AgentDiscRepo`**: no se toca en esta fase — lo borró el arreglo del optimizador (`2fd8606`),
+   que era su único usuario.
 3. **El hexágono necesita leer el build por PJ** desde `inventory_discs`: un método de repo nuevo,
    de sólo lectura.
 
