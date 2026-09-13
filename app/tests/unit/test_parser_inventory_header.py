@@ -89,14 +89,19 @@ def test_lee_el_contador_en_las_capturas_reales_del_inventario_de_armas():
     2026-09-11: se suma **75**, el de las capturas del 10 y 11 de septiembre (`Ejemplo_11` a `_16`,
     con `Amplificadores [75/2000]` en pantalla). El test quedó rojo desde que llegaron `Ejemplo_11`
     y `_12` sin que nadie lo viera: las capturas son locales y la suite completa no corrió. Leía
-    bien; lo viejo era la verdad de tierra."""
+    bien; lo viejo era la verdad de tierra.
+
+    2026-09-12: se suma **56** (`Ejemplo_17` y `_18`, verificado mirando el recorte:
+    `Amplificadores [56/2000]`). Son las capturas del caso Billy, con el filtro de rangos S+A puesto
+    — el mismo número en el que cerró el censo de armas. **Pasó exactamente lo mismo que el día
+    anterior**: llegaron capturas nuevas y la suite completa no corrió hasta la sesión siguiente."""
     ocr = _ocr_or_skip()
     leidos = []
     for p in _frames_armas():
         frame = cv2.imdecode(np.fromfile(str(p), np.uint8), cv2.IMREAD_COLOR)
         leidos.append(parse_inventory_counter(frame, ocr, CAPACIDAD_ARMAS))
     assert all(n is not None for n in leidos), f"alguna captura no se leyó: {leidos}"
-    assert set(leidos) == {57, 54, 75}, f"valores inesperados: {sorted(set(leidos))}"
+    assert set(leidos) == {57, 54, 75, 56}, f"valores inesperados: {sorted(set(leidos))}"
 
 
 @pytest.mark.skipif(not _frames_armas(), reason="capturas del inventario de armas no presentes")
