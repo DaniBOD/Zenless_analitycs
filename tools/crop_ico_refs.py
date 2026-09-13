@@ -14,7 +14,9 @@ import cv2
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "Documentacion" / "Interfaz" / "splash_arts"
+# Los splash arts se mudaron a app/resources/ui_assets/ el 2026-09-12 (regla D1: lo que la app lee
+# vive dentro de app/). Espejo de `asset_resolver.SPLASH_ARTS_DIR`.
+SRC = ROOT / "app" / "resources" / "ui_assets" / "splash_arts"
 OUT = ROOT / "app" / "resources" / "avatar_refs"
 
 CY, CX, RAD, SIZE = 0.40, 0.50, 0.36, 160

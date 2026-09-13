@@ -7,11 +7,21 @@ Catálogo de pantallas del `.exe` (RF-11) + **mapa de flujos de usuario** que do
 - **`README.md`** (este archivo) — pantallas + flujos + hotkeys + principio rector.
 - **[`Brief_Claude_Design.md`](./Brief_Claude_Design.md)** — brief para usar con Claude Design (prompt + paleta + iconos por contexto + pantallas pendientes).
 - **[`referencias_visuales/`](referencias_visuales)** — 6 capturas del juego ZZZ + paleta extraída píxel a píxel.
-- **[`splash_arts/`](splash_arts)** — destino para splash arts oficiales de los 45 PJs (script de descarga incluido).
-- **[`Facciones_Logos/`](Facciones_Logos)** — 13 logos canónicos de facciones del roster + 2 extras.
-- **[`Set_Discos_Logo/`](Set_Discos_Logo)** — 26 logos de drive discs renombrados a slug español.
-- **[`Engines_icons/`](Engines_icons)** — 38 logos de W-Engines (31 confirmados + 7 tentativos).
 - **`mockups/`** — exports de Claude Design (toast variantes + panel Captura en vivo ya generados).
+
+> ⚠️ **Los assets que la app LEE se mudaron el 2026-09-12** a
+> [`app/resources/ui_assets/`](../../app/resources/ui_assets): `splash_arts/` (splash arts de los
+> PJs), `Facciones_Logos/`, `Set_Discos_Logo/` (emblemas de sets), `Set-Discos_Package_Logo/`
+> (renders que alimentan al matcher de sets) y `Engines_icons/`.
+>
+> No fue cosmético: vivían acá y se resolvían con una ruta que se escapa de `app/`, así que
+> **andaban en desarrollo y morían empaquetadas** (regla D1). Una de ellas —los renders de sets—
+> el spec de PyInstaller no la copiaba, y en el `.exe` el matcher de sets por badge arrancaba con
+> 0 referencias en silencio. Detalle en
+> [`Dev_IA 2026-09-12`](../Dev_IA/documentacion_cruda/2026-09/2026-09-12_PLAN_Interfaz_la_pantalla_en_vivo.md).
+>
+> En esta carpeta queda lo que es **documentación**: los mockups, las referencias visuales, los
+> briefs y `UI_general/`.
 
 ---
 

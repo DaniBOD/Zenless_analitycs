@@ -2,7 +2,7 @@
 
 Objetivo: medir, con NÚMEROS reales, si un descriptor liviano (sin OCR, sin deps
 nuevas) separa los 46 PJs a la resolución de los íconos in-game (~40 px), usando
-como referencia los `-ico.webp` de Documentacion/Interfaz/splash_arts.
+como referencia los `-ico.webp` de app/resources/ui_assets/splash_arts.
 
 Descriptor (híbrido color, estilo "segmentación de regiones + color-normalizado"):
   - Recorte → círculo inscripto (máscara) → HSV.
@@ -32,7 +32,7 @@ import cv2
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-ICO_DIR = ROOT / "Documentacion" / "Interfaz" / "splash_arts"
+ICO_DIR = ROOT / "app" / "resources" / "ui_assets" / "splash_arts"
 
 S = 48          # tamaño de trabajo (px). Las referencias se bajan a ESTE tamaño para
                 # comparar a igualdad de información con un badge ~40 px.

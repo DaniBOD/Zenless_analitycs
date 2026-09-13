@@ -4,8 +4,9 @@ de imagen en disco. Centraliza la lógica de normalización de nombres y
 fallbacks para que la UI no tenga que conocer la convención de archivos.
 
 Fuentes:
-- Sets:    Documentacion/Interfaz/Set_Discos_Logo/Drive_Disc_<nombre_en_norm>_Icon.webp
-- Agentes: Documentacion/Interfaz/splash_arts/<NombreEN>-{ico,extend}.webp
+- Sets:    app/resources/ui_assets/Set_Discos_Logo/Drive_Disc_<nombre_en_norm>_Icon.webp
+- Agentes: app/resources/ui_assets/splash_arts/<NombreEN>-{ico,extend}.webp
+- Armas:   app/resources/ui_assets/Engines_icons/W-Engine_<NombreEN>.webp (o el slug ES)
 - Agentes (fallback): Pj_stats/<NombreNorm>.jpeg
 
 Los nombres en la DB están en español. Algunos agentes tienen alias inglés
@@ -26,14 +27,28 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SET_LOGOS_DIR    = REPO_ROOT / "Documentacion" / "Interfaz" / "Set_Discos_Logo"
+
+# Los assets de interfaz viven DENTRO de `app/` (regla D1). Estuvieron en `Documentacion/Interfaz/`
+# hasta el 2026-09-12, resueltos con un `parents[2]` que se escapa del paquete: andaba perfecto en
+# desarrollo y sólo fallaba empaquetado, que es cuando ya no hay nadie mirando. Uno de esos
+# directorios —`Set-Discos_Package_Logo`, el que alimenta al matcher de sets por badge— el spec de
+# PyInstaller no lo copiaba, así que en el `.exe` el matcher arrancaba con 0 referencias EN SILENCIO.
+#
+# `app/resources/` se copia ENTERA al bundle, así que desde acá un recurso nuevo entra sin tocar el
+# spec. Enumerar carpeta por carpeta ya falló tres veces (farm_nodes.toml, los baselines de badges,
+# y este). Lo cuida `app/tests/unit/test_asset_paths_dentro_de_app.py`.
+UI_ASSETS_DIR    = Path(__file__).resolve().parents[1] / "resources" / "ui_assets"
+
+SET_LOGOS_DIR    = UI_ASSETS_DIR / "Set_Discos_Logo"
 # Renders del disco (arte del tile de S2), 3 tiers S/A/B por set. Distinto de SET_LOGOS_DIR
 # (emblemas redondos): estos alimentan el matcher de badges (SetBadgeMatcher), no el display.
-SET_BADGES_DIR   = REPO_ROOT / "Documentacion" / "Interfaz" / "Set-Discos_Package_Logo"
-SPLASH_ARTS_DIR  = REPO_ROOT / "Documentacion" / "Interfaz" / "splash_arts"
+SET_BADGES_DIR   = UI_ASSETS_DIR / "Set-Discos_Package_Logo"
+SPLASH_ARTS_DIR  = UI_ASSETS_DIR / "splash_arts"
+ENGINES_DIR      = UI_ASSETS_DIR / "Engines_icons"
+FACTIONS_DIR     = UI_ASSETS_DIR / "Facciones_Logos"
+# Fallback de avatares (46 JPEG, 6 MB). Único directorio de imágenes que sigue afuera de `app/`:
+# no es de interfaz —son las capturas de las fichas de PJ— y el spec lo enumera explícitamente.
 PJ_STATS_DIR     = REPO_ROOT / "Pj_stats"
-ENGINES_DIR      = REPO_ROOT / "Documentacion" / "Interfaz" / "Engines_icons"
-FACTIONS_DIR     = REPO_ROOT / "Documentacion" / "Interfaz" / "Facciones_Logos"
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +185,73 @@ def set_logo_path(nombre_en: str | None) -> Path | None:
     path = SET_LOGOS_DIR / filename
     if path.exists():
         return path
+    return None
+
+
+def _norm_slug(s: str | None) -> str:
+    """'Cilindro neumático de Bigger' → 'cilindro_neumatico_de_bigger'. Sin tildes, sin puntuación."""
+    if not s:
+        return ""
+    t = _strip_accents(s).lower()
+    import re as _re
+    return _re.sub(r"[^a-z0-9]+", "_", t).strip("_")
+
+
+@lru_cache(maxsize=1)
+def _engine_icon_index() -> tuple[dict[str, str], dict[str, str]]:
+    """Índice del directorio de engines: (por nombre inglés, por slug español).
+
+    Se lee una vez. Los `_pendiente_*.webp` quedan AFUERA a propósito: son archivos que nadie
+    confirmó a qué arma corresponden, y servirlos sería afirmar un dato que no se verificó.
+    """
+    por_en: dict[str, str] = {}
+    por_es: dict[str, str] = {}
+    if not ENGINES_DIR.exists():
+        return por_en, por_es
+    for p in sorted(ENGINES_DIR.glob("*.webp")):
+        if p.stem.startswith("_pendiente"):
+            continue
+        if p.stem.startswith("W-Engine_"):
+            por_en[_norm_slug(p.stem[len("W-Engine_"):])] = p.name
+        else:
+            por_es[_norm_slug(p.stem)] = p.name
+    return por_en, por_es
+
+
+@lru_cache(maxsize=256)
+def engine_icon_path(nombre: str | None, nombre_en: str | None = None) -> Path | None:
+    """Ícono del W-Engine para mostrar, o None si no se puede saber cuál es.
+
+    El directorio tiene dos convenciones conviviendo: los originales del wiki
+    (`W-Engine_<NombreEN>.webp`) y slugs en español renombrados a mano. Se prueba **primero el
+    inglés**, porque esos nombres vienen del wiki; el slug español lo puso una sesión pasada y su
+    README tiene al menos un mapeo dudoso (`camara_acorazada` como *Bashful Demon*, cuando la DB
+    dice *The Vault*).
+
+    El tercer intento es por PREFIJO, y existe por la migración `_28`: el catálogo pasó a los
+    nombres completos (`Cilindro neumático de Bigger`) y los archivos quedaron con el corto
+    (`cilindro_neumatico`). El prefijo tiene que cortar en un borde de palabra — si no, el slug más
+    corto del directorio (`cuter`, 5 letras) se queda con cualquier nombre que empiece igual.
+
+    Si nada resuelve devuelve **None** y la vista dibuja un hueco. Adivinar el ícono de un arma es
+    peor que no mostrarlo: hay una familia entera (`W-Engine_29_*`) cuya correspondencia con los
+    nombres en español nadie verificó.
+    """
+    por_en, por_es = _engine_icon_index()
+
+    ke = _norm_slug(nombre_en)
+    if ke and ke in por_en:
+        return ENGINES_DIR / por_en[ke]
+
+    ks = _norm_slug(nombre)
+    if not ks:
+        return None
+    if ks in por_es:
+        return ENGINES_DIR / por_es[ks]
+
+    candidatos = [v for fk, v in por_es.items() if ks.startswith(fk + "_")]
+    if len(candidatos) == 1:
+        return ENGINES_DIR / candidatos[0]
     return None
 
 

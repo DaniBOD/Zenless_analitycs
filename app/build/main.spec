@@ -91,9 +91,17 @@ datas = [
     (str(REPO / "app" / "config"),                  "app/config"),
     # DB (sólo lectura desde el .exe; el usuario puede sobrescribirla)
     (str(REPO / "db" / "danibod_zzz_v2.db"),        "db"),
-    # Assets para asset_resolver (Hito 2.7) — set logos, splash arts, avatares
-    (str(REPO / "Documentacion" / "Interfaz" / "Set_Discos_Logo"), "Documentacion/Interfaz/Set_Discos_Logo"),
-    (str(REPO / "Documentacion" / "Interfaz" / "splash_arts"),     "Documentacion/Interfaz/splash_arts"),
+    # Los assets de interfaz (set logos, renders de sets, splash arts, íconos de engines, logos de
+    # facciones) YA NO SE ENUMERAN ACÁ: viven en `app/resources/ui_assets/` desde el 2026-09-12 y
+    # entran con la carpeta `app/resources` de arriba.
+    #
+    # Enumerarlos acá fue la TERCERA repetición del mismo error: `Set-Discos_Package_Logo` nunca
+    # estuvo en esta lista, y es el directorio del que `SetBadgeMatcher` carga sus referencias, así
+    # que en el .exe el matcher de sets por badge arrancaba con 0 referencias EN SILENCIO. Lo cuida
+    # ahora `app/tests/unit/test_asset_paths_dentro_de_app.py`.
+    #
+    # `Pj_stats/` es el único directorio de imágenes que sigue afuera de `app/`: son las capturas de
+    # las fichas de PJ (fallback de avatares), no son de interfaz, y por eso se enumera.
     (str(REPO / "Pj_stats"),                                       "Pj_stats"),
 ] + mss_datas + pyside_datas + pytess_datas + pynput_datas \
   + paddle_datas + paddleocr_datas + shapely_datas + skimage_datas + scipy_datas + imgaug_datas + cython_datas \
