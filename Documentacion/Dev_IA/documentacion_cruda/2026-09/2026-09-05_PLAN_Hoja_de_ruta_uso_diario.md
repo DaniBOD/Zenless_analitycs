@@ -118,3 +118,18 @@ funcional pendiente.
 Con los thresholds andando, los toasts pasan a decir algo accionable. Ahí entra la implementación
 de los mockups de Claude Design (`Documentacion/Interfaz/`), que están hechos y sin portar.
 Relacionado: la deuda de UI ya anotada (íconos y tipografía muy chicos en el toast).
+
+⚠️ **Daniel lo levantó el 2026-09-12**, al cerrar el censo de armas: *"seguimos con la misma
+interfaz desde el comienzo"*. Se ve en la próxima sesión. Para arrancar sin re-descubrir nada: los
+mockups de las 5 pantallas ya existen (toasts, panel LIVE, panel DISCOS, modal disco, modal PJ con
+paleta dinámica), el brief de la segunda sesión de diseño está redactado, y la deuda de los toasts
+tiene medidas concretas (badge de rareza 14 px, letra 7 px, y el ícono del header nunca se portó a
+Qt). **Pregunta abierta para esa sesión:** si se porta lo diseñado tal cual, o si primero se decide
+qué pantalla mira Daniel de verdad cada día — que ahora son dos, el panel en vivo y el inventario.
+
+**Fase 1 ✅ 2026-09-13** — el shell de la ventana y la pantalla en vivo, en main y probados en vivo.
+Diseño en [`2026-09-12_PLAN_Interfaz_la_pantalla_en_vivo.md`](2026-09-12_PLAN_Interfaz_la_pantalla_en_vivo.md)
+y cierre en [`2026-09-13_FEAT_Interfaz_fase_1_y_lo_que_la_suite_escondia.md`](2026-09-13_FEAT_Interfaz_fase_1_y_lo_que_la_suite_escondia.md).
+La pregunta abierta se resolvió así: se portó el diseño, pero la vista **sólo dice lo que vio** — el
+scoring no se muestra hasta que el tramo 4 lo calibre, y el espacio que ocupaba queda en blanco. Siguen
+las otras pantallas del mockup (discos, modales, toasts).

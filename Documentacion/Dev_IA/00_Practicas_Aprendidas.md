@@ -42,6 +42,12 @@ un bug puesto y un bug arreglado se ven **idénticos**.
 **Cómo aplicarlo:** si el éxito de un QA es que no pase nada, decilo explícito y **dejá una señal
 verificable**. Y separá siempre "no falló" de "no se ejecutó".
 
+**Vale también para la suite** (2026-09-13): *skipped* no es *passed*. Los tests de widgets de los
+toasts se **salteaban en silencio** en toda suite completa porque otro archivo había creado antes una
+app de Qt sin GUI, y la suite se reportaba verde. El mismo choque hacía que tests nuevos **mataran el
+proceso** al 90 %, sin resumen: sueltos pasaban, sólo fallaban en combinación. Un "N skipped" que no
+se sabe explicar es un hallazgo pendiente, no un detalle.
+
 ### A3 · Verificar el EFECTO, no la intención — y romper el test a propósito.
 
 Un `except` que loguea convierte un crash en silencio: había un test que miraba el reporte
@@ -85,6 +91,13 @@ evidencia tiene que ser un **conteo sobre el total** (`grep -c`, `COUNT(*)`, un 
 recorte. Si igual mirás un recorte, decí en voz alta de cuántos es. Y desconfiá especialmente
 cuando el recorte confirma que **no hay que hacer trabajo**: es la dirección en la que uno no
 insiste.
+
+**Dos casos del 2026-09-12**, en la misma dirección: *"nadie usa `AgentDiscRepo`"* salió de un grep
+inundado por `app/build/` (el bundle de PyInstaller), con el `head` cortando justo la línea del
+optimizador — se lo borró y hubo que restaurarlo. Y *"el optimizador corre al equipar"* salió de un
+grep que encontró la llamada, **sin seguir quién llama a esa función**: nadie la llamaba. Buscar en el
+repo se hace excluyendo `app/build/`, y "X se ejecuta" se afirma recorriendo la cadena de llamadas
+hasta un punto de entrada, no desde la primera coincidencia.
 
 
 ## B · Autoridad de los datos
