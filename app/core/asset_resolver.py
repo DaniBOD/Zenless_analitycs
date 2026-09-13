@@ -255,6 +255,38 @@ def engine_icon_path(nombre: str | None, nombre_en: str | None = None) -> Path |
     return None
 
 
+#: `agents.faccion` → archivo en FACTIONS_DIR. Tabla y no normalización: los archivos no siguen
+#: ninguna convención (mitad en español, mitad `Faction_…_Icon` del wiki, y dos duplicados).
+#: Armada con `Facciones_Logos/README.md`. Una facción ausente devuelve None — Covenant of Dayat
+#: (Remielle Dan) no tiene archivo todavía; lo cuida `test_asset_faction_logo.py`.
+_FACTION_LOGOS: dict[str, str] = {
+    "Angels of Delusion":                           "Agenles_delusion.webp",
+    "Belobog Heavy Industries":                     "Construcciones_Belobog.webp",
+    "Criminal Investigation Special Response Team": "Faction_Criminal_Investigation_Special_Response_Team_Icon.webp",
+    "Cunning Hares":                                "Liebres_astutas.webp",
+    "External Strategy Department":                 "Faction_External_Strategy_Department_Icon.webp",
+    "Faetón":                                       "Faction_Phaethon_Icon.webp",
+    "Hollow Special Operations Section 6":          "Faction_Hollow_Special_Operations_Section_6.webp",
+    "Krampus Compliance Authority":                 "Auditoria_Krampus.webp",
+    "Mockingbird":                                  "Ruiseñor.webp",
+    "Obol Squad":                                   "Escuadron_Obolos.webp",
+    "Sons of Calydon":                              "Hijos_Caledon.webp",
+    "Spook Shack":                                  "Cabaña_Terror.webp",
+    "Stars of Lyra":                                "Estrellas_Lira.webp",
+    "Victoria Housekeeping":                        "Servicios_Domesticos_Victoria.webp",
+    "Yunkui Summit":                                "Pinaculo_Yunkui.webp",
+}
+
+
+def faction_logo_path(faccion: str | None) -> Path | None:
+    """Logo de la facción, o None si no hay (la UI deja el hueco, no inventa uno)."""
+    archivo = _FACTION_LOGOS.get((faccion or "").strip())
+    if not archivo:
+        return None
+    path = FACTIONS_DIR / archivo
+    return path if path.exists() else None
+
+
 def set_logo_path_by_es(nombre_es: str | None, repo=None) -> Path | None:
     """
     Mismo que `set_logo_path` pero recibe el nombre en español. Requiere

@@ -51,6 +51,30 @@ BG_STATUSBAR    = "#070707"
 YELLOW_TINT     = "rgba(255, 203, 5, 0.08)"   # fondo del ítem activo del sidebar
 BG_ROW_HOVER    = "rgba(255, 203, 5, 0.06)"
 
+# Elementos — ÚNICA paleta (antes había otra en views/roster.py que no coincidía). Desde la fase 2
+# de la interfaz es además el color de acento del modal de PJ: decisión de Daniel (2026-09-13),
+# "sale del elemento", así un PJ nuevo tiene color el día 1 sin elegir nada.
+ELEMENTO_COLOR: dict[str, str] = {
+    # `elemColor` de data.jsx (mockup de Claude Design)
+    "Eléctrico": "#C5A8FF",
+    "Hielo":     "#9DE0F0",
+    "Éter":      "#FF4D8A",
+    "Fuego":     "#FF7A45",
+    "Físico":    "#FFD66B",
+    # Muestreado del pill de elemento en Perfil_agente/atributos_base_ejemplo_15.png (Remielle Dan)
+    "Lumen":     "#E9A0D0",
+    # ⚠️ PROVISIONAL: no hay frame de Velina para muestrearlo. Verde menta elegido a ojo para que no
+    # choque con los otros seis; reemplazar cuando haya captura.
+    "Viento":    "#6EE7B7",
+}
+ELEMENTO_NEUTRO = "#8A8A8A"
+
+
+def color_elemento(elemento: str | None) -> str:
+    """Color del elemento; un elemento que no está en la tabla cae a gris, no a un error."""
+    return ELEMENTO_COLOR.get(elemento or "", ELEMENTO_NEUTRO)
+
+
 SIDEBAR_W       = 220
 TITLEBAR_H      = 40
 STATUSBAR_H     = 24

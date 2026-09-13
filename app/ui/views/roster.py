@@ -73,24 +73,12 @@ def _fill_roster_table(table: QTableWidget, title: QLabel) -> None:
         con.close()
 
         table.setRowCount(len(rows))
-        elem_colors = {
-            "Eléctrico": "#4a9eff",
-            "Hielo":     "#a8d8ea",
-            "Fuego":     "#e86e3a",
-            "Físico":    "#a0a0b0",
-            "Éter":      "#c084fc",
-            # Lumen (v3.1): rosa muestreado del ícono del pill de elemento en
-            # Perfil_agente/atributos_base_ejemplo_15.png (Remielle Dan).
-            "Lumen":     "#e9a0d0",
-            # Falta "Viento" (Velina): sin frame suyo para muestrear el color.
-            # El lookup es `val in elem_colors`, así que hoy sale sin colorear.
-        }
         for row_idx, r in enumerate(rows):
             for col_idx, val in enumerate(r):
                 item = QTableWidgetItem("" if val is None else str(val))
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                if col_idx == 4 and val in elem_colors:
-                    item.setForeground(QColor(elem_colors[val]))
+                if col_idx == 4 and val:
+                    item.setForeground(QColor(T.color_elemento(val)))
                 if col_idx == 6 and val is not None:
                     try:
                         cr = float(val)

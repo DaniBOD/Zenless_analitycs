@@ -12,10 +12,10 @@ Y si ninguno resuelve, **devuelve None**: la card dibuja un hueco neutro. Adivin
 arma es peor que no mostrarlo, y hay una familia entera (`W-Engine_29_*`) cuya correspondencia con
 los nombres en español nadie verificó todavía.
 
-Cobertura medida al 2026-09-12: **34 de las 40 armas distintas del inventario**. Las 6 que faltan
-(`Última cena`, `Inocencia sacrificada`, `Caldero ardiente`, `Ecos bulliciosos`, `Sol exuvia`,
-`Tetera esmeraldina`) **tienen el archivo**; lo que les falta es el `nombre_en` en la DB. Es deuda
-de datos, no de interfaz.
+Cobertura medida al 2026-09-13, tras las migs `_33` y `_34`: **37 de las 40 armas distintas del
+inventario**. Las 3 que faltan (`Sol exuvia`, `Ecos bulliciosos`, `Tetera esmeraldina`) ya tienen
+`nombre_en`; lo que no hay es el ARCHIVO. (Al 2026-09-12 se había escrito que eran 6 y que a todas
+les faltaba el nombre: estaba mal contado.)
 """
 from __future__ import annotations
 
