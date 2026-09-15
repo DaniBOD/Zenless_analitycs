@@ -1,6 +1,6 @@
 # Interfaz fase 4: la pantalla Armas (W-Engines)
 
-**2026-09-15** · commits `44eafad` → `97e70ec` en main. Viene de la
+**2026-09-15** · commits `44eafad` → `ca85a5c` en main. **Probada en vivo por Daniel: "se ve bien".** Viene de la
 [fase 3](2026-09-13_FEAT_Interfaz_fase_3_discos_y_modal_de_disco.md).
 
 Primera pantalla diseñada **a partir del paquete de referencias** que arma
@@ -81,7 +81,7 @@ recortada con tooltip. Maximizada, la franja del dueño y el `×n` no crecían: 
 
 ## Queda abierto
 
-1. **QA en vivo de Daniel.**
+1. ~~QA en vivo de Daniel~~ — hecho el 2026-09-15, aprobada.
 2. **Modo comparador** (`engines-compare.jsx`): leído, no portado. La afinidad de rol sale de
    `weapons.tipo_especialidad`, vacía en 7 armas del inventario.
 3. **Exportar**, cuando haya formato y destino.
@@ -89,3 +89,17 @@ recortada con tooltip. Maximizada, la franja del dueño y el `×n` no crecían: 
 5. ~~3 íconos~~ — Daniel los descargó el 2026-09-15 (Sol Exuvia, Boisterous Echoes, Ice-Jade Teapot):
    **40/40 armas del inventario con ícono**, cuidado por `test_cada_arma_del_inventario_real_tiene_icono`.
    Siguen pendientes: 7 especialidades y las pasivas de las filas 5 y 13.
+   Los había guardado en `claude_design_upload/w_engines/assets/engines/`, con nombres en español
+   mal escritos (`Ecos_bullisiosos`, `Tetera_esmeldarina`): esa carpeta la **borra y regenera**
+   `stage_design_engines.py`. Se copiaron a `Engines_icons/` con el nombre inglés antes de regenerar.
+   Los tests de "falta ícono" usaban justo esas dos armas: pasaron a un arma ficticia, que no se
+   "arregla" sola cuando alguien descarga un archivo.
+6. En la ventana mínima las estrellas del refinamiento quedan pegadas al "Nv 60": se leen, es el
+   primer ajuste si molesta.
+
+## 5 · Lección para las próximas pantallas diseñadas afuera
+
+Un diseño externo trae **sus propios datos de ejemplo**, y pueden ser más viejos que la DB. Antes de
+portar, contrastar cada número del mockup contra la DB: acá la diferencia era 5 armas leídas contra
+56, y portarlo al pie de la letra habría pintado de ámbar "sin leer" armas perfectamente conocidas.
+Del diseño se toma el criterio; los datos salen siempre de `app/ui/*/datos.py`.
