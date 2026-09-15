@@ -31,7 +31,7 @@ def con(db_esquema_real):
                              stat_secundario, stat_secundario_valor) VALUES
             (1, 'Llanto mielgo', 'Weeping Gemini', 'A', 'Anomalía', 594, 'ATK%', '25%'),
             (2, 'Sol exuvia', 'Sol Exuvia', 'S', 'Ataque', 713, 'ATK%', '30%'),
-            (3, 'Tetera esmeraldina', 'Ice-Jade Teapot', 'S', NULL, NULL, 'Impact', NULL);
+            (3, 'Arma sin arte', 'Weapon Without Art', 'S', NULL, NULL, 'Impact', NULL);
         INSERT INTO agents (id, nombre, rango, elemento, rol, faccion, protected_build) VALUES
             (1, 'Yanagi', 'S', 'Eléctrico', 'Anomalía', 'Hollow Special Operations Section 6', 0),
             (2, 'Pyrois', '∞', 'Éter', 'Ataque', 'Faetón', 0),
@@ -41,8 +41,8 @@ def con(db_esquema_real):
     _arma(c, 10, 1, agente=1, equipado=1)            # Llanto mielgo · Yanagi
     _arma(c, 11, 1, nivel=30, refin=2)               # otra copia, libre y a medio subir
     _arma(c, 12, 1, descartado=1)                    # descartada: no existe para la UI
-    _arma(c, 13, 2, agente=2, equipado=1)            # Sol exuvia · Pyrois (sin ícono)
-    _arma(c, 14, 3, nivel=50, refin=1)               # Tetera: sin especialidad, libre
+    _arma(c, 13, 2, agente=2, equipado=1)            # Sol exuvia · Pyrois
+    _arma(c, 14, 3, nivel=50, refin=1)               # ficticia: sin ícono ni especialidad, libre
     return c
 
 
@@ -64,19 +64,21 @@ def test_trae_las_activas_con_su_copia_y_su_dueno(con):
 def test_el_icono_falta_sin_inventar_otro(con):
     f = {x.id: x for x in leer_armas(con)}
     assert f[10].icono and f[10].icono.endswith("W-Engine_Weeping_Gemini.webp")
-    assert f[13].icono is None, "Sol Exuvia no tiene archivo todavía"
-    assert f[14].icono is None, "Ice-Jade Teapot tampoco (son 3 en el inventario real)"
+    # Un arma sin archivo de arte: ficticia a propósito. Hasta el 2026-09-15 este test usaba Sol
+    # exuvia y Tetera esmeraldina, que no tenían ícono; Daniel los descargó y el test pasó a depender
+    # de qué hay en la carpeta. Una ficticia no se "arregla" sola.
+    assert f[14].icono is None, "sin archivo: hueco, no el ícono de otra arma"
 
 
 def test_orden_s_primero_despues_alfabetico(con):
     assert [x.nombre for x in ordenar(leer_armas(con))] == [
-        "Sol exuvia", "Tetera esmeraldina", "Llanto mielgo", "Llanto mielgo"]
+        "Arma sin arte", "Sol exuvia", "Llanto mielgo", "Llanto mielgo"]
 
 
 def test_conteos_del_header(con):
     k = conteos(leer_armas(con))
     assert k == {"armas": 4, "modelos": 3, "equipadas": 2, "libres": 2, "s": 2, "a": 2,
-                 "sin_icono": 2, "sin_especialidad": 1}
+                 "sin_icono": 1, "sin_especialidad": 1}
 
 
 def test_filtros_se_combinan(con):
@@ -97,7 +99,7 @@ def test_auditoria_separa_sin_leer_de_por_subir(con):
     assert _ids(a["refin_bajo"]) == [11, 14], "P2 y P1, leídos"
     assert a["nivel_sin_leer"] == [] and a["refin_sin_leer"] == []
     assert _ids(a["libres"]) == [11, 14]
-    assert _ids(a["sin_icono"]) == [13, 14]
+    assert _ids(a["sin_icono"]) == [14]
 
     con.execute("UPDATE inventory_weapons SET nivel = NULL, refinamiento = NULL WHERE id = 11")
     a2 = auditoria(leer_armas(con))

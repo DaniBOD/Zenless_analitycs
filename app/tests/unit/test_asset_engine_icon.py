@@ -12,10 +12,10 @@ Y si ninguno resuelve, **devuelve None**: la card dibuja un hueco neutro. Adivin
 arma es peor que no mostrarlo, y hay una familia entera (`W-Engine_29_*`) cuya correspondencia con
 los nombres en español nadie verificó todavía.
 
-Cobertura medida al 2026-09-13, tras las migs `_33` y `_34`: **37 de las 40 armas distintas del
-inventario**. Las 3 que faltan (`Sol exuvia`, `Ecos bulliciosos`, `Tetera esmeraldina`) ya tienen
-`nombre_en`; lo que no hay es el ARCHIVO. (Al 2026-09-12 se había escrito que eran 6 y que a todas
-les faltaba el nombre: estaba mal contado.)
+Cobertura: **40 de las 40 armas distintas del inventario** desde el 2026-09-15, cuando Daniel
+descargó los 3 íconos que faltaban (Sol Exuvia, Boisterous Echoes, Ice-Jade Teapot). Antes: 37/40
+tras las migs `_33` y `_34` (al 2026-09-12 se había escrito que eran 6 y que a todas les faltaba el
+nombre: estaba mal contado).
 """
 from __future__ import annotations
 
@@ -74,3 +74,22 @@ def test_no_devuelve_los_pendientes():
         assert resuelto is None or not resuelto.name.startswith("_pendiente"), (
             f"{nombre} resolvió a un archivo pendiente de confirmación: {resuelto}"
         )
+
+
+def test_cada_arma_del_inventario_real_tiene_icono():
+    """Cobertura contra la DB real. Un arma nueva (llega con cada patch) sin ícono tiene que fallar
+    con su nombre, no aparecer en la pantalla Armas como un hueco que nadie nota. Si falta el archivo
+    a propósito, se declara en SIN_ICONO con el motivo."""
+    import sqlite3
+
+    SIN_ICONO: set[str] = set()   # 40/40 desde el 2026-09-15
+    db = Path(__file__).resolve().parents[3] / "db" / "danibod_zzz_v2.db"
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        filas = con.execute(
+            "SELECT DISTINCT w.nombre, w.nombre_en FROM inventory_weapons i "
+            "JOIN weapons w ON w.id = i.weapon_id WHERE i.descartado = 0").fetchall()
+    finally:
+        con.close()
+    faltan = sorted(n for n, en in filas if n not in SIN_ICONO and engine_icon_path(n, en) is None)
+    assert not faltan, f"armas del inventario sin ícono (agregar el archivo o declararlas): {faltan}"

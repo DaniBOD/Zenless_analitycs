@@ -10,7 +10,7 @@
 - Especialidad: Ataque **16** · Anomalía **13** · Soporte **8** · sin dato **7** · Defensa **6** · Aturdimiento **3** · Ruptura **3**  ← *sin dato* = el catálogo no la tiene
 - Nivel: Nv 60 **50** · Nv 0 **3** · Nv 20 **1** · Nv 30 **1** · Nv 50 **1**
 - Refinamiento (el juego lo llama **P1–P5**): P5 **39** · P1 **13** · P2 **3** · P3 **1**
-- Ícono: 37 de 40 modelos. **Sin ícono**: Ecos bulliciosos, Sol exuvia, Tetera esmeraldina
+- Ícono: 40 de 40 modelos. **Sin ícono**: —
 
 ## Lo que la pantalla NO puede mostrar todavía
 
@@ -35,9 +35,9 @@ que salga de un scoring sin calibrar.
 | 6 | Esplendor surcanimbos | S | Ataque | 743 | CRIT DMG 48% | 60 | P1 | Ye Shunguang | `engines/esplendor_surcanimbos.webp` |
 | 7 | Inocencia sacrificada | S | Ataque | 713 | CRIT DMG 48% | 60 | P1 | N.º 0: Anby | `engines/inocencia_sacrificada.webp` |
 | 8 | Petrazufre | S | Ataque | 684 | Energy Regen 60% | 60 | P1 | Sporos | `engines/petrazufre.webp` |
-| 9 | Sol exuvia | S | Ataque | 713 | ATK% 30% | 60 | P1 | Pyrois | **falta** |
+| 9 | Sol exuvia | S | Ataque | 713 | ATK% 30% | 60 | P1 | Pyrois | `engines/sol_exuvia.webp` |
 | 10 | Templo a la granizada estelífera | S | Anomalía | 743 | CRIT Rate 24% | 60 | P1 | Miyabi | `engines/templo_a_la_granizada_estelifera.webp` |
-| 11 | Tetera esmeraldina | S | — | — | Impact | 50 | P1 | Qingyi | **falta** |
+| 11 | Tetera esmeraldina | S | — | — | Impact | 50 | P1 | Qingyi | `engines/tetera_esmeraldina.webp` |
 | 12 | Visitante de altamar | S | Ataque | 713 | CRIT Rate 24% | 60 | P1 | Ellen | `engines/visitante_de_altamar.webp` |
 | 13 | Amo de llaves | A | Ataque | 624 | ATK% 25% | 60 | P5 | Corin | `engines/amo_de_llaves.webp` |
 | 14 | Anhelo marcato | A | Ataque | 594 | CRIT Rate 20% | 60 | P5 | Orfia y Magas | `engines/anhelo_marcato.webp` |
@@ -52,7 +52,7 @@ que salga de un scoring sin calibrar.
 | 23 | Cámara acorazada | A | Soporte | 594 | ATK% 25% | 0 | P1 | LIBRE | `engines/camara_acorazada.webp` |
 | 24 | Cúter | A | Aturdimiento | 624 | Impact 15% | 60 | P5 | Pulchra | `engines/cuter.webp` |
 | 25 | Demonio cohibido | A | Soporte | — | ATK% 20% | 60 | P5 | Astra Yao | `engines/demonio_cohibido.webp` |
-| 26 | Ecos bulliciosos | A | Anomalía | 594 | Anomaly Mastery 75 | 60 | P5 | Velina | **falta** |
+| 26 | Ecos bulliciosos | A | Anomalía | 594 | Anomaly Mastery 75 | 60 | P5 | Velina | `engines/ecos_bulliciosos.webp` |
 | 27 | Estrella callejera | A | Ataque | 594 | ATK 25% | 60 | P5 | LIBRE | `engines/estrella_callejera.webp` |
 | 28 | Florescencia aurífera | A | Ataque | 594 | ATK% 25% | 60 | P5 | Antón | `engines/florescencia_aurifera.webp` |
 | 29 | Fósil preciado | A | Aturdimiento | 594 | Impact 15% | 60 | P5 | Nangong Yu | `engines/fosil_preciado.webp` |

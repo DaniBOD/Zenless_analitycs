@@ -40,8 +40,8 @@
    vivo.
 2. **Refinamiento se llama P1–P5**, como en el juego (el mockup viejo del modal de PJ decía R1–R5).
 3. **Un dato que no hay se dice**, no se inventa: `sin dato`, `sin leer`, `falta ícono`. Hoy:
-   - **3 armas sin ícono** (Ecos bulliciosos, Sol exuvia, Tetera esmeraldina) → hueco neutro, no un
-     ícono de otra arma.
+   - ~~3 armas sin ícono~~ — Daniel los descargó el 2026-09-15: hoy 40/40. Si llega un arma sin
+     archivo, hueco neutro, no el ícono de otra arma.
    - **7 armas sin especialidad** en el catálogo.
    - **Tetera esmeraldina** tiene ATK base y valor del stat en blanco (se leyó a Nv 50, no a 60).
 4. **Las copias repetidas son normales**: 5 Llanto mielgo, 5 Última cena, 3 Cañón bombástico… se

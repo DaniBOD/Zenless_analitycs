@@ -86,4 +86,6 @@ recortada con tooltip. Maximizada, la franja del dueño y el `×n` no crecían: 
    `weapons.tipo_especialidad`, vacía en 7 armas del inventario.
 3. **Exportar**, cuando haya formato y destino.
 4. Click en una celda sólo la selecciona: no hay modal de arma todavía.
-5. Los datos pendientes del catálogo siguen: 3 íconos, 7 especialidades, las pasivas de las filas 5 y 13.
+5. ~~3 íconos~~ — Daniel los descargó el 2026-09-15 (Sol Exuvia, Boisterous Echoes, Ice-Jade Teapot):
+   **40/40 armas del inventario con ícono**, cuidado por `test_cada_arma_del_inventario_real_tiene_icono`.
+   Siguen pendientes: 7 especialidades y las pasivas de las filas 5 y 13.
