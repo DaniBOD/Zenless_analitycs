@@ -191,6 +191,7 @@ class MainWindow(ShellWindow):
         from app.ui.live.build_provider import BuildProvider
         from app.ui.live.view import LiveView
         from app.ui.toast import DiscToast
+        from app.ui.views.armas import build_armas_view
         from app.ui.views.discos import build_discos_view
         from app.ui.views.placeholder import make_placeholder
         from app.ui.views.roster import build_roster_view
@@ -275,8 +276,9 @@ class MainWindow(ShellWindow):
         self._roster_view = build_roster_view(self._ui_con)
         self._roster_view.ficha_pedida.connect(self._abrir_ficha_pj)
         self.add_view("roster", self._roster_view)
-        self.add_view("armas", make_placeholder(
-            "Armas", "Fase 5 — RF-14 (W-Engines optimizer) pendiente"))
+        self._armas_view = build_armas_view(self._ui_con)
+        self._armas_view.pj_pedido.connect(self._abrir_ficha_pj)
+        self.add_view("armas", self._armas_view)
         self.add_view("equipos", make_placeholder(
             "Equipos", "Fase 3 — RF-12 (IA catalogadora) pendiente"))
         self.add_view("catalogos", make_placeholder(
