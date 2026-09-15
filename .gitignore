@@ -153,3 +153,6 @@ cv_daniel_pilquil.docx
 # Staging de assets para subir a Claude Design: son COPIAS de Documentacion/Interfaz/*,
 # que ya estan versionados ahi. Se regeneran con tools/stage_design_assets.sh.
 Documentacion/Interfaz/claude_design_upload/assets/
+# Paquete de referencias para la pantalla de W-Engines: copias de assets versionados en app/ y
+# capturas de la app con datos de la cuenta. Se regenera con tools/stage_design_engines.py.
+Documentacion/Interfaz/claude_design_upload/w_engines/assets/
