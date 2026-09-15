@@ -15,12 +15,12 @@ vacío para los 51: la celda dice "sin leer", no 1 ni 60.
 """
 from __future__ import annotations
 
-import math
 import sqlite3
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from app.core.roster_declaration import _variantes_de_atuendo
+from app.ui.grilla import Grilla, calcular
 
 #: Orden de rangos: `∞` primero (con 1 PJ, alfabético lo perdería entre 37 S), después S y A.
 _ORDEN_RANGO = {"∞": 0, "S": 1, "A": 2}
@@ -142,6 +142,9 @@ def filtrar(celdas: Iterable[CeldaPJ], filtros: Mapping[str, set[str]]) -> list[
 
 
 # --- la grilla ---------------------------------------------------------------------------------
+#
+# El cálculo vive en `app/ui/grilla.py`: lo comparte con la pantalla Armas, que usa celdas de otro
+# tamaño. Acá quedan los tamaños del diseño del Roster.
 
 #: Tamaño de celda del diseño y cuánto puede estirarse o achicarse.
 CELDA_W0, CELDA_H0 = 122, 96
@@ -153,36 +156,7 @@ ESCALA_MAX = 2.2
 ESCALA_MIN = 0.6
 
 
-@dataclass(frozen=True)
-class Grilla:
-    columnas: int
-    celda_w: int
-    celda_h: int
-    gap: int
-    escala: float
-    cabe: bool
-
-
 def calcular_grilla(n: int, ancho: int, alto: int) -> Grilla:
-    """La grilla de mayor escala que entra ENTERA en `ancho × alto`, sin scroll.
-
-    Regla heredable del diseño: si el catálogo no cabe, se comprime la celda. Si ni al piso cabe,
-    `cabe=False` — la vista lo dice, en vez de dibujar celdas ilegibles o esconder PJs.
-    """
-    n = max(n, 1)
-    mejor_c, mejor_s = 1, 0.0
-    for c in range(1, n + 1):
-        filas = math.ceil(n / c)
-        w = (ancho - GAP * (c - 1)) / c
-        h = (alto - GAP * (filas - 1)) / filas
-        if w <= 0 or h <= 0:
-            continue
-        s = min(w / CELDA_W0, h / CELDA_H0, ESCALA_MAX)
-        # `>=`: entre empates (típico al tope de escala, con la ventana maximizada) gana la de MÁS
-        # columnas. Con `>` ganaba la primera y la grilla dejaba media pantalla vacía.
-        if s >= mejor_s - 1e-9:
-            mejor_c, mejor_s = c, s
-    cabe = mejor_s >= ESCALA_MIN
-    s = max(mejor_s, ESCALA_MIN)
-    return Grilla(columnas=mejor_c, celda_w=int(CELDA_W0 * s), celda_h=int(CELDA_H0 * s),
-                  gap=GAP, escala=round(s, 3), cabe=cabe)
+    """La grilla del Roster que entra ENTERA en `ancho × alto`, sin scroll."""
+    return calcular(n, ancho, alto, base_w=CELDA_W0, base_h=CELDA_H0, gap=GAP,
+                    escala_max=ESCALA_MAX, escala_min=ESCALA_MIN)
