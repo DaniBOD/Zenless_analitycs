@@ -454,6 +454,15 @@ class Monitor:
         # cuál era. Se cierra al emitirse el log de cambio de estado. Ver `_notify_state_change`.
         self._frescura_estado_visto: str | None = None
         self._frescura_estado_t: float | None = None
+        # FRESCURA del CONTENIDO (disco-a-log). La de arriba mide cambios de PANTALLA; ésta mide el
+        # caso que el usuario vive en un censo: la pantalla no cambia, cambia el disco mirado, y lo
+        # que se espera es la línea del log (que es la señal para pasar al siguiente). QA-06 §10
+        # dice de frente que la métrica de pantalla NO cubre esto.
+        self._frescura_disco_t: float | None = None
+        self._frescura_disco_warm: bool = False   # ¿este disco pasó por el warmup del dueño?
+        # Instante de la pasada anterior del loop rápido, para medir su período real. None = la
+        # pasada anterior no trabajó (pausa / sin frame) y el hueco no es un período.
+        self._loop_prev_t: float | None = None
         # Tanda de desmontaje en curso (S11). Se crea perezosamente al entrar a la pantalla.
         self._teardown = None
         # Tracking interno para el heartbeat
@@ -889,6 +898,7 @@ class Monitor:
                 self._heartbeat(time.monotonic(), "pausado")
                 time.sleep(0.5)
                 buffer.reset()
+                self._loop_prev_t = None       # la pausa no es un período del loop
                 continue
 
             frame = self._get_frame()
@@ -896,6 +906,7 @@ class Monitor:
                 self._hb_nulls += 1
                 self._heartbeat(time.monotonic(), "sin-frame")
                 buffer.reset()
+                self._loop_prev_t = None       # ni la espera de la ventana del juego
                 continue
 
             self._loop_ticks += 1
@@ -907,6 +918,17 @@ class Monitor:
             # justifica tocar el loop caliente. Si algún día una cadencia tiene que ser exacta,
             # el cambio es pasar esta línea a `perf_counter` — no ajustar las constantes.
             now = time.monotonic()
+
+            # PERÍODO REAL del loop rápido. Es el PISO de toda frescura: nada puede reportarse antes
+            # de la pasada que lo nota. Hasta ahora había que inferirlo de los huecos entre muestras
+            # de `detector`, y así medido dio p50 360 ms contra los ~109 ms que declara
+            # `_FAST_CAPTURE_MS` — 3,3× de diferencia. Importa el doble porque el warmup del dueño se
+            # cuenta en PASADAS: cada ms acá se multiplica por 4-5 en la espera que ve el usuario.
+            # Sólo entre pasadas consecutivas que trabajaron: los dos `continue` de arriba lo ponen
+            # en None, así que una app pausada o sin frame no inyecta un "período" de 16 minutos.
+            if self._loop_prev_t is not None:
+                metrics.registrar_desde("loop_period", self._loop_prev_t)
+            self._loop_prev_t = metrics.ahora()
 
             # ---- Paso 1: clasificar frame individual ----
             raw_state = self._detector.classify(frame)
@@ -927,7 +949,10 @@ class Monitor:
                     and raw_state.code != (self._confirmed_state.code
                                            if self._confirmed_state is not None else None)):
                 self._frescura_estado_visto = raw_state.code
-                self._frescura_estado_t = now
+                # El reloj lo pone `metrics`, no el loop: `now` acá es monotónico y el cierre
+                # usaba `time.time()`, así que la resta devolvía el epoch entero. Pedirle el
+                # instante a la misma autoridad que hace la resta es lo que lo vuelve imposible.
+                self._frescura_estado_t = metrics.ahora()
 
             # Muestreo RÁPIDO de identidad en S8/S19 (10 fps, no cadencia): el
             # avatar-row es deslizante y se auto-oculta; muestrear en cada frame
@@ -1194,8 +1219,7 @@ class Monitor:
         # buffer temporal + clasificación. La demora del buffer es real y cuenta — es el precio
         # que se paga por no reportar transiciones espurias.
         if self._frescura_estado_t is not None and self._frescura_estado_visto == state.code:
-            metrics.registrar("frescura_estado_a_log",
-                              (time.time() - self._frescura_estado_t) * 1000.0)
+            metrics.registrar_desde("frescura_estado_a_log", self._frescura_estado_t)
             self._frescura_estado_t = None
         # Edge-triggered: solo se loguea al cambiar de estado (o de slot en S17).
         slot_txt = f" slot={state.slot}" if state.slot is not None else ""
@@ -3174,6 +3198,7 @@ class Monitor:
             self._disc_emitted = False
             self._disc_agg_cycles = 0
             self._s17_warming = False
+            self._abrir_frescura_disco()
         # Gate RNF-06: si este disco YA se emitió (procesado completo) y la firma no cambió,
         # NO re-OCR-earlo cada ciclo — era OCR puro desperdicio que alimentaba el leak nativo
         # de Paddle (la cosecha = parar en discos → este era el driver). El badge del dueño
@@ -3265,6 +3290,7 @@ class Monitor:
         if mature and not ceiling and not self._s17_owner_resolved(merged) \
                 and self._s17_owner_passes < _S17_OWNER_MIN_SAMPLES:
             self._s17_warming = True
+            self._frescura_disco_warm = True   # este disco ESPERÓ: se mide aparte
             return
         self._emit_s17_disc(merged, state, mature)
 
@@ -3410,6 +3436,30 @@ class Monitor:
         asignado por latch, dueño visual votado, o declarado LIBRE. False = 'incierto'."""
         return bool(disc.agente_asignado_nombre or disc.equip_pj_visual or disc.equip_libre)
 
+    # --- Frescura disco-a-log (QA-06 · contenido, no pantalla) ---------------------------------
+    # El cronómetro lo abre y lo cierra la MISMA autoridad que decide emitir: la firma del disco del
+    # handler de despacho. Se podría abrir antes —en S17 el loop rápido nota el disco nuevo unas
+    # decenas de ms antes—, pero entonces apertura y cierre quedarían gobernadas por dos firmas con
+    # umbrales distintos: un parpadeo re-abriría el cronómetro y la muestra saldría CORTA, o sea
+    # sesgada hacia lo optimista justo en el caso que se quiere medir. Lo que este número deja
+    # afuera —la espera hasta el primer despacho— se mide aparte con `loop_period`.
+    def _abrir_frescura_disco(self) -> None:
+        """Disco nuevo en pantalla: arranca el cronómetro hasta su línea de log."""
+        self._frescura_disco_t = metrics.ahora()
+        self._frescura_disco_warm = False
+
+    def _cerrar_frescura_disco(self) -> None:
+        """Salió la línea del disco. Registra dos superficies: la de TODOS los discos y la de los
+        que pasaron por el warmup del dueño — la comparación entre las dos es lo que dice si la
+        espera la pone el warmup o el cómputo, en vez de dejarlo a la interpretación."""
+        if self._frescura_disco_t is None:
+            return
+        metrics.registrar_desde("frescura_disco_a_log", self._frescura_disco_t)
+        if self._frescura_disco_warm:
+            metrics.registrar_desde("frescura_disco_warm", self._frescura_disco_t)
+        self._frescura_disco_t = None
+        self._frescura_disco_warm = False
+
     def _emit_s17_disc(self, merged, state: ScreenState, mature: bool) -> None:
         """Emite (dedup + equip_map + id_diag + log + on_disc) un disco S17 ya resuelto.
         Extraído de `_process_disc_s17_continuous` para reusarlo desde el path de warmup."""
@@ -3453,6 +3503,9 @@ class Monitor:
             tenencia = "LIBRE"
         else:
             tenencia = "dueño=?"
+        # Acá —y no antes del dedup— porque lo que se mide es la espera del USUARIO hasta VER la
+        # línea. Un disco que el dedup saltea no imprime nada: no hay evento que cronometrar.
+        self._cerrar_frescura_disco()
         log.info(
             "Disco detectado: set=%s slot=%d main=%s nivel=%d %s conf=%.2f (agg %dc%s)",
             merged.set_name_canon or merged.set_name_raw, merged.slot,
@@ -3506,6 +3559,7 @@ class Monitor:
             self._s9_emitted = False
             self._s9_agg_cycles = 0
             self._s9_warming = False
+            self._abrir_frescura_disco()
         if self._s9_emitted:
             return
         # WARMUP del dueño (fix badge=None): el disco ya maduró (stats completas) pero el
@@ -3554,6 +3608,7 @@ class Monitor:
         # badge tiene más cadencias para localizar antes de emitir sin dueño.
         if mature and not ceiling and merged.agente_asignado_nombre is None:
             self._s9_warming = True
+            self._frescura_disco_warm = True   # este disco ESPERÓ: se mide aparte
             return
         self._emit_s9_disc(merged, state)
 
@@ -3735,6 +3790,7 @@ class Monitor:
         self._last_emitted_identity = emit_key
         if merged.agente_asignado_nombre:
             self._record_equip_map(identity, merged.agente_asignado_nombre)
+        self._cerrar_frescura_disco()          # mismo criterio que en S17: después del dedup
         log.info(
             "Disco S9 detectado: set=%s slot=%d main=%s nivel=%d dueno=%s conf=%.2f",
             merged.set_name_canon or merged.set_name_raw, merged.slot,
@@ -5222,6 +5278,7 @@ class Monitor:
         if self._force_event.wait(timeout=_FAST_CAPTURE_MS / 1000.0):
             self._force_event.clear()
 
+    @metrics.measure_latency("s17_owner_sample")
     def _sample_s17_owner(self, frame) -> None:
         """Loop rápido (10 fps, 5R.5c): vota el dueño del badge de la grilla por
         firma-de-disco. Acumula confianza por PJ mientras el MISMO disco está en

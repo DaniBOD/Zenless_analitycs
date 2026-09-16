@@ -37,6 +37,13 @@ sirve.
     with metrics.measure_block("detector"):
         ...
 
+Para un tramo que empieza y termina en lugares distintos (el cronómetro no cabe en un `with`),
+**abrir con `ahora()` y cerrar con `registrar_desde()`** — nunca tomando un reloj a mano:
+
+    self._t0 = metrics.ahora()          # donde empieza
+    ...
+    metrics.registrar_desde("frescura_disco_a_log", self._t0)   # donde termina
+
 Está **apagado por defecto** y se enciende con `DANIBOD_METRICS=1`, igual que el resto de la
 instrumentación del proyecto (`DANIBOD_ID_DIAG`, `DANIBOD_MEM_DIAG`). Apagado no escribe ni crea el
 archivo: quien nunca la enciende no tiene por qué encontrarse una DB extra.
@@ -66,9 +73,18 @@ _ENV_DB = "DANIBOD_METRICS_DB"
 # costo real —abrir la DB y escribir— se paga una vez cada N.
 _FLUSH_CADA = 100
 
+# Techo de plausibilidad de una muestra, en ms. Ninguna superficie con presupuesto (20-500 ms) puede
+# tardar una hora: un valor así no es "lento", es un BUG de medición. El caso real que lo motivó:
+# `frescura_estado_a_log` abría el cronómetro con `time.monotonic()` y lo cerraba con `time.time()`,
+# así que la resta devolvía el epoch entero (~1,789e12 ms) — 14 muestras de basura que nadie vio
+# durante un mes, porque una métrica rota se ve igual que una métrica mala. Una muestra que cruza
+# este techo se DESCARTA y se avisa: mejor un agujero ruidoso que un percentil envenenado.
+_MAX_PLAUSIBLE_MS = 3_600_000.0
+
 _BUFFER: list[tuple[str, float, float]] = []      # (superficie, duration_ms, ts)
 _LOCK = threading.Lock()                          # el monitor corre en su propio hilo
 _ESQUEMA_LISTO = False
+_IMPLAUSIBLES: set[str] = set()                   # superficies ya avisadas (no spamear el log)
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS metrics_latency (
@@ -105,16 +121,49 @@ def reset() -> None:
     with _LOCK:
         _BUFFER.clear()
         _ESQUEMA_LISTO = False
+        _IMPLAUSIBLES.clear()
 
 
 # --- registro ------------------------------------------------------------------------------------
 
-def registrar(superficie: str, duration_ms: float) -> None:
-    """Anota una medición ya tomada. Útil para tiempos que se obtienen de otra fuente."""
+def ahora() -> float:
+    """**El** reloj de las mediciones. Segundos monotónicos, sin unidad de tiempo de pared.
+
+    Existe para que ningún llamador vuelva a elegir reloj (B1 · una sola autoridad por pregunta).
+    Una medición que cruza dos relojes no da un número malo: da un número **absurdo** que igual se
+    guarda y contamina el percentil sin que nada se queje. Quien mida un tramo largo guarda el `t0`
+    que devuelve esta función y cierra con `registrar_desde`.
+    """
+    return time.monotonic()
+
+
+def registrar_desde(superficie: str, t0: float) -> None:
+    """Cierra una medición abierta con `ahora()`. La resta —y el reloj— viven acá adentro."""
     if not habilitado():
         return
+    registrar(superficie, (ahora() - t0) * 1000.0)
+
+
+def registrar(superficie: str, duration_ms: float) -> None:
+    """Anota una medición ya tomada. Útil para tiempos que se obtienen de otra fuente.
+
+    Descarta lo implausible (negativo, o por encima de `_MAX_PLAUSIBLE_MS`) y avisa una vez por
+    superficie: eso no es latencia, es el cronómetro roto.
+    """
+    if not habilitado():
+        return
+    ms = float(duration_ms)
+    if ms < 0.0 or ms > _MAX_PLAUSIBLE_MS or math.isnan(ms):
+        with _LOCK:
+            nueva = superficie not in _IMPLAUSIBLES
+            _IMPLAUSIBLES.add(superficie)
+        if nueva:
+            log.warning("metrics: '%s' devolvió %.0f ms — muestra DESCARTADA. Un valor así no es "
+                        "lento, es el cronómetro mal cerrado (¿dos relojes?). Abrir con "
+                        "metrics.ahora() y cerrar con metrics.registrar_desde().", superficie, ms)
+        return
     with _LOCK:
-        _BUFFER.append((superficie, float(duration_ms), time.time()))
+        _BUFFER.append((superficie, ms, time.time()))
         lleno = len(_BUFFER) >= _FLUSH_CADA
     if lleno:
         flush()

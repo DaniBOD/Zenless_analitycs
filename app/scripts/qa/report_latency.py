@@ -29,7 +29,21 @@ _PRESUPUESTO = {
     # Pantalla-a-log: el presupuesto de RNF-06 para "algo pasa → el usuario se entera". Incluye
     # la espera del tick rápido y la votación 2/3 del buffer temporal, que son latencia real.
     "frescura_estado_a_log": 500.0,
+    # Disco-a-log: el mismo presupuesto, para el caso en que la PANTALLA NO CAMBIA y lo que cambia
+    # es el disco mirado. Es la espera que el usuario vive en un censo, porque la línea del log es
+    # su señal para pasar al siguiente disco. `_warm` es el subconjunto que pasó por el warmup del
+    # dueño: comparar los dos p50 dice si la espera la pone el warmup o el cómputo.
+    "frescura_disco_a_log": 500.0,
+    "frescura_disco_warm": 500.0,
+    # Período del loop rápido. No sale de QA-06: es el valor que el DISEÑO del loop declara —
+    # `_FAST_CAPTURE_MS` (100) de espera más el presupuesto de `detector` (50). Se declara para que
+    # la distancia contra lo medido quede a la vista; es el piso de las dos frescuras de arriba.
+    "loop_period": 150.0,
 }
+
+# `s17_owner_sample` queda SIN presupuesto a propósito: no hay ninguno declarado en QA-06 y ponerle
+# uno inventado sería exactamente lo que RNF-02 prohíbe. Lo que interesa de él es su peso RELATIVO
+# dentro de `loop_period`, que se lee comparando los dos p50.
 
 # `dispatch:SXX` no tiene un presupuesto fijo: su techo es la cadencia de ESE estado. Si el ciclo
 # se acerca a su propia cadencia, el loop está saturado ahí — y recién entonces el cómputo es el
@@ -49,7 +63,25 @@ def _budget_dispatch(superficie: str) -> float | None:
         return None
 
 
+def _salida_utf8() -> None:
+    """La consola de Windows entrega cp1252 cuando la salida se redirige (a un archivo o a un pipe),
+    y el `⚠️` del veredicto no existe en esa tabla: `UnicodeEncodeError` y el reporte se corta.
+
+    Lo peor es CUÁNDO fallaba: el emoji sale sólo en la línea de una superficie FUERA de
+    presupuesto, o sea que la herramienta de latencia se moría exactamente en el único caso en que
+    hay algo que reportar. Con `metrics.db` de hoy (4 superficies excedidas) el reporte no se podía
+    leer entero. `errors="replace"` como red: preferimos un rombo en vez del emoji antes que perder
+    la tabla.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")   # type: ignore[union-attr]
+        except (AttributeError, OSError):
+            pass          # stream reemplazado (pytest, captura): no es motivo para no reportar
+
+
 def main() -> int:
+    _salida_utf8()
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dias", type=float, default=7.0, help="ventana a resumir (default 7)")
@@ -67,9 +99,9 @@ def main() -> int:
         return 1
 
     print(f"\nÚltimos {args.dias:g} días · {sum(f['n'] for f in filas)} muestras\n")
-    print(f"{'superficie':<16}{'n':>7}{'p50 ms':>10}{'p99 ms':>10}{'max ms':>10}"
+    print(f"{'superficie':<24}{'n':>7}{'p50 ms':>10}{'p99 ms':>10}{'max ms':>10}"
           f"{'budget':>9}  veredicto")
-    print("-" * 78)
+    print("-" * 86)
     excedidas = 0
     for f in filas:
         bud = _PRESUPUESTO.get(f["superficie"]) or _budget_dispatch(f["superficie"])
@@ -80,7 +112,7 @@ def main() -> int:
             excedidas += 1
         else:
             veredicto = f"ok · {100 * f['p99'] / bud:.0f}% del budget"
-        print(f"{f['superficie']:<16}{f['n']:>7}{f['p50']:>10.1f}{f['p99']:>10.1f}"
+        print(f"{f['superficie']:<24}{f['n']:>7}{f['p50']:>10.1f}{f['p99']:>10.1f}"
               f"{f['max']:>10.1f}{(f'{bud:.0f}' if bud else '-'):>9}  {veredicto}")
 
     if excedidas:
