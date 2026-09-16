@@ -5,7 +5,7 @@
 > distintos**. Están acá porque las lecciones estaban dispersas en 62 docs de `Dev_IA/` y nadie
 > las lee todas.
 >
-> Última actualización: **2026-08-19**.
+> Última actualización: **2026-09-15**.
 
 ---
 
@@ -205,6 +205,39 @@ contar llamadas. Y antes de correr un test flaky en bucle, **sacale el azar** (c
 40 corridas verdes de un test probabilístico no distinguen "arreglado" de "tuve suerte".
 
 Ver `2026-08-19_FIX_Unicidad_de_nombres_en_audit.md` y `2026-08-20_FIX_Unicidad_del_backup_RNF-01.md`.
+
+---
+
+### C3 · Un instrumento roto se ve igual que un dato malo. Y el que mide no elige el reloj.
+
+`frescura_estado_a_log` abría el cronómetro con `time.monotonic()` y lo cerraba con `time.time()`.
+La resta de dos relojes **no da un número malo: da el epoch entero** — ~1,789e12 ms. Quedaron **14
+muestras así durante un mes** en la tabla que se consulta justamente para decidir qué optimizar.
+
+⭐ **Lo que lo volvió invisible no fue la resta, fue que el síntoma se disfraza de dato.** En una
+métrica de latencia, un número absurdamente grande **parece un hallazgo** ("uh, estuvo lento"), no
+un defecto. No hay nada en un reporte de percentiles que grite. Es el caso peor de [A2](#a2--el-silencio-no-es-un-aprobado): el pase no
+es el silencio, es una salida que se lee como resultado.
+
+La otra mitad de la lección es de autoridad ([B1](#b1--una-sola-autoridad-por-pregunta-dos-definiciones-de-lo-mismo-son-una-de-más)): el bug fue posible porque **cada llamador
+elegía su reloj**. Un `# ojo: usar monotonic` al lado no lo evita; lo evita que la resta no esté ahí.
+
+**Cómo aplicarlo:**
+
+- El módulo que registra es el dueño del reloj: abrir con `metrics.ahora()` y cerrar con
+  `metrics.registrar_desde(superficie, t0)`. Ningún sitio de medición vuelve a llamar a un reloj.
+- **Poner una cota de plausibilidad y que avise.** Ninguna superficie con presupuesto de 20-500 ms
+  puede tardar una hora: por encima de eso no es lentitud, es el cronómetro mal cerrado. Descartar
+  la muestra y loguear una vez por superficie — un agujero ruidoso es mejor que un percentil
+  envenenado, y convierte un bug invisible en uno que se anuncia.
+- **Testear el rango, no sólo que se registre.** Un test que cuenta muestras pasa con el epoch
+  adentro; el que afirma "cae por debajo de 60 000 ms" se pone rojo. Y como la instrumentación vive
+  en el pipeline, el test tiene que manejar el **handler real** — si sólo llama al helper, pasa
+  igual cuando nadie lo invoca desde producción ([A2](#a2--el-silencio-no-es-un-aprobado) otra vez).
+- Corolario: **una métrica sin un test que la mire puede existir y no medir nada.** Antes de creerle
+  a una serie histórica, mirá una muestra cruda.
+
+Ver `2026-09-15_FIX_El_reloj_de_la_frescura_media_el_epoch_y_la_espera_la_pone_el_warmup.md`.
 
 ---
 
