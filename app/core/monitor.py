@@ -348,8 +348,9 @@ from app.core.owner_vote import DETAIL as _SURF_DET, GRID as _SURF_GRID  # noqa:
 # tarda la pasada. El comentario original decía "10 fps — MSS captura en ~20ms, template match en
 # ~50ms", y esos números vencieron. Medido el 2026-09-16 (`loop_period`, `capturer`, `detector`):
 # captura p50 44 ms; classify p50 193 ms en menús y 499 ms en S9 (el OCR del header, 315 ms, se
-# releía en cada pasada hasta la caché por contenido); período p50 391 ms en menús (~2,5 fps) y
-# ~1 s en S9. Todo lo que se cuente en "pasadas del loop" hereda esos tiempos, no los 100 ms.
+# relee en cada pasada: una caché por contenido se probó el 2026-09-17 y acertó 0 de 72 en vivo, así
+# que se revirtió); período p50 391 ms en menús (~2,5 fps) y ~1 s en S9. Todo lo que se cuente en
+# "pasadas del loop" hereda esos tiempos, no los 100 ms.
 _FAST_CAPTURE_MS = 100
 
 
@@ -857,18 +858,10 @@ class Monitor:
         n = metrics.flush()
         if n:
             log.info("[metrics] %d muestras de latencia volcadas a %s", n, metrics.db_path())
-        # La caché del header entre clasificaciones (S9/S30) no se ve en ninguna métrica de latencia
-        # por sí sola: si nunca acierta —porque el header cambia de píxeles entre frames—, no gana nada
-        # y hay que saberlo. Una línea por sesión alcanza.
         if self._s9_rapido_confirmados or self._s9_rapido_rearmados or self._s9_rapido_abandonados:
             log.info("[s9-despacho-rapido] confirmados=%d re-armados=%d abandonados=%d",
                      self._s9_rapido_confirmados, self._s9_rapido_rearmados,
                      self._s9_rapido_abandonados)
-        estadisticas = getattr(self._detector, "estadisticas_cache_header", None)
-        if callable(estadisticas):
-            aciertos, fallos = estadisticas()
-            if aciertos or fallos:
-                log.info("[header-cache] aciertos=%d fallos=%d", aciertos, fallos)
         log.info("Monitor detenido · pedido desde: %s", origen)
 
     def toggle_pause(self) -> bool:

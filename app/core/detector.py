@@ -12,8 +12,6 @@ State machine para validación de transiciones anti-FP.
 from __future__ import annotations
 
 import contextvars
-import hashlib
-import os
 import re
 import time
 from contextlib import contextmanager
@@ -1805,18 +1803,13 @@ _lectura_header: contextvars.ContextVar = contextvars.ContextVar("_lectura_heade
 
 
 @contextmanager
-def _lecturas_de_una_clasificacion(por_contenido: dict | None = None):
+def _lecturas_de_una_clasificacion():
     """Abre y CIERRA el caché de lecturas caras. Vive exactamente una invocación de `classify`.
 
     El `reset` va en un `finally`: si la clasificación revienta, el caché se cierra igual. Un
     caché que sobrevive a su invocación no se nota en los tiempos —sigue siendo rápido— se nota
-    en los DATOS, contestando sobre el frame anterior.
-
-    `por_contenido` es el almacén de la lectura del header ENTRE clasificaciones (ver
-    `_read_inventory_header`). Viaja adentro de este contexto a propósito: así sólo se usa desde
-    `classify` y nunca desde un verify llamado suelto."""
-    contexto = {} if por_contenido is None else {"__por_contenido__": por_contenido}
-    token = _lectura_header.set(contexto)
+    en los DATOS, contestando sobre el frame anterior."""
+    token = _lectura_header.set({})
     try:
         yield
     finally:
@@ -1853,37 +1846,8 @@ def _read_inventory_header(frame: np.ndarray) -> str | None:
         crop = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
         if crop.size == 0:
             return None
-        # ENTRE clasificaciones, por CONTENIDO (2026-09-16). La caché de arriba muere con cada
-        # `classify`, así que el loop rápido releía el header en CADA pasada: en S9 eran 315 de los
-        # 505 ms del classify (62 %, medido sobre 19 capturas), para un título —"Pistas de disco
-        # [N/3000]"— que no cambia mientras se recorren discos.
-        #
-        # No contradice la regla de arriba ("una caché que sobrevive contesta sobre el frame
-        # anterior"): la clave no es el frame sino los BYTES del recorte. Sólo puede devolver un
-        # texto leído de un recorte idéntico byte a byte, y el OCR sobre la misma entrada da lo
-        # mismo. Se invalida sola: otro contador (farmeaste, desmontaste) u otro título (S9↔S30)
-        # son otros bytes. Tres cuidados:
-        # - sólo desde `classify` (el almacén viaja en el contexto): un verify suelto lee siempre;
-        # - un texto VACÍO no se guarda: es lo que devuelve el OCR caído, y fijarlo dejaría a
-        #   `_verify_s30` —que falla cerrado sin texto— sin reconocer el inventario de armas
-        #   mientras el header no cambie de píxeles;
-        # - `DANIBOD_HEADER_CACHE=0` la apaga sin tocar código.
-        almacen = cache.get("__por_contenido__") if cache is not None else None
-        clave = None
-        activa = os.environ.get("DANIBOD_HEADER_CACHE", "1").strip() not in ("0", "false", "no")
-        if almacen is not None and activa:
-            huella = hashlib.blake2b(np.ascontiguousarray(crop).tobytes(), digest_size=16).digest()
-            clave = (crop.shape, huella)
-            if almacen.get("clave") == clave:
-                almacen["aciertos"] = almacen.get("aciertos", 0) + 1
-                text = almacen["texto"]
-                cache["inventory_header"] = (frame, text)
-                return text
-            almacen["fallos"] = almacen.get("fallos", 0) + 1
         text, _ = ocr.text(crop, psm=7, lang="spa")
         text = text or ""
-        if clave is not None and text:
-            almacen["clave"], almacen["texto"] = clave, text
     except Exception:
         return None
 
@@ -2178,10 +2142,6 @@ class ScreenDetector:
         self._missing: list[str] = []
         self._state_machine = StateMachine() if use_state_machine else None
         self._last_raw_state: str | None = None
-        # Lectura del header entre clasificaciones, por contenido. Es de la INSTANCIA y no del módulo:
-        # el monitor usa un único detector toda la sesión y la aprovecha; cada detector nuevo (un
-        # test, una herramienta) arranca limpio, sin heredar lecturas de otro.
-        self._header_por_contenido: dict = {}
 
         for entry in _STATE_TEMPLATES:
             path = templates_dir / entry["template"]
@@ -2494,15 +2454,8 @@ class ScreenDetector:
         (`_lecturas_de_una_clasificacion`). El ciclo de vida del caché es, literalmente, este
         `with` — por eso no hace falta invalidarlo ni versionarlo.
         """
-        with _lecturas_de_una_clasificacion(self._header_por_contenido):
+        with _lecturas_de_una_clasificacion():
             return self._clasificar(frame)
-
-    def estadisticas_cache_header(self) -> tuple[int, int]:
-        """(aciertos, fallos) de la lectura del header entre clasificaciones. Un acierto en cero
-        durante una pasada por S9 significa que el header cambia de píxeles entre frames: la caché
-        no gana nada ahí (y tampoco rompe nada)."""
-        a = self._header_por_contenido
-        return a.get("aciertos", 0), a.get("fallos", 0)
 
     def _clasificar(self, frame: np.ndarray) -> ScreenState:
         """
