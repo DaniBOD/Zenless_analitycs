@@ -19,9 +19,8 @@ DB = Path(__file__).resolve().parents[3] / "db" / "danibod_zzz_v2.db"
 
 #: Facciones de la DB SIN archivo de logo, a propósito. Agregar una acá es una decisión: se anota
 #: por qué falta.
-SIN_LOGO = {
-    "Covenant of Dayat",   # Remielle Dan (v3.1): no se consiguió el logo todavía
-}
+SIN_LOGO: set[str] = set()
+# Covenant of Dayat (Remielle Dan, v3.1) estuvo acá hasta el 2026-09-17, cuando llegó su logo.
 
 
 def _facciones_db() -> set[str]:
@@ -48,6 +47,15 @@ def test_resuelve_los_nombres_que_no_siguen_ninguna_convencion():
     assert faction_logo_path("Sons of Calydon").name == "Hijos_Caledon.webp"
     assert faction_logo_path("Spook Shack").name == "Cabaña_Terror.webp"
     assert faction_logo_path("Faetón").name == "Faction_Phaethon_Icon.webp"
+
+
+def test_las_tres_facciones_de_septiembre_resuelven():
+    """Flint Workshop llega con Claret Flint (v3.2). Airspace Patrol Department todavía no tiene PJ
+    en la DB, así que el test de cobertura no la mira: se prueba acá, directo."""
+    assert faction_logo_path("Flint Workshop").name == "Faction_Flint_Workshop_Icon.webp"
+    assert faction_logo_path("Covenant of Dayat").name == "Faction_Covenant_of_Dayat_Icon.webp"
+    assert faction_logo_path("Airspace Patrol Department").name == (
+        "Faction_Airspace_Patrol_Department_Icon.webp")
 
 
 def test_toda_ruta_devuelta_existe_y_vive_dentro_de_app():

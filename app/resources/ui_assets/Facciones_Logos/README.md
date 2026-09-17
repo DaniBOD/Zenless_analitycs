@@ -26,6 +26,19 @@ Logos oficiales de las facciones del juego ZZZ. **Cobertura 100%** del roster: l
 
 **Total: 46 PJs / 13 facciones / 13 logos canónicos + 3 logos variante.**
 
+## Adiciones posteriores (la autoridad del mapeo es `asset_resolver._FACTION_LOGOS`)
+
+| Facción (`agents.faccion`) | PJs | Logo | Alta |
+|---|---|---|---|
+| **Faetón** | Pyrois | `Faction_Phaethon_Icon.webp` | v3.x |
+| **External Strategy Department** | Velina | `Faction_External_Strategy_Department_Icon.webp` | v3.0 |
+| **Covenant of Dayat** | Remielle Dan | `Faction_Covenant_of_Dayat_Icon.webp` | 2026-09-17 (la facción es de v3.1; el logo faltaba) |
+| **Flint Workshop** (pantalla ES: "Taller Flint de Roscaelifer") | Claret Flint | `Faction_Flint_Workshop_Icon.webp` | 2026-09-17 · v3.2 |
+| **Airspace Patrol Department** | (sin PJ en el roster todavía) | `Faction_Airspace_Patrol_Department_Icon.webp` | 2026-09-17 |
+
+Los originales de las tres de septiembre quedan versionados también en
+`Documentacion/Interfaz/Assets_Originales/facciones/`.
+
 ## Logos variante / extras
 
 Logos adicionales que **no son la insignia oficial de la facción paraguas**, sino variantes personales o sub-divisiones internas:

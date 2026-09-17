@@ -70,6 +70,8 @@ _AGENT_SPLASH_OVERRIDES: dict[str, str] = {
                                           # → lo resuelve el fallback de separador.
     "Jane":           "Jane-Doe",      # DB usa el nombre corto; los archivos, el completo
     "Remielle Dan":   "Remielle",      # al revés que Jane: la DB usa el completo, el archivo el corto
+    "Claret Flint":   "claret",        # igual que Remielle, y en minúscula; `-ico` y `_extend`
+                                       # conviven → lo resuelve el fallback de separador.
 }
 
 # Algunos archivos cissia usan "_" en lugar de "-" como separador
@@ -257,15 +259,19 @@ def engine_icon_path(nombre: str | None, nombre_en: str | None = None) -> Path |
 
 #: `agents.faccion` → archivo en FACTIONS_DIR. Tabla y no normalización: los archivos no siguen
 #: ninguna convención (mitad en español, mitad `Faction_…_Icon` del wiki, y dos duplicados).
-#: Armada con `Facciones_Logos/README.md`. Una facción ausente devuelve None — Covenant of Dayat
-#: (Remielle Dan) no tiene archivo todavía; lo cuida `test_asset_faction_logo.py`.
+#: Armada con `Facciones_Logos/README.md`. Una facción ausente devuelve None; lo cuida
+#: `test_asset_faction_logo.py`. Covenant of Dayat (Remielle Dan) consiguió su logo el 2026-09-17,
+#: junto con Flint Workshop (Claret Flint, v3.2) y Airspace Patrol Department (sin PJ todavía).
 _FACTION_LOGOS: dict[str, str] = {
+    "Airspace Patrol Department":                   "Faction_Airspace_Patrol_Department_Icon.webp",
     "Angels of Delusion":                           "Agenles_delusion.webp",
     "Belobog Heavy Industries":                     "Construcciones_Belobog.webp",
+    "Covenant of Dayat":                            "Faction_Covenant_of_Dayat_Icon.webp",
     "Criminal Investigation Special Response Team": "Faction_Criminal_Investigation_Special_Response_Team_Icon.webp",
     "Cunning Hares":                                "Liebres_astutas.webp",
     "External Strategy Department":                 "Faction_External_Strategy_Department_Icon.webp",
     "Faetón":                                       "Faction_Phaethon_Icon.webp",
+    "Flint Workshop":                               "Faction_Flint_Workshop_Icon.webp",
     "Hollow Special Operations Section 6":          "Faction_Hollow_Special_Operations_Section_6.webp",
     "Krampus Compliance Authority":                 "Auditoria_Krampus.webp",
     "Mockingbird":                                  "Ruiseñor.webp",

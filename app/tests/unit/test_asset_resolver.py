@@ -142,6 +142,7 @@ IRREGULAR_AGENTS = [
     "Orfia y Magas",  # → Orphie
     "N.º 11",   # MASCULINE ORDINAL (ord)
     "N.º 0: Anby",
+    "Claret Flint",   # → claret (DB nombre completo, archivo corto; `-ico` y `_extend` mezclados)
 ]
 
 

@@ -46,6 +46,7 @@ ICO_ALIAS: dict[str, str] = {
     "Orphie": "Orfia y Magas",
     "Billy-starlight": "Billy Estelar",   # Billy Kid Estelar (v2.x) — NO es Billy (id 12)
     "Remielle": "Remielle Dan",           # el archivo usa el nombre corto; la DB, el completo
+    "claret": "Claret Flint",             # ídem (v3.2); el menú de personajes también dice "Claret"
     "Seed": "Sporos",                     # nombre EN del juego; el inverso ya estaba en
                                           # `asset_resolver._AGENT_SPLASH_OVERRIDES`
 }

@@ -100,6 +100,16 @@ def test_build_name_map_alias_y_passthrough():
     assert nm["Aria"] == "Aria"         # no en roster → stem tal cual
 
 
+def test_la_ref_de_claret_se_etiqueta_con_su_nombre_de_db():
+    """El archivo dice `claret` y la DB `Claret Flint`: por `_norm_key` no matchean, y sin el
+    alias el matcher etiquetaría la ref con el stem — un nombre que el roster no tiene, así que
+    badge_surface lo descartaría en silencio (el mismo caso que Remielle)."""
+    assert (REFS / "claret.png").exists()
+    nm = build_name_map(["claret", "Remielle"], ["Claret Flint", "Remielle Dan"])
+    assert nm["claret"] == "Claret Flint"
+    assert nm["Remielle"] == "Remielle Dan"
+
+
 def test_reject_desde_folder_descarta_no_pj():
     m = AvatarMatcher.from_folders(REFS, REJECT)
     assert len(m._rejects) > 0
