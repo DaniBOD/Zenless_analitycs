@@ -19,7 +19,6 @@ import cv2
 import numpy as np
 import pytest
 
-from app.core.census import _CONF_MIN_VISTO, _SCORE_MIN_VISTO
 from app.core.parser_agent_stats import (
     _match_agent_scored,
     identify_menu_agent,
@@ -78,7 +77,7 @@ def test_una_lectura_buena_conserva_la_confianza_que_antes_se_tiraba():
     r = read_menu_agent(_frame(), _StubOcr("Nangong Yu", 0.97))
     assert r.motivo == "ok" and r.nombre == "Nangong Yu"
     assert r.conf == 0.97
-    assert r.score is not None and r.score >= _SCORE_MIN_VISTO
+    assert r.score is not None and r.score >= 0.99, "un nombre exacto matchea entero"
 
 
 # --- las dos señales son distintas ----------------------------------------------------------
@@ -140,16 +139,11 @@ _REAL = {"Ejemplo_1": "Nangong Yu", "Ejemplo_2": "Astra Yao", "Ejemplo_3": "Jane
 @pytest.mark.skipif(not (_MENU / "Ejemplo_1.png").exists(),
                     reason="capturas del menú no presentes")
 @pytest.mark.parametrize("name,esperado", list(_REAL.items()))
-def test_los_umbrales_del_censo_no_rechazan_ninguna_lectura_correcta(name, esperado):
-    """**Calibración, no afinado.** Los umbrales salen de esta medición (2026-08-16, 9/9):
-
-        sim  mínimo correcto 0.925 ('Remielle &' → Remielle Dan)   umbral 0.75
-        conf mínimo correcto 0.878 ('N.°0:Anby 0' → N.º 0: Anby)   umbral 0.80
-
-    Si este test cae, o el OCR se degradó o alguien movió un umbral sin medir. El fallo es en la
-    dirección segura —una lectura buena marcada DUDOSA solo pide repetir la selección—, pero
-    igual hay que enterarse.
-    """
+def test_la_lectura_del_menu_acierta_en_las_capturas_reales(name, esperado):
+    """El nombre leído en S15 siembra la identidad del PJ. Medición del 2026-08-16, 9/9: similitud
+    mínima correcta 0.925 ('Remielle &' → Remielle Dan), confianza mínima 0.878 ('N.°0:Anby 0').
+    Los umbrales de "censado" que este test también vigilaba se fueron con el censo de roster
+    (2026-09-17); queda lo que sigue importando: que lea el nombre correcto."""
     _roster_o_skip()
     try:
         from app.core.ocr_paddle import PaddleBackend
@@ -161,5 +155,3 @@ def test_los_umbrales_del_censo_no_rechazan_ninguna_lectura_correcta(name, esper
     frame = cv2.imdecode(np.fromfile(str(p), dtype=np.uint8), cv2.IMREAD_COLOR)
     r = read_menu_agent(frame, PaddleBackend())
     assert r.nombre == esperado, f"{name}: esperaba {esperado}, salió {r.nombre} ({r.texto_crudo!r})"
-    assert r.score >= _SCORE_MIN_VISTO, f"{name}: sim {r.score:.3f} < {_SCORE_MIN_VISTO}"
-    assert r.conf >= _CONF_MIN_VISTO, f"{name}: conf {r.conf:.3f} < {_CONF_MIN_VISTO}"

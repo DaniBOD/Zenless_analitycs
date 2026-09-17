@@ -50,11 +50,10 @@ de personajes, que no tiene contador. Para discos y armas el contador `N/M` ya e
 - **Controller:** fuera la apertura por `DANIBOD_CENSO` y la señal del cierre.
 - **UI:** fuera `app/ui/shell/cierre_censo.py` y el diálogo. La card del sidebar tiene un botón.
 - **`qa_launch.ps1`:** fuera `-Censo`; limpia `DANIBOD_CENSO` si quedó de una sesión vieja.
-- **Quedan sin uso y no se borraron** (un cambio por vez): `RosterCensus`, `write_census_report`,
+- **Quedaron sin uso** (borrados en un commit aparte, ver §3): `RosterCensus`, `write_census_report`,
   `CensusStore`, `abrir_o_reanudar` y `marcar_huerfanos_en_dominio`, con sus tests unitarios.
-  `census_store.roster_y_catalogo` y los umbrales de `census.py` **sí** tienen otros usuarios
-  (`roster_declaration`, `test_menu_agent_read`). `census.db` no se tocó: la corrida #2 del
-  2026-08-17 (1/51) sigue abierta y ya nadie la reanuda.
+  `census_store.roster_y_catalogo` y los umbrales de `census.py` **sí** tenían otros usuarios
+  (`roster_declaration`, `test_menu_agent_read`).
 
 ## Verificación
 
@@ -69,4 +68,20 @@ de personajes, que no tiene contador. Para discos y armas el contador `N/M` ya e
 ## Pendiente
 
 - Verificación en vivo de la pausa con el juego abierto **antes** que la app.
-- Decidir si se borran los restos del censo de roster (lista de arriba) y qué hacer con la corrida #2.
+
+## 3 · Los restos del censo de roster, borrados (commit aparte, mismo día)
+
+Decisión de Daniel: borrarlos ya, no después de la Fase 3.
+
+- **Borrados:** `app/core/census.py`, `app/core/census_store.py`, `test_census_cierre.py`,
+  `test_census_roster.py`, `test_census_store.py`, y `DANIBOD_CENSUS_DB` del conftest.
+- **Mudado, no borrado:** `roster_y_catalogo` (y `_sin_variante`) a `roster_declaration.py`, su
+  único usuario, con sus dos tests. Sabotaje sobre el código mudado: rojo.
+- **`test_menu_agent_read`:** el test de calibración contra las 9 capturas del menú se quedó (la
+  lectura de S15 siembra la identidad), sin los dos umbrales de "censado" que eran del censo.
+- **`db/census.db` no se borró: se renombró** a `db/census.retirado_20260917.db` (sigue fuera de
+  git con `db/census*.db`). Tenía las dos corridas del 2026-08-17, la #2 abierta con 1/51. Borrar
+  el archivo es de Daniel: un dato no se borra por ausencia de uso (B2).
+- Las marcas `no_visto_en_censo_<fecha>` que ya estén en `agents.notas` se conservan (las
+  escrituras de `notas` preservan las marcas ajenas, `test_s17_avatar_assignment`); ningún código
+  las lee y nada nuevo las escribe.

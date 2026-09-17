@@ -683,8 +683,8 @@ class InventoryDiscRepo:
         asignación confiable (S17 latch+avatar); por defecto None/0.
 
         `notas` deja marcada la fila con el MOTIVO de una escritura parcial —hoy sólo
-        `dueno_no_identificado_<fecha>`, misma convención que `no_visto_en_censo_<fecha>` de
-        `census_store`—. No es documentación: `_persist_disco_libre` lee esa marca para NO meter
+        `dueno_no_identificado_<fecha>`, misma convención que el `no_visto_en_censo_<fecha>` que
+        dejaba el censo de roster (retirado el 2026-09-17)—. No es documentación: `_persist_disco_libre` lee esa marca para NO meter
         la fila en el bucket de libres, porque una fila que en realidad está equipada no puede ser
         pisada por el próximo libre con la misma identidad.
         """

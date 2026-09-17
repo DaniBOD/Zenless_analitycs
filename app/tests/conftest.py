@@ -86,7 +86,7 @@ def _isolate_avatar_library(tmp_path, monkeypatch):
 @pytest.fixture(autouse=True)
 def _isolate_side_outputs(tmp_path, monkeypatch):
     """Mismo principio que la librería de avatares, para los otros tres archivos que la app
-    escribe de costado: los reportes de `audit/`, `census.db` y `metrics.db`.
+    escribe de costado: los reportes de `audit/` y `metrics.db`.
 
     Existe por un incidente real (2026-08-17): una versión temprana de los tests del cierre del
     censo no redirigía `DANIBOD_AUDIT_DIR`, y dejó dos reportes falsos en el `audit/censos/` del
@@ -94,7 +94,6 @@ def _isolate_side_outputs(tmp_path, monkeypatch):
     y silencioso — así que se redirigen todos por defecto en vez de test por test.
     """
     monkeypatch.setenv("DANIBOD_AUDIT_DIR", str(tmp_path / "audit"))
-    monkeypatch.setenv("DANIBOD_CENSUS_DB", str(tmp_path / "census.db"))
     # Ojo: `DANIBOD_METRICS` es el interruptor on/off; el PATH es `DANIBOD_METRICS_DB`.
     monkeypatch.setenv("DANIBOD_METRICS_DB", str(tmp_path / "metrics.db"))
 
@@ -269,7 +268,7 @@ def reloj_de_pared_congelado(monkeypatch):
             # Naive a propósito: es lo que devuelve el `datetime.now()` que se está sustituyendo.
             return _dt(2026, 8, 19, 14, 30, 12, 123456)  # noqa: DTZ001
 
-    for mod in ("app.core.audit_paths", "app.core.teardown_batch", "app.core.census",
-                "app.core.census_store", "app.core.roster_declaration", "app.db.connection"):
+    for mod in ("app.core.audit_paths", "app.core.teardown_batch",
+                "app.core.roster_declaration", "app.db.connection"):
         monkeypatch.setattr(importlib.import_module(mod), "datetime", _Congelado, raising=False)
     return _Congelado

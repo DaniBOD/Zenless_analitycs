@@ -319,3 +319,32 @@ def test_dos_declaraciones_en_el_mismo_segundo_no_pisan_el_backup(
         "danibod_zzz_v2.backup_predeclaracion_20260819_143012_2.db",
     ], "el segundo backup pisó al primero en vez de correrse a un nombre libre"
     assert _sha(backups[0]) == previo, "el backup más viejo ya no contiene el estado previo"
+
+
+# --- el catálogo de personajes que EXISTEN (mudado de test_census_store, 2026-09-17) ------
+
+def test_el_catalogo_toma_tambien_los_splash_arts():
+    """QA en vivo 2026-08-17: Norma es un PJ que Daniel no posee y que **no tiene** arte en
+    `avatar_refs/`, así que el censo de entonces la reportaba como "no reconocida" en vez de "no poseída".
+    Al agregarle el splash art —el paso 7 del onboarding, que Daniel ya hace— la esperada es que
+    el catálogo se entere sola.
+
+    Por eso el catálogo es la UNIÓN de las dos carpetas: `avatar_refs/` (semilla de badges) y
+    `splash_arts/`. Cuál de las dos se actualice primero no debería importar."""
+    from app.core.roster_declaration import roster_y_catalogo
+    roster, catalogo = roster_y_catalogo()
+    if not roster:
+        pytest.skip("roster DB no disponible")
+    from app.core.asset_resolver import SPLASH_ARTS_DIR
+    if not (SPLASH_ARTS_DIR / "Norma-ico.webp").exists():
+        pytest.skip("falta el splash art de Norma")
+    assert "Norma" in catalogo
+
+
+def test_el_catalogo_no_confunde_las_variantes_de_archivo_con_personajes():
+    """Cada PJ tiene `-ico` y `-extend`; son dos archivos del MISMO personaje."""
+    from app.core.roster_declaration import roster_y_catalogo
+    roster, catalogo = roster_y_catalogo()
+    if not roster:
+        pytest.skip("roster DB no disponible")
+    assert not [c for c in catalogo if c.endswith(("-ico", "-extend", "_ico", "_extend"))]

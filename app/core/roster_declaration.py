@@ -18,8 +18,9 @@ La declaración tiene tres efectos y ninguno borra nada:
 3. Un **sobrante** —en `agents` y no declarado— se marca con la fecha. Es la señal más fuerte que
    el sistema puede dar de una fila espuria, pero sigue siendo una señal (RNF-02).
 
-La escritura copia la ceremonia de `census_store.marcar_huerfanos_en_dominio`, que ya es el patrón
-validado del proyecto: gate `is_readonly()`, backup previo, transacción, los dos PRAGMA.
+La escritura copia la ceremonia que tenía `census_store.marcar_huerfanos_en_dominio` (el censo de
+roster por el menú, retirado el 2026-09-17), el patrón validado del proyecto: gate `is_readonly()`,
+backup previo, transacción, los dos PRAGMA.
 """
 from __future__ import annotations
 
@@ -115,6 +116,61 @@ class ResultadoDeclaracion:
 
 # --- el catálogo declarable -------------------------------------------------------------------
 
+# Nació en `census_store` (censo de roster por el menú, retirado el 2026-09-17). La declaración
+# era su otro usuario, y ahora el único.
+def _sin_variante(stem: str) -> str:
+    """`Norma-ico` / `Aria_extend` → el nombre del personaje. Cada PJ tiene dos archivos de arte
+    y son el MISMO personaje; el separador varía (`Aria_ico.webp` contra `Alice-ico.webp`)."""
+    for suf in ("-ico", "_ico", "-extend", "_extend"):
+        if stem.endswith(suf):
+            return stem[: -len(suf)]
+    return stem
+
+
+def roster_y_catalogo() -> tuple[list[tuple[int, str]], set[str]]:
+    """Las **dos listas distintas** que la declaración necesita, y que significan cosas distintas:
+
+    - `roster` — los que POSEÉS, de la tabla `agents`.
+    - `catalogo` — los que EXISTEN en el juego, de los stems del arte `-ico` en
+      `app/resources/avatar_refs/`, que se mantiene por delante de la posesión (Aria tenía arte
+      antes de que se la cargara).
+
+    La diferencia entre ambas es lo que el menú de personajes lista en GRIS. Sin ella, cada uno
+    de esos se reportaría como candidato a PJ nuevo en cada pasada.
+
+    El catálogo es una ayuda, no una garantía: no cubre a todos los no obtenidos (~9 grises en
+    una sola pantalla contra 5 de diferencia, medido el 2026-08-16). Lo que quede afuera se
+    reporta como "no reconocido" con las dos lecturas posibles.
+    """
+    roster: list[tuple[int, str]] = []
+    try:
+        from app.db.connection import get_connection
+        con = get_connection()
+        try:
+            roster = [(int(r[0]), str(r[1]))
+                      for r in con.execute("SELECT id, nombre FROM agents ORDER BY id")]
+        finally:
+            con.close()
+    except Exception:
+        log.exception("[roster] no se pudo leer el roster de `agents`")
+
+    catalogo: set[str] = set()
+    try:
+        from app.core.agent_identifier import _ICO_DIR
+        from app.core.asset_resolver import SPLASH_ARTS_DIR
+        from app.core.avatar_descriptor import build_name_map
+        # UNIÓN de las dos carpetas donde vive el arte de un personaje. Cuál se actualice primero
+        # no debería importar: `avatar_refs/` es la semilla de badges y `splash_arts/` el paso 7
+        # del onboarding. QA 2026-08-17: Norma tenía splash y no semilla, y el censo la reportaba
+        # como "no reconocida" en vez de "no poseída".
+        stems = [p.stem for p in _ICO_DIR.glob("*.png")]
+        stems += [_sin_variante(p.stem) for p in SPLASH_ARTS_DIR.glob("*.webp")]
+        catalogo = set(build_name_map(sorted(set(stems)), [n for _i, n in roster]).values())
+    except Exception:
+        log.exception("[roster] no se pudo leer el catálogo de arte")
+    return roster, catalogo
+
+
 def catalogo_declarable(
     *,
     roster_catalogo: tuple[Sequence[tuple[int, str]], Iterable[str]] | None = None,
@@ -122,13 +178,11 @@ def catalogo_declarable(
 ) -> list[PersonajeDeclarable]:
     """Todos los personajes que el usuario puede tildar, con su estado.
 
-    Es la **unión** del roster (`agents`) con el catálogo de arte, que es la misma que ya usa el
-    censo: `census_store.roster_y_catalogo()`. Un PJ que solo tiene arte viene sin identidad — de
+    Es la **unión** del roster (`agents`) con el catálogo de arte: `roster_y_catalogo()`. Un PJ que solo tiene arte viene sin identidad — de
     Hugo se sabe el nombre y nada más, y rellenar el resto con algo plausible sería justo lo que
     RNF-02 prohíbe.
     """
     if roster_catalogo is None:
-        from app.core.census_store import roster_y_catalogo
         roster, catalogo = roster_y_catalogo()
     else:
         roster, catalogo = roster_catalogo
