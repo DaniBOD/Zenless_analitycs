@@ -3,12 +3,30 @@ Repositorios read-only para el scoring engine (Hito 2.1.3).
 Los writes los hacen sync_equip.py / sync_upgrade.py con sus propias transacciones.
 """
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.core.parser_disc import DiscParsed
+
+log = logging.getLogger(__name__)
+
+#: Rol de `agents.rol` → código de `disc_archetypes`. Módulo y no local de `_load` para que los tests
+#: puedan afirmar sobre la tabla misma.
+ARCHETYPES_BY_ROLE: dict[str, str] = {
+    "Ataque":        "ATK_DPS",
+    "Anomalía":      "ANOMALY",
+    "Aturdimiento":  "STUN",
+    "Soporte":       "SUPPORT_ER",
+    "Defensa":       "DEFENSE",
+    "Disruptivos":   "HP_DISRUPT",
+    "Armero":        "ARMORER_DEF",   # Claret Flint, v3.2 (mig 35): escala con DEF y crit
+}
+_ARQUETIPO_POR_DEFECTO = "ATK_DPS"
+#: Roles ya avisados como desconocidos: un aviso por rol por proceso, no uno por recarga.
+_ROLES_SIN_ARQUETIPO_AVISADOS: set[str] = set()
 
 
 #: Prefijo de la marca que distingue "alguien lo tiene y no sé quién" de un disco realmente
@@ -308,15 +326,6 @@ class AgentRepo:
             return
         self._cache = {}
 
-        archetypes_by_role = {
-            "Ataque":        "ATK_DPS",
-            "Anomalía":      "ANOMALY",
-            "Aturdimiento":  "STUN",
-            "Soporte":       "SUPPORT_ER",
-            "Defensa":       "DEFENSE",
-            "Disruptivos":   "HP_DISRUPT",
-        }
-
         arch_rows = {
             r["code"]: r["id"]
             for r in self._con.execute("SELECT id, code FROM disc_archetypes")
@@ -337,7 +346,18 @@ class AgentRepo:
         for r in self._con.execute(
             "SELECT id, nombre, rol, set_4p_id, set_2p_id, protected_build FROM agents"
         ):
-            arch_code = archetypes_by_role.get(r["rol"], "ATK_DPS")
+            arch_code = ARCHETYPES_BY_ROLE.get(r["rol"])
+            if arch_code is None:
+                # Un rol sin arquetipo caía en silencio a ATK_DPS. Con Claret (Armero, v3.2) eso
+                # habría sido el peor error posible: ATK_DPS penaliza DEF% con -1.0 y ella escala
+                # con DEF. El fallback se mantiene —abstenerse dejaría al PJ sin scoring—, pero se
+                # anuncia: un rol nuevo llega con cada patch y tiene que verse.
+                arch_code = _ARQUETIPO_POR_DEFECTO
+                if r["rol"] not in _ROLES_SIN_ARQUETIPO_AVISADOS:
+                    _ROLES_SIN_ARQUETIPO_AVISADOS.add(r["rol"])
+                    log.warning("[scoring] rol %r sin arquetipo (PJ %s): se usa %s por defecto — "
+                                "agregarlo a ARCHETYPES_BY_ROLE", r["rol"], r["nombre"],
+                                _ARQUETIPO_POR_DEFECTO)
             arch_id = arch_rows.get(arch_code, 1)
             t_equip, t_upgrade = thresholds.get(r["id"], (0.75, 0.50))
             self._cache[r["id"]] = Agent(
