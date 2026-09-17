@@ -69,7 +69,13 @@ Este documento describe el modelo relacional completo de la base, post-aplicaci�
 > mapeo pantalla→estándar.
 >
 > **Dominio de `agents.rol`** (TEXT libre, sin CHECK): `Ataque` · `Aturdimiento` ·
-> `Anomalía` · `Soporte` · `Defensa` · `Disruptivos` (Rupture).
+> `Anomalía` · `Soporte` · `Defensa` · `Disruptivos` (Rupture) · `Armero` (Armorer, v3.2, mig 35).
+> Cada rol necesita su entrada en `repositories.ARCHETYPES_BY_ROLE`: uno sin entrada cae a
+> `ATK_DPS` y lo avisa en el log.
+>
+> **Columnas del Armero** (mig 35, 2026-09-17): `agents.dano_laceracion REAL` (% en enteros, como
+> `prob_critico`) y `agents.acumulacion_afiladura REAL` (multiplicador crudo, como `rec_energia`).
+> NULL para todo rol que no sea Armero. La ficha S18 del Armero no muestra ATK: `ataque` queda NULL.
 
 ### Capa 2 — Inventarios
 
@@ -91,7 +97,7 @@ Este documento describe el modelo relacional completo de la base, post-aplicaci�
 
 | Tabla | Filas iniciales | Descripción |
 |-------|-----------------|-------------|
-| `disc_archetypes` | 6 (seed) | ATK_DPS, HP_DISRUPT, ANOMALY, STUN, SUPPORT_ER, DEFENSE con pesos JSON |
+| `disc_archetypes` | 6 (seed) · 7 desde mig 35 | ATK_DPS, HP_DISRUPT, ANOMALY, STUN, SUPPORT_ER, DEFENSE con pesos JSON; `ARMORER_DEF` (DEF + crit) agregado para el rol Armero |
 | `disc_set_archetype` | 31 (26 sets + 5 dobles) | Mapping N:M con `prioridad` (1=primario, 2=secundario) |
 | `inventory_disc_evaluations` | 0 | Histórico de recomendaciones del scoring engine. Crece con uso |
 
