@@ -3657,7 +3657,14 @@ class Monitor:
             return
         # Maduró pero el dueño no resolvió y aún hay margen de ciclos → DIFERIR (warmup): el
         # badge tiene más cadencias para localizar antes de emitir sin dueño.
-        if mature and not ceiling and merged.agente_asignado_nombre is None:
+        # Un disco ya AFIRMADO libre no entra: no hay dueño que esperar. El criterio ya estaba escrito
+        # en la SALIDA del warmup ("reintentar el badge de un disco que YA se afirmó libre es esperar
+        # algo que no va a aparecer"), pero no en la entrada, así que cada LIBRE pagaba una pasada
+        # extra entrando para salir en la siguiente. Medido en la Pasada A (2026-09-16): los 2 libres
+        # dieron `(agg 2c · 0 desc · 1 warm)` contra `(agg 1c · 0 desc · 0 warm)` de los 8 con dueño.
+        # S17 no tenía el problema: entra por `_s17_owner_resolved`, que ya cuenta a `equip_libre`.
+        if (mature and not ceiling and merged.agente_asignado_nombre is None
+                and not merged.equip_libre):
             self._s9_warming = True
             self._frescura_disco_warm = True   # este disco ESPERÓ: se mide aparte
             return

@@ -355,6 +355,23 @@ def test_un_disco_afirmado_LIBRE_no_consulta_el_detalle(monkeypatch):
     assert llamadas == []
 
 
+def test_un_disco_LIBRE_maduro_se_emite_en_el_mismo_despacho():
+    """Un LIBRE no espera un dueño que no existe. Captura REAL y handler REAL.
+
+    Hasta el 2026-09-16 la entrada al warmup de S9 sólo miraba `agente_asignado_nombre is None`: un
+    disco maduro y afirmado libre entraba igual y recién la pasada siguiente lo dejaba salir. Sobre
+    esta misma captura, el código viejo daba: maduro, libre, **0 emitidos y `warming=True`**. En la
+    Pasada A los 2 libres pagaron exactamente esa pasada extra (`agg 2c · 1 warm`)."""
+    from app.core.detector import ScreenState
+    fr = _frame_o_skip("Ejemplo_2")                      # libre, etiquetado en test_s9_badge_libre
+    emitidos = []
+    mon = _monitor(on_disc=lambda d, st: emitidos.append(d))
+    mon._dispatch_state(fr, ScreenState("S9", 1.0, "s9_inventario"))
+    assert len(emitidos) == 1, "un LIBRE maduro tiene que salir en el primer despacho"
+    assert emitidos[0].equip_libre is True and emitidos[0].agente_asignado_nombre is None
+    assert mon._s9_warming is False and mon._s9_warm_checks == 0
+
+
 def test_sin_avatar_en_el_detalle_no_se_inventa_dueno(monkeypatch):
     import app.core.monitor as m
     monkeypatch.setattr(m, "crop_s9_detail_badge", lambda f: None)
