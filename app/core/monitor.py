@@ -829,6 +829,14 @@ class Monitor:
         n = metrics.flush()
         if n:
             log.info("[metrics] %d muestras de latencia volcadas a %s", n, metrics.db_path())
+        # La caché del header entre clasificaciones (S9/S30) no se ve en ninguna métrica de latencia
+        # por sí sola: si nunca acierta —porque el header cambia de píxeles entre frames—, no gana nada
+        # y hay que saberlo. Una línea por sesión alcanza.
+        estadisticas = getattr(self._detector, "estadisticas_cache_header", None)
+        if callable(estadisticas):
+            aciertos, fallos = estadisticas()
+            if aciertos or fallos:
+                log.info("[header-cache] aciertos=%d fallos=%d", aciertos, fallos)
         log.info("Monitor detenido · pedido desde: %s", origen)
 
     def toggle_pause(self) -> bool:
