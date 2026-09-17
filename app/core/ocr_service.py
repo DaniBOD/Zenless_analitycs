@@ -303,9 +303,18 @@ class OcrProxy(OcrBackend):
         # desde el punto de vista del llamador, ida y vuelta por el socket incluida.
         return self._despachar("text", (img, psm, lang), ("", 0.0))
 
+    # `number` y `text_with_bboxes` se miden en superficies APARTE de `ocr_text`, y no es por
+    # prolijidad. Hasta el 2026-09-16 SÓLO `text` estaba instrumentado, y `text_with_bboxes` es el OCR
+    # PRINCIPAL del pipeline: el panel de S9 y S17, el de S26, S3, S10, desmontaje y extracción. Medido
+    # offline sobre el panel de S9: 735 ms contra 89 de una lectura de texto (8,2×). O sea que
+    # `ocr_text` estuvo reportando la parte CHICA del OCR en todas las sesiones, y el resto aparecía
+    # como tiempo sin explicación — ~1,5 s por disco en la Pasada A del censo, ~2,5 s por arma en S26.
+    # Separadas, `ocr_text` conserva su serie histórica comparable (C1) y cada costo se lee solo.
+    @measure_latency("ocr_number")
     def number(self, img: np.ndarray) -> tuple[float, float]:
         return self._despachar("number", (img,), (0.0, 0.0))
 
+    @measure_latency("ocr_bboxes")
     def text_with_bboxes(self, img: np.ndarray):
         return self._despachar("text_with_bboxes", (img,), [])
 

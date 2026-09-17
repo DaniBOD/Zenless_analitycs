@@ -44,6 +44,8 @@ _PRESUPUESTO = {
     "loop_period": 150.0,
 }
 
+# `ocr_bboxes` y `ocr_number` (medidas desde el 2026-09-16) tampoco tienen presupuesto en QA-06 y
+# quedan sin declarar por la misma razón de abajo.
 # `s17_owner_sample` queda SIN presupuesto a propósito: no hay ninguno declarado en QA-06 y ponerle
 # uno inventado sería exactamente lo que RNF-02 prohíbe. Lo que interesa de él es su peso RELATIVO
 # dentro de `loop_period`, que se lee comparando los dos p50.
