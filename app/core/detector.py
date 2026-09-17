@@ -2604,6 +2604,14 @@ def polling_cadence_ms(state: ScreenState) -> int:
     real dura ~4,05 s porque el procesamiento (OCR) tarda más que la cadencia, así que el sleep ya
     era CERO. Bajarla de 1500 a 700 ms dio exactamente los mismos 16 ciclos por 65 s. Para acelerar
     S9 hay que atacar el procesamiento, no este número.
+
+    ⚠️ **Esa conclusión tenía fecha de vencimiento, y venció** (2026-09-16). Valía porque `classify`
+    tardaba 4189 ms; después del pase grueso (`3a5889a`) el loop en S9 corre a ~1 s por pasada, por
+    DEBAJO de 1500, y la cadencia pasó a ser el límite: ~1 s de los ~3,1 s entre el click y la línea
+    del log era esperar a que este número habilitara el despacho, con el disco ya visto. Por eso S9
+    ya no depende de esta cadencia para leer un disco NUEVO: lo lee el despacho rápido con
+    confirmación de panel quieto (`Monitor._s9_confirmar_pendiente`). Una premisa escrita en un
+    comentario no avisa cuando deja de ser cierta — había que medirla otra vez, no heredarla.
     """
     cadence = {
         "S1":  4000, "S2":  1000, "S3":   500, "S4":  4000,

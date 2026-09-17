@@ -100,8 +100,10 @@ _S9_POS_TOL_F = 0.5
 _AVATAR_X_TOL = 0.025
 # Identidad de detalle (S8/S19) por DESCRIPTOR PRIMARIO: nº mínimo de frames CONFIABLES
 # (matches no-abstenidos) del avatar de la barra superior antes de fijar la identidad. La
-# votación multi-frame evita clavarse en un frame malo (esquina del slider/animación); 2 es
-# ~0.2 s al loop rápido (10 fps) → robusto y responsivo. Espejo de _S17_OWNER_MIN_SAMPLES.
+# votación multi-frame evita clavarse en un frame malo (esquina del slider/animación). Espejo de
+# _S17_OWNER_MIN_SAMPLES. Se escribió "2 es ~0.2 s al loop rápido (10 fps)"; medido el 2026-09-16
+# el loop corre a ~2,5 fps en menús (p50 391 ms), así que 2 pasadas son ~0,8 s, no 0,2. Cuenta
+# pasadas, no tiempo: si el loop se pone lento, esto se estira en silencio (ver `_FAST_CAPTURE_MS`).
 _DETAIL_MIN_SAMPLES = 2
 
 # Confianza mínima de un estado NO-detalle para resetear el latch de identidad.
@@ -226,7 +228,11 @@ _S5_EVOKED_TTL_S = 600.0
 # Acotado: si el dueño no aparece tras el warmup (o se llega al techo de ciclos), emite igual
 # (incierto/libre, RNF-02 abstención). Los equipados (latch certero) y los ya-votados NO
 # esperan → cero latencia extra; el costo se paga solo donde había riesgo de incierto.
-_S17_OWNER_MIN_SAMPLES = 4     # pasadas del loop rápido para "calentar" el voto del dueño
+# Pasadas del loop rápido para "calentar" el voto del dueño. PASADAS, no tiempo: el diseño asumía
+# 10 fps (4 pasadas ≈ 0,4 s), y medido el 2026-09-16 el loop corre a ~2,5 fps en menús y ~1 fps en
+# S9, así que la espera real es varias veces mayor. En S17 no se cambió (no tiene baseline y no está
+# en el camino del censo); en S9 los libres dejaron de entrar al warmup.
+_S17_OWNER_MIN_SAMPLES = 4
 _S17_WARM_CADENCE_MS = 100     # mientras calienta, re-chequear el voto rápido (no esperar 1s)
 # Despacho rápido de S9 (2026-09-16): pasadas SEGUIDAS en que la firma del disco recién visto puede
 # seguir cambiando antes de abandonar la confirmación y volver a la cadencia de siempre. La firma de
@@ -338,7 +344,13 @@ from app.core.owner_vote import (  # noqa: E402
 from app.core.owner_vote import DETAIL as _SURF_DET, GRID as _SURF_GRID  # noqa: E402
 
 # Intervalo de captura rápida (entre frames para buffer, sin procesar)
-_FAST_CAPTURE_MS = 100  # 10 fps — MSS captura en ~20ms, template match en ~50ms
+# Espera entre capturas rápidas. NO es el período del loop: el período es esta espera MÁS lo que
+# tarda la pasada. El comentario original decía "10 fps — MSS captura en ~20ms, template match en
+# ~50ms", y esos números vencieron. Medido el 2026-09-16 (`loop_period`, `capturer`, `detector`):
+# captura p50 44 ms; classify p50 193 ms en menús y 499 ms en S9 (el OCR del header, 315 ms, se
+# releía en cada pasada hasta la caché por contenido); período p50 391 ms en menús (~2,5 fps) y
+# ~1 s en S9. Todo lo que se cuente en "pasadas del loop" hereda esos tiempos, no los 100 ms.
+_FAST_CAPTURE_MS = 100
 
 
 @dataclass
