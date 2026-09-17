@@ -126,8 +126,10 @@ def score_disco(
             subs_neg.append(SubstatContrib(stat, val, rolls, peso, contrib))
             score += contrib
 
-    # 4. Nivel bonus
-    nivel_bonus = min(ctx.nivel_bonus_max, disc.nivel / 30.0)
+    # 4. Nivel bonus. Un nivel SIN LEER (None desde la Fase 3) no suma: premiar un nivel que no
+    #    se vio sería puntuar una suposición, y castigarlo tampoco corresponde — vale 0, igual que
+    #    un disco en Nivel 0 de verdad, y el disco se distingue igual por sus substats.
+    nivel_bonus = 0.0 if disc.nivel is None else min(ctx.nivel_bonus_max, disc.nivel / 30.0)
     score += nivel_bonus
 
     # 5. Normalizar

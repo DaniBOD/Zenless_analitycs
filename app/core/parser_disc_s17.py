@@ -438,7 +438,9 @@ def _parse_s17_from_lines(
     confs: list[float] = []
 
     # --- Nivel: 'Nivel N/15' (el '/15' lo distingue de los 'Nivel 15' del grid) ---
-    nivel = 0
+    # `None` mientras no se lea: un disco recién dropeado SÍ está en Nivel 0 (con 3 o 4 substats),
+    # así que el 0 no puede significar además "no lo leí" (Fase 3, 2026-09-17).
+    nivel: int | None = None
     for ln in detail:
         m = _RE_NIVEL.search(_strip(ln.txt).lower())
         if m:
@@ -981,8 +983,15 @@ def disc_is_mature(d: DiscParsed | None) -> bool:
     Conteo de substats por NIVEL (regla ZZZ): un disco a Nivel 0-2 puede tener solo 3
     substats (el 4º se desbloquea a +3). Exigir 4 siempre dejaba a esos discos de bajo
     nivel SIN capturar nunca (no maduran → solo emitían al techo de ciclos, que el usuario
-    no alcanza) — QA 2026-06-27, Salón huracanado slot 1 Nv0 de Velina. Con nivel >= 3 o
-    desconocido se siguen exigiendo 4 (protege contra lecturas OCR parciales)."""
+    no alcanza) — QA 2026-06-27, Salón huracanado slot 1 Nv0 de Velina. Con nivel >= 3 se siguen
+    exigiendo 4 (protege contra lecturas OCR parciales). Un S puede salir con 4 desde Nv0, y por
+    eso el conteo es un MÍNIMO: verificado en `17_…_libres/Ejemplo_7_(reemplazar)`.
+
+    **El nivel es REQUISITO desde 2026-09-17 (Fase 3).** Antes se iniciaba en 0, así que un disco
+    cuyo nivel no se leyó maduraba con el 0 puesto — son las 23 filas en Nivel 0 que no se pueden
+    verificar. Ahora un nivel desconocido (`None`) NO madura: se sigue fusionando y, si nunca se
+    lee, la emisión igual ocurre al techo de ciclos (best-effort), pero con el nivel en NULL y
+    marcado, en vez de inventado."""
     if d is None:
         return False
     if not (d.set_name_canon or d.set_name_raw):
@@ -991,7 +1000,9 @@ def disc_is_mature(d: DiscParsed | None) -> bool:
         return False
     if d.main_valor is None:
         return False
-    expected = 3 if (d.nivel is not None and 0 <= d.nivel < 3) else 4
+    if d.nivel is None:
+        return False
+    expected = 3 if 0 <= d.nivel < 3 else 4
     if len(d.subs) < expected:
         return False
     return all(s.valor is not None and (s.nombre_canon or s.nombre_raw) for s in d.subs[:expected])
@@ -1038,7 +1049,7 @@ class DiscAggregator:
         if new.main_valor is not None:
             b.main_valor = new.main_valor
             b.main_unidad = new.main_unidad
-        if new.nivel:
+        if new.nivel is not None:
             b.nivel = new.nivel
         if new.rareza and new.rareza != "?":
             b.rareza = new.rareza

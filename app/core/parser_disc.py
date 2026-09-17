@@ -69,7 +69,10 @@ class DiscParsed:
     main_stat_canon: str | None
     main_valor: float | None
     main_unidad: str | None  # 'flat' | '%'
-    nivel: int
+    #: `None` = el OCR NO leyó el nivel. `0` es un valor REAL (un disco recién dropeado está en
+    #: Nivel 0/15, y puede tener 4 substats: verificado en `17_…_libres/Ejemplo_7_(reemplazar)`).
+    #: Colapsarlos costaba 23 filas indistinguibles en el inventario (2026-08-30).
+    nivel: int | None
     rareza: str              # 'S' | 'A' | 'B' | '?'
     subs: list[SubstatParsed] = field(default_factory=list)
     confianza_global: float = 0.0
@@ -115,14 +118,15 @@ def _parse_titulo(raw: str) -> tuple[str, int]:
     return m.group(1).strip(), int(m.group(2))
 
 
-def _parse_nivel(raw: str) -> int:
-    """Extrae el nivel de una cadena como 'Nivel 7/15'."""
+def _parse_nivel(raw: str) -> int | None:
+    """Extrae el nivel de una cadena como 'Nivel 7/15'. `None` si no hay número que leer:
+    abstenerse no es lo mismo que decir 0 (RNF-02)."""
     m = _RE_NIVEL.search(raw)
     if m:
         return int(m.group(1))
     # Fallback: primer entero suelto
     m2 = re.search(r"\d+", raw)
-    return int(m2.group()) if m2 else 0
+    return int(m2.group()) if m2 else None
 
 
 def _parse_substat_line(raw: str) -> tuple[str, int, float | None, str | None]:
@@ -207,12 +211,14 @@ def parse_modal_detalle(
 
     # --- Nivel ---
     # En S10 (upgrade) NO hay un campo "Nivel X/15" textual; se infiere de exp_actual.
-    nivel = 0
+    nivel: int | None = None
     if state_code == "S10":
         try:
             roi_exp = crop_named_roi(frame, section, "exp_actual")
             exp_raw, c_exp = ocr.text(roi_exp, psm=7)
-            nivel = _parse_nivel(exp_raw) if "/" in exp_raw else (int(re.search(r"\d+", exp_raw).group()) if re.search(r"\d+", exp_raw) else 0)
+            nivel = (_parse_nivel(exp_raw) if "/" in exp_raw
+                     else (int(re.search(r"\d+", exp_raw).group())
+                           if re.search(r"\d+", exp_raw) else None))
             confianzas.append(c_exp)
         except Exception:
             pass

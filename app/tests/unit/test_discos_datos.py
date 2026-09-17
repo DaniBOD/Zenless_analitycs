@@ -80,6 +80,16 @@ def test_dueno_solo_si_esta_equipado(con):
     assert f[11].dueno is None
 
 
+def test_un_nivel_NULL_llega_como_none_y_no_como_cero(con):
+    """Fase 3: `int(r[24] or 0)` convertía el "no lo leí" en Nivel 0, que es un estado REAL y
+    distinto (un disco recién dropeado). La pantalla tiene que poder decir los tres casos."""
+    _disco(con, 20, 1, 4, nivel=None)
+    _disco(con, 21, 1, 4, nivel=0)
+    filas = {x.id: x for x in leer_inventario(con)}
+    assert filas[20].nivel is None
+    assert filas[21].nivel == 0
+
+
 def test_formato_con_la_unidad_guardada():
     assert formatear_valor(30.0, "%") == "30%"
     assert formatear_valor(184.0, "flat") == "184"

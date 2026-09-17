@@ -18,6 +18,9 @@ from app.ui.live.item_card import TENENCIA_TEXTO
 
 #: Nivel de un disco que no está en 15: se tiñe, como el nivel ≠ 60 del Roster.
 AMBAR_NIVEL = "#F0AA3C"
+#: Lo que se muestra cuando el nivel NO se leyó (NULL). Un 0 diría que el disco está en Nivel 0,
+#: que es un estado real y distinto — la misma separación que Armas hace con "sin leer".
+NIVEL_SIN_LEER = "—"
 ICONO = 18
 
 COLUMNAS = ["#ID", "SET", "SL", "MAIN", "SUBS", "ROLLS", "NV", "ASIGNADO A", "ESTADO"]
@@ -32,7 +35,7 @@ def _clave_orden(col: int):
         C_MAIN: lambda f: ((f.main or "").casefold(), f.main_valor or 0),
         C_SUBS: lambda f: len(f.subs),
         C_ROLLS: lambda f: f.rolls_total,
-        C_NV: lambda f: (f.nivel, f.id),
+        C_NV: lambda f: (-1 if f.nivel is None else f.nivel, f.id),
         C_DUENO: lambda f: (f.dueno is None, (f.dueno or "").casefold()),
         C_ESTADO: lambda f: (f.libre, f.id),
     }[col]
@@ -96,7 +99,7 @@ class ModeloDiscos(QAbstractTableModel):
                 C_MAIN: f"{f.main or '—'} {formatear_valor(f.main_valor, f.main_unidad)}",
                 C_SUBS: subs_texto(f),
                 C_ROLLS: str(f.rolls_total),
-                C_NV: str(f.nivel),
+                C_NV: NIVEL_SIN_LEER if f.nivel is None else str(f.nivel),
                 C_DUENO: f.dueno or "—",
                 C_ESTADO: TENENCIA_TEXTO["equipada" if f.equipado else "libre"][0],
             }[col]
@@ -110,6 +113,8 @@ class ModeloDiscos(QAbstractTableModel):
         if role == Qt.ItemDataRole.ForegroundRole:
             if col == C_ESTADO:
                 return QBrush(QColor(TENENCIA_TEXTO["equipada" if f.equipado else "libre"][1]))
+            if col == C_NV and f.nivel is None:
+                return QBrush(QColor(T.TEXT_DIM))        # sin leer ≠ nivel bajo
             if col == C_NV and f.nivel != 15:
                 return QBrush(QColor(AMBAR_NIVEL))
             if col == C_ID:

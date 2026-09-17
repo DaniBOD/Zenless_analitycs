@@ -36,7 +36,9 @@ class FilaDisco:
     #: (nombre, valor, unidad, rolls) — sólo los que existen: 3 o 4
     subs: tuple[tuple[str, float | None, str | None, int], ...]
     rolls_total: int
-    nivel: int
+    #: `None` = el OCR no lo leyó (Fase 3). No es lo mismo que Nivel 0, que es un disco recién
+    #: dropeado; mostrarlos igual es lo que dejó 23 filas indistinguibles.
+    nivel: int | None
     equipado: bool
     dueno: str | None
     dueno_id: int | None
@@ -75,7 +77,7 @@ def leer_inventario(con: sqlite3.Connection, disco_id: int | None = None) -> lis
         salida.append(FilaDisco(
             id=r[0], set=r[1], set_id=r[2], set_en=r[3], slot=r[4], main=r[5], main_valor=r[6],
             main_unidad=r[7], subs=tuple(subs), rolls_total=sum(s[3] for s in subs),
-            nivel=int(r[24] or 0), equipado=equipado,
+            nivel=None if r[24] is None else int(r[24]), equipado=equipado,
             dueno=r[26] if equipado else None, dueno_id=r[27] if equipado else None,
         ))
     return salida

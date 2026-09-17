@@ -1639,7 +1639,9 @@ class Monitor:
             f"{('+' + str(s.rolls)) if s.rolls else ''} {s.valor if s.valor is not None else '?'}"
             for s in (disc.subs or [])
         )
-        return f"{nombre} ({disc.slot}) Nv{disc.nivel} · {main} {disc.main_valor}{uni} · {subs}"
+        # `Monitor._nv`, no `self._nv`: esto es un @staticmethod y no recibe `self` (la Fase 3 metió
+        # acá una llamada de instancia y tiró los 9 tests del desmontaje).
+        return f"{nombre} ({disc.slot}) Nv{Monitor._nv(disc.nivel)} · {main} {disc.main_valor}{uni} · {subs}"
 
     def _resolve_set_id_safe(self, raw: str | None) -> int | None:
         """`set_id` del catálogo, o None. Lectura pura: la bitácora no escribe la DB (RNF-01)."""
@@ -2693,7 +2695,7 @@ class Monitor:
             return
         self._s22_disc_ids.add(identity)
 
-        partes = [f"[disco] {set_disp} · slot {d.slot}", f"nivel {d.nivel}/15"]
+        partes = [f"[disco] {set_disp} · slot {d.slot}", f"nivel {self._nv(d.nivel)}/15"]
         main = d.main_stat_canon or d.main_stat_raw
         if main:
             partes.append(self._fmt_stat(main, d.main_valor, d.main_unidad))
@@ -3679,9 +3681,9 @@ class Monitor:
         # línea. Un disco que el dedup saltea no imprime nada: no hay evento que cronometrar.
         self._cerrar_frescura_disco()
         log.info(
-            "Disco detectado: set=%s slot=%d main=%s nivel=%d %s conf=%.2f (agg %dc%s)",
+            "Disco detectado: set=%s slot=%d main=%s nivel=%s %s conf=%.2f (agg %dc%s)",
             merged.set_name_canon or merged.set_name_raw, merged.slot,
-            merged.main_stat_canon or merged.main_stat_raw, merged.nivel, tenencia,
+            merged.main_stat_canon or merged.main_stat_raw, self._nv(merged.nivel), tenencia,
             merged.confianza_global, self._disc_agg_cycles,
             "" if mature else " best-effort",
         )
@@ -3998,10 +4000,10 @@ class Monitor:
         # Entre paréntesis, el diagnóstico de la espera: ciclos fusionados, lecturas descartadas por
         # frame de transición y re-chequeos del warmup. Mismo lugar que el `(agg Nc)` de S17.
         log.info(
-            "Disco S9 detectado: set=%s slot=%d main=%s nivel=%d %s conf=%.2f "
+            "Disco S9 detectado: set=%s slot=%d main=%s nivel=%s %s conf=%.2f "
             "(agg %dc · %d desc · %d warm%s)",
             merged.set_name_canon or merged.set_name_raw, merged.slot,
-            merged.main_stat_canon or merged.main_stat_raw, merged.nivel, tenencia,
+            merged.main_stat_canon or merged.main_stat_raw, self._nv(merged.nivel), tenencia,
             merged.confianza_global, self._s9_agg_cycles, self._s9_rechazos,
             self._s9_warm_checks, "" if disc_is_mature(merged) else " best-effort",
         )
@@ -4382,9 +4384,9 @@ class Monitor:
         # que hay. (S3 fue display-only hasta el 2026-09-05; antes esto daba igual.)
         merged.equip_libre = True
         log.info(
-            "Disco S3 (drop) detectado: set=%s slot=%d main=%s nivel=%d conf=%.2f",
+            "Disco S3 (drop) detectado: set=%s slot=%d main=%s nivel=%s conf=%.2f",
             merged.set_name_canon or merged.set_name_raw, merged.slot,
-            merged.main_stat_canon or merged.main_stat_raw, merged.nivel,
+            merged.main_stat_canon or merged.main_stat_raw, self._nv(merged.nivel),
             merged.confianza_global,
         )
         if self._on_disc:
@@ -4562,9 +4564,9 @@ class Monitor:
         self._s5_emitted_ids.add(identity)
         self._last_emitted_identity = identity
         log.info(
-            "Disco S5 (afinación) detectado: set=%s slot=%d main=%s nivel=%d conf=%.2f",
+            "Disco S5 (afinación) detectado: set=%s slot=%d main=%s nivel=%s conf=%.2f",
             merged.set_name_canon or merged.set_name_raw, merged.slot,
-            merged.main_stat_canon or merged.main_stat_raw, merged.nivel,
+            merged.main_stat_canon or merged.main_stat_raw, self._nv(merged.nivel),
             merged.confianza_global,
         )
         if self._on_disc:
@@ -5540,6 +5542,12 @@ class Monitor:
         except Exception:
             log.debug("grid_diag dump falló", exc_info=True)
 
+    @staticmethod
+    def _nv(nivel: int | None) -> str:
+        """El nivel para el log: `?` cuando no se leyó. Desde la Fase 3 (2026-09-17) `nivel` puede
+        ser None, y un `%d` con None revienta la línea entera."""
+        return "?" if nivel is None else str(nivel)
+
     def _log_id_diag(self, merged, identity: str) -> None:
         """Una línea por disco emitido con el desglose de identificación (L.0, gated
         DANIBOD_ID_DIAG): localización + match de grid vs detalle, voto ganador y dueño
@@ -5917,11 +5925,11 @@ class Monitor:
                         log.exception("Error en on_disc_rejected")
                 return
             log.info(
-                "Disco detectado: set=%s slot=%d main=%s nivel=%d conf=%.2f",
+                "Disco detectado: set=%s slot=%d main=%s nivel=%s conf=%.2f",
                 disc.set_name_canon or disc.set_name_raw,
                 disc.slot,
                 disc.main_stat_canon or disc.main_stat_raw,
-                disc.nivel,
+                self._nv(disc.nivel),
                 disc.confianza_global,
             )
             if self._on_disc:

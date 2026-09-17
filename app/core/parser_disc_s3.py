@@ -218,7 +218,7 @@ def _parse_s3_from_lines(lines, W, H, frame=None, ocr=None,
     confs: list[float] = []
 
     # --- Nivel ---
-    nivel = 0
+    nivel: int | None = None
     for ln in detail:
         m = _RE_NIVEL.search(_strip(ln.txt).lower())
         if m:

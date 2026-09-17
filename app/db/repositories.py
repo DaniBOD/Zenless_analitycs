@@ -36,6 +36,13 @@ _ROLES_SIN_ARQUETIPO_AVISADOS: set[str] = set()
 #: usa está en este módulo: el que define el término es el que lo lee.
 MARCA_DUENO_INCIERTO = "dueno_no_identificado"
 
+#: Marca de una fila cuyo NIVEL no se pudo leer (Fase 3, 2026-09-17). Hasta entonces el parser
+#: iniciaba `nivel` en 0 y un disco sin leer se guardaba como "Nivel 0" — indistinguible de un
+#: disco recién dropeado, que SÍ está en Nivel 0. Como toda marca provisional, tiene SALIDA:
+#: `update_from_parsed` la saca cuando el nivel por fin se lee (B2: una marca que sobrevive a su
+#: propia condición envenena al que la cuenta).
+MARCA_NIVEL_NO_LEIDO = "nivel_no_leido"
+
 
 def _sin_marca_dueno_incierto(notas: str | None) -> str | None:
     """`notas` sin la marca de dueño incierto, conservando lo demás. `None` si no queda nada.
@@ -48,6 +55,14 @@ def _sin_marca_dueno_incierto(notas: str | None) -> str | None:
         return None
     partes = [p.strip() for p in notas.split("|")]
     quedan = [p for p in partes if p and MARCA_DUENO_INCIERTO not in p]
+    return " | ".join(quedan) or None
+
+
+def _sin_marca(notas: str | None, marca: str) -> str | None:
+    """`notas` sin los tokens que contengan `marca`, conservando lo demás."""
+    if not notas:
+        return None
+    quedan = [p.strip() for p in notas.split("|") if p.strip() and marca not in p]
     return " | ".join(quedan) or None
 
 
@@ -106,7 +121,9 @@ class Disc:
     main_valor: float | None
     main_unidad: str | None
     subs: list[tuple[str, float | None, str | None, int]]  # (canon, val, unidad, rolls)
-    nivel: int
+    #: `None` = la fila no tiene el nivel leído (Fase 3). Distinto de 0, que es un disco recién
+    #: dropeado. La conversión `or 0` que había acá volvía a colapsar los dos casos al LEER.
+    nivel: int | None
     equipado: int
     agente_asignado: int | None
     # Por qué la fila está sin dueño, cuando lo está. Dos filas con `agente_asignado` NULL se ven
@@ -453,7 +470,7 @@ class InventoryDiscRepo:
         vez de quedarse callado con el primero que salga (RNF-02).
         """
         rows = self._con.execute(
-            "SELECT * FROM inventory_discs WHERE set_id=? AND slot=? AND nivel=? AND descartado=0",
+            "SELECT * FROM inventory_discs WHERE set_id=? AND slot=? AND nivel IS ? AND descartado=0",
             (set_id, p.slot, p.nivel),
         ).fetchall()
         out: list[Disc] = []
@@ -461,7 +478,19 @@ class InventoryDiscRepo:
             d = self._row_to_disc(r)
             if self.row_matches_parsed_identity(d, p, set_id):
                 out.append(d)
-        return out
+        if out or p.nivel is None:
+            return out
+        # SALIDA del estado provisional (B2). Si no hubo match y AHORA sí se leyó el nivel, puede
+        # existir una fila de este mismo disco guardada con el nivel en NULL (Fase 3). Es el mismo
+        # disco en los otros once campos de identidad, así que se adopta y el caller la ACTUALIZA
+        # —sacándole la marca— en vez de abrir una fila nueva y dejar la vieja de fantasma.
+        rows = self._con.execute(
+            "SELECT * FROM inventory_discs WHERE set_id=? AND slot=? AND nivel IS NULL "
+            "AND descartado=0",
+            (set_id, p.slot),
+        ).fetchall()
+        return [d for d in (self._row_to_disc(r) for r in rows)
+                if self.row_matches_parsed_identity(d, p, set_id, ignorar_nivel=True)]
 
     def find_equipped_by_agent_slot(self, agente_id: int, slot: int) -> "Disc | None":
         """
@@ -520,7 +549,7 @@ class InventoryDiscRepo:
             (s.nombre_canon or s.nombre_raw, s.rolls) for s in (p.subs or [])
         )
         rows = self._con.execute(
-            "SELECT * FROM inventory_discs WHERE set_id=? AND slot=? AND nivel=? AND descartado=0 "
+            "SELECT * FROM inventory_discs WHERE set_id=? AND slot=? AND nivel IS ? AND descartado=0 "
             "AND (? IS NULL OR id<>?) AND ("
             "  (equipado=1 AND agente_asignado IS NOT NULL AND (? IS NULL OR agente_asignado<>?)) "
             "  OR (equipado=0 AND agente_asignado IS NOT NULL AND agente_asignado=?)"
@@ -584,7 +613,7 @@ class InventoryDiscRepo:
             for s in (disco.get("subs") or [])
         }
         rows = self._con.execute(
-            "SELECT * FROM inventory_discs WHERE set_id=? AND slot=? AND nivel=? "
+            "SELECT * FROM inventory_discs WHERE set_id=? AND slot=? AND nivel IS ? "
             "AND (descartado = 0 OR descartado IS NULL)",
             (set_id, slot, nivel),
         ).fetchall()
@@ -619,14 +648,17 @@ class InventoryDiscRepo:
             "WHERE id=?", (disc_id,)
         )
 
-    def row_matches_parsed_identity(self, d: "Disc", p: "DiscParsed", set_id: int) -> bool:
+    def row_matches_parsed_identity(self, d: "Disc", p: "DiscParsed", set_id: int,
+                                    ignorar_nivel: bool = False) -> bool:
         """True si la fila `d` es EL MISMO disco que el parseado `p`, por identidad COMPLETA
         (set, slot, nivel, main, {substat normalizado + rolls}) — misma definición que
         `find_swap_candidates_by_identity`, extraída para poder validar también el hint del
         diálogo S23. RNF-02: sin esto, un hint viejo podía mover la fila del origen solo por
         compartir el set, aunque el disco que estamos viendo fuera otro."""
         from app.core.stats_vocab import _norm_key
-        if d.set_id != set_id or d.slot != p.slot or d.nivel != p.nivel:
+        if d.set_id != set_id or d.slot != p.slot:
+            return False
+        if not ignorar_nivel and d.nivel != p.nivel:
             return False
         main_canon = p.main_stat_canon or p.main_stat_raw
         if _norm_key(d.main_stat or "") != _norm_key(main_canon or ""):
@@ -715,6 +747,13 @@ class InventoryDiscRepo:
                 return s.nombre_canon or s.nombre_raw, s.valor, s.rolls, s.unidad
             return None, None, 0, None
 
+        if p.nivel is None:
+            # El nivel NO se leyó: se guarda NULL y se deja dicho por qué. Poner 0 sería inventar
+            # un valor que además existe de verdad (un disco recién dropeado está en Nivel 0).
+            from datetime import datetime as _dt
+            marca = f"{MARCA_NIVEL_NO_LEIDO}_{_dt.now().strftime('%Y-%m-%d')}"
+            notas = f"{notas} | {marca}" if notas else marca
+
         s1 = _sub(0); s2 = _sub(1); s3 = _sub(2); s4 = _sub(3)
         cur = self._con.execute(
             """INSERT INTO inventory_discs
@@ -776,16 +815,32 @@ class InventoryDiscRepo:
         s1 = _sub(0); s2 = _sub(1); s3 = _sub(2); s4 = _sub(3)
         main_sql = "main_valor=?, unidad_main=?, " if p.main_valor is not None else ""
         main_args = (p.main_valor, p.main_unidad) if p.main_valor is not None else ()
+        if p.nivel is None:
+            # Sin nivel leído no se pisa el que la fila ya tenía: un NULL encima de un 15 bueno
+            # sería perder el dato (el resto del UPDATE sí corre).
+            nivel_sql, nivel_args = "", ()
+        else:
+            nivel_sql, nivel_args = "nivel=?, ", (p.nivel,)
+            # SALIDA de la marca provisional: si la fila estaba marcada "nivel no leído" y ahora
+            # sí se leyó, la marca se va — si no, el contador de lo que falta nunca baja (B2).
+            fila = self._con.execute(
+                "SELECT notas FROM inventory_discs WHERE id=?", (disc_id,)
+            ).fetchone()
+            if fila is not None and fila["notas"] and MARCA_NIVEL_NO_LEIDO in fila["notas"]:
+                self._con.execute(
+                    "UPDATE inventory_discs SET notas=? WHERE id=?",
+                    (_sin_marca(fila["notas"], MARCA_NIVEL_NO_LEIDO), disc_id),
+                )
         self._con.execute(
             f"""UPDATE inventory_discs SET
-               nivel=?, {main_sql}
+               {nivel_sql}{main_sql}
                sub1=?, val1=?, rolls1=?, unidad1=?,
                sub2=?, val2=?, rolls2=?, unidad2=?,
                sub3=?, val3=?, rolls3=?, unidad3=?,
                sub4=?, val4=?, rolls4=?, unidad4=?
                WHERE id=?""",
             (
-                p.nivel, *main_args,
+                *nivel_args, *main_args,
                 s1[0], s1[1], s1[2], s1[3],
                 s2[0], s2[1], s2[2], s2[3],
                 s3[0], s3[1], s3[2], s3[3],
@@ -819,7 +874,7 @@ class InventoryDiscRepo:
             main_valor=main_parsed[0] if main_parsed else None,
             main_unidad=main_parsed[1] if main_parsed else None,
             subs=[sub(i) for i in (1, 2, 3, 4) if r[f"sub{i}"]],
-            nivel=r["nivel"] or 0,
+            nivel=r["nivel"],
             equipado=r["equipado"] or 0,
             agente_asignado=r["agente_asignado"],
             # `.keys()` es a propósito y NO es el SIM118 que ruff cree: `r` es un

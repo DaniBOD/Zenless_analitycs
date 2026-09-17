@@ -31,6 +31,12 @@ from app.ui.live.item_card import TENENCIA_TEXTO
 ANCHO, ALTO = 1000, 620
 
 
+def _nivel_txt(nivel: int | None) -> str:
+    """`?` cuando el nivel no se leyó (Fase 3). Un `None` interpolado imprimiría literalmente
+    "None", y un 0 diría que el disco está en Nivel 0, que es otra cosa."""
+    return "?" if nivel is None else str(nivel)
+
+
 def _lbl(texto: str, font, color: str, wrap: bool = False) -> QLabel:
     l = QLabel(texto)
     l.setFont(font)
@@ -161,7 +167,7 @@ class DiscoModal(QDialog):
         titulo = QHBoxLayout()
         titulo.setSpacing(8)
         titulo.addWidget(_lbl(f"#{d.id:05d} · {(d.set or 'sin set').upper()}", T.font_display(16, bold=True), T.TEXT_PRIMARY))
-        titulo.addWidget(_lbl(f"SLOT {d.slot} · NV {d.nivel}", T.font_display(14), T.TEXT_MUTED))
+        titulo.addWidget(_lbl(f"SLOT {d.slot} · NV {_nivel_txt(d.nivel)}", T.font_display(14), T.TEXT_MUTED))
         titulo.addStretch()
         tv.addLayout(titulo)
         h.addLayout(tv, 1)
@@ -215,8 +221,11 @@ class DiscoModal(QDialog):
         tv.setSpacing(2)
         tv.setAlignment(Qt.AlignmentFlag.AlignTop)
         tv.addWidget(_lbl((d.set or "sin set").upper(), T.font_display(13, bold=True), T.YELLOW))
-        nivel_color = T.TEXT_SECONDARY if d.nivel == 15 else "#F0AA3C"
-        tv.addWidget(_lbl(f"Slot {d.slot} · Nv {d.nivel}/15", T.font_ui(9), nivel_color))
+        # Tres casos, no dos: 15 (completo), nivel bajo (ámbar) y SIN LEER (apagado).
+        nivel_color = (T.TEXT_DIM if d.nivel is None
+                       else T.TEXT_SECONDARY if d.nivel == 15 else "#F0AA3C")
+        nivel_txt = "sin leer" if d.nivel is None else f"Nv {d.nivel}/15"
+        tv.addWidget(_lbl(f"Slot {d.slot} · {nivel_txt}", T.font_ui(9), nivel_color))
         tv.addStretch()
         ident.addLayout(tv, 1)
         v.addWidget(fila_ident)
@@ -300,7 +309,7 @@ class DiscoModal(QDialog):
         for a in visibles:
             dueno = a.dueno or TENENCIA_TEXTO["libre"][0]
             b = QPushButton(f"#{a.id:05d}   {a.main or '—'} {formatear_valor(a.main_valor, a.main_unidad)}"
-                            f"   Nv {a.nivel}   ·   {dueno}")
+                            f"   Nv {_nivel_txt(a.nivel)}   ·   {dueno}")
             b.setObjectName("alternativa")
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.setFont(T.font_mono(8))

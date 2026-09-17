@@ -82,7 +82,7 @@ Este documento describe el modelo relacional completo de la base, post-aplicaci�
 | Tabla | Filas iniciales | Descripción |
 |-------|-----------------|-------------|
 | `agent_discs` | 270 (45 PJs × 6 slots) | Discos equipados actualmente, slot por slot. Incluye EMPTY para Antón/Ben |
-| `inventory_discs` | 332 (257 equipados + 75 sueltos) | Inventario completo. RF-04/05 lo expande con discos nuevos farmer-eados |
+| `inventory_discs` | 332 (257 equipados + 75 sueltos) | Inventario completo. RF-04/05 lo expande con discos nuevos farmer-eados. **`nivel` admite NULL desde 2026-09-17** (Fase 3): NULL = *no se leyó*, y `0` vuelve a ser sólo un disco recién dropeado — la fila queda marcada `nivel_no_leido_<fecha>` en `notas` hasta que el nivel se lea. Ojo al consultarla: **`nivel = ?` no matchea NULL** (ni contra otro NULL), va `nivel IS ?` |
 | `inventory_weapons` | 50 (40 equipadas + 10 sueltas) | Inventario de W-Engines con refinamiento real |
 
 ### Capa 3 — Thresholds y preferencias (migración 01)

@@ -144,7 +144,7 @@ def _parse_s10_from_lines(
         notas.append("s10_pre")
     if nivel is None:
         notas.append("s10_nivel_no_detectado")
-        nivel = 0
+        nivel = 0      # S10 PRE con la barra vacía: el disco ESTÁ en Nivel 0 (valor, no ausencia)
     # Nivel PROYECTADO: si la pill derecha supera a la actual, hay materiales cargados y un
     # salto pendiente al hacer "Mejorar" (0→15, 5→10, …). Es el "después" del antes/después,
     # legible en un frame ESTABLE (a diferencia del MAX real que auto-cierra). RF-05.
