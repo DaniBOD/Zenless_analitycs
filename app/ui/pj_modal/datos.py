@@ -35,7 +35,20 @@ STATS: tuple[tuple[str, str], ...] = (
     ("Maestría Anom.", "maestria_anomalia"),
     ("Recup. Energía", "rec_energia"),
 )
-_PORCENTAJE = {"prob_critico", "dano_critico"}
+#: El Armero (v3.2) no tiene ATK ni Recup. Energía en su ficha: en esas dos celdas muestra
+#: Daño de laceración y Acumulación Automática de afiladura. Mismo lugar, mismo orden.
+STATS_ARMERO: tuple[tuple[str, str], ...] = tuple(
+    {"ataque": ("Laceración", "dano_laceracion"),
+     "rec_energia": ("Afiladura", "acumulacion_afiladura")}.get(col, (etq, col))
+    for etq, col in STATS
+)
+_PORCENTAJE = {"prob_critico", "dano_critico", "dano_laceracion"}
+_MULTIPLICADOR = {"rec_energia", "acumulacion_afiladura"}
+
+
+def stats_de_rol(rol: str | None) -> tuple[tuple[str, str], ...]:
+    """Las filas de stats que corresponden al rol. Una sola respuesta para la ficha y el widget."""
+    return STATS_ARMERO if (rol or "").strip() == "Armero" else STATS
 
 
 @dataclass(frozen=True)
@@ -80,7 +93,7 @@ def formatear_stat(columna: str, valor) -> str | None:
         return None
     if columna in _PORCENTAJE:
         return f"{float(valor):.1f}%"
-    if columna == "rec_energia":
+    if columna in _MULTIPLICADOR:
         return f"{float(valor):.2f}"
     return f"{int(round(float(valor))):,}".replace(",", ".")
 
@@ -142,8 +155,8 @@ def ficha_pj(con: sqlite3.Connection, agente_id: int) -> FichaPJ | None:
         id=a["id"], nombre=a["nombre"], rango=a.get("rango"), elemento=a.get("elemento"),
         rol=a.get("rol"), faccion=a.get("faccion"), mindscape=a.get("mindscape"),
         nivel=a.get("nivel"),
-        stats=[(etq, formatear_stat(col, a.get(col))) for etq, col in STATS],
-        stats_crudos={col: a.get(col) for _e, col in STATS},
+        stats=[(etq, formatear_stat(col, a.get(col))) for etq, col in stats_de_rol(a.get("rol"))],
+        stats_crudos={col: a.get(col) for _e, col in stats_de_rol(a.get("rol"))},
         bono=bono, slots=slots, sets=sets, set_logos=set_logos, arma=arma,
         despertar=despertar, despertar_nombre=despertar_nombre,
         avatar=str(avatar) if avatar else None, arte=str(arte) if arte else None,

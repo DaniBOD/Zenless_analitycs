@@ -533,6 +533,7 @@ class MonitorController(QObject):
 
         Madurez role-aware:
           - Roles Disruptivos requieren `fuerza_bruta` (no `tasa_perforacion`).
+          - Armero (v3.2) requiere `dano_laceracion` + `acumulacion_afiladura`, y no ATK ni ER.
           - Resto de roles (Ataque, Aturdimiento, Anomalía, Defensa, Soporte)
             requieren `tasa_perforacion` (no `fuerza_bruta`).
           - Si el rol no se identificó todavía, asumimos NO-disruptivo (caso
@@ -595,7 +596,8 @@ class MonitorController(QObject):
             stats.agente_nombre, stats.nivel, stats.pv, stats.ataque, stats.defensa,
             stats.impacto, stats.prob_crit, stats.dano_crit, stats.tasa_anomalia,
             stats.maestria_anomalia, stats.tasa_perforacion, stats.fuerza_bruta,
-            stats.recuperacion_energia, stats.acumulacion_adrenalina, tuple(missing),
+            stats.recuperacion_energia, stats.acumulacion_adrenalina,
+            stats.dano_laceracion, stats.acumulacion_afiladura, tuple(missing),
         )
         if stats_sig == self._last_stats_sig:
             return
@@ -611,7 +613,7 @@ class MonitorController(QObject):
 
         log.info(
             "Stats agente %s (%s/%s): Nv=%s PV=%s ATK=%s DEF=%s IMP=%s "
-            "CR=%s CD=%s TA=%s MA=%s TP=%s FB=%s ER=%s AD=%s conf=%.2f missing=%s",
+            "CR=%s CD=%s TA=%s MA=%s TP=%s FB=%s ER=%s AD=%s LAC=%s AF=%s conf=%.2f missing=%s",
             stats.agente_nombre or "?",
             stats.rol or "?", stats.elemento or "?",
             _v(stats.nivel), _v(stats.pv), _v(stats.ataque), _v(stats.defensa),
@@ -620,6 +622,7 @@ class MonitorController(QObject):
             _v(stats.tasa_anomalia), _v(stats.maestria_anomalia),
             _pct(stats.tasa_perforacion), _v(stats.fuerza_bruta),
             _v(stats.recuperacion_energia), _v(stats.acumulacion_adrenalina),
+            _pct(stats.dano_laceracion), _v(stats.acumulacion_afiladura),
             stats.confianza_global,
             missing_labels,
         )
@@ -641,7 +644,8 @@ class MonitorController(QObject):
             f"CR={_pct(stats.prob_crit)} CD={_pct(stats.dano_crit)} "
             f"TA={_v(stats.tasa_anomalia)} MA={_v(stats.maestria_anomalia)} "
             f"TP={_pct(stats.tasa_perforacion)} FB={_v(stats.fuerza_bruta)} "
-            f"ER={_v(stats.recuperacion_energia)} AD={_v(stats.acumulacion_adrenalina)}"
+            f"ER={_v(stats.recuperacion_energia)} AD={_v(stats.acumulacion_adrenalina)} "
+            f"LAC={_pct(stats.dano_laceracion)} AF={_v(stats.acumulacion_afiladura)}"
         )
 
         # Línea 3: cierre. Llegar acá ya implica completitud (el gate de arriba devolvió antes

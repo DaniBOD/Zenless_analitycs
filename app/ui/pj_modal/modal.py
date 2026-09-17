@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 
 from app.ui import tokens as T
 from app.ui.live.hexagon import BuildHexagon
-from app.ui.pj_modal.datos import STATS, FichaPJ
+from app.ui.pj_modal.datos import FichaPJ, stats_de_rol
 
 ANCHO, ALTO = 1000, 640
 HERO_H = 200
@@ -34,7 +34,8 @@ HERO_H = 200
 #: Escala VISUAL de las barras, la misma del mockup (`pct = valor / divisor`). No es un umbral ni
 #: un objetivo: sólo decide cuánto se llena la barra.
 _ESCALA_BARRA = {"pv": 200, "ataque": 30, "defensa": 14, "impacto": 2, "prob_critico": 1,
-                 "dano_critico": 2, "maestria_anomalia": 5, "rec_energia": 0.02}
+                 "dano_critico": 2, "maestria_anomalia": 5, "rec_energia": 0.02,
+                 "dano_laceracion": 2, "acumulacion_afiladura": 0.02}
 
 
 def _lbl(texto: str, font, color: str, wrap: bool = False) -> QLabel:
@@ -246,7 +247,8 @@ class PjModal(QDialog):
         v.setSpacing(4)
         v.addWidget(_caps("Stats combate", self.acento))
         crudos = self.ficha.stats_crudos
-        for (etiqueta, texto), (_e, col) in zip(self.ficha.stats, STATS, strict=True):
+        for (etiqueta, texto), (_e, col) in zip(self.ficha.stats, stats_de_rol(self.ficha.rol),
+                                                strict=True):
             g = _Gauge(etiqueta, texto, crudos.get(col), _ESCALA_BARRA.get(col, 1), self.acento)
             self._stats[etiqueta] = g.valor
             v.addWidget(g)

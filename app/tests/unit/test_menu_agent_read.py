@@ -133,7 +133,8 @@ def test_identify_menu_agent_sigue_devolviendo_tres_campos():
 
 _REAL = {"Ejemplo_1": "Nangong Yu", "Ejemplo_2": "Astra Yao", "Ejemplo_3": "Jane",
          "Ejemplo_4": "Orfia y Magas", "Ejemplo_5": "César", "Ejemplo_7": "Billy Estelar",
-         "Ejemplo_8": "N.º 0: Anby", "Ejemplo_9": "Pyrois", "Ejemplo_10": "Remielle Dan"}
+         "Ejemplo_8": "N.º 0: Anby", "Ejemplo_9": "Pyrois", "Ejemplo_10": "Remielle Dan",
+         "Ejemplo_11": "Claret Flint"}   # v3.2: el menú dice "Claret", la DB el nombre completo
 
 
 @pytest.mark.skipif(not (_MENU / "Ejemplo_1.png").exists(),

@@ -99,6 +99,20 @@ def test_pj_inexistente_devuelve_none(con):
     assert ficha_pj(con, 999) is None
 
 
+def test_el_armero_muestra_laceracion_y_afiladura_en_vez_de_atk_y_er(con):
+    """Claret Flint (v3.2): su ficha no tiene ATK ni Recup. Energía. Mostrar esas filas vacías
+    diría "sin leer" de dos stats que el PJ no tiene."""
+    con.execute("INSERT INTO agents (id, nombre, rango, elemento, rol, faccion, pv, "
+                "dano_laceracion, acumulacion_afiladura, protected_build) VALUES "
+                "(3, 'Claret Flint', 'S', 'Eléctrico', 'Armero', 'Flint Workshop', 8360, 150.0, 1.5, 0)")
+    f = ficha_pj(con, 3)
+    etiquetas = dict(f.stats)
+    assert etiquetas["Laceración"] == "150.0%"
+    assert etiquetas["Afiladura"] == "1.50"
+    assert "Ataque" not in etiquetas and "Recup. Energía" not in etiquetas
+    assert f.stats_crudos["dano_laceracion"] == 150.0
+
+
 # --- widget ------------------------------------------------------------------------------------
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -133,6 +147,17 @@ def test_stats_vacias_dicen_sin_leer_y_ningun_numero(qapp, con):
     textos = m.textos_visibles()
     assert "sin arma equipada" in textos
     assert "sin registro" in textos
+    m.close()
+
+
+def test_el_modal_del_armero_dibuja_sus_filas(qapp, con):
+    from app.ui.pj_modal.modal import PjModal
+    con.execute("INSERT INTO agents (id, nombre, rango, elemento, rol, protected_build, "
+                "dano_laceracion, acumulacion_afiladura) VALUES "
+                "(3, 'Claret Flint', 'S', 'Eléctrico', 'Armero', 0, 150.0, 1.5)")
+    m = PjModal(ficha_pj(con, 3))
+    stats = m.textos_de_stats()
+    assert stats.get("Laceración") == "150.0%" and stats.get("Afiladura") == "1.50", stats
     m.close()
 
 

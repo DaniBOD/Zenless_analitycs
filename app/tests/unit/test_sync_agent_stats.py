@@ -128,3 +128,36 @@ def test_protected_build_tambien_se_actualiza(db):
     s = AgentStatsParsed(pv=9700, ataque=1850, agente_nombre="Pyrois")
     assert AgentStatsSyncer(db).sync(s) == 2
     assert _row(db)["pv"] == 9700
+
+
+# --- Armero (v3.2, mig 35) ---------------------------------------------------------------------
+
+def test_el_armero_persiste_laceracion_y_afiladura(db):
+    """Claret Flint: laceración como % (fracción ×100, igual que CR) y afiladura cruda (como ER)."""
+    con = sqlite3.connect(str(db))
+    con.execute("ALTER TABLE agents ADD COLUMN dano_laceracion REAL")
+    con.execute("ALTER TABLE agents ADD COLUMN acumulacion_afiladura REAL")
+    con.execute("INSERT INTO agents (nombre, protected_build) VALUES ('Claret Flint', 0)")
+    con.commit(); con.close()
+    s = AgentStatsParsed(nivel=60, pv=8360, defensa=927, prob_crit=0.952, tasa_perforacion=0.32,
+                         dano_laceracion=1.5, acumulacion_afiladura=1.5,
+                         agente_nombre="Claret Flint", rol="Armero")
+    assert AgentStatsSyncer(db).sync(s)
+    r = _row(db, "Claret Flint")
+    assert r["dano_laceracion"] == 150.0
+    assert r["acumulacion_afiladura"] == 1.5
+    assert r["ataque"] is None and r["rec_energia"] is None
+
+
+def test_una_db_sin_las_columnas_del_armero_sigue_sincronizando_y_avisa(db, caplog):
+    """Una DB anterior a la migración 35 (la copia de %LOCALAPPDATA% del .exe es de agosto): las
+    columnas nuevas se saltean y avisan UNA vez; el resto de los stats se sigue persistiendo."""
+    import logging
+    caplog.set_level(logging.WARNING, logger="app.core.sync_agent_stats")
+    syncer = AgentStatsSyncer(db)
+    s = AgentStatsParsed(pv=9700, ataque=1850, dano_laceracion=1.5, agente_nombre="Pyrois")
+    assert syncer.sync(s) == 2
+    assert _row(db)["pv"] == 9700
+    syncer.sync(AgentStatsParsed(pv=9800, ataque=1850, agente_nombre="Pyrois"))
+    avisos = [r for r in caplog.records if "dano_laceracion" in r.getMessage()]
+    assert len(avisos) == 1, [r.getMessage() for r in caplog.records]

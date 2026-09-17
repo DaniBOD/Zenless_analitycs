@@ -56,6 +56,10 @@ _STAT_MAP: tuple[tuple[str, str, str], ...] = (
     ("maestria_anomalia",    "maestria_anomalia", "int"),
     ("tasa_perforacion",     "tasa_perforacion",  "pct"),
     ("recuperacion_energia", "rec_energia",       "float"),
+    # Armero (v3.2, mig 35). Columnas nuevas: una DB anterior a la migración no las tiene, y
+    # `sync` las saltea en vez de romper la sincronización de TODOS los PJs.
+    ("dano_laceracion",       "dano_laceracion",       "pct"),
+    ("acumulacion_afiladura", "acumulacion_afiladura", "float"),
 )
 # Tolerancias del dedup (evitan churn por jitter del OCR; los cambios reales de
 # subir nivel / cambiar discos son >> esto).
@@ -82,6 +86,7 @@ class AgentStatsSyncer:
     def __init__(self, db_path: Path):
         self._db_path = Path(db_path)
         self._lock = threading.Lock()
+        self._faltantes_avisados = False
 
     def sync(self, stats: AgentStatsParsed) -> int | None:
         """Persiste los stats base de `stats` en `agents`.
@@ -102,7 +107,14 @@ class AgentStatsSyncer:
             con = sqlite3.connect(str(self._db_path))
             con.row_factory = sqlite3.Row
             try:
-                cols = ", ".join(col for _, col, _ in _STAT_MAP)
+                existentes = {r[1] for r in con.execute("PRAGMA table_info(agents)")}
+                mapa = [m for m in _STAT_MAP if m[1] in existentes]
+                if len(mapa) < len(_STAT_MAP) and not self._faltantes_avisados:
+                    self._faltantes_avisados = True
+                    log.warning("[agent_sync] la DB no tiene las columnas %s (¿falta la migración "
+                                "35?): esos stats no se persisten",
+                                [c for _, c, _ in _STAT_MAP if c not in existentes])
+                cols = ", ".join(col for _, col, _ in mapa)
                 row = con.execute(
                     f"SELECT id, {cols} FROM agents WHERE nombre = ?", (nombre,)
                 ).fetchone()
@@ -112,7 +124,7 @@ class AgentStatsSyncer:
                     return None
 
                 updates: dict[str, int | float] = {}
-                for attr, col, kind in _STAT_MAP:
+                for attr, col, kind in mapa:
                     val = getattr(stats, attr, None)
                     if val is None:
                         continue                       # el OCR no leyó este campo → no tocar

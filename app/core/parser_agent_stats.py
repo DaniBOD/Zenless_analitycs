@@ -14,6 +14,8 @@ Layout de columnas (confirmado por DaniBOD):
 
   El slot bottom-left varia segun el rol:
   - Disruptivos: Fuerza Bruta + Acumulacion de Adrenalina (ver _STATS_DISRUPTIVO)
+  - Armero (v3.2, Claret Flint): la celda de ATK dice "Dano de laceracion" y la de Recup.
+    Energia "Acumulacion Automatica de afiladura"; TP sigue (ver _STATS_ARMERO)
   - Todos los demas, Anomalia incluida: Tasa de Perforacion + Recup. Energia
     (ver _STATS_RESTO). Confirmado con Remielle Dan (rol Anomalia), que muestra
     "Tasa de Perforacion 0 %" — este docstring decia lo contrario hasta 2026-07-28,
@@ -109,6 +111,7 @@ _ROL_SCREEN_MAP: dict[str, str] = {
     "disruptivo":   "Disruptivos",
     "disruptivos":  "Disruptivos",
     "destrozo":     "Disruptivos",
+    "armero":       "Armero",       # Armorer (Claret Flint) — especialidad nueva v3.2
 }
 
 
@@ -189,6 +192,7 @@ _STAT_KEYS = [
     "nivel", "pv", "ataque", "defensa", "impacto",
     "prob_crit", "dano_crit", "tasa_anomalia", "maestria_anomalia",
     "tasa_perforacion", "recup_energia", "fuerza_bruta", "adrenalina",
+    "laceracion", "afiladura",
 ]
 
 # Keywords para matchear nombres de stat contra texto OCR.
@@ -259,6 +263,11 @@ class AgentStatsParsed:
     # Disruptivos (reemplaza a recuperacion_energia, igual que fuerza_bruta
     # reemplaza a tasa_perforacion). Hito 2.8 QA 2026-05-31.
     acumulacion_adrenalina: int | None = None
+    # Armero (v3.2, Claret Flint). "Daño de laceración" ocupa la celda de ATK (fracción, como CR:
+    # 150 % → 1.5) y "Acumulación Automática de afiladura" la de Recup. Energía (multiplicador
+    # crudo). Mismo patrón de exclusividad por rol que FB/AD.
+    dano_laceracion: float | None = None
+    acumulacion_afiladura: float | None = None
     confianza_global: float = 0.0
     notas: list[str] = field(default_factory=list)
     # Identificacion del agente (extraida del OCR + validada contra DB)
@@ -275,7 +284,7 @@ _AGGREGATABLE_FIELDS: tuple[str, ...] = (
     "prob_crit", "dano_crit",
     "tasa_anomalia", "maestria_anomalia",
     "tasa_perforacion", "recuperacion_energia", "fuerza_bruta",
-    "acumulacion_adrenalina",
+    "acumulacion_adrenalina", "dano_laceracion", "acumulacion_afiladura",
 )
 
 
@@ -290,6 +299,9 @@ _AGGREGATABLE_FIELDS: tuple[str, ...] = (
 #   Disruptivos:  Fuerza Bruta (FB)        + Acumulación Automática de Adrenalina (AD)
 #   Resto:        Tasa de Perforación (TP) + Recuperación de Energía (ER)
 # Pedir los cuatro haría que NINGÚN rol complete nunca.
+#
+# El Armero (v3.2) cambia además una celda de ARRIBA: donde el resto muestra ATK, él muestra
+# "Daño de laceración" (LAC). Abajo tiene TP + "Acumulación Automática de afiladura" (AF).
 _STATS_COMUNES: tuple[str, ...] = (
     "nivel", "pv", "ataque", "defensa", "impacto",
     "prob_crit", "dano_crit",
@@ -297,6 +309,9 @@ _STATS_COMUNES: tuple[str, ...] = (
 )
 _STATS_DISRUPTIVO: tuple[str, ...] = ("fuerza_bruta", "acumulacion_adrenalina")
 _STATS_RESTO: tuple[str, ...] = ("tasa_perforacion", "recuperacion_energia")
+_STATS_ARMERO: tuple[str, ...] = tuple(k for k in _STATS_COMUNES if k != "ataque") + (
+    "dano_laceracion", "tasa_perforacion", "acumulacion_afiladura",
+)
 
 STAT_LABELS: dict[str, str] = {
     "nivel": "Nv", "pv": "PV", "ataque": "ATK", "defensa": "DEF",
@@ -304,6 +319,7 @@ STAT_LABELS: dict[str, str] = {
     "tasa_anomalia": "TA", "maestria_anomalia": "MA",
     "tasa_perforacion": "TP", "fuerza_bruta": "FB",
     "recuperacion_energia": "ER", "acumulacion_adrenalina": "AD",
+    "dano_laceracion": "LAC", "acumulacion_afiladura": "AF",
 }
 
 
@@ -312,6 +328,8 @@ def required_stat_keys(stats: AgentStatsParsed) -> tuple[str, ...]:
 
     Sin rol identificado se asume NO-disruptivo: es el caso mayoritario del roster, y asumir lo
     contrario dejaría a casi todos los PJs permanentemente incompletos."""
+    if _strip_accents(stats.rol or "").lower() == "armero":
+        return _STATS_ARMERO
     disruptivo = "disruptiv" in (stats.rol or "").lower()
     return _STATS_COMUNES + (_STATS_DISRUPTIVO if disruptivo else _STATS_RESTO)
 
@@ -423,6 +441,8 @@ class AgentStatsAggregator:
                 recuperacion_energia=new.recuperacion_energia,
                 fuerza_bruta=new.fuerza_bruta,
                 acumulacion_adrenalina=new.acumulacion_adrenalina,
+                dano_laceracion=new.dano_laceracion,
+                acumulacion_afiladura=new.acumulacion_afiladura,
                 confianza_global=new.confianza_global,
                 notas=list(new.notas),
                 agente_nombre=new.agente_nombre,
@@ -1017,6 +1037,20 @@ _RE_RECUP_ENERGIA = re.compile(
 # tiene escala distinta (entero pequeño, e.g. 2). El label se renderiza como
 # "Acumulación Automática de / Adrenalina" → el valor suele quedar tras el token.
 _RE_ADRENALINA = re.compile(r"adrenal\w*[^\d\n]{0,20}?(\d+)")
+# Armero (v3.2) — "Daño de laceración <valor> %", en la celda de ATK. Se ancla en "lacerac" y no en
+# "daño": Paddle leyó "Dafo de laceración 150 %" en la ficha de Claret (atributos_base_ejemplo_17),
+# y "daño" además es de Daño Crítico. Bidireccional como TP, por si el layout invierte valor/label.
+_RE_LACERACION = re.compile(
+    r"lacerac\w*[^\d%\n]{0,10}(\d+(?:\.\d+)?)\s*%"                      # "laceracion 150 %"
+    r"|(\d+(?:\.\d+)?)\s*%[^\d\n]{0,20}?(?:da\w{0,3}o\s*(?:de\s*)?)?lacerac"   # "150 % [dano de] laceracion"
+)
+# Armero — "Acumulación Automática de / afiladura" (label de 2 líneas, como la Adrenalina). En la
+# ficha de Claret el valor quedó ANTES del token: "tasa de perforacion 32 % 1.5 de afiladura". La
+# ventana del valor-antes excluye '%': el "32 %" de TP pegado no puede ser la afiladura.
+_RE_AFILADURA = re.compile(
+    r"(\d+(?:\.\d+)?)[^\d\n%]{0,6}?afilad\w*"      # "1.5 de afiladura"
+    r"|afilad\w*[^\d\n]{0,12}?(\d+(?:\.\d+)?)"     # "afiladura 1.5"
+)
 # Agente: nombre (1-2 palabras capitalizadas en texto original) antes de "Nivel".
 # Se aplica sobre el texto ORIGINAL (no normalizado) para preservar mayúsculas.
 # Tolera hasta 60 chars de basura OCR entre el nombre y "Nivel" — Tesseract
@@ -1088,6 +1122,8 @@ def _extract_by_regex(text: str) -> dict[str, str | None]:
         ("recup_energia", _RE_RECUP_ENERGIA),
         ("fuerza_bruta", _RE_FUERZA_BRUTA),
         ("adrenalina", _RE_ADRENALINA),
+        ("laceracion", _RE_LACERACION),
+        ("afiladura", _RE_AFILADURA),
     ]:
         m = regex.search(norm)
         if m:
@@ -1296,10 +1332,37 @@ def _parse_via_full_frame(
         acumulacion_adrenalina = _rescue_int_roi(frame, ocr, "adrenalina_valor")
         if acumulacion_adrenalina is not None:
             notas.append("ad_rescatado_roi")
+
+    # Armero (v3.2, Claret Flint): "laceración" y "afiladura" son labels EXCLUSIVOS del rol, así
+    # que su presencia lo identifica sin depender de rol_db — igual que FB para los Disruptivos.
+    # Sin esto el rescate de ROI de Recup. Energía leía la celda de la afiladura y metía 1.5 en ER:
+    # medido sobre atributos_base_ejemplo_17 antes de este cambio.
+    dano_laceracion = _normalize_percent(_parse_float(extracted["laceracion"]))
+    acumulacion_afiladura = _parse_float(extracted["afiladura"])
+    armero = (dano_laceracion is not None or acumulacion_afiladura is not None
+              or _strip_accents(rol_db or "").lower() == "armero")
+    if (dano_laceracion is not None and rol_db is not None
+            and _strip_accents(rol_db).lower() != "armero"):
+        notas.append(f"rol_corregido_por_laceracion_de_{rol_db}_a_armero")
+        rol_db = "Armero"
+    if armero and ataque is not None:
+        # La ficha del Armero no muestra ATK: un "ataque N" leído es texto ajeno, no su stat.
+        notas.append("atk_ignorado_armero")
+        ataque = None
+
     if acumulacion_adrenalina is not None:
         recuperacion_energia = None
         if extracted["recup_energia"] is not None:
             notas.append("er_ignorada_disruptivo")
+    elif armero:
+        recuperacion_energia = None
+        if extracted["recup_energia"] is not None:
+            notas.append("er_ignorada_armero")
+        if acumulacion_afiladura is None:
+            # Misma celda que Recup. Energía en el resto de los roles.
+            acumulacion_afiladura = _rescue_float_roi(frame, ocr, "recup_energia_valor")
+            if acumulacion_afiladura is not None:
+                notas.append("af_rescatada_roi")
     else:
         recuperacion_energia = _parse_float(extracted["recup_energia"])
         # Rescate por REGIÓN del valor de ER: cuando es un dígito chico/aislado
@@ -1318,6 +1381,8 @@ def _parse_via_full_frame(
         recuperacion_energia=recuperacion_energia,
         fuerza_bruta=fuerza_bruta,
         acumulacion_adrenalina=acumulacion_adrenalina,
+        dano_laceracion=dano_laceracion,
+        acumulacion_afiladura=acumulacion_afiladura,
         confianza_global=round(ocr_conf, 3),
         notas=notas,
         agente_nombre=nombre_db,
