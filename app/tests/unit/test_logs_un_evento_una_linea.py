@@ -240,3 +240,84 @@ def test_frame_negro_no_es_requisito():
     m = _monitor()
     assert m is not None
     assert np.zeros((4, 4, 3), np.uint8).size == 48
+
+
+# --- un disco, una línea: aunque el OCR lea el set con otra letra (2026-09-17) --------------------
+
+def _disco_s9(set_raw, dueno="Pyrois"):
+    d = _merged(dueno)
+    d.set_name_raw, d.set_name_canon = set_raw, None     # como en vivo: el canónico no resolvió
+    return d
+
+
+def test_el_mismo_disco_leido_con_otra_letra_da_una_sola_linea(caplog, monkeypatch):
+    """Pasada B del censo: `Firmamento Ilameante` y `Firmamento llameante` (I / l) salieron como
+    DOS líneas del mismo disco. Es la señal con la que Daniel avanza: dos líneas por un disco le
+    dicen que pasó algo que no pasó. El filtro de repetidos tiene que mirar el set RESUELTO."""
+    from app.core.detector import ScreenState
+    m = _monitor()
+    _aislar_emision_s9(monkeypatch, m)
+    resueltos = []
+    def resolver(nombre):
+        resueltos.append(nombre)
+        return 53 if "lameante" in nombre.lower() else None
+    monkeypatch.setattr(m, "_resolve_set_id_safe", resolver)
+    st = ScreenState("S9", 1.0, "t")
+    with caplog.at_level(logging.INFO):
+        m._emit_s9_disc(_disco_s9("Firmamento Ilameante"), st)
+        m._s9_emitted = False                        # otra lectura del MISMO disco
+        m._emit_s9_disc(_disco_s9("Firmamento llameante"), st)
+        m._s9_emitted = False
+        m._emit_s9_disc(_disco_s9("Firmamento llameante"), st)
+    evento = [x for x in _lineas(caplog, logging.INFO) if x.startswith("Disco S9 detectado")]
+    assert len(evento) == 1, f"un disco, una línea — hubo {len(evento)}: {evento}"
+    assert resueltos == ["Firmamento Ilameante", "Firmamento llameante"], "cada grafía se resuelve UNA vez"
+
+
+def test_si_el_set_no_resuelve_se_filtra_como_antes(caplog, monkeypatch):
+    """Sin set resuelto (catálogo inaccesible, nombre basura) queda la identidad de siempre: dos
+    textos distintos siguen siendo dos discos. Nunca peor que antes."""
+    from app.core.detector import ScreenState
+    m = _monitor()
+    _aislar_emision_s9(monkeypatch, m)
+    monkeypatch.setattr(m, "_resolve_set_id_safe", lambda nombre: None)
+    st = ScreenState("S9", 1.0, "t")
+    with caplog.at_level(logging.INFO):
+        m._emit_s9_disc(_disco_s9("Set A ilegible"), st)
+        m._s9_emitted = False
+        m._emit_s9_disc(_disco_s9("Set B ilegible"), st)
+    assert len([x for x in _lineas(caplog, logging.INFO) if x.startswith("Disco S9 detectado")]) == 2
+
+
+def test_dos_discos_distintos_del_mismo_set_siguen_siendo_dos(caplog, monkeypatch):
+    """Resolver el set no puede colapsar discos distintos: slot y substats siguen en la clave."""
+    from app.core.detector import ScreenState
+    m = _monitor()
+    _aislar_emision_s9(monkeypatch, m)
+    monkeypatch.setattr(m, "_resolve_set_id_safe", lambda nombre: 53)
+    st = ScreenState("S9", 1.0, "t")
+    otro = _disco_s9("Firmamento llameante")
+    otro.slot = 2
+    with caplog.at_level(logging.INFO):
+        m._emit_s9_disc(_disco_s9("Firmamento Ilameante"), st)
+        m._s9_emitted = False
+        m._emit_s9_disc(otro, st)
+    assert len([x for x in _lineas(caplog, logging.INFO) if x.startswith("Disco S9 detectado")]) == 2
+
+
+def test_la_premisa_las_dos_grafias_resuelven_al_mismo_set_en_la_db_real():
+    """La premisa del arreglo, contra el catálogo REAL (solo lectura): si mañana el resolvedor deja
+    de juntar estas dos grafías, el filtro de repetidos vuelve a dejar pasar el duplicado y esto
+    lo dice antes que una pasada en vivo."""
+    import sqlite3
+    from pathlib import Path
+    from app.db.repositories import DiscSetRepo
+    db = Path(__file__).resolve().parents[3] / "db" / "danibod_zzz_v2.db"
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    try:
+        repo = DiscSetRepo(con)
+        a, b = repo.resolve_id("Firmamento Ilameante"), repo.resolve_id("Firmamento llameante")
+    finally:
+        con.close()
+    assert a is not None and a == b, (a, b)

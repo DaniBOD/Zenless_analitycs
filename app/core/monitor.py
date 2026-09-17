@@ -512,6 +512,7 @@ class Monitor:
         # estática y resetea el aggregator. Sin esto el MISMO disco quieto se
         # re-emite ~7×. Se limpia al salir de S17 o al forzar re-scan (foreground). RNF-06: sin OCR.
         self._disc_emitted_ids: set = set()
+        self._set_ids_emision: dict[str, int | None] = {}   # grafía leída → set_id (ver _identidad_de_emision)
         # Diagnóstico de trabes (returns tempranos mudos) — ver `_note_stall`. {scope: (motivo, n)}
         self._stalls: dict[str, tuple[str, int]] = {}
         # --- S9 (inventario global): mismo patrón aggregator/dedup, estado propio ---
@@ -3141,7 +3142,36 @@ class Monitor:
         del modelo 3D (que no cambia ni identidad ni dueño) sigue deduplicado."""
         from app.core.stats_vocab import _norm_key
         owner = merged.agente_asignado_nombre
-        return (identity, _norm_key(owner) if owner else None)
+        return (self._identidad_de_emision(identity, merged), _norm_key(owner) if owner else None)
+
+    def _identidad_de_emision(self, identity, merged) -> tuple:
+        """La identidad del disco con el set RESUELTO en vez del nombre tal como lo leyó el OCR.
+
+        `_disc_identity` normaliza tildes, pero no puede con una letra mal leída: en la Pasada B del
+        censo (2026-09-17) el mismo disco salió DOS veces en el log, una como `Firmamento Ilameante`
+        y otra como `Firmamento llameante` (I mayúscula / l minúscula). Distinto texto ⇒ distinta
+        clave ⇒ el filtro de repetidos lo dejó pasar. Es el mismo bug del 2026-08-18, que se arregló
+        en la PERSISTENCIA (compara `set_id` resuelto) pero no acá: hasta que el despacho rápido
+        empezó a releer discos casi no había relecturas y no se notaba.
+
+        La autoridad es la misma que usa la persistencia, `DiscSetRepo.resolve_id` (B1) — verificado
+        contra la DB: las dos grafías resuelven al set 53. Si el set no resuelve, queda la identidad
+        de siempre: nunca peor que antes. `_disc_identity` en sí NO se toca: además de filtrar
+        repetidos arma las claves serializadas del mapa de equipamiento, y cambiarla invalidaría las
+        guardadas. Ésta vive en memoria, sólo para no repetir líneas en la sesión.
+        """
+        set_id = self._set_id_para_emision(merged.set_name_canon or merged.set_name_raw)
+        if set_id is None:
+            return identity
+        return (("set_id", set_id),) + tuple(identity[1:])
+
+    def _set_id_para_emision(self, nombre: str | None) -> int | None:
+        """`set_id` resuelto, recordado por nombre leído: una grafía se resuelve una vez por sesión."""
+        if not nombre:
+            return None
+        if nombre not in self._set_ids_emision:
+            self._set_ids_emision[nombre] = self._resolve_set_id_safe(nombre)
+        return self._set_ids_emision[nombre]
 
     @staticmethod
     def _same_disc_fuzzy(id_a, id_b) -> bool:
