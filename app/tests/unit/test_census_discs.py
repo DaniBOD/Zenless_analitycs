@@ -1,7 +1,7 @@
 """Censo de discos: el contador del header manda, y la brecha se dice en voz alta.
 
 El censo del roster se construyó sobre una ausencia: *"el menú de personajes no tiene contador
-`N/M`"*. De ahí salieron la asimetría PENDIENTE ≠ HUÉRFANO y el cierre explícito (F8; desde 2026-09-17, un botón) — sin
+`N/M`"*. De ahí salieron la asimetría PENDIENTE ≠ HUÉRFANO y el cierre explícito (F8, retirado el 2026-09-17) — sin
 denominador, sólo una declaración humana puede decir que la pasada terminó.
 
 **Para discos eso no aplica.** El header del inventario dice `Pistas de disco [339/3000]`, igual que

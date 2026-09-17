@@ -4,10 +4,11 @@
 abajo. Dos diferencias con el mockup, a propósito:
 
 - **Los contadores son de la DB** (`contadores.leer_contadores`), no los del dibujo. Un 0 se ve.
-- **Donde el mockup dibujaba hotkeys hay BOTONES** (2026-09-17). ZZZ corre como administrador y
-  Windows (UIPI) no le entrega las teclas a la app con el juego en foco: F8/F10 no andaban justo en
-  juego. F9 (mostrar el panel) no tiene botón: un botón no puede mostrar la ventana en la que vive;
-  lo cubre la bandeja.
+- **Donde el mockup dibujaba hotkeys hay un BOTÓN de pausa** (2026-09-17). ZZZ corre como
+  administrador y Windows (UIPI) no le entrega las teclas a la app con el juego en foco: F10 no
+  andaba justo en juego. F9 (mostrar el panel) no tiene botón: un botón no puede mostrar la ventana
+  en la que vive; lo cubre la bandeja. F8 (cerrar la pasada de censo) se fue sin reemplazo: el
+  sistema está siempre operativo y cada ítem nuevo entra solo, no hay pasada que abrir ni cerrar.
 """
 from __future__ import annotations
 
@@ -26,11 +27,9 @@ GRUPOS: list[tuple[str, list[tuple[str, str]]]] = [
     ("SISTEMA",   [("catalogos", "Catálogos"), ("config", "Configuración")]),
 ]
 
-#: Textos de los botones de acción. Los tests afirman sobre estos mismos valores.
+#: Textos del botón de pausa. Los tests afirman sobre estos mismos valores.
 TXT_PAUSAR = "Pausar"
 TXT_REANUDAR = "Reanudar"
-TXT_CERRAR_CENSO = "Cerrar pasada de censo"
-TXT_CERRANDO = "Cerrando…"
 
 UID = "1000860143"
 
@@ -107,12 +106,11 @@ class _Item(QPushButton):
 
 
 class Sidebar(QWidget):
-    """Navegación y acciones. Emite `item_selected(clave)`, `pausa_pedida` y `cierre_censo_pedido`;
-    no conoce las vistas que hay detrás ni al monitor (lo cablea `cierre_censo.FlujoCierreCenso`)."""
+    """Navegación y la pausa. Emite `item_selected(clave)` y `pausa_pedida`; no conoce las vistas
+    que hay detrás ni al monitor (los cablea la ventana principal)."""
 
     item_selected = Signal(str)
     pausa_pedida = Signal()
-    cierre_censo_pedido = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -121,7 +119,6 @@ class Sidebar(QWidget):
         self._items: dict[str, _Item] = {}
         self._running = False
         self._paused = False
-        self._cierre_en_vuelo = False
         self._build()
         self._set_checked("live")
 
@@ -196,10 +193,7 @@ class Sidebar(QWidget):
         lay.addWidget(cab)
         self.btn_pausa = self._boton_accion(TXT_PAUSAR)
         self.btn_pausa.clicked.connect(lambda _c=False: self.pausa_pedida.emit())
-        self.btn_cierre = self._boton_accion(TXT_CERRAR_CENSO)
-        self.btn_cierre.clicked.connect(self._on_cierre_click)
         lay.addWidget(self.btn_pausa)
-        lay.addWidget(self.btn_cierre)
         self._apply_acciones()
         return card
 
@@ -218,35 +212,22 @@ class Sidebar(QWidget):
 
     # --- acciones: estado ---------------------------------------------------------------------
 
-    def _on_cierre_click(self) -> None:
-        # Se deshabilita ANTES de pedir: un doble clic no puede encolar dos cierres.
-        self._cierre_en_vuelo = True
-        self._apply_acciones()
-        self.cierre_censo_pedido.emit()
-
     def on_monitor_started(self) -> None:
         # Cada arranque crea un Monitor nuevo, que nace corriendo (no pausado).
-        self._running, self._paused, self._cierre_en_vuelo = True, False, False
+        self._running, self._paused = True, False
         self._apply_acciones()
 
     def on_monitor_stopped(self) -> None:
-        # Un pedido en vuelo muere con el monitor: nadie va a responderlo.
-        self._running, self._paused, self._cierre_en_vuelo = False, False, False
+        self._running, self._paused = False, False
         self._apply_acciones()
 
     def on_pause_changed(self, paused: bool) -> None:
         self._paused = bool(paused)
         self._apply_acciones()
 
-    def cierre_terminado(self) -> None:
-        self._cierre_en_vuelo = False
-        self._apply_acciones()
-
     def _apply_acciones(self) -> None:
         self.btn_pausa.setEnabled(self._running)
         self.btn_pausa.setText(TXT_REANUDAR if self._paused else TXT_PAUSAR)
-        self.btn_cierre.setEnabled(self._running and not self._cierre_en_vuelo)
-        self.btn_cierre.setText(TXT_CERRANDO if self._cierre_en_vuelo else TXT_CERRAR_CENSO)
 
     def paintEvent(self, ev):
         p = QPainter(self)

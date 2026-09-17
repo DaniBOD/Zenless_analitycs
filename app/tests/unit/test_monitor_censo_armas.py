@@ -195,9 +195,10 @@ def test_cerrar_sin_pasada_abierta_no_revienta():
     assert _mon().cerrar_censo_armas() is None
 
 
-def test_el_cierre_cierra_los_dos_inventarios():
-    """El botón es uno solo y hay tres censos. Los de inventario van primero: tienen contador, así
-    que cerrarlos produce un número verificable."""
+def test_al_salir_se_resumen_los_dos_inventarios_y_armas_deja_su_reporte(tmp_path):
+    """Sin botón de cierre (2026-09-17), `stop()` resume los dos inventarios. El de armas deja el
+    reporte en `audit/censos/` (redirigido por el conftest): las fuera de catálogo son la entrada de
+    la migración que las da de alta, y perderlas obliga a recorrer el inventario entero."""
     mon = _mon()
     mon._censar_arma(_arma(dueno="Jane"), _Res(7))
     from app.core.parser_disc import DiscParsed, SubstatParsed
@@ -214,9 +215,10 @@ def test_el_cierre_cierra_los_dos_inventarios():
     )
     mon._censar_disco(disco, _Estado())
     assert mon.censo_discos.abierta and mon.censo_armas.abierta
-    mon.cerrar_censo(mon.cerrar_censo()["instantanea"])
+    mon.stop()
     assert not mon.censo_discos.abierta
     assert not mon.censo_armas.abierta
+    assert list((tmp_path / "audit" / "censos").glob("*censo_armas.md"))
 
 
 # --- Copias idénticas (2026-09-10) --------------------------------------------------------------

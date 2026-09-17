@@ -5,7 +5,7 @@ armas (S30). **Es la misma línea de la misma pantalla**, en la misma posición:
 es el rótulo y la capacidad.
 
 Es lo que el censo del roster no tiene. El menú de personajes no trae `N/M`, así que allá el cierre
-lo declara el usuario (botón «Cerrar pasada de censo»). Acá el denominador está escrito en pantalla, igual que el `N/300` del
+lo declaraba el usuario (F8, retirado el 2026-09-17). Acá el denominador está escrito en pantalla, igual que el `N/300` del
 desmontaje, y vale la misma doctrina: **el contador es la autoridad del conteo**; la grilla sólo
 aparea, porque el viewport no ve todo el inventario.
 

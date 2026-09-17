@@ -149,15 +149,31 @@ def test_cerrar_sin_corrida_abierta_no_explota():
     assert _mon().cerrar_censo_discos() is None
 
 
-def test_el_cierre_cierra_el_censo_de_discos_si_es_el_que_esta_abierto():
-    """El botón es uno solo. Con el censo del roster cerrado (o inexistente), tiene que cerrar el de
-    discos en vez de responder 'no hay ninguna pasada abierta'."""
+def test_al_salir_queda_el_resumen_de_la_sesion():
+    """No hay botón de cierre (2026-09-17): el sistema está siempre operativo. El resumen de
+    cobertura sale cuando se detiene el monitor."""
     mon = _mon()
     mon._censar_disco(_disco(1), _Estado())
-    res = mon.cerrar_censo()
-    assert res["accion"] == "confirmar" and mon.censo_discos.abierta
-    mon.cerrar_censo(res["instantanea"])
+    mon.stop()
     assert not mon.censo_discos.abierta
+
+
+def test_con_el_loop_todavia_vivo_no_se_resume():
+    """Si el join de `stop()` venció, el loop puede seguir tocando el censo: resumirlo desde otro
+    hilo es la carrera que el diseño evita."""
+    mon = _mon()
+    mon._censar_disco(_disco(1), _Estado())
+
+    class _Vivo:
+        def join(self, timeout=None):
+            pass
+
+        def is_alive(self):
+            return True
+
+    mon._thread = _Vivo()
+    mon.stop()
+    assert mon.censo_discos.abierta
 
 
 def test_observar_despues_de_cerrar_no_reabre_la_corrida():

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import os
-import queue
 import re
 import threading
 import time
@@ -398,11 +397,6 @@ class Monitor:
         farm_node_catalog=None,                                 # FarmNodeCatalog opcional (predicción S13)
         set_badge_matcher=None,                                 # SetBadgeMatcher opcional (set por badge S2)
         capture_only_focused: bool = False,                     # gate anti-FP por foco: OFF por defecto
-        censo=None,                                             # RosterCensus opcional (censo de cuenta)
-        on_census_progress: Callable[[dict], None] | None = None,
-        # Respuesta a un pedido de cierre de censo (`pedir_cierre_censo`). Se llama desde el hilo
-        # del monitor: del otro lado tiene que haber algo que cruce de hilo (una señal de Qt).
-        on_cierre_censo: Callable[[dict], None] | None = None,
     ):
         self._ocr = ocr
         self._detector = detector
@@ -425,17 +419,6 @@ class Monitor:
         self._on_teardown = on_teardown
         self._on_weapon_seen = on_weapon_seen
         self._on_weapon_detected = on_weapon_detected
-        # Censo de cuenta: OPCIONAL y apagado por defecto. La app se usa la enorme mayoría del
-        # tiempo sin censar, y ese camino no debe pagar nada ni cambiar de conducta. A diferencia
-        # de `TeardownBatch`, no se construye perezoso: abrir una corrida decide la reanudación
-        # multi-sesión, que es cosa del arranque de la app y no del handler.
-        self._census = censo
-        self._on_census_progress = on_census_progress
-        # Pedidos de cierre de censo desde la UI. Los drena el loop (`_atender_pedidos_cierre`): el
-        # botón nunca cierra desde su propio hilo. `SimpleQueue` y no un atributo: leer y limpiar un
-        # atributo son dos pasos, y un pedido que llegue entre medio se pierde.
-        self._on_cierre_censo = on_cierre_censo
-        self._pedidos_cierre: queue.SimpleQueue = queue.SimpleQueue()
         # S26 (detalle de W-Engine, RF-15): firma del panel para no re-OCRear un panel quieto, y
         # firma del último log para no repetir la misma línea. Observación pura: no escribe DB.
         self._s26_panel_sig: bytes | None = None
@@ -850,6 +833,12 @@ class Monitor:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=5)
+        # Los censos de inventario no se cierran a mano: el sistema está siempre operativo y cada
+        # ítem nuevo entra solo (Daniel, 2026-09-17). Al salir queda el resumen de cobertura de la
+        # sesión y, de armas, el reporte con las que están fuera de catálogo. Sólo con el loop
+        # detenido: si el join venció, el loop todavía puede estar tocando esos censos.
+        if not (self._thread and self._thread.is_alive()):
+            self._resumir_inventarios_al_salir()
         if self._log_clock is not None:
             logging.getLogger("app").removeHandler(self._log_clock)
             self._log_clock = None
@@ -863,6 +852,15 @@ class Monitor:
                      self._s9_rapido_confirmados, self._s9_rapido_rearmados,
                      self._s9_rapido_abandonados)
         log.info("Monitor detenido · pedido desde: %s", origen)
+
+    def _resumir_inventarios_al_salir(self) -> None:
+        for censo, resumir in ((self._censo_discos, self.cerrar_censo_discos),
+                               (self._censo_armas, self.cerrar_censo_armas)):
+            if censo is not None and censo.abierta:
+                try:
+                    resumir()
+                except Exception:
+                    log.exception("[censo] no se pudo resumir el inventario al salir")
 
     def toggle_pause(self) -> bool:
         """Alterna pausa/reanuda. Devuelve True si ahora está pausado."""
@@ -936,10 +934,6 @@ class Monitor:
             # El latido va en los TRES caminos del loop, incluidos los dos que hacen `continue`.
             # Justamente esos dos eran los mudos: pausado y frame-nulo no dejaban rastro alguno.
             self._hb_ticks += 1
-            # Los pedidos de la UI (cerrar censo) se atienden ANTES de la pausa y del frame: con la
-            # app pausada o el juego minimizado el loop hace `continue` más abajo, y un cierre no
-            # tiene por qué esperar a que vuelva la captura.
-            self._atender_pedidos_cierre()
             if not self._paused.is_set():
                 self._heartbeat(time.monotonic(), "pausado")
                 time.sleep(0.5)
@@ -4118,6 +4112,7 @@ class Monitor:
 
     def cerrar_censo_discos(self) -> dict | None:
         """Cierra la pasada del inventario y devuelve el resumen, o `None` si no había ninguna.
+        Lo llama `stop()`: el resumen es el de la sesión, no el de una pasada declarada.
 
         A diferencia del roster, el resumen incluye **cobertura real** contra el contador de
         pantalla. Y si quedó corta lo dice, sin resolver por su cuenta si lo que falta son discos
@@ -4129,7 +4124,7 @@ class Monitor:
             return None
         censo.cerrar(ts=time.time())
         r = censo.resumen()
-        log.info("[censo-discos] pasada cerrada — %d/%s registrados · %d con dueño · %d libres "
+        log.info("[censo-discos] resumen de la sesión — %d/%s registrados · %d con dueño · %d libres "
                  "· %d sin resolver", r["registrados"], r["total_pantalla"] or "?",
                  r["con_dueno"], r["libres"], r["sin_resolver"])
         if r["motivo_incompleto"]:
@@ -4269,6 +4264,7 @@ class Monitor:
 
     def cerrar_censo_armas(self) -> dict | None:
         """Cierra la pasada del inventario de armas y devuelve el resumen, o `None` si no había.
+        Lo llama `stop()`: el resumen es el de la sesión, no el de una pasada declarada.
 
         El desglose importa más que el total: la brecha de armas tiene DOS causas distintas y
         confundirlas haría el número inútil — las que no se pudieron nombrar (el badge se abstuvo)
@@ -4280,7 +4276,7 @@ class Monitor:
             return None
         censo.cerrar(ts=time.time())
         r = censo.resumen()
-        log.info("[censo-armas] pasada cerrada — %d/%s registradas · %d con dueño · %d sin "
+        log.info("[censo-armas] resumen de la sesión — %d/%s registradas · %d con dueño · %d sin "
                  "resolver · %d fuera de catálogo", r["registrados"],
                  r["total_pantalla"] or "?", r["con_dueno"], r["sin_resolver"],
                  r["fuera_de_catalogo"])
@@ -5315,11 +5311,7 @@ class Monitor:
         """Menú de personajes (S15, Fase M.1): reconoce al PJ SELECCIONADO leyendo su
         nombre de la barra bottom-left → `read_menu_agent` → `_match_agent_scored` (rol+elemento
         de la DB). Loguea EDGE-triggered (1× por PJ). Gate RNF-06: re-OCR solo si la firma
-        del nombre cambió (cambió la selección). No escribe la DB de dominio ni toca el latch.
-
-        Si hay una corrida de censo abierta, cada cambio de selección deja una observación. El
-        gate de firma es lo que vuelve barato el recorrido: ~51 OCR por pasada en vez de uno por
-        frame de animación."""
+        del nombre cambió (cambió la selección). No escribe la DB de dominio ni toca el latch."""
         sig = self._menu_name_signature(frame)
         if (sig is not None and self._menu_last_sig is not None
                 and self._sig_component_diff(sig, self._menu_last_sig) <= _MENU_SIG_MAX):
@@ -5329,9 +5321,6 @@ class Monitor:
         nombre, rol, elemento = lectura.nombre, lectura.rol, lectura.elemento
         if nombre:
             self._seed_identity_from_menu(nombre)
-        # Antes del dedup del log: ese `return` es por MENSAJE repetido, y el censo cuenta
-        # observaciones — volver a pasar por un PJ ya visto no imprime, pero sí acumula.
-        self._observe_census(lectura)
         logsig = (nombre, rol, elemento)
         if logsig == self._last_menu_log_sig:
             return                          # mismo resultado → no re-loguear
@@ -5345,61 +5334,6 @@ class Monitor:
                 self._on_agent_detail(state, nombre, bool(nombre), "menu")
             except Exception:
                 log.exception("Error en on_agent_detail callback (menú)")
-
-    def _instantanea_cierre(self) -> dict:
-        """Qué cerraría un cierre AHORA: los censos abiertos con su progreso y, del roster, a quiénes
-        declararía huérfanos. Es lo que el diálogo muestra y lo que vuelve como confirmación."""
-        inst: dict = {"discos": None, "armas": None, "roster": None}
-        for clave, censo in (("discos", self._censo_discos), ("armas", self._censo_armas)):
-            if censo is not None and censo.abierta:
-                inst[clave] = censo.resumen()
-        censo = self._census
-        if censo is not None and censo.abierta:
-            vistos, total = censo.progreso
-            inst["roster"] = {"vistos": vistos, "total": total,
-                              "pendientes": sorted(f.clave for f in censo.pendientes)}
-        return inst
-
-    @staticmethod
-    def _clave_cierre(inst: dict) -> tuple:
-        """Lo que una confirmación AFIRMA: qué censos se cierran y a quiénes se declara huérfanos.
-
-        El progreso de los inventarios no entra: seguir recorriendo con el diálogo abierto no cambia
-        lo que se aceptó cerrar. Los pendientes del roster sí, y como conjunto exacto."""
-        roster = inst.get("roster")
-        return (inst.get("discos") is not None, inst.get("armas") is not None,
-                None if roster is None else frozenset(roster["pendientes"]))
-
-    def _observe_census(self, lectura) -> None:
-        """Alimenta la corrida de censo con lo leído en S15.
-
-        Observación pura: **no toca la DB de dominio**. El estado del censo vive en `census.db`,
-        y esa separación es lo que vuelve estructural —y no disciplinar— que observar no
-        contamine el dominio. No-op si no hay corrida, que es el caso normal."""
-        censo = self._census
-        if censo is None or not censo.abierta:
-            return
-        from app.core.census import MenuSighting
-        try:
-            d = censo.observe(MenuSighting(
-                nombre=lectura.nombre, texto_crudo=lectura.texto_crudo, conf=lectura.conf,
-                candidato=lectura.candidato, score=lectura.score, motivo=lectura.motivo,
-            ), ts=time.time())
-        except Exception:
-            log.exception("Error acumulando la observación del censo")
-            return
-        for linea in d.logs:
-            log.info("[censo] %s", linea)
-            # Y AL PANEL, no solo al archivo. QA en vivo 2026-08-17: el censo contaba bien y el
-            # usuario no veía nada, porque miraba la app y las líneas estaban en `app.log`. En un
-            # recorrido de 51 selecciones el progreso tiene que estar donde está el usuario.
-            self._diag(f"[censo] {linea}")
-        if d.estado != d.estado_previo and self._on_census_progress:
-            try:
-                self._on_census_progress({**censo.resumen(), "clave": d.clave,
-                                          "estado": d.estado, "es_nuevo": d.es_nuevo})
-            except Exception:
-                log.exception("Error en on_census_progress callback")
 
     @staticmethod
     def _stats_result_is_useful(stats) -> bool:
@@ -5994,117 +5928,6 @@ class Monitor:
                 self._on_disc(disc, state)
         except Exception as exc:
             log.exception("Error parseando disco en estado %s: %s", state.code, exc)
-
-    def pedir_cierre_censo(self, confirmado: dict | None = None) -> None:
-        """Deja un pedido de cierre de censo para el hilo del monitor y vuelve enseguida. La
-        respuesta sale por `on_cierre_censo`.
-
-        **Acá no se ejecuta nada, a propósito.** No hay locks en `Monitor` ni en los censos, y el
-        botón corre en el hilo de la UI: cerrar desde ahí compite con el loop, que en esa misma
-        pasada puede estar observando el censo que se cierra (F8 tenía la misma carrera desde el
-        hilo del listener). El loop drena la cola al tope de cada pasada, también pausado.
-        """
-        self._pedidos_cierre.put(confirmado)
-
-    def _atender_pedidos_cierre(self) -> None:
-        """Ejecuta, en el hilo del loop, los cierres pedidos desde la UI."""
-        while True:
-            try:
-                confirmado = self._pedidos_cierre.get_nowait()
-            except queue.Empty:
-                return
-            try:
-                resultado = self.cerrar_censo(confirmado)
-            except Exception:
-                log.exception("[censo] el cierre pedido falló")
-                resultado = {"accion": "error"}
-            if self._on_cierre_censo:
-                try:
-                    self._on_cierre_censo(resultado)
-                except Exception:
-                    log.exception("Error en on_cierre_censo callback")
-
-    def cerrar_censo(self, confirmado: dict | None = None) -> dict:
-        """Cierra las pasadas de censo abiertas **si `confirmado` es lo que hay abierto ahora**.
-        Corre en el hilo del loop (ver `pedir_cierre_censo`) y devuelve qué pasó:
-
-        - `{"accion": "nada"}` — no había ninguna pasada abierta.
-        - `{"accion": "confirmar", "instantanea": …}` — **no se cerró nada**. Es la respuesta sin
-          confirmación, y también cuando lo confirmado ya no es lo que hay.
-        - `{"accion": "cerrado", "discos": …, "armas": …, "roster": …}` — lo que se cerró; `None`
-          lo que no estaba abierto.
-
-        **El cierre es una declaración del usuario, no una inferencia.** El sistema no puede
-        saber si el recorrido llegó al final —el menú no tiene contador de agentes—, así que no
-        debe cerrarse solo. Corolario asumido: una pasada que nunca se cierra no produce
-        huérfanos, y eso es correcto.
-
-        **Siempre se confirma, y el primer pedido no cierra nada** (2026-09-17, al pasar de F8 a un
-        botón). Con F8 el primer pedido cerraba los inventarios y recién después advertía por el
-        roster: con un diálogo, eso es un "Cancelar" que ya cerró el censo de discos. Y un censo de
-        inventario no se reabre, así que un clic de más a mitad de la pasada la cortaba.
-
-        **La confirmación es un conjunto, no una ventana de tiempo.** Riesgo visto en vivo
-        (2026-08-17): después de cerrar una pasada completa, volver al menú a revisar unos pocos PJs
-        abre una corrida NUEVA; cerrarla ahí declararía huérfanos a los 49 por los que no se volvió
-        a pasar, y el reporte mentiría con cara de completo. Antes lo cubría un segundo F8 dentro de
-        15 s; ahora se cierra sólo si los censos abiertos y los pendientes del roster son
-        EXACTAMENTE los que se mostraron — un diálogo abierto diez minutos no confirma otra pasada.
-
-        Es también el único momento en que el censo escribe la DB de dominio, y solo para anotar
-        (RNF-01 + gate de readonly dentro de `marcar_huerfanos_en_dominio`).
-        """
-        inst = self._instantanea_cierre()
-        if all(v is None for v in inst.values()):
-            log.info("[censo] no hay ninguna pasada abierta que cerrar")
-            return {"accion": "nada"}
-        if confirmado is None or self._clave_cierre(confirmado) != self._clave_cierre(inst):
-            if confirmado is not None:
-                log.info("[censo] lo abierto cambió desde la confirmación — se vuelve a preguntar")
-            pendientes = (inst["roster"] or {}).get("pendientes") or []
-            if pendientes:
-                muestra = ", ".join(pendientes[:8])
-                if len(pendientes) > 8:
-                    muestra += f", … (+{len(pendientes) - 8})"
-                aviso = (f"faltan {len(pendientes)} sin ver — cerrar ahora los declara HUÉRFANOS: "
-                         f"{muestra}.")
-                log.warning("[censo] %s", aviso)
-                self._diag(f"[censo] {aviso}")
-            return {"accion": "confirmar", "instantanea": inst}
-        # Los de inventario primero: tienen contador, así que cerrarlos produce un número
-        # verificable. El del roster va último porque su cierre es el caro — declara huérfanos y
-        # escribe la DB de dominio.
-        resultado: dict = {"accion": "cerrado", "discos": None, "armas": None, "roster": None}
-        if inst["discos"] is not None:
-            resultado["discos"] = self.cerrar_censo_discos()
-        if inst["armas"] is not None:
-            resultado["armas"] = self.cerrar_censo_armas()
-        if inst["roster"] is not None:
-            resultado["roster"] = self._cerrar_censo_roster(self._census)
-        return resultado
-
-    def _cerrar_censo_roster(self, censo) -> dict | None:
-        from app.core.census import write_census_report
-        registro = censo.cerrar(ts=time.time())
-        if registro is None:
-            return None
-        r = registro["resumen"]
-        log.info("[censo] pasada cerrada — %d/%d vistos · %d dudosos · %d huérfanos · %d no "
-                 "reconocidos", r["vistos"], r["total_db"], r["dudosos"], r["huerfanos"],
-                 r["nuevos"])
-        try:
-            from datetime import datetime as _dt
-
-            from app.core.census_store import marcar_huerfanos_en_dominio
-            marcar_huerfanos_en_dominio(registro["huerfanos"],
-                                        fecha=_dt.now().strftime("%Y-%m-%d"))
-        except Exception:
-            log.exception("[censo] no se pudieron marcar los huérfanos")
-        try:
-            write_census_report(registro)
-        except Exception:
-            log.exception("[censo] no se pudo escribir el reporte")
-        return registro
 
     def _hook_foreground(self) -> None:
         """

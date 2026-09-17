@@ -8,8 +8,8 @@ Dos cosas que el mockup dice y la app NO copia, a propósito:
 
 - **Los contadores del mockup son inventados** (`332 discos`, `45 PJs`, `1.2k`). Acá son consultas a
   la DB, y un 0 se muestra como 0: esconder un contador vacío es afirmar que no hay nada que contar.
-- **La card de hotkeys del mockup es una card de ACCIONES** (2026-09-17): las teclas no llegan a la
-  app con el juego en foco (UIPI), así que pausar y cerrar el censo son botones.
+- **La card de hotkeys del mockup tiene un BOTÓN de pausa** (2026-09-17): las teclas no llegan a la
+  app con el juego en foco (UIPI). No hay botón de cerrar censo: el sistema está siempre operativo.
 """
 from __future__ import annotations
 
@@ -139,42 +139,27 @@ def test_leer_contadores_sobrevive_a_una_tabla_que_falta(db):
 
 # --- acciones -----------------------------------------------------------------------------------
 
-def test_la_card_de_acciones_tiene_los_dos_botones_y_ninguna_tecla(qapp):
+def test_la_card_de_acciones_tiene_solo_la_pausa_y_ninguna_tecla(qapp):
     import re
     from PySide6.QtWidgets import QPushButton
     from app.ui.shell.sidebar import Sidebar
     sb = Sidebar()
     botones = [b.text() for b in sb.findChildren(QPushButton)]
-    assert "Pausar" in botones and "Cerrar pasada de censo" in botones
+    assert "Pausar" in botones
+    assert not [b for b in botones if "censo" in b.lower()], "no hay pasada de censo que cerrar"
     assert not [t for t in _textos(sb) + botones if re.fullmatch(r"F\d{1,2}", t.strip())]
 
 
-def test_los_botones_siguen_el_estado_del_monitor(qapp):
+def test_la_pausa_sigue_el_estado_del_monitor(qapp):
     from app.ui.shell.sidebar import Sidebar
     sb = Sidebar()
-    assert not sb.btn_pausa.isEnabled() and not sb.btn_cierre.isEnabled(), "sin monitor no hay nada"
+    assert not sb.btn_pausa.isEnabled(), "sin monitor no hay nada que pausar"
     sb.on_monitor_started()
-    assert sb.btn_pausa.isEnabled() and sb.btn_cierre.isEnabled()
+    assert sb.btn_pausa.isEnabled() and sb.btn_pausa.text() == "Pausar"
     sb.on_pause_changed(True)
     assert sb.btn_pausa.text() == "Reanudar"
-    assert sb.btn_cierre.isEnabled(), "pausado también se puede cerrar el censo"
     sb.on_monitor_stopped()
-    assert sb.btn_pausa.text() == "Pausar"
-    assert not sb.btn_pausa.isEnabled() and not sb.btn_cierre.isEnabled()
-
-
-def test_cerrar_pide_UNA_vez_y_queda_cerrando_hasta_la_respuesta(qapp):
-    from app.ui.shell.sidebar import Sidebar
-    sb = Sidebar()
-    sb.on_monitor_started()
-    pedidos: list[int] = []
-    sb.cierre_censo_pedido.connect(lambda: pedidos.append(1))
-    sb.btn_cierre.click()
-    sb.btn_cierre.click()                        # doble clic: el segundo no llega
-    assert pedidos == [1]
-    assert sb.btn_cierre.text() == "Cerrando…"
-    sb.cierre_terminado()
-    assert sb.btn_cierre.isEnabled() and sb.btn_cierre.text() == "Cerrar pasada de censo"
+    assert sb.btn_pausa.text() == "Pausar" and not sb.btn_pausa.isEnabled()
 
 
 def test_pausar_emite_el_pedido(qapp):

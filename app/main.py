@@ -94,7 +94,7 @@ if _ocr_ipc.es_arranque_de_worker():
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPalette
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
-from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 log = logging.getLogger(__name__)
 
@@ -238,6 +238,14 @@ class MainWindow(ShellWindow):
         c.monitor_stopped.connect(barra.on_monitor_stopped)
         c.pause_changed.connect(vista.on_pause_changed)
         c.pause_changed.connect(barra.on_pause_changed)
+        # El botón de pausa del sidebar. Se cablea ACÁ, antes del auto-arranque de más abajo: con
+        # ZZZ abierto, `set_auto_detect(True)` arranca el monitor en el acto y `monitor_started`
+        # sale antes de que se conecte nada posterior. Así quedó el botón deshabilitado para
+        # siempre en el QA en vivo del 2026-09-17.
+        c.monitor_started.connect(self.sidebar.on_monitor_started)
+        c.monitor_stopped.connect(self.sidebar.on_monitor_stopped)
+        c.pause_changed.connect(self.sidebar.on_pause_changed)
+        self.sidebar.pausa_pedida.connect(c.toggle_pause)
         c.state_changed.connect(vista.on_state_changed)
         c.error_occurred.connect(vista.on_error)
         # Mensajes informativos (cambios de estado, capturas descartadas, etc.) → la consola
@@ -284,12 +292,6 @@ class MainWindow(ShellWindow):
         vista.start_monitor_requested.connect(c.start)
         vista.stop_monitor_requested.connect(c.stop)
 
-        # Acciones del sidebar (reemplazan a las hotkeys, 2026-09-17): pausa y cierre de censo. La
-        # ventana es la dueña del diálogo; el ida y vuelta con el monitor vive en el flujo.
-        from app.ui.shell.cierre_censo import FlujoCierreCenso
-        self._flujo_cierre = FlujoCierreCenso(c, self.sidebar, vista.append_log,
-                                              self._preguntar_cierre_censo, parent=self)
-
         # Las 9 vistas del sidebar
         self.add_view("live", vista)
         self.add_view("historico", make_placeholder(
@@ -320,19 +322,6 @@ class MainWindow(ShellWindow):
             "[auto] Watcher de ZZZ ACTIVO — el monitor arranca solo cuando detecta el juego."
             if enabled else "[auto] Watcher de ZZZ desactivado."
         )
-
-    def _preguntar_cierre_censo(self, texto: str) -> bool:
-        """El diálogo de cierre de censo. Cancelar es el botón por defecto: un Enter distraído no
-        declara huérfanos."""
-        caja = QMessageBox(self)
-        caja.setIcon(QMessageBox.Icon.Warning)
-        caja.setWindowTitle("Cerrar pasada de censo")
-        caja.setText(texto)
-        cerrar = caja.addButton("Cerrar pasada", QMessageBox.ButtonRole.AcceptRole)
-        cancelar = caja.addButton("Cancelar", QMessageBox.ButtonRole.RejectRole)
-        caja.setDefaultButton(cancelar)
-        caja.exec()
-        return caja.clickedButton() is cerrar
 
     def _abrir_ficha_pj(self, agente_id: int):
         """Click en una celda del roster → el modal de ese PJ. La ventana es la dueña de los
