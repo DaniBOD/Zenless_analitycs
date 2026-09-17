@@ -314,7 +314,7 @@ def test_click_a_log_se_abre_al_ver_el_disco_y_se_cierra_con_la_linea(met, tmp_p
     _aislar_emision_s9(monkeypatch, mon)
     monkeypatch.setattr(mon, "_s9_disc_signature", lambda frame: _firma(0.0))
 
-    mon._vigilar_click_s9(None)
+    mon._s9_mirar_disco_en_loop(None)
     assert mon._frescura_click_t is not None, "disco nuevo: el cronómetro tiene que abrirse"
     d = _disco_maduro()
     d.agente_asignado_nombre = "Corin"
@@ -338,11 +338,11 @@ def test_click_a_log_no_se_reabre_mientras_el_panel_anima(met, monkeypatch):
     instantes = iter([10.0, 20.0, 30.0])
     monkeypatch.setattr(met, "ahora", lambda: next(instantes))
 
-    mon._vigilar_click_s9(None)
+    mon._s9_mirar_disco_en_loop(None)
     t0 = mon._frescura_click_t
     assert t0 == 10.0
-    mon._vigilar_click_s9(None)                 # la firma cambió (animación)
-    mon._vigilar_click_s9(None)                 # y otra vez
+    mon._s9_mirar_disco_en_loop(None)                 # la firma cambió (animación)
+    mon._s9_mirar_disco_en_loop(None)                 # y otra vez
     assert mon._frescura_click_t == t0, "se re-abrió: la muestra saldría corta"
 
 
@@ -350,20 +350,21 @@ def test_click_a_log_sin_firma_no_abre(met, monkeypatch):
     """Sin firma no hay evidencia de un disco nuevo (RNF-02): no se cronometra nada."""
     mon = _monitor()
     monkeypatch.setattr(mon, "_s9_disc_signature", lambda frame: None)
-    mon._vigilar_click_s9(None)
+    mon._s9_mirar_disco_en_loop(None)
     assert mon._frescura_click_t is None
 
 
-def test_click_a_log_con_metricas_apagadas_ni_calcula_la_firma(tmp_path, monkeypatch):
-    """La firma cuesta ~15 ms por pasada. En uso normal (métricas apagadas) este vigilante no
-    puede cobrar ese costo por una medición que nadie va a leer."""
+def test_sin_metricas_ni_despacho_rapido_ni_calcula_la_firma(tmp_path, monkeypatch):
+    """La firma cuesta ~15 ms por pasada. Si nadie la necesita —ni la medición ni el despacho
+    rápido (`DANIBOD_S9_DESPACHO_RAPIDO=0`)—, el vigilante no la calcula."""
     import app.core.metrics as m
     monkeypatch.delenv("DANIBOD_METRICS", raising=False)
     m.reset()
     mon = _monitor()
+    mon._s9_despacho_rapido = False
     llamadas = []
     monkeypatch.setattr(mon, "_s9_disc_signature", lambda frame: llamadas.append(1) or _firma(0.0))
-    mon._vigilar_click_s9(None)
+    mon._s9_mirar_disco_en_loop(None)
     assert llamadas == [] and mon._frescura_click_t is None
 
 
@@ -392,14 +393,16 @@ def test_click_a_log_salir_de_S9_suelta_el_cronometro():
     assert mon._frescura_click_t is None and mon._s9_fast_sig is None
 
 
-def test_el_loop_rapido_realmente_vigila_S9():
+def test_el_loop_rapido_realmente_vigila_S9(monkeypatch, met):
     """**Contra A2.** Los tests de arriba llaman al vigilante a mano y pasarían aunque el loop no lo
-    invocara. El loop no se puede correr en un test (captura pantalla), así que se verifica que lo
-    llame en la rama de S9."""
-    import inspect
-    fuente = inspect.getsource(Monitor._run)
-    rama = fuente.split('elif raw_state.code == "S9":', 1)
-    assert len(rama) == 2 and "self._vigilar_click_s9(frame)" in rama[1].split("\n")[1]
+    invocara. Hasta el 2026-09-16 esto se verificaba leyendo el código fuente; ahora se corre el
+    `_run` VERDADERO con frames inyectados (ver `test_monitor_s9_despacho_rapido.py`, que usa el
+    mismo arnés): el cronómetro tiene que quedar abierto por el loop, no por el test."""
+    from app.tests.unit.arnes_loop_monitor import correr_loop
+    mon = _monitor()
+    assert mon._frescura_click_t is None
+    correr_loop(monkeypatch, mon, firmas=[0.0, 0.0, 0.0, 255.0])
+    assert mon._frescura_click_t is not None, "el loop no abrió el cronómetro click→log"
 
 
 def test_despacho_y_loop_rapido_usan_la_misma_comparacion():
@@ -407,7 +410,7 @@ def test_despacho_y_loop_rapido_usan_la_misma_comparacion():
     criterios distintos, la métrica mediría la diferencia entre dos umbrales, no la espera."""
     import inspect
     assert "_s9_firmas_distintas(" in inspect.getsource(Monitor._is_new_s9_disc)
-    assert "_s9_firmas_distintas(" in inspect.getsource(Monitor._vigilar_click_s9)
+    assert "_s9_firmas_distintas(" in inspect.getsource(Monitor._s9_mirar_disco_en_loop)
 
 
 def _disco_maduro_con(dueno):

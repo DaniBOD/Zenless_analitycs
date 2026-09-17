@@ -228,6 +228,12 @@ _S5_EVOKED_TTL_S = 600.0
 # esperan → cero latencia extra; el costo se paga solo donde había riesgo de incierto.
 _S17_OWNER_MIN_SAMPLES = 4     # pasadas del loop rápido para "calentar" el voto del dueño
 _S17_WARM_CADENCE_MS = 100     # mientras calienta, re-chequear el voto rápido (no esperar 1s)
+# Despacho rápido de S9 (2026-09-16): pasadas SEGUIDAS en que la firma del disco recién visto puede
+# seguir cambiando antes de abandonar la confirmación y volver a la cadencia de siempre. La firma de
+# S9 mira texto estático (título, bloque de stats) y la posición del recuadro, así que el panel se
+# asienta en una pasada; el tope existe para que un panel que no se asiente NUNCA —por lo que sea—
+# degrade al comportamiento de antes en vez de suprimir el despacho para siempre.
+_S9_CONFIRMACION_MAX = 3
 
 # Firma HÍBRIDA del disco S17 (gobierna la re-captura; BARATA, sin OCR — RNF-06).
 # Dos componentes en gris comparadas con OR:
@@ -508,9 +514,18 @@ class Monitor:
         self._s9_rechazos: int = 0
         self._s9_warm_checks: int = 0
         # Frescura CLICK→LOG en S9: la firma del disco que vio por última vez el LOOP RÁPIDO (no el
-        # despacho) y el instante en que la vio cambiar. Ver `_vigilar_click_s9`.
+        # despacho) y el instante en que la vio cambiar. Ver `_s9_mirar_disco_en_loop`.
         self._s9_fast_sig = None
         self._frescura_click_t: float | None = None
+        # Despacho rápido con confirmación de panel quieto (ver `_s9_confirmar_pendiente`).
+        self._s9_despacho_rapido: bool = os.environ.get(
+            "DANIBOD_S9_DESPACHO_RAPIDO", "1").strip() not in ("0", "false", "no")
+        self._s9_pendiente: bool = False          # hay un disco visto que todavía no se leyó
+        self._s9_recien_visto: bool = False       # ESTA pasada vio el disco moverse: no leer su frame
+        self._s9_intentos_confirmacion: int = 0
+        self._s9_rapido_confirmados: int = 0      # contadores para la Pasada B (se loguean al parar)
+        self._s9_rapido_rearmados: int = 0
+        self._s9_rapido_abandonados: int = 0
         # Censo del inventario: a diferencia del roster, acá HAY denominador en pantalla, así que
         # la corrida se abre sola (hay disparador claro) y sabe cuánto le falta sin preguntar.
         self._censo_discos = None          # InventoryCensus, perezoso
@@ -832,6 +847,10 @@ class Monitor:
         # La caché del header entre clasificaciones (S9/S30) no se ve en ninguna métrica de latencia
         # por sí sola: si nunca acierta —porque el header cambia de píxeles entre frames—, no gana nada
         # y hay que saberlo. Una línea por sesión alcanza.
+        if self._s9_rapido_confirmados or self._s9_rapido_rearmados or self._s9_rapido_abandonados:
+            log.info("[s9-despacho-rapido] confirmados=%d re-armados=%d abandonados=%d",
+                     self._s9_rapido_confirmados, self._s9_rapido_rearmados,
+                     self._s9_rapido_abandonados)
         estadisticas = getattr(self._detector, "estadisticas_cache_header", None)
         if callable(estadisticas):
             aciertos, fallos = estadisticas()
@@ -947,6 +966,21 @@ class Monitor:
                 metrics.registrar_desde("loop_period", self._loop_prev_t)
             self._loop_prev_t = metrics.ahora()
 
+            # ---- Paso 0 (S9): despacho rápido con confirmación de panel quieto ----
+            # Si la pasada anterior vio un disco nuevo, se compara la firma de ESTE frame antes de
+            # clasificar. Coincide ⇒ el panel ya está quieto ⇒ se lee ya, sin pagar el classify ni el
+            # OCR del slot de esta pasada. Ver `_s9_confirmar_pendiente`.
+            confirmacion_s9 = self._s9_confirmar_pendiente(frame)
+            if confirmacion_s9 == "despachar":
+                mem_diag.heartbeat({"ticks": self._loop_ticks, "st": "S9"})
+                self._ram_watchdog(now)
+                self._heartbeat(now, "S9")
+                last_process_time = now
+                with metrics.measure_block("dispatch:S9"):
+                    self._safe_dispatch(frame, self._confirmed_state)
+                self._wait_fast()
+                continue
+
             # ---- Paso 1: clasificar frame individual ----
             raw_state = self._detector.classify(frame)
 
@@ -984,7 +1018,8 @@ class Monitor:
             elif raw_state.code == "S17":
                 self._sample_s17_owner(frame)
             elif raw_state.code == "S9":
-                self._vigilar_click_s9(frame)
+                if confirmacion_s9 != "sigue":        # "sigue" ya firmó este frame
+                    self._s9_mirar_disco_en_loop(frame)
 
             # Fallback deep detect S18: si classify se quedó en S12, intentar
             # detección independiente de templates con OCR confirmatorio de stats.
@@ -1092,6 +1127,13 @@ class Monitor:
                 should_dispatch = forced or (
                     elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
                 )
+                # Despacho rápido de S9: en la pasada en que el loop VIO el disco moverse, su frame
+                # puede estar a mitad de la animación del panel. No se lee; lo lee la pasada
+                # siguiente, cuando la firma confirme que quedó quieto. Sin esto la cadencia podía
+                # caer justo en el frame animado y pagar una lectura de ~1,9 s para descartarla.
+                if (should_dispatch and not forced and active_state.code == "S9"
+                        and self._s9_recien_visto):
+                    should_dispatch = False
                 if should_dispatch:
                     last_process_time = now
                     # Costo del ciclo, ETIQUETADO POR PANTALLA: es lo que compite con la cadencia.
@@ -2868,7 +2910,7 @@ class Monitor:
 
     def _s9_firmas_distintas(self, a, b) -> bool:
         """LA respuesta a "¿son dos discos distintos?" en S9. La usan el despacho
-        (`_is_new_s9_disc`) y el loop rápido (`_vigilar_click_s9`): si cada uno comparara a su
+        (`_is_new_s9_disc`) y el loop rápido (`_s9_mirar_disco_en_loop`): si cada uno comparara a su
         manera, el cronómetro click→log se abriría con un criterio y el disco se re-armaría con
         otro, y la métrica mediría la diferencia entre dos umbrales en vez de la espera (B1)."""
         return (self._sig_component_diff(a[0], b[0]) > _S9_SIG_MAX
@@ -3486,25 +3528,21 @@ class Monitor:
         self._frescura_disco_t = None
         self._frescura_disco_warm = False
 
-    def _vigilar_click_s9(self, frame) -> None:
-        """Loop rápido en S9: abre el cronómetro CLICK→LOG cuando la firma del disco cambia.
+    def _s9_mirar_disco_en_loop(self, frame) -> None:
+        """Loop rápido en S9: ¿cambió el disco mirado? Es la ÚNICA autoridad del avistaje, y de
+        ella cuelgan dos cosas:
 
-        Tapa el punto ciego de `frescura_disco_a_log`, que se abre en el DESPACHO y por eso no ve la
-        espera hasta el primer despacho — en S9 hasta ~1,8 s, gobernada por la cadencia (Pasada 1,
-        2026-09-16). Es la espera que Daniel vive de verdad.
+        1. **El cronómetro CLICK→LOG** (`frescura_disco_click_a_log`), la espera que Daniel vive de
+           verdad. Sólo abre si no hay uno abierto: mientras el panel anima la firma cambia varias
+           veces, y re-abrir mediría desde el último cuadro (sesgo optimista). Sólo con métricas.
+        2. **El despacho rápido**: marca el disco como PENDIENTE y esta pasada como RECIÉN VISTO,
+           para que no se lea su frame (puede estar animando) y la pasada siguiente lo confirme.
 
-        **Sólo abre si no hay uno abierto.** Mientras el panel anima, la firma cambia varias veces
-        seguidas; re-abrir en cada cambio mediría desde el último cuadro de la animación y la muestra
-        saldría corta — sesgada hacia lo optimista justo en lo que se quiere medir. El sesgo que
-        queda es el opuesto y se acepta: si se pasa de disco antes de que salga la línea, la muestra
-        sale LARGA.
-
-        Superficie aparte a propósito: `frescura_disco_a_log` conserva su definición para seguir
-        comparándose con la Pasada 1 (C1). Sólo corre con las métricas encendidas — calcular la
-        firma cuesta ~15 ms por pasada (medido sobre 19 capturas a 2559×1439) y en uso normal no
-        tiene que pagarse por una medición que nadie va a leer.
+        Con el despacho rápido apagado (`DANIBOD_S9_DESPACHO_RAPIDO=0`) y sin métricas no calcula
+        nada: la firma cuesta ~15 ms por pasada (medido sobre 19 capturas a 2559×1439).
         """
-        if not metrics.habilitado():
+        medir = metrics.habilitado()
+        if not (self._s9_despacho_rapido or medir):
             return
         sig = self._s9_disc_signature(frame)
         if sig is None:
@@ -3512,8 +3550,54 @@ class Monitor:
         if self._s9_fast_sig is not None and not self._s9_firmas_distintas(sig, self._s9_fast_sig):
             return
         self._s9_fast_sig = sig
-        if self._frescura_click_t is None:
+        if medir and self._frescura_click_t is None:
             self._frescura_click_t = metrics.ahora()
+        if self._s9_despacho_rapido:
+            self._s9_pendiente = True
+            self._s9_recien_visto = True
+            self._s9_intentos_confirmacion = 0
+
+    def _s9_confirmar_pendiente(self, frame) -> str | None:
+        """Pasada siguiente al avistaje, ANTES de clasificar: ¿el panel ya está quieto?
+
+        Devuelve `"despachar"` (la firma de este frame coincide con la del avistaje: leer ya, con
+        este frame y sin classify), `"sigue"` (la firma volvió a cambiar: el panel todavía anima; ya
+        se firmó este frame) o `None` (nada pendiente, o no se puede confirmar: pasada normal).
+
+        **Por qué confirmar y no leer en el acto** (Pasada A, 2026-09-16): el despacho lee el MISMO
+        frame en el que el loop vio el cambio, y ese frame puede estar a mitad de la animación. La
+        espera de cadencia de antes le daba tiempo al panel a asentarse sin querer — por eso esa
+        pasada dio 0 descartes en 10 discos —, pero a costa de ~1 s por disco.
+
+        **Por qué se puede saltear el classify**: que la firma del panel de S9 coincida en dos frames
+        seguidos, habiendo sido S9 la pantalla confirmada, ES la evidencia de seguir en S9. Si el
+        usuario se fue de pantalla, la firma no coincide y la pasada clasifica normal.
+        """
+        self._s9_recien_visto = False
+        if not (self._s9_despacho_rapido and self._s9_pendiente):
+            return None
+        confirmado = self._confirmed_state
+        if confirmado is None or confirmado.code != "S9":
+            self._s9_pendiente = False
+            return None
+        sig = self._s9_disc_signature(frame)
+        if sig is None or self._s9_fast_sig is None:
+            self._s9_pendiente = False
+            return None
+        if not self._s9_firmas_distintas(sig, self._s9_fast_sig):
+            self._s9_pendiente = False
+            self._s9_rapido_confirmados += 1
+            return "despachar"
+        # Sigue moviéndose: se re-arma sobre la firma nueva, hasta un tope.
+        self._s9_fast_sig = sig
+        self._s9_intentos_confirmacion += 1
+        if self._s9_intentos_confirmacion >= _S9_CONFIRMACION_MAX:
+            self._s9_pendiente = False               # degrada a la cadencia de siempre
+            self._s9_rapido_abandonados += 1
+        else:
+            self._s9_recien_visto = True
+            self._s9_rapido_rearmados += 1
+        return "sigue"
 
     def _emit_s17_disc(self, merged, state: ScreenState, mature: bool) -> None:
         """Emite (dedup + equip_map + id_diag + log + on_disc) un disco S17 ya resuelto.
@@ -4186,6 +4270,9 @@ class Monitor:
         self._s9_warm_checks = 0
         self._s9_fast_sig = None
         self._frescura_click_t = None      # un cronómetro de S9 no puede cerrarlo otra pantalla
+        self._s9_pendiente = False
+        self._s9_recien_visto = False
+        self._s9_intentos_confirmacion = 0
 
     # --- S3: modal de drop farmeado (parser espacial 2 columnas) ----------------
     def _process_disc_s3_continuous(self, frame, state: ScreenState) -> None:
