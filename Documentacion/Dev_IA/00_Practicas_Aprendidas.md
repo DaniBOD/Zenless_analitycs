@@ -33,6 +33,14 @@ realmente usa— esa misma ref era la más cercana (0.156 contra 0.475) y era la
 medición con la métrica equivocada no es media medición: es una refutación falsa, y cuesta más que
 no haber medido, porque cierra la puerta con aire de rigor.
 
+**Un test que pasa prueba el mecanismo, no la premisa** (2026-09-17). Se cacheó el OCR del header
+del inventario por los BYTES del recorte, porque "el título no cambia mientras se recorren discos".
+El test con `classify` y Tesseract reales pasó: comparaba el frame contra `a.copy()`, que es idéntico
+byte a byte **por construcción**. En vivo: **0 aciertos de 72**. Que dos frames REALES consecutivos
+traigan el header con los mismos bytes nunca se midió; se revirtió. Antes de construir sobre una
+premisa del mundo (qué hace el juego, qué trae la pantalla), medila en vivo — el laboratorio no la
+puede contradecir si el propio test la fabrica.
+
 ### A2 · El silencio no es un aprobado.
 
 *"No hay ERROR en el log"* no significa que anduvo: puede significar que **ese código nunca
@@ -169,9 +177,17 @@ La métrica de la librería de caras mintió **de cuatro formas distintas**:
 | clases de una sola ref | deprimían un matcher que acierta 22/22 |
 | `is_gray` separando paletas, no obtenidos | un PJ de negro se comparaba **sin color** |
 | distancia al centroide en clase **bimodal** | el centroide cae en el medio ⇒ todo parece lejano |
+| **mediana** de `dispatch:S9`, que es **bimodal** (2026-09-16) | cayó en el modo barato ⇒ "el primer despacho no emite", falso |
 
 La cuarta la inventó el asistente y llevó a "descubrir" 8 refs contaminadas que eran legítimas.
 Sacarlas bajó el acierto de 93,3 % a 91,5 %.
+
+La quinta es **la misma forma un mes después**. `dispatch:S9` mezcla despachos que no leen nada
+(11-148 ms, el disco ya salió) con lecturas reales (1,8-3,0 s). Con 43 muestras la mediana dio
+135 ms, se tomó como "lo que cuesta leer un disco", y de ahí salió un diagnóstico entero que la
+pasada siguiente desmintió (los contadores dijeron `agg 1c · 0 desc`: la primera lectura
+alcanzaba). **Antes de resumir una serie con un número, mirá si tiene dos poblaciones**: ordenala
+entera, o separá por lo que la genera. Un resumen de una mezcla no describe a ninguna de las dos.
 
 **Cómo aplicarlo:** usá `measure_badge_lib.py --against-labeled`, que está validado, y corré
 **antes y después** de cualquier cambio. Una métrica nueva se valida contra la vieja antes de
@@ -237,7 +253,17 @@ elegía su reloj**. Un `# ojo: usar monotonic` al lado no lo evita; lo evita que
 - Corolario: **una métrica sin un test que la mire puede existir y no medir nada.** Antes de creerle
   a una serie histórica, mirá una muestra cruda.
 
-Ver `2026-09-15_FIX_El_reloj_de_la_frescura_media_el_epoch_y_la_espera_la_pone_el_warmup.md`.
+**Reapareció a los dos días, con otra forma: una métrica que PARECE completa** (2026-09-17).
+`ocr_text` medía **sólo** `OcrProxy.text`. `text_with_bboxes` —el OCR principal del panel de S9,
+S17, S26, S3, S10, desmontaje— no dejaba rastro, y cuesta **8,2×** una lectura de texto (735 contra
+89 ms offline; ~1,6 s en vivo). Durante meses `ocr_text` reportó la parte chica del OCR, y la grande
+aparecía como "tiempo sin explicar": ~1,5 s por disco, ~2,5 s por arma. Un nombre genérico
+(`ocr_text`) sobre una medición parcial se lee como "el OCR cuesta esto". La guarda no es acordarse
+de decorar: es un test que deriva los métodos del contrato (`OcrBackend`) y exige que el proxy los
+tenga TODOS medidos (`test_ocr_medido.py`), así un método nuevo sin medir cae con su nombre.
+
+Ver `2026-09-15_FIX_El_reloj_de_la_frescura_media_el_epoch_y_la_espera_la_pone_el_warmup.md` y
+`2026-09-17_PERF_Latencia_del_log_en_S9_lo_que_midieron_las_pasadas_A_y_B.md`.
 
 ---
 
