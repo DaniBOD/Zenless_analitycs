@@ -84,9 +84,9 @@ _REJECT_DET_DIR = _RESOURCES / "avatar_reject_det"
 # tiene UN solo lugar, que es de lo que se trata.
 _BASELINE_DIR = _RESOURCES / "badge_baselines"
 _BASELINES = {
-    "row": _BASELINE_DIR / "avatar_row_v2_snapshot_20260816_roster51.npz",
-    "grid": _BASELINE_DIR / "avatar_badge_v2_snapshot_20260816_roster51.npz",
-    "detail": _BASELINE_DIR / "avatar_detbadge_v2_snapshot_20260816_roster51.npz",
+    "row": _BASELINE_DIR / "avatar_row_v2_snapshot_20260917_roster52.npz",
+    "grid": _BASELINE_DIR / "avatar_badge_v2_snapshot_20260917_roster52.npz",
+    "detail": _BASELINE_DIR / "avatar_detbadge_v2_snapshot_20260917_roster52.npz",
 }
 
 # Cache del seed -ico: los descriptores son inmutables (frozen) y caros de construir

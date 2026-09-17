@@ -4,9 +4,7 @@
 Plan: `C:\Users\danie\.claude\plans\claret-flint-y-vamos-snappy-lollipop.md`. Reporte de la
 migración: `audit/onboarding_claret_flint_20260917.md`.
 
-**Estado al cerrar este doc:** entregas 1-3 en `main` y verdes. La **entrega 4 (en vivo)** estaba en
-curso: la app abierta con `-FromSource -ReadOnly -BadgeHarvest -NoRamGuard -IdDiag` esperando que
-Daniel pase por S15 → S18 → Equipamiento (screenshot para `row`) → los 6 discos. Ver §6.
+**Estado:** las 5 entregas cerradas. La 4 (en vivo) dejó la lección del §6.
 
 ## Qué es Claret
 
@@ -93,20 +91,43 @@ OCR real de Paddle sobre la ficha: `Dafo de laceración 150 %` (sic) y
 | sabotajes | E2 3/3 rojos · E3 7/7 rojos (script con `count == 1`) |
 | `.exe` | no se recompiló (pedido de Daniel) |
 
-## 6 · Entrega 4 (en vivo) — dónde quedó
+## 6 · Entrega 4 (en vivo) — y por qué la primera pasada no cosechó nada
 
-**Línea base medida antes de cosechar** (`measure_badge_lib --against-labeled`):
-`grid` 93,3 % top-1 · 4,3 % abstención · **2,4 % wrong** (imán Billy Estelar ×4; igual que al cerrar
-Aria) · `row` 7,3 % top-1 · 0 % wrong. `detail` no tiene modo `--against-labeled`.
+**S18 quedó verificado en vivo**: `Stats agente Claret Flint (Armero/Eléctrico): Nv=60 PV=8360 ATK=-
+… TP=32.0% FB=- ER=- AD=- LAC=150.0% AF=1.5 conf=0.95 missing=[]`. Y **S15 la reconoce sola** —
+`PJ=Claret Flint · rol=Armero · elemento=Eléctrico`—, así que el mapa de roles de pantalla anda.
 
-Pasos pendientes, en orden:
-1. Daniel: S15 → Claret (`[S15] … PJ=Claret Flint`); S18 (`[stats] … LAC=150.0% AF=1.5`, `[completo] 11/11`);
-   Equipamiento con screenshot a `Discos_Triggers/03_Pantalla_Agente_Discos_Equipados/Ejemplo_N.png`;
-   un disco equipado y los 6 slots; Salir.
-2. Leer el log (desde la línea 10783 de `app.log`): `badge aprendido para 'Claret Flint'` y `[id_diag]`.
-3. `tools/preseed_badge_lib.py --surface row --source frame --frame <screenshot> --label "Claret Flint"`.
-4. `measure_badge_lib --against-labeled` en `grid` y `row`: **no puede empeorar** contra la línea base.
-5. Snapshot de las 3 librerías a `audit/` + repuntar `agent_identifier._BASELINES` + commit.
+⭐ **La primera pasada por los 6 discos no aprendió NI UN badge, y el log lo explicaba entero.** Los
+seis salieron `assigned=- · [grilla] disco equipado · dueño incierto`, y arriba estaba la causa:
+`[S8] … PJ=Claret Flint identificado=True (sostenido)`. "Sostenido" es carry-forward: el matcher de
+fila **no la reconoció** (no tenía refs suyas), y el guard de latch sostenido desactiva el ancla justo
+cuando el badge tampoco vota. Las dos fallas están correlacionadas y el comentario del código ya lo
+decía; lo que faltaba era el orden del protocolo: **`row` primero**.
+
+Yo había ordenado la pasada al revés (los discos antes que el `row`). Con la ref de `row` cargada
+desde el screenshot de Equipamiento, la segunda pasada cerró el lazo como está escrito:
+
+```
+[S8] … PJ=Claret Flint identificado=True (avatar)      ← ya no "sostenido"
+AgentIdentifier: badge aprendido para 'Claret Flint'   ← slot 1: aprende
+… slot=2 assigned=Claret Flint voted=Claret Flint      ← del segundo en adelante, ya la vota
+```
+
+Los 6 discos quedaron atribuidos (`dueño=Claret Flint`, conf 0.97-0.99) y de paso confirmaron su
+build: **4pc Rosa espinosa (Thorned Rose) + 2pc Tecno tetraodóntido (Puffer Electro)**, que es
+exactamente lo que recomienda Prydwen.
+
+**Medición, antes y después** (`measure_badge_lib --against-labeled`; Claret no está en el corpus
+etiquetado, así que lo que se mide es que **no desplace a nadie**):
+
+| superficie | antes | después |
+|---|---|---|
+| `grid` | 93,3 % top-1 · 4,3 % abst. · **2,4 % wrong** (379 refs) | **igual** (385 refs, +6 de Claret) |
+| `row` | 7,3 % top-1 · 0 % wrong (66 refs) | **igual** (67 refs, +1) |
+
+`detail` sumó 1 ref: el dedup funcionando (el avatar del panel no cambia con el disco), igual que con
+Aria. Snapshots de las 3 librerías a `app/resources/badge_baselines/` con `_BASELINES` repuntado —
+y de paso el protocolo, que seguía diciendo `audit/`, quedó corregido (se mudaron el 2026-08-19).
 
 ## 7 · Pendiente
 

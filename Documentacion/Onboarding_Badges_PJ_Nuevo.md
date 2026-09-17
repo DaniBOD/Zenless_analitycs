@@ -153,20 +153,26 @@ Y la salud general de las tres librerías:
 Las librerías viven en `%LOCALAPPDATA%\DaniBOD_ZZZ_Analytics\`, que **no está versionado**, y ya
 se vaciaron dos veces. Si no dejás snapshot, la próxima vez perdés la cosecha entera.
 
+⚠️ Los snapshots viven en **`app/resources/badge_baselines/`**, no en `audit/`: se mudaron ahí el
+2026-08-19 porque el `.exe` no llega a `audit/` (regla D1) y la red de emergencia estaba muerta en el
+empaquetado. El sufijo nombra el tamaño del roster.
+
 ```powershell
 $ts = Get-Date -Format "yyyyMMdd"
-Copy-Item "$env:LOCALAPPDATA\DaniBOD_ZZZ_Analytics\avatar_badge_v2.npz"    "audit\avatar_badge_v2_snapshot_${ts}_roster50.npz"
-Copy-Item "$env:LOCALAPPDATA\DaniBOD_ZZZ_Analytics\avatar_row_v2.npz"      "audit\avatar_row_v2_snapshot_${ts}.npz"
-Copy-Item "$env:LOCALAPPDATA\DaniBOD_ZZZ_Analytics\avatar_detbadge_v2.npz" "audit\avatar_detbadge_v2_snapshot_${ts}.npz"
+$dst = "app\resources\badge_baselines"
+Copy-Item "$env:LOCALAPPDATA\DaniBOD_ZZZ_Analytics\avatar_badge_v2.npz"    "$dst\avatar_badge_v2_snapshot_${ts}_roster52.npz"
+Copy-Item "$env:LOCALAPPDATA\DaniBOD_ZZZ_Analytics\avatar_row_v2.npz"      "$dst\avatar_row_v2_snapshot_${ts}_roster52.npz"
+Copy-Item "$env:LOCALAPPDATA\DaniBOD_ZZZ_Analytics\avatar_detbadge_v2.npz" "$dst\avatar_detbadge_v2_snapshot_${ts}_roster52.npz"
 ```
 
 Después **actualizá el puntero** en `app/core/agent_identifier.py::_BASELINES` a los archivos
-nuevos, y commiteá los `.npz` junto con ese cambio. Eso es lo que hace que, si la carpeta del
+nuevos, borrá los anteriores (el historial de git los conserva) y commiteá los `.npz` junto con ese
+cambio. Eso es lo que hace que, si la carpeta del
 runtime se vuelve a vaciar, la app se reponga sola con un WARNING en el log en vez de quedarse
 nombrando con arte `-ico`.
 
 > Hay un test que lo cuida: `test_los_baselines_versionados_existen` falla si el puntero apunta a
-> un archivo que no está en `audit/`. Una red de emergencia imaginaria no falla al declararla —
+> un archivo que no está en `app/resources/badge_baselines/`. Una red de emergencia imaginaria no falla al declararla —
 > falla el día que hace falta.
 
 ---
