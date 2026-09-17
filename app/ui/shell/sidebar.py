@@ -1,11 +1,13 @@
 """Sidebar del panel principal — portado de `Sidebar` en panel.jsx (mockup de Claude Design).
 
-220 px, gradiente oscuro, bloque de cuenta arriba, tres grupos de navegación y la card de hotkeys
+220 px, gradiente oscuro, bloque de cuenta arriba, tres grupos de navegación y la card de acciones
 abajo. Dos diferencias con el mockup, a propósito:
 
 - **Los contadores son de la DB** (`contadores.leer_contadores`), no los del dibujo. Un 0 se ve.
-- **La card de hotkeys dice lo que la tecla HACE** (`app/core/hotkeys.py`): en el mockup F8 era
-  "Captura"; en la app cierra la pasada de censo.
+- **Donde el mockup dibujaba hotkeys hay BOTONES** (2026-09-17). ZZZ corre como administrador y
+  Windows (UIPI) no le entrega las teclas a la app con el juego en foco: F8/F10 no andaban justo en
+  juego. F9 (mostrar el panel) no tiene botón: un botón no puede mostrar la ventana en la que vive;
+  lo cubre la bandeja.
 """
 from __future__ import annotations
 
@@ -24,13 +26,11 @@ GRUPOS: list[tuple[str, list[tuple[str, str]]]] = [
     ("SISTEMA",   [("catalogos", "Catálogos"), ("config", "Configuración")]),
 ]
 
-#: Lo que cada tecla hace en la app, fuente: el docstring de `app/core/hotkeys.py`.
-HOTKEYS: list[tuple[str, str]] = [
-    ("F8",  "Cerrar censo"),
-    ("F9",  "Panel"),
-    ("F10", "Pausa"),
-    ("F11", "Run"),
-]
+#: Textos de los botones de acción. Los tests afirman sobre estos mismos valores.
+TXT_PAUSAR = "Pausar"
+TXT_REANUDAR = "Reanudar"
+TXT_CERRAR_CENSO = "Cerrar pasada de censo"
+TXT_CERRANDO = "Cerrando…"
 
 UID = "1000860143"
 
@@ -107,15 +107,21 @@ class _Item(QPushButton):
 
 
 class Sidebar(QWidget):
-    """Navegación. Emite `item_selected(clave)`; no conoce las vistas que hay detrás."""
+    """Navegación y acciones. Emite `item_selected(clave)`, `pausa_pedida` y `cierre_censo_pedido`;
+    no conoce las vistas que hay detrás ni al monitor (lo cablea `cierre_censo.FlujoCierreCenso`)."""
 
     item_selected = Signal(str)
+    pausa_pedida = Signal()
+    cierre_censo_pedido = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setFixedWidth(T.SIDEBAR_W)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._items: dict[str, _Item] = {}
+        self._running = False
+        self._paused = False
+        self._cierre_en_vuelo = False
         self._build()
         self._set_checked("live")
 
@@ -141,7 +147,7 @@ class Sidebar(QWidget):
             root.addSpacing(8)
 
         root.addStretch(1)
-        root.addWidget(self._card_hotkeys())
+        root.addWidget(self._card_acciones())
 
     def _bloque_cuenta(self) -> QWidget:
         w = QFrame()
@@ -174,36 +180,73 @@ class Sidebar(QWidget):
         lay.addLayout(col, 1)
         return w
 
-    def _card_hotkeys(self) -> QWidget:
+    def _card_acciones(self) -> QWidget:
         card = QFrame()
-        card.setObjectName("hotkeys")
+        card.setObjectName("acciones")
         card.setStyleSheet(
-            f"QFrame#hotkeys {{ margin: 0 10px; border: 1px solid {T.BORDER_SUBTLE};"
+            f"QFrame#acciones {{ margin: 0 10px; border: 1px solid {T.BORDER_SUBTLE};"
             f" border-radius: 6px; background: rgba(0,0,0,0.4); }}"
         )
         lay = QVBoxLayout(card)
         lay.setContentsMargins(10, 8, 10, 8)
-        lay.setSpacing(3)
-        cab = QLabel("HOTKEYS")
+        lay.setSpacing(5)
+        cab = QLabel("ACCIONES")
         cab.setFont(T.font_caps(7, bold=True))
         cab.setStyleSheet(f"color: {T.TEXT_MUTED}; border: none;")
         lay.addWidget(cab)
-        for tecla, accion in HOTKEYS:
-            fila = QHBoxLayout()
-            k = QLabel(tecla)
-            k.setFont(T.font_mono(8))
-            k.setStyleSheet(
-                f"color: {T.TEXT_SECONDARY}; border: 1px solid {T.BORDER_MID};"
-                f" border-radius: 3px; padding: 0 4px;"
-            )
-            v = QLabel(accion)
-            v.setFont(T.font_ui(8))
-            v.setStyleSheet(f"color: {T.TEXT_SECONDARY}; border: none;")
-            fila.addWidget(k)
-            fila.addStretch(1)
-            fila.addWidget(v)
-            lay.addLayout(fila)
+        self.btn_pausa = self._boton_accion(TXT_PAUSAR)
+        self.btn_pausa.clicked.connect(lambda _c=False: self.pausa_pedida.emit())
+        self.btn_cierre = self._boton_accion(TXT_CERRAR_CENSO)
+        self.btn_cierre.clicked.connect(self._on_cierre_click)
+        lay.addWidget(self.btn_pausa)
+        lay.addWidget(self.btn_cierre)
+        self._apply_acciones()
         return card
+
+    def _boton_accion(self, texto: str) -> QPushButton:
+        b = QPushButton(texto)
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.setFont(T.font_ui(8))
+        b.setFixedHeight(24)
+        b.setStyleSheet(f"""
+            QPushButton {{ color: {T.TEXT_SECONDARY}; background: transparent;
+                          border: 1px solid {T.BORDER_MID}; border-radius: 4px; }}
+            QPushButton:hover {{ background: {T.BG_ROW_HOVER}; color: {T.TEXT_PRIMARY}; }}
+            QPushButton:disabled {{ color: {T.TEXT_MUTED}; border-color: {T.BORDER_SUBTLE}; }}
+        """)
+        return b
+
+    # --- acciones: estado ---------------------------------------------------------------------
+
+    def _on_cierre_click(self) -> None:
+        # Se deshabilita ANTES de pedir: un doble clic no puede encolar dos cierres.
+        self._cierre_en_vuelo = True
+        self._apply_acciones()
+        self.cierre_censo_pedido.emit()
+
+    def on_monitor_started(self) -> None:
+        # Cada arranque crea un Monitor nuevo, que nace corriendo (no pausado).
+        self._running, self._paused, self._cierre_en_vuelo = True, False, False
+        self._apply_acciones()
+
+    def on_monitor_stopped(self) -> None:
+        # Un pedido en vuelo muere con el monitor: nadie va a responderlo.
+        self._running, self._paused, self._cierre_en_vuelo = False, False, False
+        self._apply_acciones()
+
+    def on_pause_changed(self, paused: bool) -> None:
+        self._paused = bool(paused)
+        self._apply_acciones()
+
+    def cierre_terminado(self) -> None:
+        self._cierre_en_vuelo = False
+        self._apply_acciones()
+
+    def _apply_acciones(self) -> None:
+        self.btn_pausa.setEnabled(self._running)
+        self.btn_pausa.setText(TXT_REANUDAR if self._paused else TXT_PAUSAR)
+        self.btn_cierre.setEnabled(self._running and not self._cierre_en_vuelo)
+        self.btn_cierre.setText(TXT_CERRANDO if self._cierre_en_vuelo else TXT_CERRAR_CENSO)
 
     def paintEvent(self, ev):
         p = QPainter(self)

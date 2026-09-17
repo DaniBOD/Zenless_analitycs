@@ -8,7 +8,6 @@ dependencies = [
     "mss>=9.0",
     "opencv-python>=4.10",
     "pytesseract>=0.3.13",
-    "pynput>=1.7",
     "pywin32>=308",
     "anthropic>=0.34",
 ]

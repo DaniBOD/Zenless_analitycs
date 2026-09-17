@@ -69,6 +69,7 @@ class MonitorController(QObject):
     monitor_started = Signal()
     monitor_stopped = Signal()
     pause_changed = Signal(bool)             # True = paused
+    censo_cierre_resultado = Signal(dict)    # respuesta del monitor a un pedido de cierre de censo
     state_changed = Signal(str, float)       # code (S1-S12), confidence
 
     # Eventos de captura
@@ -183,6 +184,7 @@ class MonitorController(QObject):
             capture_only_focused=_capture_only_focused(),  # gate anti-FP por foco de ventana
             upgrade_syncer=self._upgrade_syncer,      # tracking PRE→POST modal upgrade (S10)
             censo=self._censo,                        # censo de roster (S15), None si no se censa
+            on_cierre_censo=self.censo_cierre_resultado.emit,  # hilo del monitor → UI
         )
         self._monitor.start()
         self.monitor_started.emit()
@@ -276,6 +278,14 @@ class MonitorController(QObject):
             return
         paused = self._monitor.toggle_pause()
         self.pause_changed.emit(paused)
+
+    def pedir_cierre_censo(self, confirmado: dict | None = None) -> None:
+        """Pide al monitor cerrar las pasadas de censo. No bloquea ni cierra desde este hilo: la
+        respuesta llega por `censo_cierre_resultado`, emitida desde el hilo del monitor."""
+        if self._monitor is None:
+            self.censo_cierre_resultado.emit({"accion": "sin_monitor"})
+            return
+        self._monitor.pedir_cierre_censo(confirmado)
 
     # ---- Auto-detect (arranque automático cuando ZZZ está abierto) -------------
 
@@ -423,7 +433,8 @@ class MonitorController(QObject):
         # Censo de cuenta (DANIBOD_CENSO, lo setea `qa_launch.ps1 -Censo`). APAGADO por defecto:
         # censar es un modo, no el comportamiento normal de la app.
         #
-        # Acá se REANUDA o se ABRE, nunca se cierra: el cierre lo declara el usuario con F8,
+        # Acá se REANUDA o se ABRE, nunca se cierra: el cierre lo declara el usuario con el botón
+        # «Cerrar pasada de censo» del panel,
         # porque el sistema no puede saber si el recorrido llegó al final (el menú de personajes
         # no tiene contador de agentes). Una corrida abierta sobrevive a cerrar la app.
         self._censo = None
@@ -441,7 +452,7 @@ class MonitorController(QObject):
                 self._censo = abrir_o_reanudar(CensusStore(), _roster, _catalogo, ts=_t.time())
                 _v, _tot = self._censo.progreso
                 log.info("[censo] corrida #%s activa — %d/%d vistos · %d pendientes. "
-                         "F8 para cerrar la pasada.",
+                         "Se cierra con «Cerrar pasada de censo».",
                          self._censo.run_id, _v, _tot, len(self._censo.pendientes))
             except Exception:
                 log.exception("[censo] no se pudo abrir la corrida — se sigue sin censar")

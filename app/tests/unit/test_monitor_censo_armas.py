@@ -195,8 +195,8 @@ def test_cerrar_sin_pasada_abierta_no_revienta():
     assert _mon().cerrar_censo_armas() is None
 
 
-def test_f8_cierra_los_dos_inventarios():
-    """La hotkey es una sola y hay tres censos. Los de inventario van primero: tienen contador, así
+def test_el_cierre_cierra_los_dos_inventarios():
+    """El botón es uno solo y hay tres censos. Los de inventario van primero: tienen contador, así
     que cerrarlos produce un número verificable."""
     mon = _mon()
     mon._censar_arma(_arma(dueno="Jane"), _Res(7))
@@ -214,7 +214,7 @@ def test_f8_cierra_los_dos_inventarios():
     )
     mon._censar_disco(disco, _Estado())
     assert mon.censo_discos.abierta and mon.censo_armas.abierta
-    mon.cerrar_censo()
+    mon.cerrar_censo(mon.cerrar_censo()["instantanea"])
     assert not mon.censo_discos.abierta
     assert not mon.censo_armas.abierta
 

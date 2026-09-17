@@ -94,7 +94,7 @@ if _ocr_ipc.es_arranque_de_worker():
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPalette
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
-from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
 log = logging.getLogger(__name__)
 
@@ -283,7 +283,12 @@ class MainWindow(ShellWindow):
         # Vista → controller
         vista.start_monitor_requested.connect(c.start)
         vista.stop_monitor_requested.connect(c.stop)
-        vista.pause_toggle_requested.connect(c.toggle_pause)
+
+        # Acciones del sidebar (reemplazan a las hotkeys, 2026-09-17): pausa y cierre de censo. La
+        # ventana es la dueña del diálogo; el ida y vuelta con el monitor vive en el flujo.
+        from app.ui.shell.cierre_censo import FlujoCierreCenso
+        self._flujo_cierre = FlujoCierreCenso(c, self.sidebar, vista.append_log,
+                                              self._preguntar_cierre_censo, parent=self)
 
         # Las 9 vistas del sidebar
         self.add_view("live", vista)
@@ -305,9 +310,9 @@ class MainWindow(ShellWindow):
         self.add_view("catalogos", make_placeholder(
             "Catálogos", "Sets, W-Engines y facciones — pendiente"))
         self.add_view("config", make_placeholder(
-            "Configuración", "Paths, thresholds, OCR backend, hotkeys"))
+            "Configuración", "Paths, thresholds, OCR backend"))
 
-        vista.append_log("[init] Monitor inactivo. 'Iniciar captura' o F9 para abrir el panel.")
+        vista.append_log("[init] Monitor inactivo. 'Iniciar captura' para arrancar.")
         self._refrescar_contadores()
 
     def _on_auto_start(self, enabled: bool):
@@ -315,6 +320,19 @@ class MainWindow(ShellWindow):
             "[auto] Watcher de ZZZ ACTIVO — el monitor arranca solo cuando detecta el juego."
             if enabled else "[auto] Watcher de ZZZ desactivado."
         )
+
+    def _preguntar_cierre_censo(self, texto: str) -> bool:
+        """El diálogo de cierre de censo. Cancelar es el botón por defecto: un Enter distraído no
+        declara huérfanos."""
+        caja = QMessageBox(self)
+        caja.setIcon(QMessageBox.Icon.Warning)
+        caja.setWindowTitle("Cerrar pasada de censo")
+        caja.setText(texto)
+        cerrar = caja.addButton("Cerrar pasada", QMessageBox.ButtonRole.AcceptRole)
+        cancelar = caja.addButton("Cancelar", QMessageBox.ButtonRole.RejectRole)
+        caja.setDefaultButton(cancelar)
+        caja.exec()
+        return caja.clickedButton() is cerrar
 
     def _abrir_ficha_pj(self, agente_id: int):
         """Click en una celda del roster → el modal de ese PJ. La ventana es la dueña de los
@@ -372,7 +390,7 @@ class MainWindow(ShellWindow):
         tray_menu = QMenu()
         show_action = QAction("Mostrar panel", self)
         show_action.triggered.connect(self.show)
-        quit_action = QAction("Salir (Ctrl+Shift+Z)", self)
+        quit_action = QAction("Salir", self)
         quit_action.triggered.connect(QApplication.quit)
         tray_menu.addAction(show_action)
         tray_menu.addSeparator()

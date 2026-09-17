@@ -9,7 +9,7 @@ misma aritmética de cobertura, condenadas a derivar en silencio (B1). Lo único
 entidad es un texto.
 
 El censo del roster se construyó sobre una ausencia: *"el menú de personajes no tiene contador
-`N/M`"*, y de ahí salieron la asimetría PENDIENTE ≠ HUÉRFANO y el cierre explícito por F8. Sin
+`N/M`"*, y de ahí salieron la asimetría PENDIENTE ≠ HUÉRFANO y el cierre explícito (F8; desde 2026-09-17, un botón). Sin
 denominador, sólo una declaración humana puede afirmar que la pasada terminó.
 
 **Para estos inventarios eso no aplica.** El header trae `N/M`, igual que el `N/300` del

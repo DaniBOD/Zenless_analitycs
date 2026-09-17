@@ -170,13 +170,13 @@ def test_el_panel_no_repite_al_volver_a_pasar_por_un_pj_ya_visto():
     assert len([p for p in panel if p.startswith("[censo]")]) == 2
 
 
-# --- cierre por hotkey ----------------------------------------------------------------------
+# --- cierre (desde 2026-09-17, por pedido del botón; ver test_cierre_censo_por_pedido.py) ------
 
-def test_f8_esta_registrada_como_hotkey_valida():
-    """Si el nombre no está en el mapa, `HotkeyManager.on` tira ValueError y el cierre queda sin
-    forma de dispararse. F8 y no F12: esa la reservan depuradores y grabadoras."""
-    from app.core.hotkeys import _KEY_NAMES, _VK_CODES
-    assert "f8" in _VK_CODES and _KEY_NAMES["f8"] == "cerrar_censo"
+def _cerrar_confirmando(m):
+    """Lo que hace el diálogo aceptado: pedir, y volver a pedir con la instantánea mostrada."""
+    res = m.cerrar_censo()
+    assert res["accion"] == "confirmar", res
+    return m.cerrar_censo(res["instantanea"])
 
 
 def test_cerrar_censo_emite_reporte_y_resumen(tmp_path, monkeypatch):
@@ -185,8 +185,7 @@ def test_cerrar_censo_emite_reporte_y_resumen(tmp_path, monkeypatch):
     c = _censo()
     m = _monitor(_SeqOcr(["Nangong Yu"]), censo=c)
     m._dispatch_state(_frames()[0], _st())
-    m.cerrar_censo()                       # advierte por los pendientes
-    reg = m.cerrar_censo()                 # confirma
+    reg = _cerrar_confirmando(m)["roster"]
     assert reg is not None and reg["completo"] is True
     assert set(reg["huerfanos"]) == {"Jane", "Ellen"}
     assert list((tmp_path / "audit" / "censos").glob("*.md"))
@@ -213,8 +212,7 @@ def test_cerrar_censo_marca_los_huerfanos_de_verdad_en_el_dominio(tmp_path, monk
     c = _censo()
     m = _monitor(_SeqOcr(["Nangong Yu"]), censo=c)
     m._dispatch_state(_frames()[0], _st())
-    m.cerrar_censo()                       # advierte
-    m.cerrar_censo()                       # confirma
+    _cerrar_confirmando(m)
 
     con = sqlite3.connect(dom)
     notas = dict(con.execute("SELECT nombre, notas FROM agents"))
@@ -226,62 +224,59 @@ def test_cerrar_censo_marca_los_huerfanos_de_verdad_en_el_dominio(tmp_path, monk
 
 # --- la guarda del cierre parcial -------------------------------------------------------------
 
-def test_una_pasada_COMPLETA_cierra_al_primer_F8(tmp_path, monkeypatch):
-    """Sin pendientes no hay nada que advertir: cero fricción en el caso normal."""
+def test_una_pasada_COMPLETA_tambien_se_confirma_y_no_declara_huerfanos(tmp_path, monkeypatch):
+    """Desde el botón, SIEMPRE se confirma (un clic de más no puede cerrar nada). Sin pendientes,
+    la confirmación no tiene a nadie que declarar."""
     monkeypatch.setenv("DANIBOD_AUDIT_DIR", str(tmp_path / "audit"))
     monkeypatch.setenv("DANIBOD_READONLY", "1")
     c = _censo()
     m = _monitor(_SeqOcr(["Nangong Yu", "Jane", "Ellen"]), censo=c)
     for f in _frames():
         m._dispatch_state(f, _st())
-    assert m.cerrar_censo() is not None
+    primero = m.cerrar_censo()
+    assert primero["accion"] == "confirmar" and c.abierta
+    assert primero["instantanea"]["roster"]["pendientes"] == []
+    reg = m.cerrar_censo(primero["instantanea"])["roster"]
+    assert reg is not None and reg["huerfanos"] == []
 
 
-def test_una_pasada_PARCIAL_no_cierra_al_primer_F8_y_dice_a_quienes_declararia_huerfanos():
+def test_una_pasada_PARCIAL_no_cierra_al_primer_pedido_y_dice_a_quienes_declararia_huerfanos():
     """Riesgo real, visto en vivo el 2026-08-17: tras cerrar una pasada completa, volver al menú
     a revisar unos pocos PJs abre una corrida NUEVA. Cerrarla ahí declararía huérfanos a los 49
-    por los que no se volvió a pasar — y el reporte mentiría con cara de completo.
-
-    El cierre es una DECLARACIÓN, así que cuando lo que se va a declarar es grande, se pide
-    decirlo dos veces."""
+    por los que no se volvió a pasar — y el reporte mentiría con cara de completo."""
     panel: list[str] = []
     c = _censo()
     m = _monitor(_SeqOcr(["Nangong Yu"]), censo=c, on_diagnostic=panel.append)
     m._dispatch_state(_frames()[0], _st())
-    assert m.cerrar_censo() is None, "no debe cerrar de una con pendientes"
+    res = m.cerrar_censo()
+    assert res["accion"] == "confirmar", "no debe cerrar de una con pendientes"
     assert c.abierta, "la corrida sigue viva"
+    assert res["instantanea"]["roster"]["pendientes"] == ["Ellen", "Jane"]
     aviso = " ".join(p for p in panel if "censo" in p)
     assert "2" in aviso and ("Jane" in aviso and "Ellen" in aviso)
 
 
-def test_el_segundo_F8_confirma_y_cierra(tmp_path, monkeypatch):
+def test_confirmar_una_instantanea_VIEJA_no_cierra(tmp_path, monkeypatch):
+    """Reemplaza a "la confirmación caduca" de F8: lo que protegía la ventana de 15 s ahora lo
+    protege el conjunto. Se vio un PJ más con el diálogo abierto ⇒ lo confirmado ya no es lo que se
+    declararía, y se vuelve a preguntar."""
     monkeypatch.setenv("DANIBOD_AUDIT_DIR", str(tmp_path / "audit"))
     monkeypatch.setenv("DANIBOD_READONLY", "1")
     c = _censo()
-    m = _monitor(_SeqOcr(["Nangong Yu"]), censo=c)
-    m._dispatch_state(_frames()[0], _st())
-    assert m.cerrar_censo() is None
-    reg = m.cerrar_censo()
-    assert reg is not None
-    assert set(reg["huerfanos"]) == {"Jane", "Ellen"}
-
-
-def test_la_confirmacion_caduca_y_vuelve_a_advertir(monkeypatch):
-    """Si el aviso quedó armado hace rato, el segundo F8 ya no es una confirmación consciente:
-    puede ser el usuario intentando cerrar de nuevo sin haber leído nada."""
-    import app.core.monitor as mon
-    c = _censo()
-    m = _monitor(_SeqOcr(["Nangong Yu"]), censo=c)
-    m._dispatch_state(_frames()[0], _st())
-    assert m.cerrar_censo() is None
-    m._cierre_pedido_ts -= mon._CIERRE_CONFIRM_S + 1.0
-    assert m.cerrar_censo() is None, "caducada: vuelve a advertir en vez de cerrar"
+    m = _monitor(_SeqOcr(["Nangong Yu", "Jane"]), censo=c)
+    frames = _frames()
+    m._dispatch_state(frames[0], _st())
+    vieja = m.cerrar_censo()["instantanea"]
+    m._dispatch_state(frames[1], _st())
+    res = m.cerrar_censo(vieja)
+    assert res["accion"] == "confirmar"
     assert c.abierta
+    assert res["instantanea"]["roster"]["pendientes"] == ["Ellen"]
 
 
 def test_cerrar_censo_sin_corrida_no_revienta():
     m = _monitor(_SeqOcr(["Nangong Yu"]))
-    assert m.cerrar_censo() is None
+    assert m.cerrar_censo() == {"accion": "nada"}
 
 
 def test_cerrar_censo_dos_veces_no_duplica_el_reporte(tmp_path, monkeypatch):
@@ -290,9 +285,9 @@ def test_cerrar_censo_dos_veces_no_duplica_el_reporte(tmp_path, monkeypatch):
     c = _censo()
     m = _monitor(_SeqOcr(["Nangong Yu"]), censo=c)
     m._dispatch_state(_frames()[0], _st())
-    m.cerrar_censo()                       # advierte
-    assert m.cerrar_censo() is not None    # confirma y cierra
-    assert m.cerrar_censo() is None, "ya no hay pasada abierta"
+    res = m.cerrar_censo()
+    assert m.cerrar_censo(res["instantanea"])["accion"] == "cerrado"
+    assert m.cerrar_censo(res["instantanea"]) == {"accion": "nada"}, "ya no hay pasada abierta"
     assert len(list((tmp_path / "audit" / "censos").glob("*.json"))) == 1
 
 

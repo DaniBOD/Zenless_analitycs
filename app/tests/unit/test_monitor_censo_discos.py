@@ -149,12 +149,14 @@ def test_cerrar_sin_corrida_abierta_no_explota():
     assert _mon().cerrar_censo_discos() is None
 
 
-def test_F8_cierra_el_censo_de_discos_si_es_el_que_esta_abierto():
-    """La hotkey es una sola. Con el censo del roster cerrado (o inexistente), F8 tiene que cerrar
-    el de discos en vez de responder 'no hay ninguna pasada abierta'."""
+def test_el_cierre_cierra_el_censo_de_discos_si_es_el_que_esta_abierto():
+    """El botón es uno solo. Con el censo del roster cerrado (o inexistente), tiene que cerrar el de
+    discos en vez de responder 'no hay ninguna pasada abierta'."""
     mon = _mon()
     mon._censar_disco(_disco(1), _Estado())
-    mon.cerrar_censo()
+    res = mon.cerrar_censo()
+    assert res["accion"] == "confirmar" and mon.censo_discos.abierta
+    mon.cerrar_censo(res["instantanea"])
     assert not mon.censo_discos.abierta
 
 

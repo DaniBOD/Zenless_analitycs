@@ -1,13 +1,14 @@
 """
 Hito 2.4.7 / 2.5 — Monitor principal con polling adaptativo · RF-04 §5.
 Loop en thread secundario: captura → clasifica → parsea → emite callback.
-Integra UpgradeSyncer (S10 PRE/POST) y HotkeyManager (F9/F10).
+Integra UpgradeSyncer (S10 PRE/POST).
 Hook win32 para EVENT_SYSTEM_FOREGROUND (forzar scan al volver al juego).
 """
 from __future__ import annotations
 
 import logging
 import os
+import queue
 import re
 import threading
 import time
@@ -297,9 +298,6 @@ _S18_SIG_NAME_MAX = 3.0
 # el umbral → re-OCR espurio cada segundo (presión de memoria, RNF-06); 6.0 absorbe ese ruido
 # y conserva margen amplio (≈2×) contra el cambio real de PJ.
 _MENU_SIG_MAX = 6.0
-# Ventana para confirmar un cierre de censo con PENDIENTES (F8 dos veces). Corta a propósito:
-# tiene que sentirse como "sí, dale" y no como un doble intento separado en el tiempo.
-_CIERRE_CONFIRM_S = 15.0
 # Throttle del fallback deep_detect S18 sobre S12 (RNF-06): máx 1 intento de OCR cada
 # N seg. En pantallas de carga/transición clasificadas como S12, esto corría OCR cada
 # frame → spike que colgaba la UI al abrir el juego. Un deep_detect exitoso igual promueve
@@ -367,7 +365,7 @@ class Monitor:
     """
     Loop de monitoreo en thread separado.
     Al detectar un disco en pantalla llama a `on_disc` con el DiscParsed.
-    Integra UpgradeSyncer para S10 y HotkeyManager para F9/F10.
+    Integra UpgradeSyncer para S10.
     """
 
     def __init__(
@@ -376,7 +374,6 @@ class Monitor:
         detector: ScreenDetector,
         on_disc: Callable[[DiscParsed, ScreenState], None] | None = None,
         on_state_change: Callable[[ScreenState], None] | None = None,
-        on_toggle_panel: Callable[[], None] | None = None,
         set_repo=None,
         upgrade_syncer=None,                                   # UpgradeSyncer opcional
         on_disc_rejected: Callable[[DiscParsed, ScreenState, str], None] | None = None,
@@ -403,12 +400,14 @@ class Monitor:
         capture_only_focused: bool = False,                     # gate anti-FP por foco: OFF por defecto
         censo=None,                                             # RosterCensus opcional (censo de cuenta)
         on_census_progress: Callable[[dict], None] | None = None,
+        # Respuesta a un pedido de cierre de censo (`pedir_cierre_censo`). Se llama desde el hilo
+        # del monitor: del otro lado tiene que haber algo que cruce de hilo (una señal de Qt).
+        on_cierre_censo: Callable[[dict], None] | None = None,
     ):
         self._ocr = ocr
         self._detector = detector
         self._on_disc = on_disc
         self._on_state_change = on_state_change
-        self._on_toggle_panel = on_toggle_panel
         self._set_repo = set_repo
         self._upgrade_syncer = upgrade_syncer
         self._on_disc_rejected = on_disc_rejected
@@ -432,9 +431,11 @@ class Monitor:
         # multi-sesión, que es cosa del arranque de la app y no del handler.
         self._census = censo
         self._on_census_progress = on_census_progress
-        # Momento del F8 que ARMÓ la confirmación de un cierre con pendientes (ver
-        # `_confirmar_cierre_parcial`). 0.0 = no hay confirmación pendiente.
-        self._cierre_pedido_ts = 0.0
+        # Pedidos de cierre de censo desde la UI. Los drena el loop (`_atender_pedidos_cierre`): el
+        # botón nunca cierra desde su propio hilo. `SimpleQueue` y no un atributo: leer y limpiar un
+        # atributo son dos pasos, y un pedido que llegue entre medio se pierde.
+        self._on_cierre_censo = on_cierre_censo
+        self._pedidos_cierre: queue.SimpleQueue = queue.SimpleQueue()
         # S26 (detalle de W-Engine, RF-15): firma del panel para no re-OCRear un panel quieto, y
         # firma del último log para no repetir la misma línea. Observación pura: no escribe DB.
         self._s26_panel_sig: bytes | None = None
@@ -814,7 +815,7 @@ class Monitor:
     # ---- Control ----------------------------------------------------------------
 
     def start(self) -> None:
-        """Arranca el loop en thread secundario y registra hotkeys."""
+        """Arranca el loop en thread secundario."""
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
@@ -822,7 +823,6 @@ class Monitor:
         self._thread = threading.Thread(target=self._run, name="zzz-monitor", daemon=True)
         self._thread.start()
         self._hook_foreground()
-        self._register_hotkeys()
         log.info("Monitor arrancado.")
 
     def _install_log_clock(self) -> None:
@@ -868,11 +868,11 @@ class Monitor:
         """Alterna pausa/reanuda. Devuelve True si ahora está pausado."""
         if self._paused.is_set():
             self._paused.clear()
-            log.info("Monitor pausado (F10).")
+            log.info("Monitor pausado.")
             return True
         else:
             self._paused.set()
-            log.info("Monitor reanudado (F10).")
+            log.info("Monitor reanudado.")
             return False
 
     def force_scan(self) -> None:
@@ -936,6 +936,10 @@ class Monitor:
             # El latido va en los TRES caminos del loop, incluidos los dos que hacen `continue`.
             # Justamente esos dos eran los mudos: pausado y frame-nulo no dejaban rastro alguno.
             self._hb_ticks += 1
+            # Los pedidos de la UI (cerrar censo) se atienden ANTES de la pausa y del frame: con la
+            # app pausada o el juego minimizado el loop hace `continue` más abajo, y un cierre no
+            # tiene por qué esperar a que vuelva la captura.
+            self._atender_pedidos_cierre()
             if not self._paused.is_set():
                 self._heartbeat(time.monotonic(), "pausado")
                 time.sleep(0.5)
@@ -5342,30 +5346,29 @@ class Monitor:
             except Exception:
                 log.exception("Error en on_agent_detail callback (menú)")
 
-    def _confirmar_cierre_parcial(self, censo) -> bool:
-        """True si se puede cerrar ya. Con pendientes, el primer F8 sólo ADVIERTE y arma la
-        confirmación; el segundo dentro de `_CIERRE_CONFIRM_S` cierra.
+    def _instantanea_cierre(self) -> dict:
+        """Qué cerraría un cierre AHORA: los censos abiertos con su progreso y, del roster, a quiénes
+        declararía huérfanos. Es lo que el diálogo muestra y lo que vuelve como confirmación."""
+        inst: dict = {"discos": None, "armas": None, "roster": None}
+        for clave, censo in (("discos", self._censo_discos), ("armas", self._censo_armas)):
+            if censo is not None and censo.abierta:
+                inst[clave] = censo.resumen()
+        censo = self._census
+        if censo is not None and censo.abierta:
+            vistos, total = censo.progreso
+            inst["roster"] = {"vistos": vistos, "total": total,
+                              "pendientes": sorted(f.clave for f in censo.pendientes)}
+        return inst
 
-        La ventana caduca a propósito: un segundo F8 diez minutos después no es una confirmación
-        consciente, es alguien reintentando sin haber leído el aviso.
-        """
-        pendientes = [f.clave for f in censo.pendientes]
-        if not pendientes:
-            self._cierre_pedido_ts = 0.0
-            return True
-        ahora = time.time()
-        if ahora - self._cierre_pedido_ts <= _CIERRE_CONFIRM_S:
-            self._cierre_pedido_ts = 0.0
-            return True
-        self._cierre_pedido_ts = ahora
-        muestra = ", ".join(sorted(pendientes)[:8])
-        if len(pendientes) > 8:
-            muestra += f", … (+{len(pendientes) - 8})"
-        aviso = (f"faltan {len(pendientes)} sin ver — cerrar ahora los declara HUÉRFANOS: "
-                 f"{muestra}. F8 otra vez en {int(_CIERRE_CONFIRM_S)} s para confirmar.")
-        log.warning("[censo] %s", aviso)
-        self._diag(f"[censo] {aviso}")
-        return False
+    @staticmethod
+    def _clave_cierre(inst: dict) -> tuple:
+        """Lo que una confirmación AFIRMA: qué censos se cierran y a quiénes se declara huérfanos.
+
+        El progreso de los inventarios no entra: seguir recorriendo con el diálogo abierto no cambia
+        lo que se aceptó cerrar. Los pendientes del roster sí, y como conjunto exacto."""
+        roster = inst.get("roster")
+        return (inst.get("discos") is not None, inst.get("armas") is not None,
+                None if roster is None else frozenset(roster["pendientes"]))
 
     def _observe_census(self, lectura) -> None:
         """Alimenta la corrida de censo con lo leído en S15.
@@ -5992,44 +5995,95 @@ class Monitor:
         except Exception as exc:
             log.exception("Error parseando disco en estado %s: %s", state.code, exc)
 
-    def cerrar_censo(self) -> dict | None:
-        """Cierra la pasada de censo en curso (hotkey F8). Devuelve el registro, o None si no
-        había ninguna abierta.
+    def pedir_cierre_censo(self, confirmado: dict | None = None) -> None:
+        """Deja un pedido de cierre de censo para el hilo del monitor y vuelve enseguida. La
+        respuesta sale por `on_cierre_censo`.
+
+        **Acá no se ejecuta nada, a propósito.** No hay locks en `Monitor` ni en los censos, y el
+        botón corre en el hilo de la UI: cerrar desde ahí compite con el loop, que en esa misma
+        pasada puede estar observando el censo que se cierra (F8 tenía la misma carrera desde el
+        hilo del listener). El loop drena la cola al tope de cada pasada, también pausado.
+        """
+        self._pedidos_cierre.put(confirmado)
+
+    def _atender_pedidos_cierre(self) -> None:
+        """Ejecuta, en el hilo del loop, los cierres pedidos desde la UI."""
+        while True:
+            try:
+                confirmado = self._pedidos_cierre.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                resultado = self.cerrar_censo(confirmado)
+            except Exception:
+                log.exception("[censo] el cierre pedido falló")
+                resultado = {"accion": "error"}
+            if self._on_cierre_censo:
+                try:
+                    self._on_cierre_censo(resultado)
+                except Exception:
+                    log.exception("Error en on_cierre_censo callback")
+
+    def cerrar_censo(self, confirmado: dict | None = None) -> dict:
+        """Cierra las pasadas de censo abiertas **si `confirmado` es lo que hay abierto ahora**.
+        Corre en el hilo del loop (ver `pedir_cierre_censo`) y devuelve qué pasó:
+
+        - `{"accion": "nada"}` — no había ninguna pasada abierta.
+        - `{"accion": "confirmar", "instantanea": …}` — **no se cerró nada**. Es la respuesta sin
+          confirmación, y también cuando lo confirmado ya no es lo que hay.
+        - `{"accion": "cerrado", "discos": …, "armas": …, "roster": …}` — lo que se cerró; `None`
+          lo que no estaba abierto.
 
         **El cierre es una declaración del usuario, no una inferencia.** El sistema no puede
         saber si el recorrido llegó al final —el menú no tiene contador de agentes—, así que no
         debe cerrarse solo. Corolario asumido: una pasada que nunca se cierra no produce
         huérfanos, y eso es correcto.
 
-        **Con pendientes, pide confirmar dos veces.** Riesgo visto en vivo (2026-08-17): después
-        de cerrar una pasada completa, volver al menú a revisar unos pocos PJs abre una corrida
-        NUEVA; cerrarla ahí declararía huérfanos a los 49 por los que no se volvió a pasar, y el
-        reporte mentiría con cara de completo. Sin pendientes no hay fricción: cierra de una.
+        **Siempre se confirma, y el primer pedido no cierra nada** (2026-09-17, al pasar de F8 a un
+        botón). Con F8 el primer pedido cerraba los inventarios y recién después advertía por el
+        roster: con un diálogo, eso es un "Cancelar" que ya cerró el censo de discos. Y un censo de
+        inventario no se reabre, así que un clic de más a mitad de la pasada la cortaba.
+
+        **La confirmación es un conjunto, no una ventana de tiempo.** Riesgo visto en vivo
+        (2026-08-17): después de cerrar una pasada completa, volver al menú a revisar unos pocos PJs
+        abre una corrida NUEVA; cerrarla ahí declararía huérfanos a los 49 por los que no se volvió
+        a pasar, y el reporte mentiría con cara de completo. Antes lo cubría un segundo F8 dentro de
+        15 s; ahora se cierra sólo si los censos abiertos y los pendientes del roster son
+        EXACTAMENTE los que se mostraron — un diálogo abierto diez minutos no confirma otra pasada.
 
         Es también el único momento en que el censo escribe la DB de dominio, y solo para anotar
         (RNF-01 + gate de readonly dentro de `marcar_huerfanos_en_dominio`).
         """
-        # La hotkey es una sola y hay TRES censos. Los de inventario se cierran primero: son los
-        # que tienen contador, así que cerrarlos produce un número verificable. El del roster va
-        # último porque su cierre es el caro — declara huérfanos y escribe la DB de dominio.
-        cerro_inventario = False
-        if self._censo_discos is not None and self._censo_discos.abierta:
-            self.cerrar_censo_discos()
-            cerro_inventario = True
-        if self._censo_armas is not None and self._censo_armas.abierta:
-            self.cerrar_censo_armas()
-            cerro_inventario = True
-        # Si ya se cerró un inventario y no hay censo de roster abierto, la F8 ya hizo su trabajo:
-        # salir acá evita el "no hay ninguna pasada abierta que cerrar" que contradiría al log que
-        # se acaba de emitir.
-        if cerro_inventario and (self._census is None or not self._census.abierta):
-            return None
-        censo = self._census
-        if censo is None or not censo.abierta:
+        inst = self._instantanea_cierre()
+        if all(v is None for v in inst.values()):
             log.info("[censo] no hay ninguna pasada abierta que cerrar")
-            return None
-        if not self._confirmar_cierre_parcial(censo):
-            return None
+            return {"accion": "nada"}
+        if confirmado is None or self._clave_cierre(confirmado) != self._clave_cierre(inst):
+            if confirmado is not None:
+                log.info("[censo] lo abierto cambió desde la confirmación — se vuelve a preguntar")
+            pendientes = (inst["roster"] or {}).get("pendientes") or []
+            if pendientes:
+                muestra = ", ".join(pendientes[:8])
+                if len(pendientes) > 8:
+                    muestra += f", … (+{len(pendientes) - 8})"
+                aviso = (f"faltan {len(pendientes)} sin ver — cerrar ahora los declara HUÉRFANOS: "
+                         f"{muestra}.")
+                log.warning("[censo] %s", aviso)
+                self._diag(f"[censo] {aviso}")
+            return {"accion": "confirmar", "instantanea": inst}
+        # Los de inventario primero: tienen contador, así que cerrarlos produce un número
+        # verificable. El del roster va último porque su cierre es el caro — declara huérfanos y
+        # escribe la DB de dominio.
+        resultado: dict = {"accion": "cerrado", "discos": None, "armas": None, "roster": None}
+        if inst["discos"] is not None:
+            resultado["discos"] = self.cerrar_censo_discos()
+        if inst["armas"] is not None:
+            resultado["armas"] = self.cerrar_censo_armas()
+        if inst["roster"] is not None:
+            resultado["roster"] = self._cerrar_censo_roster(self._census)
+        return resultado
+
+    def _cerrar_censo_roster(self, censo) -> dict | None:
         from app.core.census import write_census_report
         registro = censo.cerrar(ts=time.time())
         if registro is None:
@@ -6051,16 +6105,6 @@ class Monitor:
         except Exception:
             log.exception("[censo] no se pudo escribir el reporte")
         return registro
-
-    def _register_hotkeys(self) -> None:
-        from app.core.hotkeys import HotkeyManager
-        hk = HotkeyManager()
-        hk.on("f10", self.toggle_pause)
-        hk.on("f8", self.cerrar_censo)
-        if self._on_toggle_panel:
-            hk.on("f9", self._on_toggle_panel)
-        hk.start()
-        self._hotkey_manager = hk
 
     def _hook_foreground(self) -> None:
         """

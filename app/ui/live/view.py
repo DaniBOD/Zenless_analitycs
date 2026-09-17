@@ -72,7 +72,6 @@ def drop_como_observacion(payload: dict) -> dict:
 class LiveView(QWidget):
     start_monitor_requested = Signal()
     stop_monitor_requested = Signal()
-    pause_toggle_requested = Signal()      # compat con el cableado de F10 en main.py
 
     def __init__(self, build_fn: BuildFn | None = None, parent: QWidget | None = None):
         super().__init__(parent)
@@ -127,7 +126,7 @@ class LiveView(QWidget):
 
     def on_monitor_started(self) -> None:
         self.console.on_monitor_started()
-        self.console.append_log("[monitor] Capturando. F10 pausa.")
+        self.console.append_log("[monitor] Capturando.")
 
     def on_monitor_stopped(self) -> None:
         self.console.on_monitor_stopped()

@@ -33,9 +33,3 @@ polling_reposo_ms = 4000
 polling_inventario_ms = 2000
 polling_resultado_ms = 1000
 polling_modal_ms = 500
-
-[hotkeys]
-toggle_panel = "f9"
-toggle_pausa = "f10"
-registrar_run = "f11"
-salir = "ctrl+shift+z"

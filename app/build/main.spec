@@ -25,7 +25,6 @@ REPO = Path.cwd().resolve()
 mss_datas, mss_binaries, mss_hiddenimports = collect_all("mss")
 pyside_datas, pyside_binaries, pyside_hiddenimports = collect_all("PySide6")
 pytess_datas, pytess_binaries, pytess_hiddenimports = collect_all("pytesseract")
-pynput_datas, pynput_binaries, pynput_hiddenimports = collect_all("pynput")
 win32_hiddenimports = collect_submodules("win32com") + collect_submodules("win32")
 
 # --- PaddleOCR stack (Hito 2.8 — migración Python normal 2026-05-31) -----------
@@ -103,17 +102,17 @@ datas = [
     # `Pj_stats/` es el único directorio de imágenes que sigue afuera de `app/`: son las capturas de
     # las fichas de PJ (fallback de avatares), no son de interfaz, y por eso se enumera.
     (str(REPO / "Pj_stats"),                                       "Pj_stats"),
-] + mss_datas + pyside_datas + pytess_datas + pynput_datas \
+] + mss_datas + pyside_datas + pytess_datas \
   + paddle_datas + paddleocr_datas + shapely_datas + skimage_datas + scipy_datas + imgaug_datas + cython_datas \
   + imageio_datas + metadata_datas + net_datas
 
-binaries = mss_binaries + pyside_binaries + pytess_binaries + pynput_binaries \
+binaries = mss_binaries + pyside_binaries + pytess_binaries \
     + paddle_binaries + paddleocr_binaries + shapely_binaries + skimage_binaries + scipy_binaries + imgaug_binaries + cython_binaries + imageio_binaries + net_binaries
 
 # ---------------------------------------------------------------------------
 # Hidden imports — módulos que PyInstaller no detecta automáticamente
 # ---------------------------------------------------------------------------
-hiddenimports = mss_hiddenimports + pyside_hiddenimports + pytess_hiddenimports + pynput_hiddenimports + win32_hiddenimports \
+hiddenimports = mss_hiddenimports + pyside_hiddenimports + pytess_hiddenimports + win32_hiddenimports \
     + paddle_hiddenimports + paddleocr_hiddenimports + shapely_hiddenimports + skimage_hiddenimports + scipy_hiddenimports + imgaug_hiddenimports + cython_hiddenimports + imageio_hiddenimports + net_hiddenimports + [
     # PaddleOCR deps con carga dinámica que collect_all puede no resolver solo
     "pyclipper",
@@ -144,7 +143,6 @@ hiddenimports = mss_hiddenimports + pyside_hiddenimports + pytess_hiddenimports 
     "app.core.sync_equip",
     "app.core.sync_upgrade",
     "app.core.optimizer",
-    "app.core.hotkeys",
     "app.core.capturer",
     "app.core.asset_resolver",
     "app.ui.tokens",
