@@ -292,3 +292,125 @@ def test_abrir_de_nuevo_reinicia_la_marca_de_warmup(met, tmp_path):
     db = tmp_path / "metrics.db"
     assert len(_muestras(db, "frescura_disco_a_log")) == 2
     assert len(_muestras(db, "frescura_disco_warm")) == 1, "sólo el primero esperó"
+
+
+# --- frescura CLICK→LOG en S9 (el punto ciego de la de despacho) ---------------------------------
+
+def _firma(valor: float):
+    """Firma de S9 sintética: título, bloque y posición. Dos valores muy distintos = dos discos."""
+    import numpy as np
+    return (np.full((24, 48), valor, np.float32), np.full((48, 48), valor, np.float32), None)
+
+
+def _aislar_emision_s9(monkeypatch, mon):
+    monkeypatch.setattr(mon, "_record_equip_map", lambda *a, **kw: None)
+    monkeypatch.setattr(mon, "_censar_disco", lambda *a, **kw: None)
+
+
+def test_click_a_log_se_abre_al_ver_el_disco_y_se_cierra_con_la_linea(met, tmp_path, monkeypatch):
+    """La espera que Daniel vive: desde que el loop rápido ve el disco nuevo hasta la línea. La
+    frescura de despacho no ve el tramo hasta el primer despacho, que en S9 llega a ~1,8 s."""
+    mon = _monitor()
+    _aislar_emision_s9(monkeypatch, mon)
+    monkeypatch.setattr(mon, "_s9_disc_signature", lambda frame: _firma(0.0))
+
+    mon._vigilar_click_s9(None)
+    assert mon._frescura_click_t is not None, "disco nuevo: el cronómetro tiene que abrirse"
+    d = _disco_maduro()
+    d.agente_asignado_nombre = "Corin"
+    mon._emit_s9_disc(d, ScreenState("S9", 1.0, "t"))
+    met.flush()
+
+    vals = _muestras(tmp_path / "metrics.db", "frescura_disco_click_a_log")
+    assert len(vals) == 1 and 0.0 <= vals[0] < _TECHO_PLAUSIBLE_MS
+    assert mon._frescura_click_t is None
+
+
+def test_click_a_log_no_se_reabre_mientras_el_panel_anima(met, monkeypatch):
+    """Mientras el panel anima, la firma cambia varias veces. Re-abrir en cada cambio mediría desde
+    el ÚLTIMO cuadro y la muestra saldría corta: sesgo optimista en justo lo que se quiere medir."""
+    mon = _monitor()
+    firmas = iter([_firma(0.0), _firma(255.0), _firma(120.0)])
+    monkeypatch.setattr(mon, "_s9_disc_signature", lambda frame: next(firmas))
+    # Reloj CONTROLADO, y no es un detalle: `monotonic()` en Windows avanza de a 15,625 ms, así que
+    # tres llamadas seguidas devuelven el mismo valor y "no se re-abrió" pasaba aunque se re-abriera.
+    # Lo detectó el sabotaje del 2026-09-16 (práctica C2: un reloj declara unidad, no granularidad).
+    instantes = iter([10.0, 20.0, 30.0])
+    monkeypatch.setattr(met, "ahora", lambda: next(instantes))
+
+    mon._vigilar_click_s9(None)
+    t0 = mon._frescura_click_t
+    assert t0 == 10.0
+    mon._vigilar_click_s9(None)                 # la firma cambió (animación)
+    mon._vigilar_click_s9(None)                 # y otra vez
+    assert mon._frescura_click_t == t0, "se re-abrió: la muestra saldría corta"
+
+
+def test_click_a_log_sin_firma_no_abre(met, monkeypatch):
+    """Sin firma no hay evidencia de un disco nuevo (RNF-02): no se cronometra nada."""
+    mon = _monitor()
+    monkeypatch.setattr(mon, "_s9_disc_signature", lambda frame: None)
+    mon._vigilar_click_s9(None)
+    assert mon._frescura_click_t is None
+
+
+def test_click_a_log_con_metricas_apagadas_ni_calcula_la_firma(tmp_path, monkeypatch):
+    """La firma cuesta ~15 ms por pasada. En uso normal (métricas apagadas) este vigilante no
+    puede cobrar ese costo por una medición que nadie va a leer."""
+    import app.core.metrics as m
+    monkeypatch.delenv("DANIBOD_METRICS", raising=False)
+    m.reset()
+    mon = _monitor()
+    llamadas = []
+    monkeypatch.setattr(mon, "_s9_disc_signature", lambda frame: llamadas.append(1) or _firma(0.0))
+    mon._vigilar_click_s9(None)
+    assert llamadas == [] and mon._frescura_click_t is None
+
+
+def test_click_a_log_un_disco_repetido_suelta_el_cronometro(met, tmp_path, monkeypatch):
+    """Un disco repetido no imprime línea. Si el cronómetro quedara abierto, lo cerraría el disco
+    SIGUIENTE y mediría las dos esperas juntas como si fueran una."""
+    mon = _monitor()
+    _aislar_emision_s9(monkeypatch, mon)
+    d = _disco_maduro()
+    d.agente_asignado_nombre = "Corin"
+    st = ScreenState("S9", 1.0, "t")
+    mon._emit_s9_disc(d, st)                     # primera vez: línea
+    mon._frescura_click_t = met.ahora()          # cronómetro abierto para el repetido
+    mon._emit_s9_disc(_disco_maduro_con("Corin"), st)        # mismo disco: dedup, sin línea
+    met.flush()
+    assert mon._frescura_click_t is None
+    assert _muestras(tmp_path / "metrics.db", "frescura_disco_click_a_log") == []
+
+
+def test_click_a_log_salir_de_S9_suelta_el_cronometro():
+    """Un cronómetro abierto en S9 no lo puede cerrar la línea de un disco de otra pantalla."""
+    mon = _monitor()
+    mon._frescura_click_t = 1.0
+    mon._s9_fast_sig = _firma(0.0)
+    mon._reset_s9_disc_tracking()
+    assert mon._frescura_click_t is None and mon._s9_fast_sig is None
+
+
+def test_el_loop_rapido_realmente_vigila_S9():
+    """**Contra A2.** Los tests de arriba llaman al vigilante a mano y pasarían aunque el loop no lo
+    invocara. El loop no se puede correr en un test (captura pantalla), así que se verifica que lo
+    llame en la rama de S9."""
+    import inspect
+    fuente = inspect.getsource(Monitor._run)
+    rama = fuente.split('elif raw_state.code == "S9":', 1)
+    assert len(rama) == 2 and "self._vigilar_click_s9(frame)" in rama[1].split("\n")[1]
+
+
+def test_despacho_y_loop_rapido_usan_la_misma_comparacion():
+    """B1: "¿es otro disco?" tiene UNA respuesta. Si el despacho y el loop rápido compararan con
+    criterios distintos, la métrica mediría la diferencia entre dos umbrales, no la espera."""
+    import inspect
+    assert "_s9_firmas_distintas(" in inspect.getsource(Monitor._is_new_s9_disc)
+    assert "_s9_firmas_distintas(" in inspect.getsource(Monitor._vigilar_click_s9)
+
+
+def _disco_maduro_con(dueno):
+    d = _disco_maduro()
+    d.agente_asignado_nombre = dueno
+    return d

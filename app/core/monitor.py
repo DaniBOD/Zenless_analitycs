@@ -502,6 +502,15 @@ class Monitor:
         self._s9_emitted: bool = False    # ya se emitió (persist/log) este disco S9
         self._s9_agg_cycles: int = 0
         self._s9_warming: bool = False     # maduró pero el dueño no resolvió → reintentar badge
+        # Diagnóstico de la latencia en S9 (2026-09-16), por disco: lecturas DESCARTADAS por ser un
+        # frame de transición (no cuentan para el techo de ciclos) y re-chequeos del warmup. Van en
+        # la línea del evento: son los que dicen POR QUÉ un disco no salió en el primer despacho.
+        self._s9_rechazos: int = 0
+        self._s9_warm_checks: int = 0
+        # Frescura CLICK→LOG en S9: la firma del disco que vio por última vez el LOOP RÁPIDO (no el
+        # despacho) y el instante en que la vio cambiar. Ver `_vigilar_click_s9`.
+        self._s9_fast_sig = None
+        self._frescura_click_t: float | None = None
         # Censo del inventario: a diferencia del roster, acá HAY denominador en pantalla, así que
         # la corrida se abre sola (hay disparador claro) y sabe cuánto le falta sin preguntar.
         self._censo_discos = None          # InventoryCensus, perezoso
@@ -966,6 +975,8 @@ class Monitor:
             # sin parpadeo. El descriptor cuesta microsegundos; no toca el MSS ni el OCR.
             elif raw_state.code == "S17":
                 self._sample_s17_owner(frame)
+            elif raw_state.code == "S9":
+                self._vigilar_click_s9(frame)
 
             # Fallback deep detect S18: si classify se quedó en S12, intentar
             # detección independiente de templates con OCR confirmatorio de stats.
@@ -2845,9 +2856,16 @@ class Monitor:
         """
         if self._s9_agg_sig is None or sig is None:
             return True
-        return (self._sig_component_diff(sig[0], self._s9_agg_sig[0]) > _S9_SIG_MAX
-                or self._sig_component_diff(sig[1], self._s9_agg_sig[1]) > _S9_SIG_MAX
-                or self._s9_pos_movio(sig[2], self._s9_agg_sig[2]))
+        return self._s9_firmas_distintas(sig, self._s9_agg_sig)
+
+    def _s9_firmas_distintas(self, a, b) -> bool:
+        """LA respuesta a "¿son dos discos distintos?" en S9. La usan el despacho
+        (`_is_new_s9_disc`) y el loop rápido (`_vigilar_click_s9`): si cada uno comparara a su
+        manera, el cronómetro click→log se abriría con un criterio y el disco se re-armaría con
+        otro, y la métrica mediría la diferencia entre dos umbrales en vez de la espera (B1)."""
+        return (self._sig_component_diff(a[0], b[0]) > _S9_SIG_MAX
+                or self._sig_component_diff(a[1], b[1]) > _S9_SIG_MAX
+                or self._s9_pos_movio(a[2], b[2]))
 
     @staticmethod
     def _s3_disc_signature(frame):
@@ -3460,6 +3478,35 @@ class Monitor:
         self._frescura_disco_t = None
         self._frescura_disco_warm = False
 
+    def _vigilar_click_s9(self, frame) -> None:
+        """Loop rápido en S9: abre el cronómetro CLICK→LOG cuando la firma del disco cambia.
+
+        Tapa el punto ciego de `frescura_disco_a_log`, que se abre en el DESPACHO y por eso no ve la
+        espera hasta el primer despacho — en S9 hasta ~1,8 s, gobernada por la cadencia (Pasada 1,
+        2026-09-16). Es la espera que Daniel vive de verdad.
+
+        **Sólo abre si no hay uno abierto.** Mientras el panel anima, la firma cambia varias veces
+        seguidas; re-abrir en cada cambio mediría desde el último cuadro de la animación y la muestra
+        saldría corta — sesgada hacia lo optimista justo en lo que se quiere medir. El sesgo que
+        queda es el opuesto y se acepta: si se pasa de disco antes de que salga la línea, la muestra
+        sale LARGA.
+
+        Superficie aparte a propósito: `frescura_disco_a_log` conserva su definición para seguir
+        comparándose con la Pasada 1 (C1). Sólo corre con las métricas encendidas — calcular la
+        firma cuesta ~15 ms por pasada (medido sobre 19 capturas a 2559×1439) y en uso normal no
+        tiene que pagarse por una medición que nadie va a leer.
+        """
+        if not metrics.habilitado():
+            return
+        sig = self._s9_disc_signature(frame)
+        if sig is None:
+            return                              # sin firma no hay evidencia de un disco nuevo
+        if self._s9_fast_sig is not None and not self._s9_firmas_distintas(sig, self._s9_fast_sig):
+            return
+        self._s9_fast_sig = sig
+        if self._frescura_click_t is None:
+            self._frescura_click_t = metrics.ahora()
+
     def _emit_s17_disc(self, merged, state: ScreenState, mature: bool) -> None:
         """Emite (dedup + equip_map + id_diag + log + on_disc) un disco S17 ya resuelto.
         Extraído de `_process_disc_s17_continuous` para reusarlo desde el path de warmup."""
@@ -3559,6 +3606,8 @@ class Monitor:
             self._s9_emitted = False
             self._s9_agg_cycles = 0
             self._s9_warming = False
+            self._s9_rechazos = 0
+            self._s9_warm_checks = 0
             self._abrir_frescura_disco()
         if self._s9_emitted:
             return
@@ -3575,6 +3624,7 @@ class Monitor:
             else:
                 self._assign_s9_owner(merged, frame)   # reintenta el badge sobre el merge
                 self._s9_agg_cycles += 1
+                self._s9_warm_checks += 1
                 # `equip_libre` corta el warmup: reintentar el badge de un disco que YA se afirmó
                 # libre es esperar algo que no va a aparecer. Antes agotaban el techo de ciclos,
                 # porque "no tiene dueño" no se distinguía de "todavía no lo veo".
@@ -3595,6 +3645,7 @@ class Monitor:
             return
         self._assign_s9_owner(disc, frame)
         if disc.confianza_global < 0.7:
+            self._s9_rechazos += 1
             return  # frame de transición → no contaminar el aggregator
         merged = self._s9_aggregator.merge(disc)
         self._s9_agg_cycles += 1
@@ -3781,21 +3832,46 @@ class Monitor:
         self._s9_emitted = True
         identity = self._disc_identity(merged)
         emit_key = self._disc_emit_key(identity, merged)
+        # Un disco repetido no imprime línea: no hay espera que cronometrar. Sin soltar el
+        # cronómetro acá, quedaría abierto y lo cerraría el disco SIGUIENTE, midiendo las dos
+        # esperas juntas como si fueran una.
         if self._recapture_on:
             if emit_key == self._last_emitted_identity:
+                self._frescura_click_t = None
                 return
         elif emit_key in self._disc_emitted_ids:
+            self._frescura_click_t = None
             return
         self._disc_emitted_ids.add(emit_key)
         self._last_emitted_identity = emit_key
         if merged.agente_asignado_nombre:
             self._record_equip_map(identity, merged.agente_asignado_nombre)
         self._cerrar_frescura_disco()          # mismo criterio que en S17: después del dedup
+        if self._frescura_click_t is not None:
+            metrics.registrar_desde("frescura_disco_click_a_log", self._frescura_click_t)
+            self._frescura_click_t = None
+        # TENENCIA: los cuatro desenlaces de `_assign_s9_owner`, cada uno con su texto. Hasta el
+        # 2026-09-16 salían `nombre or "-"`, así que LIBRE, "tiene dueño y no sé quién" y "no se
+        # pudo leer el badge" imprimían lo MISMO — y no son lo mismo para el censo: el segundo se
+        # guarda marcado y el tercero no se guarda. Es la línea que Daniel usa de señal para pasar
+        # al disco siguiente, así que tiene que decirle qué pasó sin abrir otra cosa.
+        if merged.agente_asignado_nombre:
+            tenencia = f"dueño={merged.agente_asignado_nombre}"
+        elif merged.equip_libre:
+            tenencia = "LIBRE"
+        elif merged.equip_dueno_incierto:
+            tenencia = "dueño=? (sin identificar)"
+        else:
+            tenencia = "dueño=? (badge sin leer)"
+        # Entre paréntesis, el diagnóstico de la espera: ciclos fusionados, lecturas descartadas por
+        # frame de transición y re-chequeos del warmup. Mismo lugar que el `(agg Nc)` de S17.
         log.info(
-            "Disco S9 detectado: set=%s slot=%d main=%s nivel=%d dueno=%s conf=%.2f",
+            "Disco S9 detectado: set=%s slot=%d main=%s nivel=%d %s conf=%.2f "
+            "(agg %dc · %d desc · %d warm%s)",
             merged.set_name_canon or merged.set_name_raw, merged.slot,
-            merged.main_stat_canon or merged.main_stat_raw, merged.nivel,
-            merged.agente_asignado_nombre or "-", merged.confianza_global,
+            merged.main_stat_canon or merged.main_stat_raw, merged.nivel, tenencia,
+            merged.confianza_global, self._s9_agg_cycles, self._s9_rechazos,
+            self._s9_warm_checks, "" if disc_is_mature(merged) else " best-effort",
         )
         # Censar DESPUÉS de persistir: la decisión de la persistencia es la que dice si el disco
         # es nuevo. Antes se censaba primero y con identidad propia, y las dos capas discrepaban.
@@ -4091,6 +4167,10 @@ class Monitor:
         self._s9_emitted = False
         self._s9_agg_cycles = 0
         self._s9_warming = False
+        self._s9_rechazos = 0
+        self._s9_warm_checks = 0
+        self._s9_fast_sig = None
+        self._frescura_click_t = None      # un cronómetro de S9 no puede cerrarlo otra pantalla
 
     # --- S3: modal de drop farmeado (parser espacial 2 columnas) ----------------
     def _process_disc_s3_continuous(self, frame, state: ScreenState) -> None:

@@ -35,6 +35,9 @@ _PRESUPUESTO = {
     # dueño: comparar los dos p50 dice si la espera la pone el warmup o el cómputo.
     "frescura_disco_a_log": 500.0,
     "frescura_disco_warm": 500.0,
+    # Click→log: desde que el loop rápido ve el disco nuevo, no desde el primer despacho. Es la
+    # espera que el usuario vive; `frescura_disco_a_log` no ve el tramo hasta el primer despacho.
+    "frescura_disco_click_a_log": 500.0,
     # Período del loop rápido. No sale de QA-06: es el valor que el DISEÑO del loop declara —
     # `_FAST_CAPTURE_MS` (100) de espera más el presupuesto de `detector` (50). Se declara para que
     # la distancia contra lo medido quede a la vista; es el piso de las dos frescuras de arriba.

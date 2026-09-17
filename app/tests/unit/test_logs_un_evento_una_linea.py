@@ -160,6 +160,80 @@ def test_la_linea_del_evento_es_autocontenida(caplog, monkeypatch, dueno, libre,
         assert trozo in evento[0], f"falta {trozo!r} en: {evento[0]}"
 
 
+def _aislar_emision_s9(monkeypatch, m):
+    """Lo que `_emit_s9_disc` hace DESPUÉS de decidir la línea (mapa de equipamiento y censo) no
+    es lo que se prueba acá, y necesita DB."""
+    monkeypatch.setattr(m, "_record_equip_map", lambda *a, **kw: None)
+    monkeypatch.setattr(m, "_censar_disco", lambda *a, **kw: None)
+
+
+@pytest.mark.parametrize("dueno,libre,incierto,esperado", [
+    ("Corin", False, False, "dueño=Corin"),
+    (None, True, False, "LIBRE"),
+    (None, False, True, "dueño=? (sin identificar)"),
+    (None, False, False, "dueño=? (badge sin leer)"),
+])
+def test_la_linea_de_S9_distingue_los_cuatro_desenlaces(caplog, monkeypatch, dueno, libre,
+                                                        incierto, esperado):
+    """La línea de S9 imprimía `dueno=-` para TRES casos distintos: LIBRE, "tiene dueño y no sé
+    quién" y "no se pudo leer el badge". Para el censo no son lo mismo — el segundo se guarda
+    marcado y el tercero no se guarda —, y es la línea que Daniel mira para pasar al disco
+    siguiente. En la pasada del 2026-09-16 salieron dos `dueno=-` y no había forma de saber cuál
+    de los tres eran. Ninguno de los cuatro puede salir como `-` ni sin decir qué pasó."""
+    from app.core.detector import ScreenState
+    m = _monitor()
+    _aislar_emision_s9(monkeypatch, m)
+    d = _merged(dueno, libre)
+    d.equip_dueno_incierto = incierto
+    with caplog.at_level(logging.INFO):
+        m._emit_s9_disc(d, ScreenState("S9", 1.0, "t"))
+    evento = [x for x in _lineas(caplog, logging.INFO) if x.startswith("Disco S9 detectado")]
+    assert len(evento) == 1, f"esperaba una línea de evento, hubo {len(evento)}"
+    for trozo in ("set=Jazz caótico", "slot=1", "main=HP", "nivel=15", esperado):
+        assert trozo in evento[0], f"falta {trozo!r} en: {evento[0]}"
+    assert "dueno=-" not in evento[0] and "=-" not in evento[0]
+
+
+def test_la_linea_de_S9_cuenta_las_lecturas_descartadas_en_el_handler_real(caplog, monkeypatch):
+    """**El diagnóstico de la Pasada A**, probado en el handler REAL y no en el emisor suelto.
+
+    En la pasada del 2026-09-16 los 7 discos sin warmup esperaron 1719-2047 ms: el primer
+    despacho no emitía y el siguiente sí. Faltaba saber POR QUÉ, y la sospecha es la lectura de
+    transición (`confianza_global < 0.7`), que se descarta en silencio y encima no cuenta para el
+    techo de ciclos. Este test fija que ese descarte se VEA en la línea: si alguien mueve el
+    contador fuera del camino real, la línea dice `0 desc` y el diagnóstico miente."""
+    import numpy as np
+    from app.core.detector import ScreenState
+    from app.core.parser_disc import SubstatParsed
+    m = _monitor()
+    _aislar_emision_s9(monkeypatch, m)
+    firma = (np.zeros((24, 48), np.float32), np.zeros((48, 48), np.float32), None)
+    monkeypatch.setattr(m, "_s9_disc_signature", lambda frame: firma)
+    monkeypatch.setattr(m, "_anclar_contador_s9", lambda *a, **kw: None)
+    monkeypatch.setattr("app.core.monitor.extract_s9_slot", lambda frame, ocr: 1)
+    # Dueño con nombre: así el disco NO entra al warmup y lo único que puede frenarlo es la lectura.
+    monkeypatch.setattr(m, "_assign_s9_owner",
+                        lambda disc, frame: setattr(disc, "agente_asignado_nombre", "Corin"))
+
+    def _disco(conf):
+        d = _merged()
+        d.confianza_global = conf
+        d.subs = [SubstatParsed(n, n, v, "flat", 1, 0.95)
+                  for n, v in (("ATK", 38.0), ("DEF", 15.0), ("PV", 112.0), ("Penetración", 9.0))]
+        return d
+
+    lecturas = iter([_disco(0.40), _disco(0.95)])       # 1ª: frame de transición · 2ª: buena
+    monkeypatch.setattr("app.core.monitor.parse_disc_s9", lambda frame, ocr, slot=None: next(lecturas))
+    st = ScreenState("S9", 1.0, "t")
+    with caplog.at_level(logging.INFO):
+        m._process_disc_s9_continuous(None, st)          # descartada: no hay línea todavía
+        assert not [x for x in _lineas(caplog, logging.INFO) if x.startswith("Disco S9")]
+        m._process_disc_s9_continuous(None, st)          # buena: sale
+    evento = [x for x in _lineas(caplog, logging.INFO) if x.startswith("Disco S9 detectado")]
+    assert len(evento) == 1
+    assert "(agg 1c · 1 desc · 0 warm)" in evento[0], evento[0]
+
+
 def test_frame_negro_no_es_requisito():
     """Guard de humo: el monitor se construye sin tocar pantalla ni DB (los tests de arriba lo
     instancian y no deben depender de un entorno gráfico)."""

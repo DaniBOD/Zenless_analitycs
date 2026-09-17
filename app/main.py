@@ -174,6 +174,26 @@ from app.ui.shell.window import ShellWindow  # noqa: E402 — después del desv�
 VERSION = "v0.1.0-dev"
 
 
+def _conectar_salida_limpia(app, detener) -> None:
+    """Toda salida de la app pasa por `detener` (el `stop` del controller) ANTES de que el proceso
+    termine.
+
+    Hasta el 2026-09-16 no pasaba: las tres salidas —la X, "Salir" en la bandeja y el auto-restart
+    del watchdog RNF-06— llaman a `QApplication.quit()`, y nada estaba conectado a `aboutToQuit`. El
+    proceso terminaba con el hilo del monitor corriendo y `Monitor.stop()` nunca se llamaba. Lo que
+    se perdía no se veía: `stop()` es quien vuelca el buffer de métricas (se escribe de a 100), así
+    que **cada pasada de QA perdía su última tanda** — en la pasada del 2026-09-16 quedaron 500
+    muestras exactas y faltaba el último disco. Tampoco salía "Monitor detenido" en el log.
+
+    Se conecta a `aboutToQuit` y no a cada botón de salida porque es el único punto por el que pasan
+    todas, incluidas las que se agreguen después. `stop()` es idempotente (`if self._monitor is
+    None: return`), así que una salida que ya detuvo el monitor no hace nada dos veces.
+    """
+    if app is None:
+        return
+    app.aboutToQuit.connect(detener)
+
+
 class MainWindow(ShellWindow):
     def __init__(self):
         from app.db.connection import get_db_path, is_readonly
@@ -207,6 +227,7 @@ class MainWindow(ShellWindow):
 
         self._live_view = LiveView(build_fn=build_fn)
         self._controller = MonitorController(parent=self)
+        _conectar_salida_limpia(QApplication.instance(), self._controller.stop)
         self._toast = DiscToast()
         c, vista, barra = self._controller, self._live_view, self.titlebar
 
