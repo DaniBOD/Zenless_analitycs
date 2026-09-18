@@ -119,7 +119,7 @@ Este documento describe el modelo relacional completo de la base, post-aplicaci�
 
 | Tabla | Filas esperadas | Descripción |
 |-------|-----------------|-------------|
-| `enemies` | ~80 iniciales | Catálogo de bosses/notorious con `escalado_dificultad` JSON. Fuente Hakush.in + Prydwen |
+| `enemies` | ~80 iniciales | Catálogo de bosses/notorious con `escalado_dificultad` JSON. Fuente Hakush.in + Prydwen. Mig 38 suma `atk_base`, `def_base`, `daze_base`, `stun_duracion_s`, `stun_dmg_mult` (al `nivel_referencia` de la fila) y los 11 enemigos del Quinto Frente (Fandom, nv 70) |
 | `enemy_resistances` | ~640 (80 × 8 elementos) | Multiplicador de daño por elemento + `breakdown_status`. 8 elementos desde la migración 14 (se sumaron `viento` y `lumen`) |
 | `shiyu_cycles` | 1 inicial, +1 cada 2 sem | Ciclo activo de Shiyu Critical con `frentes` JSON |
 | `da_cycles` | 1 inicial, +1 cada 2 sem | Ciclo activo de Deadly Assault con `entidades` JSON |

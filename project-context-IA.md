@@ -171,7 +171,7 @@ RF-14 coordina con RF-06 (build full = arma + 6 discos)
 > QA 2026-05-31. Ver `audit/correccion_roles_elementos_20260601.md`.
 
 **Niveles:** 41 en nv60 · 4 en nv55 (Harumasa, Seth, Ben, Antón, Corin)
-**Performance:** Defensa Shiyu 94 809 (top 31.35 %) · Simulación Umbral 185 006 (top 43.21 %)
+**Performance:** Defensa Shiyu **104 789 (top 23 %, S+, 2026-09-18)** — antes 94 809 (top 31.35 %) · Simulación Umbral 185 006 (top 43.21 %)
 
 **Stunners principales:** Lycaon (M4, Impact 169, Hielo) · Koleda (M3, Fuego) · Qingyi (Eléctrico) · Anby (M6) · Pulchra (M6, Impact 189) · Gatillo
 **DPS S-rank destacados:** Miyabi (Hielo Anomaly) · Yanagi (Eléctrico Anomaly A-arma) · Burnice (Fuego Anomaly) · Ellen (Hielo) · Zhu Yuan/Yixuan/Dialyn/Ye Shunguang (varios) · Manato M6 · Evelyn
