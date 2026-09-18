@@ -1,0 +1,28 @@
+{
+  "schema": "censo_armas/1",
+  "resumen": {
+    "entidad": "armas",
+    "estado": "en_curso",
+    "total_pantalla": 69,
+    "registrados": 53,
+    "faltan": 16,
+    "excedente": 0,
+    "libres": 5,
+    "con_dueno": 47,
+    "sin_resolver": 1,
+    "provisorios": 2,
+    "fuera_de_catalogo": 1,
+    "avisos": [],
+    "motivo_incompleto": "faltan 16 de 69: o no se recorrieron, o hay copias del mismo W-Engine que se vieron sin poder localizar la selección de la grilla — sin esa posición, dos copias idénticas cuentan como una"
+  },
+  "fuera_de_catalogo": [
+    {
+      "nombre_raw": "Fortunafelina -01+",
+      "rareza": "A",
+      "nivel": 50,
+      "nivel_max": 50,
+      "atk_base": 297,
+      "stat": "DEF% 35.2%"
+    }
+  ]
+}
