@@ -134,12 +134,58 @@ que el commit de la 37 se armó con ese blob por plumbing (`git hash-object` + `
 --cacheinfo`) sin tocar ningún archivo ajeno del árbol. La suite que vale como compuerta se corrió
 de nuevo, con la otra sesión ya sin escribir.
 
-## 8. Pendiente
+## 8. Después: el alta de Fortuna felina (migración 39)
 
-- **Alta de Catty Luck** en `weapons` (migración propia), que además necesita la especialidad
-  `'Armero'` en ese catálogo.
-- **El nombre con basura del camino S30** (`Fortunafelina -01+` vs `Fortuna felina`).
+El engine de Claret entró al catálogo **después** de este arreglo a propósito, para estrenarlo con
+el atributo principal ya rotulado (`stat_base_tipo = 'DEF'`, `tipo_especialidad = 'Armero'`).
+
+**Dos fuentes para cada valor**, más la pantalla: Gachabase 13017 con `lang=es` da el nombre en
+español **idéntico** al de la pantalla (*Fortuna felina*) y Game8 el inglés (*Catty Luck*); las dos
+coinciden en Defensa Base **356** y DEF **40 %** a nivel 60, y en la pasiva (*Almohadillas de la
+suerte* / *Lucky Pawpad*, 8 % a R1 → 12 % a R5, que es lo que muestra la pantalla a P5). Un tweet
+decía 342: la única fuente que discrepa.
+
+**La pantalla dijo 297, y ese número no entró.** El arma está a Nv 50/50 y el catálogo guarda el
+valor de nivel 60 — mismo criterio que *Tetera esmeraldina* en la migración 27. Chequeo interno que
+no dependía de ninguna wiki: 297/356 = **0,834**, y Tetera leyó 595 a 50/50 contra el 713 de una S
+a nivel 60: **0,834**. Es la misma curva de crecimiento, sacada de datos que no se tocan entre sí.
+
+**Una corrección a la migración 37.** Ahí llamé *invariante* a que el tipo del stat base esté
+exactamente cuando está el valor. Es falso como regla: el tipo es una propiedad del arma (la
+etiqueta no cambia con el nivel) y el valor del catálogo es el de nivel 60. Un arma leída sólo por
+debajo del máximo tiene tipo conocido y valor NULL, y eso no miente. Lo que sí miente es lo
+contrario —un número sin decir qué stat es—, y ese es el smoke check que quedó. La 37 no se
+reescribe; la corrección vive en la 39.
+
+**Lo que la 39 NO hace:** no inserta la fila de inventario. La escribe la app la próxima vez que
+pase por S30 (decisión de Daniel: el flujo normal). El nombre roto de S30, `Fortunafelina -01+`,
+**ya matchea** el catálogo por el fuzzy — verificado con `match_catalogo` contra el catálogo real —,
+así que el `-01+` pasa de bug bloqueante a cosmético.
+
+El ícono estaba sólo en `claude_design_upload/`, que está gitignoreada y que un script borra; se
+copió a `app/resources/ui_assets/Engines_icons/` (D1) y a `Assets_Originales/w_engines/`. Resuelve
+**por el nombre inglés**: sin `nombre_en` en la fila, `engine_icon_path` se abstiene. Por eso el
+nombre inglés no era un dato decorativo.
+
+**Tests y sabotajes:** 4 tests sobre lo que la fila habilita (no sobre que exista). 5 sabotajes, 5
+rojos. Los cuatro que rompen la fila se hicieron sobre una **copia descartable** de la DB —
+apuntando el test a ella—, nunca sobre la real (B3); el sha de la real quedó igual.
+
+Otra vez dos sesiones: la DB del árbol tiene la 38 sin commitear. La 39 se aplicó **dos veces**:
+sobre una copia de la DB de `HEAD` (esa es la que va al commit, con la 37 y la 39 pero sin la 38) y
+sobre la del árbol (que conserva las tres).
+
+De paso: el `--dry-run` del runner de migraciones abre su propia transacción y choca con el
+`BEGIN TRANSACTION` que tienen **todas** las migraciones del repo. El ensayo se hizo aplicando de
+verdad sobre una copia descartable.
+
+## 9. Pendiente
+
+- **El `-01+` que agrega el camino de S30** al nombre: ya no bloquea (matchea igual), pero es basura
+  en el log.
+- **La fila de inventario de Claret** entra en la próxima pasada por S30.
 - **Declarar alcance en el censo de armas**, o va a reportar un hueco para siempre.
 - **`Modelo_Relacional/README.md`** no documenta todavía `weapons.stat_base_*`: la otra sesión lo
   estaba editando y no se tocó para no pisarla. Va en un commit aparte.
 - **La guarda de la suite** debería al menos no recomendar `git checkout` a ciegas (§7).
+- **El `--dry-run` de `apply_migration.py`** no funciona con ninguna migración del repo (§8).
