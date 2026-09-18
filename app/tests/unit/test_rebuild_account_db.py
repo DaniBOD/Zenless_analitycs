@@ -24,6 +24,7 @@ from app.scripts.rebuild_account_db import (
     AGENTS_MUERTAS_ARMA,
     AGENTS_NULL,
     CATALOGO,
+    DERIVADAS_VACIAS,
     INVESTIGACION,
     VACIAR,
     clasificar_tablas,
@@ -236,6 +237,59 @@ def test_clasificar_tablas_cubre_las_31_de_la_db_real():
     faltan, sobran = clasificar_tablas(reales)
     assert faltan == [], f"tablas de la DB sin clasificar: {faltan}"
     assert sobran == [], f"tablas clasificadas que ya no existen: {sobran}"
+
+
+def test_una_tabla_ya_vacia_con_filas_hace_fallar_el_rebuild(origen, tmp_path):
+    """DERIVADAS_VACIAS afirma "ya estaban vacías". Si una trae filas, la afirmación quedó vieja y
+    vaciarla sería perder datos rotulándolos "ya vacía" en el reporte. Pasó con `shiyu_cycles` el
+    2026-09-18 (mig 38 cargó el primer ciclo a mano)."""
+    con = sqlite3.connect(origen)
+    con.execute("INSERT INTO lategame_runs VALUES (1, '2026-09-18')")
+    con.commit(); con.close()
+    with pytest.raises(ValueError, match="ya vacía.*TIENEN filas"):
+        rebuild(origen, tmp_path / "nueva.db")
+
+
+def test_ninguna_tabla_ya_vacia_tiene_filas_en_la_db_real():
+    """Contra la DB REAL, sólo lectura. Es el test que atrapa la PRÓXIMA migración que empiece a
+    cargar una tabla del grupo "ya vacía" sin reclasificarla — antes de que alguien corra un
+    rebuild y la pierda."""
+    from app.db.connection import get_db_path
+    db = get_db_path()
+    if not db.exists():
+        pytest.skip("DB de dominio no disponible")
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        reales = {r[0] for r in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
+        con_filas = {t: n for t in DERIVADAS_VACIAS if t in reales
+                     for n in [con.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]] if n}
+    finally:
+        con.close()
+    assert con_filas == {}, f"clasificadas 'ya vacía' pero con filas: {con_filas}"
+
+
+def test_el_ciclo_de_shiyu_sobrevive_al_rebuild_de_la_db_real(tmp_path):
+    """Sobre una COPIA de la DB real (el rebuild abre el origen read-only): el ciclo que cargó la
+    mig 38 tiene que llegar entero a la DB nueva."""
+    from app.db.connection import get_db_path
+    db = get_db_path()
+    if not db.exists():
+        pytest.skip("DB de dominio no disponible")
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        antes = con.execute("SELECT COUNT(*) FROM shiyu_cycles").fetchone()[0]
+    finally:
+        con.close()
+    if antes == 0:
+        pytest.skip("la DB real todavía no tiene ciclos cargados")
+    rep = rebuild(db, tmp_path / "nueva.db")
+    assert rep.conteos["shiyu_cycles"] == (antes, antes)
+    nueva = sqlite3.connect(tmp_path / "nueva.db")
+    try:
+        assert nueva.execute("SELECT COUNT(*) FROM shiyu_cycles").fetchone()[0] == antes
+    finally:
+        nueva.close()
 
 
 def test_las_listas_de_agents_no_se_pisan():

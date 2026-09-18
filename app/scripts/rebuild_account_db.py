@@ -40,6 +40,10 @@ from pathlib import Path
 CATALOGO: tuple[str, ...] = (
     "disc_sets", "disc_archetypes", "disc_set_archetype", "weapons",
     "enemies", "enemy_resistances", "content_profiles", "weapon_passives_structured",
+    # Estaba en DERIVADAS_VACIAS ("ya estaban vacías") hasta que la mig 38 (2026-09-18) cargó el
+    # primer ciclo a mano, desde Game8 y la pantalla. Es contenido del juego, como `enemies`, y
+    # ningún censo lo reproduce: un rebuild lo habría vaciado rotulándolo "ya vacía".
+    "shiyu_cycles",
 )
 
 #: Trabajo de investigación (Prydwen/Fandom/matrices de rol). **El censo NO las recupera.**
@@ -64,7 +68,7 @@ VACIAR: tuple[str, ...] = (
 #: Ya estaban vacías (features de fases posteriores). Se crean y quedan vacías.
 DERIVADAS_VACIAS: tuple[str, ...] = (
     "ai_catalog_runs", "da_cycles", "lategame_run_damage", "lategame_runs",
-    "prydwen_tier_snapshots", "prydwen_weapon_recommendations_snapshots", "shiyu_cycles",
+    "prydwen_tier_snapshots", "prydwen_weapon_recommendations_snapshots",
     "team_compositions", "team_synergies", "team_synergy_adjustments",
     "tier_list_personal", "weapon_evaluations",
 )
@@ -228,6 +232,18 @@ def rebuild(origen: Path | str, destino: Path | str) -> Reporte:
             raise ValueError(
                 f"tablas sin clasificar en {origen.name}: {faltan}. "
                 "Agregalas a CATALOGO / INVESTIGACION / VACIAR / DERIVADAS_VACIAS antes de seguir."
+            )
+        # DERIVADAS_VACIAS es una AFIRMACIÓN ("ya estaban vacías"), no una orden de vaciar. Si una
+        # trae filas, alguien empezó a cargarla y la clasificación quedó vieja: vaciarla sería
+        # perder datos rotulándolos "ya vacía" en el reporte. Pasó con `shiyu_cycles` (mig 38):
+        # frenar y preguntar, igual que con una tabla sin clasificar.
+        con_filas = {t: n for t in DERIVADAS_VACIAS if t in reales
+                     for n in [_contar(src, t)] if n}
+        if con_filas:
+            raise ValueError(
+                f"tablas clasificadas como 'ya vacía' que TIENEN filas en {origen.name}: "
+                f"{con_filas}. Reclasificalas (CATALOGO / INVESTIGACION / VACIAR) antes de seguir: "
+                "el rebuild no las vacía por su cuenta."
             )
 
         dst = sqlite3.connect(destino)
