@@ -55,7 +55,7 @@ Este documento describe el modelo relacional completo de la base, post-aplicaci�
 | Tabla | Filas iniciales | Descripción |
 |-------|-----------------|-------------|
 | `agents` | 46 | Roster completo (46 post-Cissia mig 06). Stats efectivos de HoYoLAB, mindscape, FK a `weapons` y `disc_sets` (4p/2p equipados) |
-| `weapons` | 49 + extensiones (mig 05) | Catálogo de W-Engines con `pasiva_tipo` semi-estructurado. Mig 05 agrega `pasiva_modelada` y `sensibilidad_contexto` |
+| `weapons` | 49 + extensiones (mig 05) · 61 desde mig 39 | Catálogo de W-Engines con `pasiva_tipo` semi-estructurado. Mig 05 agrega `pasiva_modelada` y `sensibilidad_contexto`. **Mig 37 (2026-09-18): `atk_base` → `stat_base_valor` + `stat_base_tipo`** (`'ATK'` / `'DEF'`): el atributo principal no siempre es ataque — el de un engine de **Armero** es "Defensa Base". `stat_base_valor` es el de **nivel 60**; un arma leída por debajo del máximo puede tener el tipo (fijo por arma) y el valor en NULL. Lo que no puede haber es un valor sin tipo. `tipo_especialidad` admite `'Armero'` desde la mig 39 (Fortuna felina) |
 | `disc_sets` | 26 | Catálogo de sets con `bonus_2p` y `bonus_4p_desc` |
 | `agent_awakenings` | 1 cargado / 7 confirmados | Despertares con `version_juego` para escalabilidad. Pendiente: capturar texto de Lycaon/Ellen/Grace/N.º 0: Anby (Task #12) |
 
