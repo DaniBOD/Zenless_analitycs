@@ -1,9 +1,14 @@
 """Parser del panel de detalle de W-Engine (S26).
 
-Verdad de tierra de los 40 fixtures, campo por campo. Los valores salen de leer las capturas
-del propio juego, no de la DB: el catálogo `weapons` venía con rareza, tipo y `atk_base`
+Verdad de tierra de los 41 fixtures, campo por campo. Los valores salen de leer las capturas
+del propio juego, no de la DB: el catálogo `weapons` venía con rareza, tipo y stat base
 heredados de otra arma en varias filas (ver `audit/weapons_catalog_20260728.md`), así que usarlo
 como verdad sería circular.
+
+⚠️ **Los 40 primeros fixtures dicen todos "Ataque Base"**, así que un test escrito sólo sobre
+ellos pasa en verde aunque el parser ni lea la etiqueta — que es exactamente lo que pasaba hasta
+el 2026-09-18. `Ejemplo_50` (Fortuna felina, el engine de Armero de Claret) dice **"Defensa
+Base"** y es el único del corpus que puede romperlo.
 
 El catálogo que se le pasa al parser es la lista de los 40 nombres esperados, no el catálogo
 completo. Es a propósito y es **más exigente**: incluye los pares confundibles
@@ -32,7 +37,8 @@ from app.core.parser_weapon_s26 import (
 _DIR = (Path(__file__).resolve().parents[3] / "Documentacion" / "Screenshots_Triggers"
         / "Engines_Triggers" / "Engine_vista_detallada_pj")
 
-# fixture → (nombre en el catálogo, nivel, nivel_max, atk_base, stat canon, valor, unidad)
+# fixture → (nombre en el catálogo, nivel, nivel_max, stat_base_valor, stat canon, valor,
+#            unidad). QUÉ stat es el base va aparte, en `_GT_STAT_BASE_TIPO`.
 _GT: dict[str, tuple] = {
     "Ejemplo_1":  ("Ecos bulliciosos", 60, 60, 594, "Maestría de Anomalía", 75.0, "flat"),
     "Ejemplo_2":  ("Fósil preciado", 60, 60, 594, "Impacto", 15.0, "%"),
@@ -74,15 +80,23 @@ _GT: dict[str, tuple] = {
     "Ejemplo_38": ("Transmorfer original", 60, 60, 594, "HP%", 25.0, "%"),
     "Ejemplo_39": ("Pacificador especializado", 60, 60, 624, "ATK%", 25.0, "%"),
     "Ejemplo_40": ("Primavera termal", 60, 60, 594, "ATK%", 25.0, "%"),
+    # El primer engine de Armero del corpus. Su atributo principal es DEFENSA, no ataque.
+    "Ejemplo_50": ("Fortuna felina", 50, 50, 297, "DEF%", 35.2, "%"),
 }
 
 _CATALOGO = sorted({v[0] for v in _GT.values()})
 
+# Qué stat es el atributo principal. Por defecto ATK —lo dicen las 40 capturas— y las excepciones
+# se nombran: hoy sólo la de Armero. Mismo patrón que `_GT_RAREZA`: un default medido, no supuesto.
+_GT_STAT_BASE_TIPO = {stem: "ATK" for stem in _GT} | {"Ejemplo_50": "DEF"}
+
 # --- Rareza y refinamiento (H3) --------------------------------------------------------------
-# La rareza sale de dos señales independientes que coinciden en los 40: el hue del badge y, para
-# las 32 que están a nivel máximo, el ATK base (S ∈ {684,713,743}, A ∈ {594,624}). Las 8 que están
-# a 0/10 no tienen esa corroboración, así que se apoyan en el nombre: las Repercusión, Tormenta
+# La rareza sale de dos señales independientes que coinciden: el hue del badge y, para las que
+# están a nivel máximo CON ATK base, el ATK (S ∈ {684,713,743}, A ∈ {594,624}). Las que están a
+# 0/10 no tienen esa corroboración, así que se apoyan en el nombre: las Repercusión, Tormenta
 # magnética, Fase lunar y Turbulencia son de rango B, y Cámara acorazada es A.
+# Ejemplo_50 tampoco la tiene, por otro motivo: su base es DEF y la tabla es de ATK. Es A por el
+# badge, y esa es toda la evidencia que hay — una especialidad nueva estrena con una sola señal.
 _GT_RAREZA = {
     "S": {"Ejemplo_6", "Ejemplo_7", "Ejemplo_8", "Ejemplo_9", "Ejemplo_10", "Ejemplo_15",
           "Ejemplo_16", "Ejemplo_17", "Ejemplo_18", "Ejemplo_19"},
@@ -158,11 +172,16 @@ def test_nivel_y_maximo(stem):
 
 @pytest.mark.skipif(not _present("Ejemplo_1"), reason="capturas no presentes")
 @pytest.mark.parametrize("stem", list(_GT), ids=lambda s: s)
-def test_atk_base(stem):
+def test_stat_base(stem):
+    """El VALOR y QUÉ STAT es. Verificar sólo el número dejaba pasar el bug de 2026-09-18: el
+    parser tomaba la fila por posición y llamaba ATK a lo que la pantalla rotula como Defensa."""
     if not _present(stem):
         pytest.skip("fixture no presente")
-    atk = _GT[stem][3]
-    assert _parsed(stem).atk_base == atk
+    valor = _GT[stem][3]
+    d = _parsed(stem)
+    assert d.stat_base_valor == valor
+    assert d.stat_base_tipo == _GT_STAT_BASE_TIPO[stem], (
+        f"{stem}: la etiqueta de la pantalla manda, no el default")
 
 
 @pytest.mark.skipif(not _present("Ejemplo_1"), reason="capturas no presentes")
@@ -210,12 +229,47 @@ def test_refinamiento(stem):
 
 @pytest.mark.skipif(not _present("Ejemplo_1"), reason="capturas no presentes")
 def test_ninguna_rareza_discrepa_del_atk():
-    """La verificación cruzada: en las 32 que están al máximo, el badge y el ATK base tienen que
-    decir lo mismo. Si esto cae, una de las dos calibraciones se movió."""
+    """La verificación cruzada: en las que están al máximo CON ATK base, el badge y el ATK
+    tienen que decir lo mismo. Si esto cae, una de las dos calibraciones se movió.
+
+    La tabla `_ATK_MAX_POR_RAREZA` sólo vale para ATK: un engine de Armero tiene DEF base y caería
+    en el rango de otra rareza de casualidad, inventando una discrepancia. Por eso el parser exige
+    el tipo — y el costo, real, es que esa especialidad se queda con una sola señal (el badge)."""
     malos = [s for s in _GT if _present(s)
              for d in [_parsed(s)]
              if any(n.startswith("rareza_discrepa_atk") for n in d.notas)]
     assert not malos, malos
+
+
+# --- La corroboración de rareza, sobre la función pura -----------------------------------------
+# Ningún fixture produce la colisión que la guarda previene (el único de Armero vale 297, fuera de
+# la tabla), así que sobre el corpus la guarda es INVISIBLE: se puede sacar y todo sigue verde.
+# Estos tests son los únicos que la sostienen.
+
+def test_la_corroboracion_anota_la_discrepancia_real():
+    """El caso para el que la tabla existe: badge dice A, el ATK de máximo dice S."""
+    nota = W.corroborar_rareza_por_atk("A", True, "ATK", 713)
+    assert nota == "rareza_discrepa_atk:badge=A,atk=S"
+
+
+def test_la_corroboracion_calla_cuando_coinciden():
+    assert W.corroborar_rareza_por_atk("S", True, "ATK", 713) is None
+
+
+def test_un_DEF_base_NO_se_mide_contra_la_tabla_de_ATK():
+    """LA guarda. 594 es un ATK de rango A; como DEF base no significa nada, y medirlo contra la
+    tabla inventaría una discrepancia. Un engine de Armero con ese número tiene que pasar callado."""
+    assert W.corroborar_rareza_por_atk("S", True, "DEF", 594) is None
+    assert W.corroborar_rareza_por_atk("A", True, "DEF", 684) is None
+
+
+def test_sin_tipo_leido_tampoco_se_corrobora():
+    """Si no se supo qué stat es, no se puede afirmar que el número sea comparable."""
+    assert W.corroborar_rareza_por_atk("S", True, None, 594) is None
+
+
+def test_fuera_del_maximo_el_atk_no_dice_nada():
+    assert W.corroborar_rareza_por_atk("A", False, "ATK", 713) is None
 
 
 @pytest.mark.skipif(not _present("Ejemplo_1"), reason="capturas no presentes")
@@ -319,8 +373,42 @@ def test_sin_catalogo_no_inventa_nombre():
     d = parse_weapon_s26_from_lines(lines, W=2559, H=1439)
     assert d.nombre_raw == "Petrazufre"
     assert d.nombre_canon is None
-    assert (d.nivel, d.nivel_max, d.atk_base) == (60, 60, 684)
+    assert (d.nivel, d.nivel_max, d.stat_base_valor) == (60, 60, 684)
+    # La etiqueta viene FUNDIDA con el valor en una sola línea ("Ataque Base 684"): el tipo
+    # tiene que salir igual por el camino del fallback.
+    assert d.stat_base_tipo == "ATK"
     assert (d.stat_avanzado_canon, d.stat_avanzado_valor) == ("ATK%", 30.0)
+
+
+@pytest.mark.parametrize("x1,x2", [(800, 1300), (1200, 1400)], ids=["izquierda", "derecha"])
+def test_la_etiqueta_fundida_da_el_tipo_en_cualquier_columna(x1, x2):
+    """El OCR a veces funde "Defensa Base 297" en UNA línea. Si esa línea cae en la columna del
+    valor, el número se lee por el camino normal y el fallback para fundidas no corre: el tipo se
+    perdía con la etiqueta en la mano. Lo encontró un sabotaje que quedó en VERDE (2026-09-18)."""
+    lines = [("Fortuna felina", 0.99, (800, 200, 1100, 240)),
+             ("Nivel 50/50", 0.99, (800, 260, 1100, 300)),
+             ("Atributo principal", 0.99, (800, 420, 1100, 450)),
+             ("Defensa Base 297", 0.99, (x1, 460, x2, 495)),
+             ("Atributos avanzados", 0.99, (800, 520, 1100, 550)),
+             ("Defensa", 0.99, (800, 570, 950, 600)),
+             ("35.2 %", 0.99, (1250, 570, 1350, 600))]
+    d = parse_weapon_s26_from_lines(lines, W=2559, H=1439)
+    assert (d.stat_base_valor, d.stat_base_tipo) == (297, "DEF")
+    assert "stat_base_tipo_no_leido" not in d.notas
+
+
+def test_una_etiqueta_desconocida_se_abstiene_pero_conserva_el_numero():
+    """B2: no saber QUÉ stat es no cuesta el número, que se leyó bien. Pero se dice."""
+    lines = [("Arma X", 0.99, (800, 200, 1100, 240)),
+             ("Nivel 60/60", 0.99, (800, 260, 1100, 300)),
+             ("Atributo principal", 0.99, (800, 420, 1100, 450)),
+             ("Vitalidad Base", 0.99, (800, 460, 1100, 495)),
+             ("777", 0.99, (1250, 460, 1350, 495)),
+             ("Atributos avanzados", 0.99, (800, 520, 1100, 550))]
+    d = parse_weapon_s26_from_lines(lines, W=2559, H=1439)
+    assert d.stat_base_valor == 777
+    assert d.stat_base_tipo is None
+    assert "stat_base_tipo_no_leido" in d.notas
 
 
 def test_arma_fuera_del_catalogo_se_declara():
@@ -337,7 +425,7 @@ def test_arma_fuera_del_catalogo_se_declara():
 def test_panel_vacio_no_revienta():
     d = parse_weapon_s26_from_lines([], W=2559, H=1439)
     assert d.notas == ["panel_vacio"]
-    assert d.nivel is None and d.atk_base is None
+    assert d.nivel is None and d.stat_base_valor is None and d.stat_base_tipo is None
 
 
 def test_al_maximo_distingue_los_dos_regimenes():

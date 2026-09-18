@@ -32,7 +32,8 @@ def _arma(nombre="Engranaje infernal", *, dueno=None, nivel=60, refin=2, en_cata
     from app.core.parser_weapon_s26 import WeaponParsed
     return WeaponParsed(
         nombre_raw=nombre, nombre_canon=nombre if en_catalogo else None,
-        nivel=nivel, nivel_max=60, atk_base=684, rareza="S", refinamiento=refin,
+        nivel=nivel, nivel_max=60, stat_base_valor=684, stat_base_tipo="ATK",
+        rareza="S", refinamiento=refin,
         dueno=dueno, confianza=0.95,
     )
 

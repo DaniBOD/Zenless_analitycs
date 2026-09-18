@@ -47,7 +47,8 @@ class FilaArma:
     nombre_en: str | None
     rareza: str | None
     especialidad: str | None
-    atk_base: int | None
+    stat_base_valor: int | None
+    stat_base_tipo: str | None
     stat: str | None
     stat_valor: str | None
     nivel: int | None
@@ -68,7 +69,8 @@ class FilaArma:
 def leer_armas(con: sqlite3.Connection) -> list[FilaArma]:
     """Una fila por arma activa. Dos consultas: el inventario y el conteo de copias."""
     filas = con.execute("""
-        SELECT i.id, w.id AS wid, w.nombre, w.nombre_en, w.rareza, w.tipo_especialidad, w.atk_base,
+        SELECT i.id, w.id AS wid, w.nombre, w.nombre_en, w.rareza, w.tipo_especialidad,
+               w.stat_base_valor, w.stat_base_tipo,
                w.stat_secundario, w.stat_secundario_valor, i.nivel, i.refinamiento, i.equipado,
                a.nombre AS dueno, a.id AS dueno_id
         FROM inventory_weapons i
@@ -81,14 +83,15 @@ def leer_armas(con: sqlite3.Connection) -> list[FilaArma]:
 
     salida = []
     for f in filas:
-        (inv_id, wid, nombre, nombre_en, rareza, esp, atk, stat, stat_v, nivel, refin, equipado,
-         dueno, dueno_id) = tuple(f)
+        (inv_id, wid, nombre, nombre_en, rareza, esp, base_val, base_tipo, stat, stat_v, nivel,
+         refin, equipado, dueno, dueno_id) = tuple(f)
         equipado = bool(equipado)
         icono = engine_icon_path(nombre, nombre_en)
         avatar = agent_avatar_path(dueno, "ico") if equipado and dueno else None
         salida.append(FilaArma(
             id=inv_id, weapon_id=wid, nombre=nombre, nombre_en=nombre_en, rareza=rareza,
-            especialidad=esp, atk_base=atk, stat=stat, stat_valor=stat_v, nivel=nivel,
+            especialidad=esp, stat_base_valor=base_val, stat_base_tipo=base_tipo,
+            stat=stat, stat_valor=stat_v, nivel=nivel,
             refinamiento=refin, equipado=equipado,
             dueno=dueno if equipado else None, dueno_id=dueno_id if equipado else None,
             dueno_avatar=str(avatar) if avatar else None,

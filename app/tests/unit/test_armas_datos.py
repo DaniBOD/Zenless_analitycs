@@ -27,11 +27,11 @@ def _arma(con, inv_id, weapon_id, *, nivel=60, refin=5, agente=None, equipado=0,
 def con(db_esquema_real):
     c = db_esquema_real
     c.executescript("""
-        INSERT INTO weapons (id, nombre, nombre_en, rareza, tipo_especialidad, atk_base,
-                             stat_secundario, stat_secundario_valor) VALUES
-            (1, 'Llanto mielgo', 'Weeping Gemini', 'A', 'Anomalía', 594, 'ATK%', '25%'),
-            (2, 'Sol exuvia', 'Sol Exuvia', 'S', 'Ataque', 713, 'ATK%', '30%'),
-            (3, 'Arma sin arte', 'Weapon Without Art', 'S', NULL, NULL, 'Impact', NULL);
+        INSERT INTO weapons (id, nombre, nombre_en, rareza, tipo_especialidad, stat_base_valor,
+                             stat_base_tipo, stat_secundario, stat_secundario_valor) VALUES
+            (1, 'Llanto mielgo', 'Weeping Gemini', 'A', 'Anomalía', 594, 'ATK', 'ATK%', '25%'),
+            (2, 'Sol exuvia', 'Sol Exuvia', 'S', 'Ataque', 713, 'ATK', 'ATK%', '30%'),
+            (3, 'Arma sin arte', 'Weapon Without Art', 'S', NULL, NULL, NULL, 'Impact', NULL);
         INSERT INTO agents (id, nombre, rango, elemento, rol, faccion, protected_build) VALUES
             (1, 'Yanagi', 'S', 'Eléctrico', 'Anomalía', 'Hollow Special Operations Section 6', 0),
             (2, 'Pyrois', '∞', 'Éter', 'Ataque', 'Faetón', 0),
@@ -59,6 +59,14 @@ def test_trae_las_activas_con_su_copia_y_su_dueno(con):
     assert f[13].copias == 1
     assert f[10].nombre == "Llanto mielgo" and f[10].rareza == "A"
     assert f[14].especialidad is None, "sin dato: no se inventa"
+
+
+def test_el_stat_base_llega_con_su_tipo(con):
+    """La UI tiene que saber QUÉ stat es el base, no sólo el número: un engine de Armero tiene
+    DEF base, y mostrarlo bajo un rótulo fijo de ATK es la misma mentira que tenía el parser."""
+    f = {x.id: x for x in leer_armas(con)}
+    assert (f[10].stat_base_valor, f[10].stat_base_tipo) == (594, "ATK")
+    assert (f[14].stat_base_valor, f[14].stat_base_tipo) == (None, None), "sin dato: no se inventa"
 
 
 def test_el_icono_falta_sin_inventar_otro(con):

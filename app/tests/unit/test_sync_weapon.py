@@ -59,7 +59,8 @@ def _arma(nombre_canon="Engranaje infernal", *, dueno="Jane", nivel=60, refinami
           nombre_raw=None):
     return WeaponParsed(
         nombre_raw=nombre_raw if nombre_raw is not None else (nombre_canon or "?"),
-        nombre_canon=nombre_canon, nivel=nivel, nivel_max=60, atk_base=684,
+        nombre_canon=nombre_canon, nivel=nivel, nivel_max=60, stat_base_valor=684,
+        stat_base_tipo="ATK",
         stat_avanzado_canon="Impacto", stat_avanzado_valor=18.0, stat_avanzado_unidad="%",
         rareza="S", refinamiento=refinamiento, dueno=dueno, tenencia="equipada",
         confianza=0.95,

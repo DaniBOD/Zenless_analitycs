@@ -94,9 +94,13 @@ _RE_NIVEL_ARMA = re.compile(r"nivel\s*(\d{1,2})\s*/\s*(\d{1,2})", re.I)
 # de S18: por unos pocos píxeles el orden se da vuelta y una regex direccional falla en la mitad
 # de los casos. La columna es estable; el orden no.
 _RE_SOLO_NUMERO = re.compile(r"(\d{2,4})")
-# Fallback bidireccional para cuando el OCR funde etiqueta y valor en UNA línea.
-_RE_ATK_BASE_FUNDIDA = re.compile(
-    r"ataque\s*base\D{0,6}(\d{2,4})|(\d{2,4})\D{0,6}ataque\s*base", re.I)
+# Fallback bidireccional para cuando el OCR funde etiqueta y valor en UNA línea. Acepta las DOS
+# etiquetas: un engine de Armero dice "Defensa Base" (ver `_STAT_BASE_POR_ETIQUETA`).
+_RE_STAT_BASE_FUNDIDA = re.compile(
+    r"(?:ataque|defensa)\s*base\D{0,6}(\d{2,4})|(\d{2,4})\D{0,6}(?:ataque|defensa)\s*base", re.I)
+# Etiqueta de la fila del atributo principal → stat canónico. El juego la escribe en la columna
+# izquierda, igual que en los atributos avanzados; hasta 2026-09-17 no se leía.
+_STAT_BASE_POR_ETIQUETA = {"ataque base": "ATK", "defensa base": "DEF"}
 # Corte del nombre del stat contra su valor: "Ataque 30 %" → ("Ataque", "30 %").
 _RE_STAT_VALOR = re.compile(r"^(?P<nombre>[^\d]+?)\s*(?P<valor>[\d]+(?:[.,]\d+)?\s*%?)\s*$")
 
@@ -192,6 +196,31 @@ _OWNER_NITIDEZ_MIN = 20.0  # 4.2× sobre el libre más alto, 2.6× bajo el dueñ
 _ATK_MAX_POR_RAREZA = {684: "S", 713: "S", 743: "S", 594: "A", 624: "A"}
 
 
+def corroborar_rareza_por_atk(rareza: str | None, al_maximo: bool, stat_base_tipo: str | None,
+                              stat_base_valor: int | None) -> str | None:
+    """Nota de discrepancia entre el badge y el ATK base, o `None` si no hay nada que decir.
+
+    Se ANOTA la discrepancia en vez de resolverla: el badge es una lectura directa y el ATK una
+    inferencia, así que no hay motivo para que la inferencia gane; pero callarla sería perder la
+    única verificación cruzada que tenemos.
+
+    **La tabla es de ATK y sólo vale para ATK.** Un engine de Armero tiene DEF base, y un DEF que
+    caiga en el rango de un ATK inventaría una discrepancia que no existe. Está extraída acá —y no
+    inline, como estaba— porque ningún fixture del corpus produce esa colisión (el único de Armero
+    vale 297, que no está en la tabla): sin esta función la guarda no se podría romper a propósito,
+    y una protección que ningún test puede tumbar no está verificada, sólo escrita.
+
+    El costo, dicho: esa especialidad se queda con **una sola señal** (el badge). No se corrobora
+    con una tabla ajena.
+    """
+    if not (rareza and al_maximo and stat_base_tipo == "ATK"):
+        return None
+    por_atk = _ATK_MAX_POR_RAREZA.get(stat_base_valor)
+    if por_atk is None or por_atk == rareza:
+        return None
+    return f"rareza_discrepa_atk:badge={rareza},atk={por_atk}"
+
+
 @dataclass
 class WeaponParsed:
     """Lo que se lee del panel. Campo no leído ⇒ None + nota (RNF-02, nunca un plausible)."""
@@ -200,7 +229,13 @@ class WeaponParsed:
     nombre_canon: str | None = None
     nivel: int | None = None
     nivel_max: int | None = None
-    atk_base: int | None = None
+    #: Atributo principal: el VALOR y QUÉ STAT es. Hasta el 2026-09-17 esto era un solo campo
+    #: `atk_base`, porque todos los W-Engines conocidos tenían "Ataque Base" — y el parser tomaba
+    #: el número de esa fila POR POSICIÓN, sin leer nunca la etiqueta. El primer engine de Armero
+    #: (Fortuna felina, de Claret) dice **"Defensa Base"**: se guardaba un DEF con nombre de ATK,
+    #: sin una sola nota. El tipo se lee ahora de la columna izquierda, igual que el avanzado.
+    stat_base_valor: int | None = None
+    stat_base_tipo: str | None = None      # "ATK" | "DEF" | None si la etiqueta no se reconoció
     stat_avanzado_canon: str | None = None
     stat_avanzado_valor: float | None = None
     stat_avanzado_unidad: str | None = None
@@ -864,25 +899,39 @@ def parse_weapon_s26_from_lines(
     if out.nombre_raw and out.nombre_canon is None and catalogo:
         out.notas.append("nombre_fuera_del_catalogo")
 
-    # --- Atributo principal: "Ataque Base N" ---
-    # `>` estricto excluye el header; el label "Ataque Base" NO es header y tiene que entrar.
+    # --- Atributo principal: la ETIQUETA a la izquierda, el valor a la derecha ---
+    # `>` estricto excluye el header; el label ("Ataque Base" / "Defensa Base") NO es header y
+    # tiene que entrar. La etiqueta se LEE: asumir ATK guardaba el DEF de los engines de Armero
+    # con nombre de ATK y sin una sola nota (2026-09-17, Fortuna felina).
     seccion_main = _primera_fila([ln for ln in detail if _ymain < ln.y1 < _yavanz])
     if seccion_main:
         valores_main = [ln for ln in seccion_main if ln.xn >= layout.col_split]
         for ln in valores_main:
             m = _RE_SOLO_NUMERO.search(ln.txt)
             if m:
-                out.atk_base = int(m.group(1))
+                out.stat_base_valor = int(m.group(1))
                 break
-        if out.atk_base is None:
+        texto_fila = _strip(" ".join(ln.txt for ln in seccion_main))
+        if out.stat_base_valor is None:
             # El OCR fundió etiqueta y valor: se busca en el texto unido, en los dos órdenes.
-            m = _RE_ATK_BASE_FUNDIDA.search(_strip(" ".join(ln.txt for ln in seccion_main)))
+            m = _RE_STAT_BASE_FUNDIDA.search(texto_fila)
             if m:
-                out.atk_base = int(m.group(1) or m.group(2))
-        if out.atk_base is not None:
+                out.stat_base_valor = int(m.group(1) or m.group(2))
+        # El TIPO se busca en la fila ENTERA, no sólo en la columna de la etiqueta: el OCR a veces
+        # funde "Defensa Base 297" en una línea, y si cae en la columna del valor el rótulo queda
+        # del lado derecho. Hubo dos caminos (columna izquierda + fallback para fundidas) y un
+        # sabotaje mostró que el segundo cubría al primero: se deja uno (B1).
+        for rotulo, canon in _STAT_BASE_POR_ETIQUETA.items():
+            if rotulo in texto_fila.lower():
+                out.stat_base_tipo = canon
+                break
+        if out.stat_base_valor is not None:
             confs.extend(ln.conf for ln in seccion_main)
-    if out.atk_base is None:
-        out.notas.append("atk_base_no_leido")
+    if out.stat_base_valor is None:
+        out.notas.append("stat_base_no_leido")
+    # B2: no saber QUÉ stat es no cuesta el número, que se leyó bien. Pero se dice.
+    if out.stat_base_tipo is None:
+        out.notas.append("stat_base_tipo_no_leido")
 
     # --- Atributo avanzado: nombre en la columna izquierda, valor en la derecha ---
     seccion_avanz = _primera_fila(
@@ -917,10 +966,11 @@ def parse_weapon_s26_from_lines(
         # ANOTA la discrepancia en vez de resolverla — el badge es una lectura directa y el ATK
         # una inferencia, así que no hay motivo para que la inferencia gane; pero callarla sería
         # perder la única verificación cruzada que tenemos.
-        if out.rareza and out.al_maximo and out.atk_base in _ATK_MAX_POR_RAREZA:
-            por_atk = _ATK_MAX_POR_RAREZA[out.atk_base]
-            if por_atk != out.rareza:
-                out.notas.append(f"rareza_discrepa_atk:badge={out.rareza},atk={por_atk}")
+        #
+        nota = corroborar_rareza_por_atk(
+            out.rareza, out.al_maximo, out.stat_base_tipo, out.stat_base_valor)
+        if nota:
+            out.notas.append(nota)
 
     out.confianza = round(sum(confs) / len(confs), 3) if confs else 0.0
     return out

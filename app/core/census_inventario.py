@@ -379,7 +379,7 @@ def _markdown_armas(registro: dict) -> str:
                 f"| `{w.get('nombre_raw') or '?'}` | {w.get('rareza') or '?'} | "
                 f"{w.get('nivel') if w.get('nivel') is not None else '?'}"
                 f"/{w.get('nivel_max') if w.get('nivel_max') is not None else '?'} | "
-                f"{w.get('atk_base') or '?'} | {w.get('stat') or '?'} |"
+                f"{w.get('stat_base_tipo') or '?'} {w.get('stat_base_valor') or '?'} | {w.get('stat') or '?'} |"
             )
         out.append("")
 

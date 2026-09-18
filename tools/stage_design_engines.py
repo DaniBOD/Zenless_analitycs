@@ -55,7 +55,8 @@ def volcar_datos(con: sqlite3.Connection) -> dict:
     from app.core.asset_resolver import engine_icon_path
 
     inv = con.execute("""
-        SELECT i.id, w.id AS wid, w.nombre, w.nombre_en, w.rareza, w.tipo_especialidad, w.atk_base,
+        SELECT i.id, w.id AS wid, w.nombre, w.nombre_en, w.rareza, w.tipo_especialidad,
+               w.stat_base_valor, w.stat_base_tipo,
                w.stat_secundario, w.stat_secundario_valor, i.nivel, i.refinamiento, i.equipado,
                a.nombre AS dueno, w.pasiva_descripcion
         FROM inventory_weapons i
@@ -124,7 +125,9 @@ def volcar_datos(con: sqlite3.Connection) -> dict:
         stat = " ".join(x for x in (r["stat_secundario"], r["stat_secundario_valor"]) if x) or "—"
         lineas.append(
             f"| {k} | {r['nombre']} | {r['rareza'] or '—'} | {r['tipo_especialidad'] or '—'} | "
-            f"{r['atk_base'] if r['atk_base'] is not None else '—'} | {stat} | {r['nivel']} | "
+            f"{r['stat_base_tipo'] or ''} "
+            f"{r['stat_base_valor'] if r['stat_base_valor'] is not None else '—'}"
+            f" | {stat} | {r['nivel']} | "
             f"P{r['refinamiento']} | {r['dueno'] or 'LIBRE'} | "
             f"{'`engines/' + _slug(r['nombre']) + '.webp`' if icono else '**falta**'} |")
 
@@ -137,7 +140,8 @@ def volcar_datos(con: sqlite3.Connection) -> dict:
         "| campo | cargado |",
         "|---|--:|",
     ]
-    for campo in ("nombre_en", "rareza", "tipo_especialidad", "atk_base", "stat_secundario",
+    for campo in ("nombre_en", "rareza", "tipo_especialidad", "stat_base_valor",
+                  "stat_base_tipo", "stat_secundario",
                   "stat_secundario_valor", "pasiva_descripcion"):
         k = sum(1 for c in catalogo if c[campo] is not None)
         lineas.append(f"| `{campo}` | {k}/{len(catalogo)} |")

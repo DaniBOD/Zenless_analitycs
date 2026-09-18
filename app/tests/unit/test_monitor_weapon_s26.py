@@ -32,7 +32,8 @@ class FakeWeapon:
         self.nombre_raw, self.nombre_canon = nombre, canon
         self.nivel, self.nivel_max = nivel, nivel_max
         self.rareza, self.refinamiento = rareza, refin
-        self.atk_base = 684
+        self.stat_base_valor = 684
+        self.stat_base_tipo = "ATK"
         self.stat_avanzado_canon, self.stat_avanzado_valor = "ATK%", 30.0
         self.stat_avanzado_unidad = "%"
         self.dueno = None

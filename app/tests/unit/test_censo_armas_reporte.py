@@ -38,7 +38,8 @@ def _censo(total=4, *, fuera=1):
 
 
 _FUERA = [{"nombre_raw": "Cilindro neumático", "rareza": "B", "nivel": 0,
-           "nivel_max": 60, "atk_base": 32, "stat": "Impacto 6%"}]
+           "nivel_max": 60, "stat_base_valor": 32, "stat_base_tipo": "ATK",
+            "stat": "Impacto 6%"}]
 
 
 def test_escribe_json_y_markdown(audit):

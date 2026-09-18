@@ -4231,7 +4231,8 @@ class Monitor:
         if not d.nombre_canon and d.nombre_raw:
             self._armas_sin_catalogo.setdefault(d.nombre_raw, {
                 "nombre_raw": d.nombre_raw, "rareza": d.rareza, "nivel": d.nivel,
-                "nivel_max": d.nivel_max, "atk_base": d.atk_base,
+                "nivel_max": d.nivel_max, "stat_base_valor": d.stat_base_valor,
+                "stat_base_tipo": d.stat_base_tipo,
                 "stat": (f"{d.stat_avanzado_canon} {d.stat_avanzado_valor:g}"
                          f"{d.stat_avanzado_unidad or ''}"
                          if d.stat_avanzado_canon and d.stat_avanzado_valor is not None else None),
@@ -4867,7 +4868,8 @@ class Monitor:
         # un Hough por frame: si el círculo se corre unos píxeles el recorte cambia, y un match
         # ajustado se da vuelta — en el QA del 2026-07-31 el dueño alternaba Grace↔Miyabi cada
         # ciclo con el panel QUIETO. Es el mismo remedio que ya estabilizó la identidad en S8/S19.
-        arma_key = (d.nombre_canon or d.nombre_raw, d.nivel, d.refinamiento, d.atk_base)
+        arma_key = (d.nombre_canon or d.nombre_raw, d.nivel, d.refinamiento,
+                    d.stat_base_tipo, d.stat_base_valor)
         if arma_key != self._s26_owner_key:
             self._s26_owner_key = arma_key
             self._s26_owner_votes = {}
@@ -4950,7 +4952,8 @@ class Monitor:
             "incierto": "tenencia incierta",
         }[d.tenencia]
         linea = (f"[S26] W-Engine — {nombre} · {d.rareza or '?'} · Nv {d.nivel}/{d.nivel_max} · "
-                 f"P{d.refinamiento or '?'} · ATK base {d.atk_base or '?'} · {stat or 'stat ?'}"
+                 f"P{d.refinamiento or '?'} · {d.stat_base_tipo or '¿?'} base"
+                 f" {d.stat_base_valor or '?'} · {stat or 'stat ?'}"
                  f" · {tenencia}")
         log.info(linea)
         self._diag(linea)
@@ -4984,7 +4987,8 @@ class Monitor:
                     "nivel": d.nivel,
                     "nivel_max": d.nivel_max,
                     "refinamiento": d.refinamiento,
-                    "atk_base": d.atk_base,
+                    "stat_base_valor": d.stat_base_valor,
+                    "stat_base_tipo": d.stat_base_tipo,
                     "stat": stat,
                     "dueno": d.dueno,
                     "tenencia": d.tenencia,
@@ -5115,7 +5119,8 @@ class Monitor:
         # cena libres daban la misma `log_sig` y la segunda salía por este `return` sin llegar
         # nunca a la persistencia ni al censo. Es la misma premisa que tenía el bucket C del
         # syncer. Contenido idéntico en OTRO tile es otra copia.
-        log_sig = (nombre, d.rareza, d.nivel, d.nivel_max, d.refinamiento, d.atk_base, stat,
+        log_sig = (nombre, d.rareza, d.nivel, d.nivel_max, d.refinamiento,
+                   d.stat_base_tipo, d.stat_base_valor, stat,
                    tenencia)
         otra_copia = self._s9_pos_movio(self._s30_last_log_pos, pos)
         if log_sig == self._s30_last_log_sig and not otra_copia:
@@ -5126,7 +5131,8 @@ class Monitor:
 
         linea = (f"[S30] Inventario W-Engine — {nombre} · {d.rareza or '?'} · "
                  f"Nv {d.nivel}/{d.nivel_max} · P{d.refinamiento or '?'} · "
-                 f"ATK base {d.atk_base or '?'} · {stat or 'stat ?'} · {tenencia}"
+                 f"{d.stat_base_tipo or '¿?'} base {d.stat_base_valor or '?'}"
+                 f" · {stat or 'stat ?'} · {tenencia}"
                  f"{'' if d.nombre_canon else ' · ⚠ fuera del catálogo'}"
                  # Dónde estaba la selección. Instrumento del 2026-09-11: dos Rotor de cañón
                  # libres donde Daniel tiene uno, y la "segunda" salió justo antes de cambiar de

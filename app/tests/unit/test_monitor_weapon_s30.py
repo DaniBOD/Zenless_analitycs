@@ -35,7 +35,8 @@ class FakeWeapon:
         self.nombre_raw, self.nombre_canon = nombre, canon
         self.nivel, self.nivel_max = 60, 60
         self.rareza, self.refinamiento = rareza, refin
-        self.atk_base = 594
+        self.stat_base_valor = 594
+        self.stat_base_tipo = "ATK"
         self.stat_avanzado_canon, self.stat_avanzado_valor = "Recarga de Energía", 50.0
         self.stat_avanzado_unidad = "%"
         self.pill_bbox = (1944, 546, 2139, 579)
@@ -87,6 +88,27 @@ def test_loguea_el_arma_seleccionada(mon):
     assert "Última cena" in linea            # el CANÓNICO, no el crudo del OCR
     assert "Uitimacena" not in linea
     assert "A" in linea and "Nv 60/60" in linea and "P5" in linea and "594" in linea
+
+
+def test_la_linea_dice_el_stat_base_que_leyo_no_ATK_siempre(mon):
+    """El log decía "ATK base" con el número que viniera. Con el engine de Armero de Claret eso
+    era afirmar ATK sobre un valor que la pantalla rotula DEFENSA (2026-09-18)."""
+    arma = FakeWeapon(nombre="Fortuna felina", canon=None)
+    arma.nivel = arma.nivel_max = 50
+    arma.stat_base_valor, arma.stat_base_tipo = 297, "DEF"
+    _paso(mon, _S30, weapon=arma)
+    linea = _lineas(mon)[0]
+    assert "DEF base 297" in linea, linea
+    assert "ATK base" not in linea, linea
+
+
+def test_sin_tipo_leido_la_linea_no_afirma_ninguno(mon):
+    arma = FakeWeapon()
+    arma.stat_base_tipo = None
+    _paso(mon, _S30, weapon=arma)
+    linea = _lineas(mon)[0]
+    assert "ATK base" not in linea and "DEF base" not in linea, linea
+    assert "594" in linea, "el número se leyó bien y se muestra igual"
 
 
 def test_no_emite_toast_nunca(mon):

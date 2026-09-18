@@ -137,7 +137,7 @@ def test_parsea_los_seis_campos(name):
     assert d.rareza == rareza, f"{name}: rareza {d.rareza}"
     assert (d.nivel, d.nivel_max) == (nivel, nivel_max), f"{name}: nivel {d.nivel}/{d.nivel_max}"
     assert d.refinamiento == refin, f"{name}: refinamiento {d.refinamiento}"
-    assert d.atk_base == atk, f"{name}: atk {d.atk_base}"
+    assert d.stat_base_valor == atk, f"{name}: base {d.stat_base_valor}"
     assert d.stat_avanzado_canon and d.stat_avanzado_valor is not None, f"{name}: sin stat avanzado"
 
 

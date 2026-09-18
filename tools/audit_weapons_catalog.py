@@ -81,7 +81,8 @@ def main() -> int:
     db = Path(sys.argv[1] if len(sys.argv) > 1 else "db/danibod_zzz_v2.db")
     con = sqlite3.connect(db)
     filas = list(con.execute(
-        "select id, nombre, nombre_en, rareza, tipo_especialidad, atk_base from weapons order by id"))
+        "select id, nombre, nombre_en, rareza, tipo_especialidad, stat_base_valor,"
+        " stat_base_tipo from weapons order by id"))
     ref = {norm(en): (en, rar, tipo) for en, rar, tipo in REFERENCIA}
 
     rotos, sin_mapeo, rareza_mal, tipo_mal, ok = [], [], [], [], []
