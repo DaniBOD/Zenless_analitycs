@@ -115,11 +115,45 @@ tolerancia**. Se agregó un pill **sintético en una posición ajena** (x 0.65 y
 sí se ejercita, y el sabotaje pasó a rojo. Una guarda que ningún test puede tumbar no está
 verificada, sólo escrita — es la segunda vez en dos días que aparece esta misma forma.
 
-## 7. Lo que falta
+## 7. Verificado en vivo (2026-09-20, 20:23-20:31)
 
-- **Verificarlo en vivo.** Los 164 ms son de corpus, no de pasada real. La medición tiene que ser
-  con **n ≥ 100 y su intervalo** (regla C1.b): ~10 min de pasada por condición.
-- La espera sigue teniendo **~1 s de parseo** y la cadencia del loop. Con el detector a 164 ms, el
-  siguiente candidato es el período del loop (p50 1093 ms en el censo), del que el `classify` era
-  más de la mitad.
+Pasada de Daniel por el inventario, `qa_launch -ReadOnly -FromSource -Metrics`. **72 discos.**
+
+| | censo 17/09 (antes) | pasada de hoy | |
+|---|---|---|---|
+| **click→log** | n=383 · **3547** ms · IC [3359-3688] | n=72 · **2766** ms · IC [2688-2875] | **−781 ms (−22 %)** |
+| período del loop | n=1553 · 1093 ms · IC [1078-1109] | n=327 · **687** ms · IC [672-703] | −406 ms |
+| `detector` | n=1159 · 584 ms · IC [583-585] | n=249 · **219** ms · IC [218-220] | −365 ms |
+
+**Ningún intervalo se solapa.** A diferencia del −18 % de la Fase 2, esta mejora se puede afirmar.
+
+### El mecanismo cuadra, que es lo que lo hace creíble
+
+No alcanza con que el número baje: tiene que bajar **por donde dice la hipótesis**. El detector cayó
+365 ms y en la espera entran **dos vueltas**, así que lo predicho era ~730 ms; lo medido, 781. Y el
+**período del loop** —declarado de antemano como control— cayó 406 ms, consistente con que el
+`classify` era más de la mitad de la vuelta. Si la espera hubiera bajado sin que el loop se moviera,
+la explicación habría sido otra.
+
+### Tres salvedades
+
+1. **Fueron 72 discos y la regla pedía ≥100.** No se mueve el poste: lo que el 100 buscaba era un
+   intervalo angosto, y con 72 quedó en **±93 ms** contra una **brecha de 484 ms** entre los dos
+   intervalos. La conclusión no depende de los 28 que faltaron. Si el resultado rozara el
+   solapamiento, habría que completarlos.
+2. **Hoy fue en modo lectura y el censo escribía.** La persistencia mide 16-47 ms: explica como
+   mucho ~45 de los 781. Queda dicho, no descontado.
+3. Hubo **un relevo del worker de OCR** en la pasada, igual que en el censo: condiciones
+   comparables en ese punto.
+
+Verificado además: **sha256 de la DB sin cambios** (el `-ReadOnly` cumplió), **0 persistencias**,
+**0 warnings o errores** en toda la pasada.
+
+## 8. Lo que falta
+
+- De los **2766 ms** que quedan, **~1 s es el parseo** del disco (100 % OCR del panel) y el resto es
+  cadencia del loop. Ahora sí el OCR del panel es proporcionalmente el tramo grande — lo contrario
+  de cuando arrancó esta fase, que es de donde salió la premisa equivocada.
 - Los otros dos call-sites de OCR del panel (11 % y 6 % del total) siguen sin tocar.
+- El recorte de la ROI del panel quedó **descartado por ahora**: los candidatos probados cambiaban
+  la lectura en 3-6 de 19 capturas, y el margen disponible era chico (~10-15 % de los píxeles).
