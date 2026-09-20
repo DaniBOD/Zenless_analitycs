@@ -155,7 +155,14 @@ def test_la_vista_entra_en_la_ventana_minima(qapp):
         v.resize(1100, 756)
         v.show()
         qapp.processEvents()
-        assert len(v.celdas()) == 56, "las 56 armas físicas"
+        # Una celda por arma FÍSICA activa, contadas por SQL directo — no por el mismo camino que
+        # arma la vista, así que el test sigue comparando dos fuentes. El número NO se escribe a
+        # mano: estaba fijo en 56 y se puso en rojo el 2026-09-20, cuando la app escribió el engine
+        # de Claret. Un test que afirma el tamaño del inventario de Daniel se rompe cada vez que él
+        # consigue un arma, y eso no es una regresión: es el inventario haciendo su trabajo.
+        activas = c.execute(
+            "SELECT COUNT(*) FROM inventory_weapons WHERE descartado = 0").fetchone()[0]
+        assert len(v.celdas()) == activas, "una celda por arma física activa"
         cuerpo = v.cuerpo.rect()
         for c_ in _visibles(v):
             assert cuerpo.contains(c_.geometry()), f"{c_.fila.nombre} se sale del cuerpo"
