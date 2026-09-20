@@ -1856,13 +1856,74 @@ def _read_inventory_header(frame: np.ndarray) -> str | None:
     return text
 
 
+# --- La pestaña activa del inventario, sin OCR ------------------------------------------------
+# S9 (discos) y S30 (amplificadores) comparten template, así que hay que mirar OTRA cosa para
+# distinguirlos. Hasta 2026-09-20 esa otra cosa era el TÍTULO leído con Tesseract: un proceso
+# externo por clasificación, medido en **323 ms — el 62 % del `classify`** estando en el inventario.
+# Y en la espera de Daniel entran dos clasificaciones, así que lo pagaba dos veces por disco.
+#
+# El pill lima de la pestaña activa dice lo mismo en ~1 ms. Medido sobre los dos corpus (19 capturas
+# de S9 + 18 de S30), el centroide horizontal del lima en esta franja da:
+#     discos  0.8065 - 0.8074   (dispersión 0.0009)
+#     armas   0.7571 - 0.7572   (dispersión 0.0001)
+# Separación entre grupos: **0.0493**, unas 50 veces la dispersión interna. Lo que discrimina es el
+# MARGEN, no un umbral absoluto (la forma que este proyecto ya vio fallar tres veces), así que se
+# decide por centro más cercano y se ABSTIENE si no cae claramente en uno.
+#
+# Abstenerse no rompe nada: los dos verifies caen al OCR de siempre, que sigue siendo la autoridad
+# cuando el pill no alcanza. Esto no reemplaza la evidencia, agrega una más barata que la precede.
+_INV_TAB_ROI = (0.60, 0.11, 0.40, 0.08)        # x, y, w, h — franja de las pestañas del inventario
+_INV_TAB_CENTERS = {"S9": 0.8070, "S30": 0.7572}
+_INV_TAB_MIN_RATIO = 0.02                       # medido 0.059-0.077; abajo de esto no hay pill
+#: Tolerancia al centro. 0.012 es ~13× la dispersión observada y sigue siendo 1/4 de la separación:
+#: un frame que caiga en el medio se abstiene en vez de elegir.
+_INV_TAB_TOL = 0.012
+
+
+def inventory_tab_by_pill(frame: np.ndarray) -> str | None:
+    """`"S9"` (discos), `"S30"` (amplificadores) o `None` si el pill no es concluyente.
+
+    Pura HSV sobre la franja de pestañas, sin OCR. `None` significa "no sé", y el llamador tiene
+    que caer a la evidencia cara — nunca adivinar."""
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return None
+    try:
+        h, w = frame.shape[:2]
+        x, y, rw, rh = _INV_TAB_ROI
+        crop = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
+        if crop.size == 0:
+            return None
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, _TAB_HSV_LOWER, _TAB_HSV_UPPER)
+        if (mask.sum() / 255 / mask.size) < _INV_TAB_MIN_RATIO:
+            return None
+        cols = mask.sum(axis=0)
+        total = cols.sum()
+        if total <= 0:
+            return None
+        cx = (int(x * w) + (np.arange(len(cols)) * cols).sum() / total) / w
+        code, dist = min(((c, abs(cx - v)) for c, v in _INV_TAB_CENTERS.items()),
+                         key=lambda kv: kv[1])
+        return code if dist <= _INV_TAB_TOL else None
+    except Exception:
+        return None
+
+
 def _verify_s9(frame: np.ndarray) -> tuple[bool, str | None]:
     """Rechaza S9 cuando la grilla es el inventario de AMPLIFICADORES y no el de discos.
 
     Solo bloquea cuando **ve positivamente** el título de armas. Si el OCR devuelve basura, deja
     pasar: hasta ahora S9 no tenía verificación ninguna, y este hito es un blindaje contra una
     pantalla concreta, no una recalibración de S9 (que además es NON_CAPTURE e informativo). Sin
-    Tesseract → no bloquear, por la misma razón."""
+    Tesseract → no bloquear, por la misma razón.
+
+    Desde 2026-09-20 mira primero el **pill de la pestaña** (~1 ms). Sólo si se abstiene se paga el
+    OCR: la conclusión es la misma, cambia de dónde sale la evidencia."""
+    pill = inventory_tab_by_pill(frame)
+    if pill == "S30":
+        return (False, "pill=amplificadores")
+    if pill == "S9":
+        return (True, "pill=discos")
     text = _read_inventory_header(frame)
     if text is None:
         return (True, None)
@@ -1879,7 +1940,16 @@ def _verify_s30(frame: np.ndarray) -> tuple[bool, str | None]:
     **Falla cerrado**, al revés que `_verify_s9`. Es la asimetría deliberada que hace que el par
     tenga un fallback definido: con el título ilegible el frame vuelve a S9 —el comportamiento de
     siempre— en vez de quedar en tierra de nadie. Y como S30 va ANTES en `_STATE_TEMPLATES`, el
-    primer turno de verificación le toca al estricto (mismo mecanismo que S26 frente a S17)."""
+    primer turno de verificación le toca al estricto (mismo mecanismo que S26 frente a S17).
+
+    El pill de la pestaña va primero (~1 ms) y el OCR queda de respaldo. Ojo con la asimetría: el
+    pill que dice "discos" es evidencia POSITIVA de que esto no es S30, así que cierra; abstenerse,
+    en cambio, manda al OCR, no al `False` — si no, una pantalla sin pill nunca podría ser S30."""
+    pill = inventory_tab_by_pill(frame)
+    if pill == "S30":
+        return (True, "pill=amplificadores")
+    if pill == "S9":
+        return (False, "pill=discos")
     text = _read_inventory_header(frame)
     if text is None:
         return (False, "sin-ocr")

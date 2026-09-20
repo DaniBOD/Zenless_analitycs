@@ -4,6 +4,12 @@ En un `classify` de S9 corren los dos verifies del par (S30 primero, falla; desp
 mandan al OCR **el mismo recorte byte a byte** — verificado por sha256 antes de escribir una línea
 de caché, no deducido del código. Eran ~330 ms pagados dos veces.
 
+> **2026-09-20.** El camino normal ya no pasa por acá: el `classify` de S9/S30 decide por el
+> **pill de la pestaña** (~1 ms) y el OCR del header quedó de RESPALDO, para cuando el pill se
+> abstiene. Estos tests corren con el pill ciego (`inventory_tab_by_pill -> None`) porque ese es
+> justamente el camino que protegen. El test nuevo del final fija lo otro: que en el camino normal
+> no se pague OCR ninguno.
+
 Lo que este archivo protege NO es el ahorro (eso es un detalle de velocidad) sino las dos formas
 en que un caché así se rompe en silencio:
 
@@ -74,6 +80,13 @@ class _EspiaOCR:
         self.shas.clear()
 
 
+@pytest.fixture
+def pill_ciego(monkeypatch):
+    """Fuerza el camino del OCR. Sin esto el pill contesta primero y no hay lectura que contar —
+    que es exactamente lo que estos tests dejaron de ver el 2026-09-20."""
+    monkeypatch.setattr(det_mod, "inventory_tab_by_pill", lambda _f: None)
+
+
 @pytest.fixture(scope="module")
 def dos_frames_s9():
     a, b = _load(S9_DIR / "Ejemplo_9.png"), _load(S9_DIR / "Ejemplo_1.png")
@@ -84,7 +97,7 @@ def dos_frames_s9():
     return a, b
 
 
-def test_la_lectura_no_sobrevive_a_la_invocacion_de_classify(dos_frames_s9):
+def test_la_lectura_no_sobrevive_a_la_invocacion_de_classify(dos_frames_s9, pill_ciego):
     """EL test del paso 3. Un `classify` posterior, con otro frame, tiene que volver a leer.
 
     Si el caché durara de más, la segunda clasificación no llamaría al OCR y decidiría con el
@@ -116,7 +129,7 @@ def test_la_lectura_no_sobrevive_a_la_invocacion_de_classify(dos_frames_s9):
     )
 
 
-def test_dentro_de_una_invocacion_el_header_se_lee_una_sola_vez(dos_frames_s9):
+def test_dentro_de_una_invocacion_el_header_se_lee_una_sola_vez(dos_frames_s9, pill_ciego):
     """La mitad barata: los dos verifies del par S9/S30 comparten la lectura.
 
     Se mide CONTANDO llamadas, no cronometrando (misma razón que en el pase de templates).
@@ -133,7 +146,7 @@ def test_dentro_de_una_invocacion_el_header_se_lee_una_sola_vez(dos_frames_s9):
     )
 
 
-def test_los_dos_recortes_son_byte_identicos(dos_frames_s9):
+def test_los_dos_recortes_son_byte_identicos(dos_frames_s9, pill_ciego):
     """La premisa que habilita el caché, verificada y no supuesta: si los recortes difirieran
     aunque sea en un píxel, compartir la lectura devolvería un resultado que no corresponde."""
     a, _ = dos_frames_s9
@@ -150,7 +163,7 @@ def test_los_dos_recortes_son_byte_identicos(dos_frames_s9):
     )
 
 
-def test_fuera_de_una_clasificacion_no_hay_cache(dos_frames_s9):
+def test_fuera_de_una_clasificacion_no_hay_cache(dos_frames_s9, pill_ciego):
     """Llamar al verify suelto (lo hacen varios tests y `tools/`) no debe usar ni dejar caché."""
     a, _ = dos_frames_s9
     assert det_mod._lectura_header.get() is None
@@ -161,6 +174,20 @@ def test_fuera_de_una_clasificacion_no_hay_cache(dos_frames_s9):
 
     assert len(espia.shas) == 2, "fuera de un classify cada llamada lee de nuevo"
     assert det_mod._lectura_header.get() is None
+
+
+def test_el_camino_normal_no_paga_NINGUN_ocr_del_header(dos_frames_s9):
+    """Lo que el discriminador de pestaña vino a lograr, fijado como contrato.
+
+    El caché de acá abajo bajó de dos lecturas a una por clasificación; el pill las bajó a CERO.
+    Si alguien vuelve a pedir el título con el pill claro, esto se pone en rojo antes de que la
+    espera suba ~350 ms por vuelta."""
+    a, _ = dos_frames_s9
+    det = ScreenDetector()
+    with _EspiaOCR() as espia:
+        estado = det.classify(a)
+    assert estado.code == "S9", f"cambió la clasificación: {estado.code}"
+    assert espia.shas == [], f"se pagó el OCR del header teniendo el pill: {len(espia.shas)} lecturas"
 
 
 def test_el_cache_se_cierra_aunque_la_clasificacion_reviente(dos_frames_s9, monkeypatch):

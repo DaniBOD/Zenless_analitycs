@@ -206,18 +206,90 @@ def test_el_inventario_de_armas_da_s30(fx, det):
 def test_verify_s30_rechaza_el_inventario_de_discos(fx):
     ok, detalle = _verify_s30(_load(fx))
     assert ok is False, f"{fx.name}: _verify_s30 se robó el inventario de discos"
-    assert detalle == "txt=no-match"
+    assert detalle in ("pill=discos", "txt=no-match"), detalle
 
 
-def test_verify_s30_falla_cerrado_sin_ocr(monkeypatch):
-    """La asimetría deliberada del par: con el título ilegible el frame vuelve a S9 —el
-    comportamiento de siempre— en vez de quedar en tierra de nadie."""
+def test_verify_s30_falla_cerrado_sin_NINGUNA_evidencia(monkeypatch):
+    """La asimetría deliberada del par: sin evidencia, el frame vuelve a S9 —el comportamiento de
+    siempre— en vez de quedar en tierra de nadie.
+
+    **El contrato cambió el 2026-09-20 y vale decirlo:** antes "sin OCR" era "sin evidencia". Hoy
+    el pill de la pestaña es evidencia por sí solo, así que sin Tesseract S30 igual se verifica
+    (lo prueba el test de abajo). Lo que sigue fallando cerrado es no tener NINGUNA de las dos."""
     if not _ARMA_INVENTARIO:
         pytest.skip("capturas del inventario de armas no presentes")
     monkeypatch.setattr(det_mod, "_get_dialog_verify_ocr", lambda: None)
+    monkeypatch.setattr(det_mod, "inventory_tab_by_pill", lambda _f: None)
     ok, detalle = _verify_s30(_load(_ARMA_INVENTARIO[0]))
     assert ok is False
     assert detalle and "ocr" in detalle.lower()
+
+
+@pytest.mark.skipif(not _ARMA_INVENTARIO, reason="capturas del inventario de armas no presentes")
+def test_s30_se_verifica_SIN_tesseract_gracias_al_pill(monkeypatch):
+    """La contracara del cambio de contrato: el pill solo alcanza."""
+    monkeypatch.setattr(det_mod, "_get_dialog_verify_ocr", lambda: None)
+    ok, detalle = _verify_s30(_load(_ARMA_INVENTARIO[0]))
+    assert ok is True
+    assert detalle == "pill=amplificadores"
+
+
+# --- El discriminador de pestaña, medido sobre los dos corpus ---------------------------------
+# Reemplaza un proceso de Tesseract por vuelta (323 ms, 62 % del `classify`) por ~1 ms de HSV.
+# Medido: centroide del lima en [0.8065-0.8074] para discos y [0.7571-0.7572] para armas, con una
+# separación de 0.0493 — unas 50 veces la dispersión interna. Lo que discrimina es el MARGEN.
+
+@pytest.mark.skipif(not _DISCO_INVENTARIO, reason="capturas del inventario de discos no presentes")
+@pytest.mark.parametrize("fx", _DISCO_INVENTARIO, ids=lambda p: p.stem)
+def test_el_pill_dice_discos_en_el_inventario_de_discos(fx):
+    assert det_mod.inventory_tab_by_pill(_load(fx)) == "S9"
+
+
+@pytest.mark.skipif(not _ARMA_INVENTARIO, reason="capturas del inventario de armas no presentes")
+@pytest.mark.parametrize("fx", _ARMA_INVENTARIO, ids=lambda p: p.stem)
+def test_el_pill_dice_armas_en_el_inventario_de_armas(fx):
+    assert det_mod.inventory_tab_by_pill(_load(fx)) == "S30"
+
+
+def test_el_pill_se_ABSTIENE_en_vez_de_adivinar():
+    """`None` es una respuesta válida y el llamador cae al OCR. Un frame liso no tiene pill, y
+    afirmar una pestaña sobre él sería exactamente lo que este discriminador NO puede hacer."""
+    import numpy as np
+    assert det_mod.inventory_tab_by_pill(np.zeros((1439, 2559, 3), dtype=np.uint8)) is None
+    assert det_mod.inventory_tab_by_pill(None) is None
+
+
+def test_el_pill_en_una_posicion_AJENA_no_se_adjudica_al_centro_mas_cercano():
+    """La guarda del MARGEN, que es distinta de la de "no hay pill".
+
+    Un frame liso se va antes, por el chequeo de que no hay lima: con eso solo, la tolerancia no la
+    ejercita nadie (lo mostró un sabotaje que quedó en VERDE). Acá hay lima de sobra, pero en una
+    x que no es de ninguna de las dos pestañas: la respuesta correcta es NO SÉ, no "la más cerca"."""
+    import numpy as np
+    lima = (61, 187, 179)                     # centro del rango HSV del pill, en BGR
+    h, w = 1439, 2559
+
+    def con_pill_en(xc: float):
+        f = np.zeros((h, w, 3), dtype=np.uint8)
+        f[int(0.12 * h):int(0.17 * h), int((xc - 0.02) * w):int((xc + 0.02) * w)] = lima
+        return f
+
+    assert det_mod.inventory_tab_by_pill(con_pill_en(0.65)) is None, "se adjudicó un pill ajeno"
+    assert det_mod.inventory_tab_by_pill(con_pill_en(0.90)) is None
+    # Y en su lugar sí contesta: el test de arriba no pasa por no ver nunca nada.
+    assert det_mod.inventory_tab_by_pill(con_pill_en(0.807)) == "S9"
+
+
+@pytest.mark.skipif(not _DISCO_INVENTARIO, reason="capturas del inventario de discos no presentes")
+def test_los_verifies_NO_pagan_OCR_cuando_el_pill_alcanza(monkeypatch):
+    """El punto de todo el cambio. Si alguien vuelve a pedir el título estando el pill claro, el
+    OCR se paga de nuevo y la espera de Daniel sube ~700 ms por disco."""
+    def explota(_frame):
+        raise AssertionError("se pagó el OCR del header teniendo el pill")
+    monkeypatch.setattr(det_mod, "_read_inventory_header", explota)
+    frame = _load(_DISCO_INVENTARIO[0])
+    assert _verify_s9(frame) == (True, "pill=discos")
+    assert _verify_s30(frame) == (False, "pill=discos")
 
 
 def test_s30_esta_registrado():
@@ -245,7 +317,9 @@ def test_s30_va_antes_que_s9_en_la_lista_de_templates():
 def test_verify_s9_rechaza_el_inventario_de_armas(fx):
     ok, detalle = _verify_s9(_load(fx))
     assert ok is False, f"{fx.name}: _verify_s9 lo aceptó"
-    assert detalle == "txt=amplificadores"
+    # Desde 2026-09-20 la evidencia normal es el PILL de la pestaña (~1 ms); el OCR del título
+    # quedó de respaldo. El veredicto es el mismo; el detalle dice cuál de las dos lo dio.
+    assert detalle in ("pill=amplificadores", "txt=amplificadores"), detalle
 
 
 @pytest.mark.parametrize(
@@ -283,6 +357,8 @@ def test_verify_s9_no_bloquea_si_el_ocr_no_dice_nada(monkeypatch):
             return ("", 0.0)
 
     monkeypatch.setattr(det_mod, "_get_dialog_verify_ocr", lambda: _Mudo())
+    # Con el pill ciego se ejerce el camino del OCR, que es lo que este test siempre probó.
+    monkeypatch.setattr(det_mod, "inventory_tab_by_pill", lambda _f: None)
     ok, detalle = _verify_s9(_load(_DISCO_INVENTARIO[0]))
     assert ok is True
     assert detalle is None
