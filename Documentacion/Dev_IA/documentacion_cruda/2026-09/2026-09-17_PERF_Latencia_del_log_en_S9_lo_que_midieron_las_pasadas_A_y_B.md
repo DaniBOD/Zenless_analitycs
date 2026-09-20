@@ -10,6 +10,14 @@ Commits: `841497a` (paso 2.0) · `f7a7efb` · `b0bb89c` · `53a27a9` · `4614bd0
 
 ## Resultado en una tabla
 
+> ⚠️ **CORREGIDO el 2026-09-20 — el −18 % de abajo no se sostiene.** Los dos titulares (3109 y
+> 2562) son **el quinto valor de diez muestras**, y el bootstrap de sus medianas da intervalos que
+> **se solapan casi por completo** (A: 2641-3703 · B: 2188-3305). No hay evidencia de que la espera
+> haya bajado. El censo posterior (n=383, 3547 ms) resultó **indistinguible de la Pasada A**, o sea
+> del estado previo. Lo demás de este doc sigue en pie: los defectos arreglados, la caché revertida
+> por acertar 0/72 y el OCR del panel como tramo grande. Detalle, remuestreo y la regla que faltaba:
+> [2026-09-20_QA_El_menos_18_por_ciento_no_existia.md](2026-09-20_QA_El_menos_18_por_ciento_no_existia.md).
+
 Sólo la ventana en S9 de cada pasada, 10-11 discos, readonly, `-Metrics`.
 
 | | Pasada A (16-09 22:12) | Pasada B (17-09 00:32) | |

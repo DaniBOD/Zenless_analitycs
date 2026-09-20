@@ -193,6 +193,32 @@ entera, o separá por lo que la genera. Un resumen de una mezcla no describe a n
 **antes y después** de cualquier cambio. Una métrica nueva se valida contra la vieja antes de
 decidir con ella. Contar referencias **no** es medir cobertura.
 
+#### C1.b · Un p50 de n=10 no es un baseline (2026-09-20)
+
+La Fase 2 declaró que la espera en S9 bajó **3109 → 2562 ms (−18 %)**. Los dos números son **el
+quinto valor de diez muestras**. Con n par no hay un medio: hay dos, y en la Pasada B difieren un
+22 % (2561 y 3139), así que **la convención del percentil —no el sistema— elegía el titular**. El
+bootstrap de las medianas da intervalos que se solapan casi por completo (A: 2641-3703 · B:
+2188-3305): **no hubo evidencia de mejora en ningún momento**. Peor: sobre ese 2562 se reportó
+después una "regresión de 830 ms" del censo (n=383), que resultó **indistinguible de la Pasada A**,
+o sea del estado previo. Una medición frágil no sólo no prueba la mejora: **fabrica la regresión
+siguiente**.
+
+En la misma revisión, dos comparaciones más que no querían decir lo que parecían:
+- **El detector "se encareció" de 190 a 585 ms.** Falso: controlando por pantalla, en S9 **siempre**
+  costó ~500-585 ms. Los 190 eran otras pantallas. Se comparó una *mezcla de pantallas* con otra.
+- **`dispatch:S9` 128 → 2222 ms y `ocr_bboxes` 17 → 601 ms.** Tampoco: en una pasada de 10 discos la
+  mayoría de las vueltas no tienen disco que leer y son baratas. Son métricas **por vuelta**, y sólo
+  se pueden comparar entre corridas con la misma densidad de trabajo.
+
+**Cómo aplicarlo:** al comparar latencias, (1) reportá **n** junto al número, y el **intervalo** si
+vas a declarar una mejora — dos intervalos solapados no son una mejora; (2) compará sólo métricas
+**por ítem** (`frescura_*`) entre corridas de distinta densidad, nunca las agregadas por vuelta;
+(3) **controlá la pantalla**: el costo del detector y del loop no es una constante del sistema, es
+una constante por pantalla. Con ~100 muestras por condición (≈10 min de pasada) el intervalo baja a
+±100-200 ms y una mejora de 500 ms se ve. Detalle:
+[2026-09-20_QA_El_menos_18_por_ciento_no_existia.md](documentacion_cruda/2026-09/2026-09-20_QA_El_menos_18_por_ciento_no_existia.md).
+
 ### C2 · Un reloj declara una unidad, no una granularidad. Y un sello de tiempo no es un ID.
 
 Apareció **dos veces**, disfrazada de cosas distintas:
