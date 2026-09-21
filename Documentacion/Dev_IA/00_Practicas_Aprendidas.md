@@ -5,7 +5,7 @@
 > distintos**. Están acá porque las lecciones estaban dispersas en 62 docs de `Dev_IA/` y nadie
 > las lee todas.
 >
-> Última actualización: **2026-09-15**.
+> Última actualización: **2026-09-20**.
 
 ---
 
@@ -218,6 +218,36 @@ vas a declarar una mejora — dos intervalos solapados no son una mejora; (2) co
 una constante por pantalla. Con ~100 muestras por condición (≈10 min de pasada) el intervalo baja a
 ±100-200 ms y una mejora de 500 ms se ve. Detalle:
 [2026-09-20_QA_El_menos_18_por_ciento_no_existia.md](documentacion_cruda/2026-09/2026-09-20_QA_El_menos_18_por_ciento_no_existia.md).
+
+#### C1.c · Una prueba en la máquina quieta no refuta nada sobre la máquina llena (2026-09-20)
+
+El OCR del panel cuesta **526-800 ms en el banco y 1784 en vivo**, y ninguna explicación del lado
+del código sobrevivió a la medición (el socket son 1,34 ms; el proceso aparte, 598 contra 587; la
+fuga acumulada, +1 % en 60 llamadas). La diferencia era **el juego corriendo al lado**: con los 6
+núcleos ocupados, el mismo recorte pasa a **3300 ms**.
+
+Antes de eso había probado prioridad del proceso, `CREATE_NO_WINDOW` y el throttling de Windows 11,
+y anoté "ninguna mueve nada" — **con la máquina vacía, donde no había con quién competir**. Repetida
+con carga, la prioridad sí parece mover ~20 %. La conclusión anterior no era falsa: era **vacía**, y
+encima venía con la forma de un descarte prolijo.
+
+En la misma tanda, dos hipótesis mías más refutadas por su propia medición: filtrar las cajas
+inútiles antes de reconocerlas es **más lento** (Paddle ordena por relación de aspecto y agrupa de a
+6: la basura es corta y ya salía casi gratis), y **bajarle los hilos a Paddle con la máquina llena
+la empeora** (6102 contra 3300) — pedir menos hilos no te deja pasar antes, te deja menos chances de
+agarrar un núcleo libre.
+
+**Y el A/B necesita alternar el orden.** Medí "175 ms de envoltorio de PaddleOCR" corriendo siempre
+la llamada entera primero y el pipeline a mano después: la segunda rama heredaba los hilos ya
+calientes. Alternando, son 18 ms. Un orden fijo entre dos ramas es una condición que se le suma
+**entera** a una sola — la misma forma que C1.b, en la escala de la llamada.
+
+**Cómo aplicarlo:** (1) la condición de la prueba es parte de la hipótesis — si el fenómeno es "en
+vivo", la prueba necesita la carga de en vivo, y si no la tiene, el resultado se anota como *no
+probado*, nunca como *descartado*; (2) en cualquier A/B intercalá el orden; (3) cuando una
+optimización dependa de cómo agrupa el motor por dentro, mirá cómo agrupa antes de estimar el
+ahorro. Detalle:
+[2026-09-20_PERF_Fase_2D_el_titulo_de_prepo_y_el_panel_que_no_afloja.md](documentacion_cruda/2026-09/2026-09-20_PERF_Fase_2D_el_titulo_de_prepo_y_el_panel_que_no_afloja.md).
 
 ### C2 · Un reloj declara una unidad, no una granularidad. Y un sello de tiempo no es un ID.
 
