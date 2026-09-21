@@ -54,8 +54,8 @@ entra. Verificado: 19/19 el mismo slot que antes, 1 de 19 paga el respaldo.
 respaldo desaparezca, que el respaldo se pague **siempre** (o sea, que vuelva a ser la autoridad),
 y que el `slot=` pasado a mano deje de ganar.
 
-Esperado: **−552 ms** en la espera y **−286 ms en cada vuelta del loop** dentro de S9. Falta
-verificarlo en vivo.
+Esperado: **−552 ms** en la espera y **−286 ms en cada vuelta del loop** dentro de S9. Lo medido en
+vivo, y en qué se equivocaba esa predicción, está en el §5.
 
 ## 3. El panel: cuatro intentos, cuatro refutados por su propia medición
 
@@ -138,9 +138,51 @@ mover algo:
 no es evidencia, es una pista. Y aunque lo fuera, subirle la prioridad al worker es sacarle CPU
 **al juego que Daniel está jugando**: es una decisión suya, no una optimización que se aplica sola.
 
-## 5. Lo que queda
+## 5. Verificado en vivo (2026-09-20, 22:44-22:51) — **99 discos**
 
-- **Verificar en vivo** el §2: la espera debería bajar ~550 ms y el período del loop en S9 ~290.
+Pasada de Daniel por el inventario, `qa_launch -ReadOnly -FromSource -Metrics`. La ventana se
+acota **del primer al último disco**: la sesión trae 8 minutos previos de navegación por menús,
+donde el loop cuesta otra cosa. Comparada contra los 6 minutos equivalentes de la pasada anterior.
+
+| | antes (n=72) | hoy (n=99) | |
+|---|---|---|---|
+| **click→log** | **2766** ms [2687-2860] | **2531** ms [2484-2594] | **−235 ms · sin solape** |
+| disco fresco→log | 2172 [2141-2266] | 1969 [1938-2015] | −203 · sin solape |
+| **período del loop** | **703** ms [672-734] | **375** ms [375-390] | **−328 ms · sin solape** |
+| `detector` | 218 | 203 | −15 |
+| `capturer` | 49 | 42 | −6 |
+| **el panel** (control) | 1877 [1840-1937] | 1898 [1854-1923] | **se solapan** |
+| **lecturas del título** | **271** a 243 ms | **5** | el mecanismo, a la vista |
+
+**El control se mantuvo.** El panel era el control declarado *antes* de la pasada: si hubiera
+bajado también, lo que cambió serían las condiciones de la máquina y no el arreglo. Se solapa —
+así que la mejora es atribuible.
+
+**El mecanismo se ve directo:** mismo trabajo (6 minutos de inventario), las lecturas de la franja
+del título pasaron de **271 a 5**. Esas 5 son el respaldo entrando donde el panel no supo: **5 % de
+99 discos**, contra el 1 de 19 (5,3 %) que había dado el corpus. La predicción de cuántas veces
+haría falta se cumplió.
+
+### Predije −550 y salieron −235, y eso también tiene mecanismo
+
+No es que el ahorro no esté: el **período del loop** cayó 328 ms, más de lo previsto. Lo que estaba
+mal era mi modelo de la espera. **La espera no es una suma de trabajo: está cuantizada por vueltas
+del loop.** Con el loop más rápido entran más vueltas adentro de la misma espera, y cada vuelta
+trae su `classify`: el `detector` pasó de aparecer **0,31 veces** dentro de la espera a **0,93**, y
+el `capturer` de 0,5 a 1,5. Eso devuelve ~170 de los ~300 ms que "faltan"; el resto es la
+granularidad de qué vuelta se entera del click.
+
+Dicho de otro modo: sacar trabajo de cada vuelta mejora la espera **menos** de lo que sugiere la
+resta, porque parte del ahorro se reinvierte en mirar más seguido. Sigue siendo una mejora real y
+afirmable, pero la próxima predicción de latencia de la espera tiene que modelar las vueltas, no
+sumar milisegundos.
+
+Verificado además: **sha256 de la DB de dominio sin cambios** (el `-ReadOnly` cumplió) y **0
+warnings o errores** en toda la pasada.
+
+## 6. Lo que queda
+
+- De los **2531 ms** que quedan, **1898 son el panel** (75 %). Es lo único grande que sobra.
 - **El panel no tiene más jugo por el lado de Python.** Si se lo quiere bajar de verdad hay que
   cambiar lo que corre: un runtime más barato en CPU (ONNX Runtime sobre los mismos pesos, que este
   repo ya usa para el embedder) o llevarlo a la GPU. Eso es una fase propia, con su medición.
