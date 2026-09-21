@@ -912,6 +912,18 @@ def parse_disc_s9(frame: np.ndarray, ocr: "OcrBackend", slot: int | None = None)
         if _slot_por_main is not None:
             slot_final = _slot_por_main
             d.notas.append("slot_inferido_por_main_plano")
+    # ÚLTIMO recurso, y el único que cuesta: re-OCRizar la franja del título. Es la lectura más
+    # limpia del "(N)" y hasta el 2026-09-20 se hacía SIEMPRE, antes de todo lo de arriba, a
+    # ~286 ms la llamada en vivo. Medido sobre el corpus de 19 capturas: en 18 el panel llega
+    # al mismo número sin ella y en NINGUNA dice algo distinto; la que falta (Ejemplo_6, un
+    # "(6)" que el panel deja en línea aparte) es exactamente este caso. Pasó de ser la
+    # autoridad a ser el respaldo: no se pierde evidencia, se deja de pagar por adelantado.
+    if not (1 <= slot_final <= 6) and frame is not None and ocr is not None:
+        from app.core.detector import extract_s9_slot      # tarde: el detector importa parsers
+        rescatado = extract_s9_slot(frame, ocr)
+        if rescatado and 1 <= rescatado <= 6:
+            slot_final = rescatado
+            d.notas.append("slot_rescatado_por_titulo")
     if 1 <= slot_final <= 6:
         d.slot = slot_final
         if "slot_no_detectado" in d.notas:

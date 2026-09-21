@@ -23,7 +23,7 @@ from app.core.capturer import (
 )
 from app.core.detector import (
     ScreenDetector, ScreenState, TemporalBuffer, AGENT_STATS_STATES,
-    extract_s17_slot, extract_s9_slot, polling_cadence_ms, s9_selected_tile_pos,
+    extract_s17_slot, polling_cadence_ms, s9_selected_tile_pos,
     _deep_detect_s18, detect_active_tab, selected_avatar_x,
     crop_grid_selected_badge, crop_detail_badge,
     read_s9_selected_badge, BADGE_LIBRE, BADGE_NO_LOCALIZADO, _S9_BADGE_NITIDEZ_MIN,
@@ -1051,10 +1051,17 @@ class Monitor:
             # (_process_disc_s17_continuous) para resetear el aggregator al cambiar de
             # disco. El slot lo lee el parser del título cada ciclo (y el aggregator
             # conserva el mejor no-cero).
-            if raw_state.code == "S9":
-                raw_state.slot = extract_s9_slot(frame, self._ocr)
-            elif raw_state.code != "S17":
-                # Fuera de S17 → olvidar el tracking del disco mirado.
+            #
+            # S9 SALIÓ de acá el 2026-09-20 (Fase 2D). Leía el título con OCR en CADA vuelta
+            # para dejar `raw_state.slot`, y eso costaba ~286 ms por vuelta: 378 de las 479
+            # lecturas de la pasada del 20/09 fueron de frames que nadie iba a parsear. El
+            # handler continuo ya lo re-lee fresco (state.slot venía stale, está dicho abajo)
+            # y el cambio de disco lo detecta la FIRMA del panel, no el slot. Lo único que se
+            # pierde es el sufijo "slot N" de la línea `[pantalla]`, que duplicaba lo que ya
+            # dice la línea `Disco S9 detectado` — un evento, una línea.
+            if raw_state.code not in ("S9", "S17"):
+                # Fuera de S17 → olvidar el tracking del disco mirado. (S9 queda afuera por lo
+                # mismo que antes: mirar el inventario global no invalida el disco de S17.)
                 self._reset_s17_disc_tracking()
             if raw_state.code != "S9":
                 # Fuera de S9 → olvidar el tracking del disco del inventario global.
@@ -3761,12 +3768,10 @@ class Monitor:
                     self._emit_s9_disc(merged, state)
                 return
         try:
-            # Slot por la ROI del TÍTULO (extract_s9_slot, calibrada): es la lectura
-            # más limpia del "(N)" — el panel detalle a veces lo pierde. Fresca del
-            # frame actual (no usa state.slot, que en frames continuos viene stale).
-            # parse_disc_s9 lo usa como override; si igual se dropeó, infiere por main.
-            s9_slot = extract_s9_slot(frame, self._ocr)
-            disc = parse_disc_s9(frame, self._ocr, slot=s9_slot)
+            # El slot lo resuelve `parse_disc_s9` con lo que ya leyó del panel, y sólo
+            # si no pudo paga la lectura aparte del título (ver allá). Hasta el 2026-09-20
+            # esa lectura se hacía SIEMPRE y primero, ~286 ms por despacho.
+            disc = parse_disc_s9(frame, self._ocr)
         except Exception:
             log.exception("Error parseando disco S9")
             return

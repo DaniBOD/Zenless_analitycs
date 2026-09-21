@@ -210,7 +210,6 @@ def test_la_linea_de_S9_cuenta_las_lecturas_descartadas_en_el_handler_real(caplo
     firma = (np.zeros((24, 48), np.float32), np.zeros((48, 48), np.float32), None)
     monkeypatch.setattr(m, "_s9_disc_signature", lambda frame: firma)
     monkeypatch.setattr(m, "_anclar_contador_s9", lambda *a, **kw: None)
-    monkeypatch.setattr("app.core.monitor.extract_s9_slot", lambda frame, ocr: 1)
     # Dueño con nombre: así el disco NO entra al warmup y lo único que puede frenarlo es la lectura.
     monkeypatch.setattr(m, "_assign_s9_owner",
                         lambda disc, frame: setattr(disc, "agente_asignado_nombre", "Corin"))

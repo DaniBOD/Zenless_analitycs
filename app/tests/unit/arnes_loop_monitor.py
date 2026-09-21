@@ -60,7 +60,6 @@ def correr_loop(monkeypatch, mon, firmas: list[float], estado: str = "S9") -> Re
     monkeypatch.setattr(mon, "_safe_dispatch", lambda frame, st: reg.despachados.append(actual["n"]))
     monkeypatch.setattr(mon, "_wait_fast", lambda: None)
     monkeypatch.setattr("app.core.monitor.polling_cadence_ms", lambda st: 0)
-    monkeypatch.setattr("app.core.monitor.extract_s9_slot", lambda frame, ocr: 1)
     mon._paused.set()
     mon._stop.clear()
     mon._run()
