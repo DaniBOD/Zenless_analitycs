@@ -7,6 +7,11 @@ dependencies = [
     "PySide6>=6.7",
     "mss>=9.0",
     "opencv-python>=4.10",
+    # El MOTOR del OCR (Fase 2E): mismos pesos que paddle, 40 % más rápido con la máquina
+    # ocupada. OJO al instalar: `pip install onnxruntime` a secas quiere subir protobuf a
+    # 4.x/7.x y paddlepaddle 2.6.2 está en 3.20.2 — va con `--no-deps`. Verificado que corre
+    # con protobuf 3.20.2 (lo que necesita viaja en la DLL nativa).
+    "onnxruntime>=1.20",
     "pytesseract>=0.3.13",
     "pywin32>=308",
     "anthropic>=0.34",

@@ -48,6 +48,13 @@ cython_datas, cython_binaries, cython_hiddenimports = collect_all("Cython")
 # collect_all trae plugins; copy_metadata trae el .dist-info que faltaba
 # → sin esto `import paddleocr` falla con PackageNotFoundError: imageio.
 imageio_datas, imageio_binaries, imageio_hiddenimports = collect_all("imageio")
+# onnxruntime (Fase 2E, 2026-09-21): es el MOTOR del OCR desde que se midió que con la
+# máquina ocupada —o sea siempre que el juego corre al lado— rinde 40 % mejor que paddle
+# inference sobre los mismos pesos. Trae DLLs nativas y carga capi dinámicamente, así que
+# va por collect_all. Si faltara, el .exe no se rompe: cae a paddle inference y lo LOGUEA
+# (`ocr_paddle.motivo_sin_onnx`) — pero correría 40 % más lento, que es exactamente el tipo
+# de degradación que sólo aparece empaquetada y que nadie nota mirando.
+onnx_datas, onnx_binaries, onnx_hiddenimports = collect_all("onnxruntime")
 # Metadata (.dist-info) de paquetes que hacen importlib.metadata.version()
 # en su import. Faltaba imageio; agrego los vecinos de la cadena por defensa.
 metadata_datas = []
@@ -104,16 +111,16 @@ datas = [
     (str(REPO / "Pj_stats"),                                       "Pj_stats"),
 ] + mss_datas + pyside_datas + pytess_datas \
   + paddle_datas + paddleocr_datas + shapely_datas + skimage_datas + scipy_datas + imgaug_datas + cython_datas \
-  + imageio_datas + metadata_datas + net_datas
+  + imageio_datas + metadata_datas + net_datas + onnx_datas
 
 binaries = mss_binaries + pyside_binaries + pytess_binaries \
-    + paddle_binaries + paddleocr_binaries + shapely_binaries + skimage_binaries + scipy_binaries + imgaug_binaries + cython_binaries + imageio_binaries + net_binaries
+    + paddle_binaries + paddleocr_binaries + shapely_binaries + skimage_binaries + scipy_binaries + imgaug_binaries + cython_binaries + imageio_binaries + net_binaries + onnx_binaries
 
 # ---------------------------------------------------------------------------
 # Hidden imports — módulos que PyInstaller no detecta automáticamente
 # ---------------------------------------------------------------------------
 hiddenimports = mss_hiddenimports + pyside_hiddenimports + pytess_hiddenimports + win32_hiddenimports \
-    + paddle_hiddenimports + paddleocr_hiddenimports + shapely_hiddenimports + skimage_hiddenimports + scipy_hiddenimports + imgaug_hiddenimports + cython_hiddenimports + imageio_hiddenimports + net_hiddenimports + [
+    + paddle_hiddenimports + paddleocr_hiddenimports + shapely_hiddenimports + skimage_hiddenimports + scipy_hiddenimports + imgaug_hiddenimports + cython_hiddenimports + imageio_hiddenimports + net_hiddenimports + onnx_hiddenimports + [
     # PaddleOCR deps con carga dinámica que collect_all puede no resolver solo
     "pyclipper",
     "lmdb",

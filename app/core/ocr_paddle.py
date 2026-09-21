@@ -8,14 +8,18 @@ path automáticamente si paddleocr no es importable desde site-packages.
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 
 from app.core import mem_diag
 from app.core.metrics import measure_latency
 from app.core.ocr_backend import OcrBackend
+
+log = logging.getLogger(__name__)
 
 # Flags de memoria de paddlepaddle (RNF-06) — DEBEN setearse ANTES de importar paddle.
 # `eager_delete_tensor_gb=0.0` libera los tensores intermedios apenas dejan de usarse
@@ -47,6 +51,55 @@ def _ensure_paddle_site() -> bool:
 _ensure_paddle_site()
 
 
+# --- Fase 2E (2026-09-21): el MOTOR es ONNX Runtime, el pipeline sigue siendo PaddleOCR ---------
+#
+# Medido sobre el panel de S9 (19 capturas, ramas intercaladas y orden sorteado, IC bootstrap):
+#
+#   | máquina                  | paddle inference | onnxruntime |        |
+#   |--------------------------|------------------|-------------|--------|
+#   | quieta                   | 881 ms           | 781 ms      | −11 %  |
+#   | con los 6 núcleos llenos | 2767 ms          | 1669 ms     | −40 %  |
+#
+# La diferencia se agranda justo donde importa: en vivo el juego ocupa la máquina, y ahí el panel
+# costaba 1784 ms contra 526-800 en el banco. Paddle pide 10 hilos sobre 6 núcleos y se degrada
+# feo cuando no los consigue; ORT reparte mejor. **Lecturas idénticas en 19 de 19.**
+#
+# Lo que cambia es SÓLO el motor de inferencia: el pre-proceso (DBNet resize/normalize), el
+# post-proceso (unclip de cajas, decodificación CTC) y los pesos son los mismos, porque los corre
+# el mismo PaddleOCR. Los `.onnx` salen de convertir los MISMOS modelos que ya usaba
+# (`tools/export_ocr_onnx.py`).
+#
+# Y de yapa arregla una deuda de D1: con `use_onnx=True` PaddleOCR **no descarga nada**
+# (`maybe_download` queda del otro lado del `if not params.use_onnx`), así que los modelos dejan
+# de vivir en `~/.paddleocr` —fuera de la app, bajados en el primer arranque— y pasan a viajar
+# adentro de `app/resources/`.
+_RES_OCR = Path(__file__).resolve().parents[1] / "resources" / "ocr"
+_DET_ONNX = _RES_OCR / "ppocrv3_det_en.onnx"
+_REC_ONNX = _RES_OCR / "ppocrv3_rec_latin.onnx"
+
+#: Vuelve al motor de siempre sin tocar código ni reempaquetar (`DANIBOD_OCR_ENGINE=paddle`).
+_ENV_MOTOR = "DANIBOD_OCR_ENGINE"
+
+
+def motivo_sin_onnx() -> str | None:
+    """`None` si se puede usar ONNX; si no, POR QUÉ no — para poder loguearlo.
+
+    Devuelve el motivo en vez de un bool a propósito: un backend que se cae al camino lento sin
+    decir cuál de las dos cosas le faltó es justamente la degradación silenciosa que la regla D2
+    prohíbe. Acá el que llama tiene con qué escribir una línea accionable.
+    """
+    if os.environ.get(_ENV_MOTOR, "").strip().lower() == "paddle":
+        return f"{_ENV_MOTOR}=paddle (pedido a mano)"
+    faltan = [p.name for p in (_DET_ONNX, _REC_ONNX) if not p.is_file()]
+    if faltan:
+        return f"no están los modelos {', '.join(faltan)} en {_RES_OCR}"
+    try:
+        import onnxruntime  # noqa: F401
+    except Exception as exc:                      # noqa: BLE001 — cualquier fallo de carga vale
+        return f"onnxruntime no se pudo importar ({type(exc).__name__}: {exc})"
+    return None
+
+
 class PaddleBackend(OcrBackend):
     """
     Adapter sobre PaddleOCR. Mejor que Tesseract para números pequeños
@@ -67,6 +120,16 @@ class PaddleBackend(OcrBackend):
                     use_textline_orientation=False,
                     lang=self._lang,
                 )
+                # El motor: ONNX si se puede, y si no el de siempre DICIENDO por qué (D2).
+                motivo = motivo_sin_onnx()
+                if motivo is None:
+                    kwargs.update(use_onnx=True, det_model_dir=str(_DET_ONNX),
+                                  rec_model_dir=str(_REC_ONNX))
+                    log.info("OCR: motor onnxruntime (modelos de app/resources/ocr)")
+                else:
+                    log.warning("OCR: se usa paddle inference porque %s. Es ~40 %% más lento "
+                                "cuando la máquina está ocupada, que es siempre que el juego "
+                                "corre al lado.", motivo)
                 # Detectar parámetros soportados por la versión instalada
                 import inspect
                 sig = inspect.signature(PaddleOCR.__init__)
