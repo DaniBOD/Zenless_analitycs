@@ -134,9 +134,40 @@ mover algo:
 | por encima de lo normal | 1861 ms | 1408-5169 |
 | alta | 1967 ms | 1160-4128 |
 
-**No lo declaro una mejora**: n=8 por variante y los rangos se pisan enteros. Por la regla C1.b eso
-no es evidencia, es una pista. Y aunque lo fuera, subirle la prioridad al worker es sacarle CPU
-**al juego que Daniel está jugando**: es una decisión suya, no una optimización que se aplica sola.
+**No lo declaré una mejora**: n=8 por variante, tres workers distintos uno después del otro y los
+rangos pisados enteros. Por C1.b eso no es evidencia, es una pista.
+
+### La pista era mía: con el diseño arreglado, el efecto desaparece
+
+Se repitió con **un solo worker al que se le cambia la clase en caliente entre llamada y llamada**
+(`SetPriorityClass` anda sobre un proceso vivo), **orden sorteado en cada vuelta** y n=30 por
+variante. Mismo proceso, mismos modelos cargados, misma memoria: lo único que cambia es la
+prioridad.
+
+| prioridad del worker, con 6 procesos quemando | n | p50 | IC de la mediana | |
+|---|---|---|---|---|
+| normal (hoy) | 30 | 1761 ms | [1631-1966] | |
+| por encima de lo normal | 30 | 1738 ms | [1381-1859] | −23 ms · **se solapa** |
+| alta | 30 | 1697 ms | [1518-2128] | −65 ms · **se solapa** |
+
+Los 472 ms de "mejora" de anoche eran **la deriva entre tres corridas**, no la prioridad. La misma
+forma que C1.c, ahora del otro lado: primero medí en un escenario donde nada podía moverse, después
+en uno donde lo que se movía era otra cosa.
+
+**Y el instrumento sí funcionaba**, que es lo que hay que descartar antes de aceptar un resultado
+negativo:
+
+1. **La clase queda puesta.** `SetPriorityClass` devolver `True` es la intención; se leyó de vuelta
+   con `GetPriorityClass` y las tres clases quedaron aplicadas.
+2. **La prioridad muerde.** Con el worker en `HIGH`, un trabajo **fijo** en un proceso normal pasa
+   de 575 a 625 ms: **+9 % para todo lo demás**. O sea que sí le saca CPU al resto — sólo que no la
+   convierte en OCR más rápido.
+
+**Conclusión: no se hace.** Cuesta 9 % del resto de la máquina —el juego incluido— y devuelve, en
+el mejor caso, 65 ms sobre una espera de 2531 (2,6 %), que encima no se distingue del ruido. Que
+el OCR no vaya más rápido con más prioridad dice además algo del cuello: el worker pide **10 hilos
+sobre 6 núcleos** y cada inferencia son tandas paralelas cortas con barrera — la barrera la marca
+el hilo más lento, y eso no se arregla llegando antes a la cola.
 
 ## 5. Verificado en vivo (2026-09-20, 22:44-22:51) — **99 discos**
 
@@ -186,6 +217,6 @@ warnings o errores** en toda la pasada.
 - **El panel no tiene más jugo por el lado de Python.** Si se lo quiere bajar de verdad hay que
   cambiar lo que corre: un runtime más barato en CPU (ONNX Runtime sobre los mismos pesos, que este
   repo ya usa para el embedder) o llevarlo a la GPU. Eso es una fase propia, con su medición.
-- **La prioridad del worker**, si Daniel quiere probar el intercambio: más rápido el OCR, menos CPU
-  para el juego.
+- ~~La prioridad del worker~~ **probada y descartada** (§4): con el diseño arreglado el efecto
+  desaparece (−23/−65 ms, IC solapados) y cuesta **+9 % a todo lo demás**.
 - Los otros dos call-sites del OCR del panel (11 % y 6 % del total) siguen sin tocar.
