@@ -5,7 +5,7 @@
 > distintos**. Están acá porque las lecciones estaban dispersas en 62 docs de `Dev_IA/` y nadie
 > las lee todas.
 >
-> Última actualización: **2026-09-20**.
+> Última actualización: **2026-09-22**.
 
 ---
 
@@ -248,6 +248,27 @@ probado*, nunca como *descartado*; (2) en cualquier A/B intercalá el orden; (3)
 optimización dependa de cómo agrupa el motor por dentro, mirá cómo agrupa antes de estimar el
 ahorro. Detalle:
 [2026-09-20_PERF_Fase_2D_el_titulo_de_prepo_y_el_panel_que_no_afloja.md](documentacion_cruda/2026-09/2026-09-20_PERF_Fase_2D_el_titulo_de_prepo_y_el_panel_que_no_afloja.md).
+
+#### C1.d · Un control tiene que estar causalmente desconectado del tratamiento (2026-09-22)
+
+Para verificar en vivo la Fase 2E declaré de antemano un control —el **período del loop**— con un
+argumento que sonaba bien: el detector no usa OCR desde la Fase 2C, así que acelerar el OCR no
+debería moverlo. Bajó igual, 375 → 360 ms. Y el p90 del mismo control se desplomó **2266 → 828**,
+que es lo que delata el error: **el loop se bloquea mientras se parsea**. El período del loop
+contiene al tratamiento. Declararlo antes de mirar —que es C1— era necesario y **no alcanzaba**:
+un control también tiene que ser algo que el cambio no pueda tocar ni por un camino indirecto.
+
+Lo que sí sirvió fue el par `capturer` (42 → 43 ms) y `detector` (203 → 198), que no dependen del
+OCR del panel. Y en particular **`capturer` se movió para arriba**: un control que se mueve en la
+dirección *contraria* al tratamiento descarta la explicación "hoy la máquina estaba más rápida"
+mucho mejor que uno que no se mueve, porque descarta también que el instrumento esté dormido.
+
+**Cómo aplicarlo:** antes de declarar un control, preguntate por qué camino **podría** moverlo el
+cambio, incluido el indirecto (comparte hilo, comparte proceso, lo espera, lo bloquea). Si hay
+camino, no es control: es otra métrica de resultado. Y preferí **dos** controles a uno, de los
+cuales al menos uno debería quedarse quieto y otro poder moverse en contra. Detalle:
+[2026-09-21_PERF_Fase_2E_el_motor_del_OCR.md](documentacion_cruda/2026-09/2026-09-21_PERF_Fase_2E_el_motor_del_OCR.md).
+
 
 ### C2 · Un reloj declara una unidad, no una granularidad. Y un sello de tiempo no es un ID.
 
