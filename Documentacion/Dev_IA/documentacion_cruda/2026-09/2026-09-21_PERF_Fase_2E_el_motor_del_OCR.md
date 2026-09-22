@@ -113,6 +113,20 @@ contra 899 de una pasada equivalente, y `ocr_bboxes` en 568 ms con IC **[178-162
 porque mezclaba pantallas. Acotada bien, la misma serie da 1721 [1659-1820]. Es **C1.b** otra vez:
 una mezcla de pantallas se disfraza de medición.
 
+### Reproducida la misma tarde (19:19:09 → 19:22:45, 108 discos)
+
+Una sola pasada puede tener suerte. Se repitió con el código ya con el arreglo del aviso (§10):
+
+| | mañana | tarde |
+|---|---|---|
+| **click → log** | 1203 [1172-1234] | **1218** [1187-1235] |
+| panel (`ocr_bboxes`) | 587 [543-603] | 601 [579-608] |
+| *`capturer` / `detector`* | *43 / 198* | *42 / 198* |
+
+Los intervalos se pisan y los controles no se movieron: **el 1203 no fue suerte**. De yapa, la
+tarde confirma el arreglo del §10 en la app real —`OCR: motor onnxruntime` aparece en `app.log` al
+levantarse el worker— y otra vez **0 relevos**, con el worker en 591 MB al cerrar.
+
 ## 8. La fuga de memoria era de paddle, no del OCR
 
 El reciclado del worker (`TECHO_RECICLADO_MB = 2500`) está dimensionado sobre **12,46 MB por
@@ -160,6 +174,12 @@ mudo de S17** ya abierto desde el 2026-07-23, pero la **frecuencia es nueva** y 
 el loop gira 2,2× más seguido. No hay con qué atribuirlo: la pasada corrió sin `-LogDebug` y
 durante esos 94 s el log **no dice nada**. Contra el silencio no se depura — antes que teorizar,
 hace falta que el despacho grite cuando lleva demasiado sin resolver.
+
+**La pasada de la tarde no tuvo ninguno**: 108 discos, hueco máximo **4 s**, mediana y p90 de
+2,0 s. Así que no son la nueva normalidad de la 2E — pero tampoco quedan descartados: cinco en 107
+y después cero en 108 es la forma de un problema **intermitente**. La diferencia visible entre las
+dos pasadas es de uso, no de código: la de la mañana tuvo pausas y vueltas atrás a mitad de camino,
+la de la tarde fue de corrido. Es una pista para cuando se instrumente, no una causa.
 
 ## 10. El aviso se emitía en el proceso equivocado (arreglado el 2026-09-22)
 
