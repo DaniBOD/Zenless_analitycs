@@ -17,6 +17,11 @@ archivo se pisan, y el resultado —un log truncado -- es peor que no tener las 
 Así que el worker **no loguea**: devuelve el error como dato y el padre lo escribe. Una sola
 autoridad sobre el archivo.
 
+Eso vale para **todo** lo que haya que decir, no sólo para los errores. La Fase 2E metió un WARNING
+de "caí al motor lento" adentro de este proceso y por eso no llegaba a ningún lado: el aviso
+existía y se emitía donde nadie lo lee. Ahora el motor del OCR viaja en el saludo
+(`_saludo_listo`).
+
 ## Por qué desactiva las métricas
 
 `DANIBOD_METRICS` se hereda del padre. Si el worker también registrara, `ocr_text` quedaría contado
@@ -108,6 +113,21 @@ def _memoria_mb() -> float:
         return 0.0
 
 
+def _saludo_listo(backend, cual: str) -> dict:
+    """El mensaje de "ya estoy caliente". Lleva el MOTOR del OCR porque acá no se puede loguear.
+
+    `motor_en_uso()` sólo lo tiene el backend de Paddle (Tesseract no elige motor) y devuelve
+    `None` si los modelos todavía no se cargaron, así que se lo pide con `getattr` y el padre
+    decide qué hacer con la ausencia.
+    """
+    return {
+        "listo": True,
+        "backend": cual,
+        "mem_mb": _memoria_mb(),
+        "motor": getattr(backend, "motor_en_uso", lambda: None)(),
+    }
+
+
 def _atender(sock: socket.socket, backend) -> None:
     """Bucle de servicio: un pedido, una respuesta, hasta que el padre cierre."""
     while True:
@@ -150,7 +170,7 @@ def ejecutar() -> int:
         except Exception as exc:
             ocr_ipc.enviar(sock, {"listo": False, "error": f"{type(exc).__name__}: {exc}"})
             return 3
-        ocr_ipc.enviar(sock, {"listo": True, "backend": cual, "mem_mb": _memoria_mb()})
+        ocr_ipc.enviar(sock, _saludo_listo(backend, cual))
         _atender(sock, backend)
         return 0
     finally:

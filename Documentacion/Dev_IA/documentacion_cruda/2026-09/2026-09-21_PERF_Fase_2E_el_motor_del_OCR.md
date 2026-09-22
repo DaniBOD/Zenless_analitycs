@@ -161,12 +161,45 @@ el loop gira 2,2× más seguido. No hay con qué atribuirlo: la pasada corrió s
 durante esos 94 s el log **no dice nada**. Contra el silencio no se depura — antes que teorizar,
 hace falta que el despacho grite cuando lleva demasiado sin resolver.
 
-## 10. Lo que falta
+## 10. El aviso se emitía en el proceso equivocado (arreglado el 2026-09-22)
 
-- **El aviso de la caída al motor viejo no llega a ningún lado.** El `WARNING` del §5 se emite
-  dentro del **worker**, que a propósito no escribe en `app.log` (dos procesos rotando el mismo
-  archivo lo truncan). El worker ya devuelve los errores como dato para que los escriba el padre;
-  el motivo del motor tiene que viajar por ahí. Tal como está, la red de D2 avisa donde nadie mira.
+El `WARNING` del §5 —"caí a paddle inference porque X"— se emitía **adentro del worker**, que a
+propósito no escribe en `app.log`: el archivo lo rota un handler del padre y dos procesos rotándolo
+lo truncan. El worker corre además con `stderr=DEVNULL`, así que el aviso no aparecía **en ningún
+lado**. Una red de D2 que existe, se escribe y no llega: la forma más cara de las tres, porque
+parece hecha.
+
+El worker ya devolvía **los errores como dato** para que los escriba el padre. El motor viaja
+ahora por ese mismo camino: `_saludo_listo()` mete `(motor, motivo)` en el saludo de "ya estoy
+caliente", y `_anotar_motor_del_worker()` lo escribe del lado del padre. Tres detalles que no son
+adorno:
+
+- el texto y el nivel del aviso viven en **una sola** función, `ocr_paddle.avisar_motor()`, que
+  usan los dos procesos. Si cada lado tuviera su copia se irían separando (**B1**);
+- el backend reporta lo que **quedó puesto** (`motor_en_uso()`), no lo que `motivo_sin_onnx()`
+  contestaría si se le preguntara de nuevo. Es el efecto, no la intención (**A3**);
+- **la ausencia también avisa**: si el backend es paddle y el saludo no trae motor, el padre
+  escribe un WARNING en vez de asumir que está todo bien.
+
+Sabotajes **5/5 en rojo** (el saludo sin la clave, el padre que recibe y no escribe, la rama de la
+ausencia borrada, el backend que no recuerda, y el aviso bajado a INFO), con los tres archivos
+restaurados y sha256 igual.
+
+### Y el cableado, que los tests unitarios no ven
+
+Los tests cuidan las dos funciones por separado; que `ejecutar()` use una y `_levantar_worker()`
+llame a la otra es justo lo que "se testea" sin estar conectado. Así que se verificó con **un
+worker real por un socket real**, mirando el log del padre: con el motor por defecto sale
+`OCR: motor onnxruntime`, y con `DANIBOD_OCR_ENGINE=paddle` sale el WARNING completo con el motivo.
+
+⚠️ **La primera verificación dio que no andaba, y el roto era el instrumento.** El script de prueba
+configuraba el logging con `basicConfig` y nada más; `import paddleocr` **sube el nivel del root
+logger a WARNING** (ya estaba anotado en `main.py` desde el 2026-05-31) y silenciaba el INFO. La
+app es inmune porque fija `logging.getLogger("app")` a INFO; el script no. Casi diagnostico un bug
+en el arreglo por no haberle puesto al banco la misma configuración que tiene la app.
+
+## 11. Lo que falta
+
 - **El trabe mudo**, con la instrumentación del §9.
 - El `.exe` **no** se reconstruyó (`main.spec` quedó listo para cuando toque).
 - Los otros dos call-sites del OCR del panel siguen sin tocar, pero ahora todos corren sobre ORT.

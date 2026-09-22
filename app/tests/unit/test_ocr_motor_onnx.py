@@ -128,3 +128,77 @@ def test_caer_al_motor_lento_se_AVISA(paddleocr_falso, monkeypatch, caplog):
     avisos = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
     assert avisos, "se cayó al motor lento sin decir nada"
     assert "paddle" in avisos[0].lower()
+
+
+def test_el_backend_RECUERDA_el_motor_que_uso(paddleocr_falso, monkeypatch):
+    """Lo que se reporta es lo que pasó, no lo que se iba a hacer (A3). Antes de cargar no hay
+    respuesta: `None` significa "no sé", no "onnx"."""
+    monkeypatch.setenv(mod._ENV_MOTOR, "paddle")
+    back = mod.PaddleBackend()
+    assert back.motor_en_uso() is None, "dice un motor sin haber cargado nada"
+    back._get_ocr()
+    motor, motivo = back.motor_en_uso()
+    assert motor == "paddle inference", motor
+    assert motivo and "paddle" in motivo, motivo
+
+
+# --- el aviso tiene que cruzar del worker al padre (2026-09-22) ---------------------------
+#
+# El WARNING de la Fase 2E se emitía dentro del worker, que a propósito NO escribe en `app.log`
+# (dos procesos rotando el mismo archivo lo truncan). O sea que la red de D2 avisaba en un proceso
+# cuyo logging va a DEVNULL: existía y no servía. El motor viaja ahora como dato en el saludo.
+
+class _BackendFalso:
+    def __init__(self, motor):
+        self._motor = motor
+
+    def motor_en_uso(self):
+        return self._motor
+
+
+def test_el_worker_MANDA_el_motor_en_el_saludo(monkeypatch):
+    import app.core.ocr_worker as worker
+    monkeypatch.setattr(worker, "_memoria_mb", lambda: 123.0)
+    saludo = worker._saludo_listo(_BackendFalso(("paddle inference", "porque sí")), "paddle")
+    assert saludo["motor"] == ("paddle inference", "porque sí"), saludo
+    assert saludo["listo"] is True and saludo["backend"] == "paddle"
+
+
+def test_el_saludo_aguanta_un_backend_que_no_elige_motor(monkeypatch):
+    """Tesseract no tiene motor que elegir: el saludo no puede reventar por eso."""
+    import app.core.ocr_worker as worker
+    monkeypatch.setattr(worker, "_memoria_mb", lambda: 0.0)
+
+    class _SinMotor:
+        pass
+
+    assert worker._saludo_listo(_SinMotor(), "tesseract")["motor"] is None
+
+
+def test_el_PADRE_escribe_el_aviso_del_worker(caplog):
+    """El corazón del arreglo: el motivo tiene que terminar en el log del padre, con su texto
+    accionable intacto."""
+    import app.core.ocr_service as svc
+    with caplog.at_level(logging.WARNING, logger=svc.__name__):
+        svc._anotar_motor_del_worker(
+            {"backend": "paddle", "motor": ("paddle inference", "no están los modelos X.onnx")})
+    avisos = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert avisos, "el worker cayó al motor lento y el padre no escribió nada"
+    assert "no están los modelos X.onnx" in avisos[0], avisos
+
+
+def test_el_padre_no_grita_cuando_el_worker_quedo_en_onnx(caplog):
+    import app.core.ocr_service as svc
+    with caplog.at_level(logging.INFO, logger=svc.__name__):
+        svc._anotar_motor_del_worker({"backend": "paddle", "motor": ("onnxruntime", None)})
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("onnxruntime" in r.getMessage() for r in caplog.records), caplog.records
+
+
+def test_si_el_worker_NO_dice_el_motor_el_padre_avisa(caplog):
+    """Ausencia no es "todo bien": un saludo sin motor con backend paddle puede ser el motor lento
+    corriendo sin que nadie se entere, que es el bug que este arreglo viene a cerrar."""
+    import app.core.ocr_service as svc
+    with caplog.at_level(logging.WARNING, logger=svc.__name__):
+        svc._anotar_motor_del_worker({"backend": "paddle", "mem_mb": 1.0})
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING], "se lo tragó en silencio"

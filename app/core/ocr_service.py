@@ -149,6 +149,25 @@ class _ErrorDeLlamada(RuntimeError):
     """El worker atendió y devolvió error. No es motivo para reciclarlo."""
 
 
+def _anotar_motor_del_worker(listo: dict) -> None:
+    """Escribe en el log del PADRE con qué motor de OCR quedó el worker.
+
+    El worker no puede loguear —rotaría el mismo archivo que el padre—, así que manda su elección
+    en el saludo. Sin esto, la caída de ONNX a paddle inference (40 % más lento con la máquina
+    ocupada, que es siempre que el juego corre al lado) sería invisible: el aviso existía, pero se
+    emitía en el proceso equivocado. Eso es exactamente la degradación silenciosa que prohíbe D2.
+    """
+    motor = listo.get("motor")
+    if motor:
+        from app.core.ocr_paddle import avisar_motor      # tarde: el padre no siempre carga paddle
+        avisar_motor(motor[0], motor[1], destino=log)
+    elif listo.get("backend") == "paddle":
+        # Ausencia ≠ "todo bien": si el backend es paddle y no dijo motor, algo no se cargó como
+        # se cree. Se avisa en vez de asumir (D2 otra vez, en la escala del dato que falta).
+        log.warning("OCR: el worker no dijo con qué motor quedó. Puede estar sobre paddle "
+                    "inference, que es ~40 % más lento con la máquina ocupada.")
+
+
 def _levantar_worker() -> _Worker:
     """Lanza un hijo y espera a que esté **caliente**. Bloquea hasta 3 minutos.
 
@@ -191,6 +210,7 @@ def _levantar_worker() -> _Worker:
     w = _Worker(proc, sock, listo.get("backend", "?"))
     w.mem_mb = float(listo.get("mem_mb") or 0.0)
     log.info("OCR en proceso aparte: worker pid=%s backend=%s", proc.pid, w.backend)
+    _anotar_motor_del_worker(listo)
     return w
 
 

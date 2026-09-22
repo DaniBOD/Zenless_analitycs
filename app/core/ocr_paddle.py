@@ -100,6 +100,22 @@ def motivo_sin_onnx() -> str | None:
     return None
 
 
+def avisar_motor(motor: str, motivo: str | None, destino: "logging.Logger | None" = None) -> None:
+    """Escribe UNA línea diciendo con qué motor quedó el OCR, y si no es ONNX, por qué.
+
+    Es función aparte porque el mismo aviso hace falta en DOS procesos: acá cuando el backend corre
+    en el padre, y en `ocr_service` cuando el que eligió fue el worker —que a propósito no escribe
+    en `app.log` y manda su elección de vuelta como dato. Si el texto y el nivel vivieran en los
+    dos lados se irían separando (B1: una sola autoridad por pregunta).
+    """
+    dst = destino or log
+    if motivo is None:
+        dst.info("OCR: motor %s (modelos de app/resources/ocr)", motor)
+    else:
+        dst.warning("OCR: se usa %s porque %s. Es ~40 %% más lento cuando la máquina está "
+                    "ocupada, que es siempre que el juego corre al lado.", motor, motivo)
+
+
 class PaddleBackend(OcrBackend):
     """
     Adapter sobre PaddleOCR. Mejor que Tesseract para números pequeños
@@ -110,6 +126,8 @@ class PaddleBackend(OcrBackend):
         self._lang = lang
         self._use_gpu = use_gpu
         self._ocr = None  # lazy-loaded
+        #: `(motor, motivo)` de lo que QUEDÓ puesto; `None` mientras no se haya cargado.
+        self._motor: tuple[str, str | None] | None = None
 
     def _get_ocr(self):
         if self._ocr is None:
@@ -125,11 +143,8 @@ class PaddleBackend(OcrBackend):
                 if motivo is None:
                     kwargs.update(use_onnx=True, det_model_dir=str(_DET_ONNX),
                                   rec_model_dir=str(_REC_ONNX))
-                    log.info("OCR: motor onnxruntime (modelos de app/resources/ocr)")
-                else:
-                    log.warning("OCR: se usa paddle inference porque %s. Es ~40 %% más lento "
-                                "cuando la máquina está ocupada, que es siempre que el juego "
-                                "corre al lado.", motivo)
+                self._motor = ("onnxruntime" if motivo is None else "paddle inference", motivo)
+                avisar_motor(*self._motor)
                 # Detectar parámetros soportados por la versión instalada
                 import inspect
                 sig = inspect.signature(PaddleOCR.__init__)
@@ -141,6 +156,15 @@ class PaddleBackend(OcrBackend):
                     "paddleocr no instalado. Ejecutar: pip install paddleocr"
                 ) from e
         return self._ocr
+
+    def motor_en_uso(self) -> tuple[str, str | None] | None:
+        """`(motor, motivo)` de lo que quedó puesto, o `None` si todavía no se cargó.
+
+        Reporta lo que PASÓ, no lo que se iba a hacer (A3): preguntarle de nuevo a
+        `motivo_sin_onnx()` desde afuera daría una segunda respuesta, que puede no ser la que se
+        usó. El worker manda esto en su saludo para que lo escriba el padre.
+        """
+        return self._motor
 
     @measure_latency("ocr_text")
     def text(self, img: np.ndarray, psm: int = 6, lang: str = "spa") -> tuple[str, float]:
