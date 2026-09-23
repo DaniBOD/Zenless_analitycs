@@ -1,0 +1,141 @@
+{
+  "schema": "criterio_equipar/1",
+  "fuente": "Documentacion/Dev_IA/documentacion_cruda/2026-09/2026-09-22_SPEC_Criterio_de_equipamiento_casos_human_first.md",
+  "nota": "Decisiones de Daniel (human first, 2026-09-22). El estado de cada PJ viaja ADENTRO del caso para que el test no dependa de la DB. Los arquetipos y el mapeo set->arquetipo son una FOTO de la DB de ese día (los defaults de Prydwen); los ajustes de Daniel van aparte, en `ajustes_usuario`, porque son otra capa. Donde el caso era abstracto ('el set de su 4pc', 'un set que no usa') se eligió un set real que cumple eso mismo: Metal polar (38) = 4pc de Ellen, Tecno Pícido (48) = su 2pc, Jazz Caótico (27) = un set que no usa (no está mapeado a ATK_DPS).",
+
+  "arquetipos": {
+    "ATK_DPS":     {"mains_4": ["Prob. Crítica", "Daño Crítico", "ATK%"], "mains_5": ["Bono Daño Físico", "Bono Daño Fuego", "Bono Daño Hielo", "Bono Daño Eléctrico", "Bono Daño Éter", "Bono Daño Viento", "ATK%"], "mains_6": ["ATK%"],
+                    "positivos": {"Prob. Crítica": 1.0, "Daño Crítico": 1.0, "ATK%": 1.0, "ATK": 0.4, "Perforación": 0.7},
+                    "perjudiciales": {"DEF": -0.8, "DEF%": -1.0, "HP": -0.5, "HP%": -0.8, "Maestría de Anomalía": -0.8}, "threshold_stock": 0.7},
+    "HP_DISRUPT":  {"mains_4": ["Prob. Crítica", "Daño Crítico", "HP%"], "mains_5": ["Bono Daño Físico", "Bono Daño Fuego", "Bono Daño Hielo", "Bono Daño Eléctrico", "Bono Daño Éter", "Bono Daño Viento", "HP%"], "mains_6": ["HP%"],
+                    "positivos": {"Prob. Crítica": 1.0, "Daño Crítico": 1.0, "HP%": 1.0, "HP": 0.4},
+                    "perjudiciales": {"DEF": -0.8, "DEF%": -1.0, "Maestría de Anomalía": -0.8, "Perforación": -0.5}, "threshold_stock": 0.7},
+    "ANOMALY":     {"mains_4": ["Maestría de Anomalía", "ATK%"], "mains_5": ["Bono Daño Físico", "Bono Daño Fuego", "Bono Daño Hielo", "Bono Daño Eléctrico", "Bono Daño Éter", "Bono Daño Viento", "ATK%"], "mains_6": ["Tasa de Anomalía", "ATK%"],
+                    "positivos": {"Maestría de Anomalía": 1.0, "ATK%": 1.0, "ATK": 0.4, "Perforación": 0.6},
+                    "perjudiciales": {"DEF": -0.8, "DEF%": -1.0, "HP": -0.5, "HP%": -0.8, "Daño Crítico": -0.6}, "threshold_stock": 0.7},
+    "STUN":        {"mains_4": ["Prob. Crítica", "Daño Crítico", "ATK%"], "mains_5": ["Bono Daño Físico", "Bono Daño Fuego", "Bono Daño Hielo", "Bono Daño Eléctrico", "Bono Daño Éter", "Bono Daño Viento", "ATK%"], "mains_6": ["Impacto"],
+                    "positivos": {"ATK%": 1.0, "ATK": 0.4, "Prob. Crítica": 0.8, "Daño Crítico": 0.8, "Perforación": 0.6},
+                    "perjudiciales": {"DEF": -0.8, "DEF%": -1.0, "HP": -0.5, "HP%": -0.8, "Maestría de Anomalía": -0.8}, "threshold_stock": 0.7},
+    "SUPPORT_ER":  {"mains_4": ["ATK%", "Prob. Crítica"], "mains_5": ["ATK%", "Bono Daño Físico", "Bono Daño Fuego", "Bono Daño Hielo", "Bono Daño Eléctrico", "Bono Daño Éter", "Bono Daño Viento"], "mains_6": ["Recarga de Energía"],
+                    "positivos": {"ATK%": 0.7, "HP%": 0.7, "Prob. Crítica": 0.6, "Daño Crítico": 0.6, "Perforación": 0.4},
+                    "perjudiciales": {"DEF": -0.5, "DEF%": -0.6, "Maestría de Anomalía": -0.7}, "threshold_stock": 0.65},
+    "DEFENSE":     {"mains_4": ["DEF%", "HP%"], "mains_5": ["DEF%", "HP%"], "mains_6": ["Impacto", "DEF%", "HP%"],
+                    "positivos": {"DEF%": 1.0, "DEF": 0.4, "HP%": 1.0, "HP": 0.4},
+                    "perjudiciales": {"ATK": -0.6, "ATK%": -0.8, "Perforación": -0.6, "Maestría de Anomalía": -0.8}, "threshold_stock": 0.65},
+    "ARMORER_DEF": {"mains_4": ["Prob. Crítica", "Daño Crítico"], "mains_5": ["Bono Daño Físico", "Bono Daño Fuego", "Bono Daño Hielo", "Bono Daño Eléctrico", "Bono Daño Éter", "Bono Daño Viento", "Tasa de Perforación"], "mains_6": ["DEF%"],
+                    "positivos": {"Prob. Crítica": 1.0, "DEF%": 0.9, "Daño Crítico": 0.7, "Perforación": 0.6, "DEF": 0.4},
+                    "perjudiciales": {"ATK%": -1.0, "ATK": -0.8, "Maestría de Anomalía": -0.8}, "threshold_stock": 0.7}
+  },
+
+  "set_arquetipos": {
+    "27": [["ANOMALY", 1]],
+    "38": [["ATK_DPS", 1]],
+    "48": [["ATK_DPS", 1], ["ARMORER_DEF", 2]]
+  },
+
+  "sets_2pc": {
+    "27": {"stat": "Maestría de Anomalía", "valor": 30.0},
+    "38": {"stat": "Bono Daño Hielo", "valor": 10.0},
+    "48": {"stat": "Prob. Crítica", "valor": 8.0}
+  },
+
+  "ajustes_usuario": {
+    "arquetipos": {"HP_DISRUPT": {"mains_4": ["Prob. Crítica", "Daño Crítico"]}},
+    "rangos": {"Ellen": {"ATK": [3000, 3200]}}
+  },
+
+  "pjs": {
+    "Ellen": {"arquetipo": "ATK_DPS",
+              "pesos": {"Prob. Crítica": 1.0, "Daño Crítico": 1.0, "ATK%": 0.8, "Perforación": 0.5, "ATK": 0.4, "HP%": -0.4, "DEF%": -0.6}}
+  },
+
+  "roster_generico": {
+    "nota": "Para los casos de disco nuevo (6 y 7): un PJ por arquetipo, sin pesos propios y con los umbrales default, más Ellen. Reproduce lo medido en la DB real el 2026-09-22: el mejor candidato de D1 era un ATK_DPS sin pesos propios, en 0,448.",
+    "arquetipos": ["ATK_DPS", "HP_DISRUPT", "ANOMALY", "STUN", "SUPPORT_ER", "DEFENSE", "ARMORER_DEF"],
+    "incluye_pjs": ["Ellen"]
+  },
+
+  "casos": [
+    {"id": "caso1", "tipo": "comparar", "pj": "Ellen", "slot": 2,
+     "estado_pj": {"Prob. Crítica": 58.0, "Daño Crítico": 175.0, "ATK": 3150},
+     "build": {"4pc": 38, "2pc": null},
+     "opciones": {
+       "X": {"set": 38, "main": "ATK", "nivel": 15, "subs": [["Prob. Crítica", 7.2, 2], ["ATK%", 3.0, 0], ["ATK", 19.0, 0], ["DEF", 15.0, 0]]},
+       "Y": {"set": 38, "main": "ATK", "nivel": 15, "subs": [["Daño Crítico", 14.4, 2], ["ATK%", 6.0, 1], ["ATK", 19.0, 0], ["Perforación", 9.0, 0]]}},
+     "decision": "Y",
+     "razon": "Y gana Perforación (utilidad); la DEF de X no sirve. La CR que se pierde no es notable (R1, R2).",
+     "nota": "Mejoras irreales para un Nivel 15 (+2/+3 en vez de +5): no cambia la preferencia relativa."},
+
+    {"id": "caso2", "tipo": "comparar", "pj": "Ellen", "slot": 2,
+     "estado_pj": {"Prob. Crítica": 65.0, "Daño Crítico": 175.0, "ATK": 3150},
+     "build": {"4pc": 38, "2pc": null},
+     "opciones": {
+       "X": {"set": 38, "main": "ATK", "nivel": 15, "subs": [["Prob. Crítica", 7.2, 2], ["ATK%", 3.0, 0], ["ATK", 19.0, 0], ["DEF", 15.0, 0]]},
+       "Y": {"set": 38, "main": "ATK", "nivel": 15, "subs": [["Daño Crítico", 14.4, 2], ["ATK%", 6.0, 1], ["ATK", 19.0, 0], ["Perforación", 9.0, 0]]}},
+     "decision": "Y",
+     "razon": "Con CR 65 / DC 175 los dos críticos 'ya están bien, sólo sería pulir'; Y sube ATK% y la DEF de X no sirve (R1, R3).",
+     "nota": "Mejoras irreales para un Nivel 15, igual que el caso 1."},
+
+    {"id": "caso3", "tipo": "comparar", "pj": "Ellen", "slot": 2,
+     "estado_pj": {"Prob. Crítica": 65.0, "Daño Crítico": 175.0, "ATK": 3150},
+     "build": {"4pc": 38, "2pc": null},
+     "opciones": {
+       "X": {"set": 38, "main": "ATK", "nivel": 15, "subs": [["Prob. Crítica", 7.2, 2], ["ATK%", 3.0, 0], ["ATK", 19.0, 0], ["Perforación", 9.0, 0]]},
+       "Y": {"set": 38, "main": "ATK", "nivel": 15, "subs": [["Daño Crítico", 14.4, 2], ["ATK%", 3.0, 0], ["ATK", 19.0, 0], ["Perforación", 9.0, 0]]}},
+     "decision": "X",
+     "razon": "Ya hay harto DC; importa bajar la 'lotería' del crítico (R4). La cuenta coincide: 1+CR·DC da 2,2635 contra 2,2311.",
+     "necesita": "balance del crítico con el CR y DC actuales del PJ"},
+
+    {"id": "caso4", "tipo": "cambiar", "pj": "Ellen", "slot": 2,
+     "estado_pj": {},
+     "build": {"4pc": 38, "2pc": 48},
+     "actual": {"set": 38, "main": "ATK", "nivel": 15, "subs": [["Prob. Crítica", 4.8, 1], ["Daño Crítico", 9.6, 1], ["ATK%", 6.0, 1], ["HP", 336.0, 2]]},
+     "nuevo":  {"set": 27, "main": "ATK", "nivel": 15, "subs": [["Prob. Crítica", 7.2, 2], ["Daño Crítico", 14.4, 2], ["ATK%", 6.0, 1], ["Perforación", 9.0, 0]]},
+     "decision": "mantener",
+     "razon": "El 4pc no se rompe salvo secundarios excelentes, y sería muy puntual; lo normal es romper un 2pc (R5, R6)."},
+
+    {"id": "caso5", "tipo": "cambiar", "pj": "Ellen", "slot": 6,
+     "estado_pj": {"Prob. Crítica": 65.0, "Daño Crítico": 175.0},
+     "build": {"4pc": 38, "2pc": 48},
+     "actual": {"set": 48, "main": "ATK%", "nivel": 15, "subs": [["Prob. Crítica", 4.8, 1], ["Daño Crítico", 4.8, 0], ["ATK", 57.0, 2], ["HP", 336.0, 2]]},
+     "nuevo":  {"set": 27, "main": "ATK%", "nivel": 15, "subs": [["Prob. Crítica", 4.8, 1], ["Daño Crítico", 14.4, 2], ["ATK%", 9.0, 2], ["Perforación", 9.0, 0]]},
+     "decision": "cambiar",
+     "razon": "El 2pc son sólo stats; más DC lo compensa, y ATK% +2 en vez de plano está mucho mejor (R7, R8). Tensión con la cuenta: el multiplicador de crítico baja 4 %."},
+
+    {"id": "caso6_D1", "tipo": "disco_nuevo",
+     "disco": {"set": 48, "slot": 4, "main": "Daño Crítico", "nivel": 0, "subs": [["Prob. Crítica", 2.4, 0], ["ATK%", 3.0, 0], ["Perforación", 9.0, 0]]},
+     "decision": "mejorar",
+     "razon": "Potencial para atacantes o aturdidores: principal correcto y tres líneas útiles, aunque la cuarta sea incógnita (R11, R12)."},
+
+    {"id": "caso6_D2", "tipo": "disco_nuevo",
+     "disco": {"set": 48, "slot": 4, "main": "Daño Crítico", "nivel": 0, "subs": [["Prob. Crítica", 2.4, 0], ["HP", 112.0, 0], ["DEF", 15.0, 0], ["ATK", 19.0, 0]]},
+     "decision": "descartar",
+     "razon": "Dos líneas basura para atacantes y aturdidores (R13)."},
+
+    {"id": "caso6_D3", "tipo": "disco_nuevo",
+     "disco": {"set": 48, "slot": 4, "main": "HP%", "nivel": 0, "subs": [["Prob. Crítica", 2.4, 0], ["Daño Crítico", 4.8, 0], ["ATK%", 3.0, 0], ["Perforación", 9.0, 0]]},
+     "decision": "descartar",
+     "motivo": {"puntaje_menor_que": "caso6_D1"},
+     "razon": "Principal PV % no sirve ni para disruptores, a pesar de los secundarios perfectos (R9). Se guardaría sólo si hay un hueco que tapar (R10). El MOTIVO importa: el motor actual lo descarta porque descarta todo Nivel 0, con el mismo puntaje que D1."},
+
+    {"id": "caso7_D1a", "tipo": "disco_nuevo",
+     "disco": {"set": 48, "slot": 4, "main": "Daño Crítico", "nivel": 6, "subs": [["Prob. Crítica", 2.4, 0], ["ATK%", 3.0, 0], ["Perforación", 18.0, 1], ["DEF", 15.0, 0]]},
+     "decision": "descartar",
+     "razon": "La cuarta línea salió muerta: 1 de cada 4 mejoras futuras se va a la basura (R15). En la práctica lo subiría igual para ver el final (R14)."},
+
+    {"id": "caso7_D1b", "tipo": "disco_nuevo",
+     "disco": {"set": 48, "slot": 4, "main": "Daño Crítico", "nivel": 6, "subs": [["Prob. Crítica", 4.8, 1], ["ATK%", 3.0, 0], ["Perforación", 9.0, 0], ["ATK", 19.0, 0]]},
+     "decision": "mejorar",
+     "razon": "Sigue subiendo: la cuarta línea es plana (a medias) y la mejora fue a CR."},
+
+    {"id": "caso8", "tipo": "comparar", "pj": "Ellen", "slot": 1,
+     "estado_pj": {"Prob. Crítica": 62.0, "Daño Crítico": 170.0, "ATK": 3350},
+     "build": {"4pc": 38, "2pc": null},
+     "opciones": {
+       "X": {"set": 38, "main": "HP", "nivel": 15, "subs": [["ATK%", 12.0, 3], ["ATK", 38.0, 1], ["Prob. Crítica", 4.8, 1], ["Perforación", 9.0, 0]]},
+       "Y": {"set": 38, "main": "HP", "nivel": 15, "subs": [["Prob. Crítica", 7.2, 2], ["Daño Crítico", 9.6, 1], ["ATK%", 6.0, 1], ["Perforación", 18.0, 1]]}},
+     "decision": "Y",
+     "razon": "Pasado el tope del rango el ATK rinde menos pero suma (R16); un crítico acertado da más DPS que más ATK: stats más homogéneos (R17).",
+     "necesita": "rangos objetivo del usuario sobre el ATK actual del PJ"}
+  ]
+}
