@@ -136,6 +136,11 @@
        "Y": {"set": 38, "main": "HP", "nivel": 15, "subs": [["Prob. Crítica", 7.2, 2], ["Daño Crítico", 9.6, 1], ["ATK%", 6.0, 1], ["Perforación", 18.0, 1]]}},
      "decision": "Y",
      "razon": "Pasado el tope del rango el ATK rinde menos pero suma (R16); un crítico acertado da más DPS que más ATK: stats más homogéneos (R17).",
-     "necesita": "rangos objetivo del usuario sobre el ATK actual del PJ"}
+     "necesita": "rangos objetivo del usuario sobre el ATK actual del PJ"},
+
+    {"id": "caso9", "tipo": "disco_nuevo",
+     "disco": {"set": 48, "slot": 4, "main": "Daño Crítico", "nivel": 0, "subs": [["Prob. Crítica", 2.4, 0], ["ATK%", 3.0, 0], ["Perforación", 9.0, 0], ["DEF", 15.0, 0]]},
+     "decision": "mejorar",
+     "razon": "Se mejora: 'se puede permitir uno muerto siempre y cuando las mejoras no apliquen a él'. Distinto de 7_D1a, donde la DEF la CREÓ la mejora del +3 (R15')."}
   ]
 }

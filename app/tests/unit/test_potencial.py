@@ -148,6 +148,58 @@ def test_una_linea_muerta_conocida_frena():
     assert rec.tipo == "descartar"
 
 
+def test_una_linea_muerta_de_origen_se_tolera():
+    """Caso 9: Nivel 0, cuatro líneas de entrada, una muerta. "Se puede permitir uno muerto
+    siempre y cuando las mejoras no apliquen a él": todavía no se gastó ninguna."""
+    d = _disco([("Prob. Crítica", 0), ("ATK%", 0), ("Perforación", 0), ("DEF", 0)], 0)
+    pot = potencial(d, DPS, DPS_ARCH, CTX)
+    assert pot.lineas_muertas == ["DEF"] and not pot.mejora_en_linea_muerta
+    assert _reco(d, [DPS]).tipo == "mejorar"
+
+
+def test_si_una_mejora_sube_la_linea_muerta_se_frena():
+    d = _disco([("Prob. Crítica", 0), ("ATK%", 0), ("Perforación", 0), ("DEF", 1)], 3)
+    assert potencial(d, DPS, DPS_ARCH, CTX).mejora_en_linea_muerta
+    assert _reco(d, [DPS]).tipo == "descartar"
+
+
+def test_si_la_mejora_CREO_la_linea_muerta_tambien_se_frena():
+    """Caso 7_D1a: Nivel 6 con una sola mejora repartida → arrancó con 3 líneas y la del +3 creó
+    la 4ª. Si esa 4ª es muerta, ya se gastó una mejora en ella."""
+    d = _disco([("Prob. Crítica", 0), ("ATK%", 0), ("Perforación", 1), ("DEF", 0)], 6)
+    assert potencial(d, DPS, DPS_ARCH, CTX).mejora_en_linea_muerta
+
+
+def test_la_misma_muerta_arriba_no_la_creo_una_mejora():
+    """Mismo disco, pero la DEF no es la última línea: la agregada fue la Perforación (útil).
+    Descansa en la premisa de que la línea agregada aparece al final."""
+    d = _disco([("Prob. Crítica", 0), ("DEF", 0), ("ATK%", 1), ("Perforación", 0)], 6)
+    assert not potencial(d, DPS, DPS_ARCH, CTX).mejora_en_linea_muerta
+
+
+def test_dos_lineas_muertas_se_descartan_aunque_lo_esperable_alcance():
+    """R13 (caso 6_D2): dos líneas basura, fuera. Hay que probarla AISLADA: con muertas que restan,
+    el valor esperado ya queda bajo y el disco se descarta igual, así que la regla nunca se pone a
+    prueba (un sabotaje que la apagaba pasaba en verde). Acá las dos muertas pesan exactamente 0
+    —no restan— y el resto es bueno: sin la regla, este disco se MEJORARÍA."""
+    sin_castigo = Archetype(
+        id=1, code="ATK_DPS",
+        substats_positivos={"Prob. Crítica": 1.0, "Daño Crítico": 1.0, "ATK%": 1.0, "ATK": 0.4,
+                            "Perforación": 0.7},
+        substats_perjudiciales={}, threshold_stock=0.7,
+        mains_4=["Prob. Crítica", "Daño Crítico", "ATK%"])
+    d = _disco([("Prob. Crítica", 0), ("ATK%", 0), ("HP", 0), ("DEF", 0)], 0)
+    assert potencial(d, DPS, sin_castigo, CTX).score_norm >= DPS.threshold_upgrade, \
+        "el ejemplo tiene que superar el umbral por sí solo, o no aísla la regla"
+
+    class _Solo(_Repos):
+        def get_by_id(self, _):
+            return sin_castigo
+
+    rec = recomendar(d, _Solo([DPS]), _Solo([sin_castigo]), _Solo([]), CTX)
+    assert rec.tipo == "descartar"
+
+
 def test_vale_el_mejor_rol_SIN_lineas_muertas():
     """Para el atacante la DEF es basura; para este aturdidor, no. Juzgado para la cuenta entera
     (R11), el disco sirve: se mejora para el aturdidor."""

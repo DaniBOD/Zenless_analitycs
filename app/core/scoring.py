@@ -128,6 +128,10 @@ class Potencial:
     score_norm: float
     lineas_muertas: list[str]           # líneas YA conocidas que a este PJ no le sirven (peso ≤ 0)
     cuarta_linea_supuesta: bool         # la 4ª se promedió con probabilidad uniforme (tentativo)
+    #: Ya se GASTÓ una mejora en una línea muerta: la subió, o la creó (la 4ª de un disco que
+    #: arrancó con 3). Caso 9 de Daniel: una muerta se tolera "siempre y cuando las mejoras no
+    #: apliquen a él"; cuando aplican, se frena (caso 7).
+    mejora_en_linea_muerta: bool = False
 
 
 def potencial(
@@ -167,11 +171,21 @@ def potencial(
     if por_mejora:
         raw += pendientes * fmean(por_mejora)
 
+    muertas = [s for s, _ in lineas if aporte_linea(s, 0, pos, neg, ctx) <= 0]
+    # ¿Arrancó con 3 líneas? Entonces una de las mejoras ya hechas CREÓ la 4ª, y se nota en la
+    # cuenta: tiene una mejora menos repartida que las hechas. PREMISA (no medida): la línea
+    # agregada es la ÚLTIMA en pantalla, que es el orden en que la lee el parser.
+    hechas = len(NIVELES_DE_MEJORA) - mejoras_pendientes(disc.nivel or 0)
+    agregada = (lineas[3][0] if len(lineas) == 4 and hechas >= 1
+                and sum(m for _, m in lineas) == hechas - 1 else None)
+    gastada = any(m > 0 for s, m in lineas if s in muertas) or agregada in muertas
+
     return Potencial(
         score_raw=raw,
         score_norm=max(0.0, min(1.0, raw / ctx.score_maximo_teorico(archetype))),
-        lineas_muertas=[s for s, _ in lineas if aporte_linea(s, 0, pos, neg, ctx) <= 0],
+        lineas_muertas=muertas,
         cuarta_linea_supuesta=supuesta,
+        mejora_en_linea_muerta=gastada,
     )
 
 

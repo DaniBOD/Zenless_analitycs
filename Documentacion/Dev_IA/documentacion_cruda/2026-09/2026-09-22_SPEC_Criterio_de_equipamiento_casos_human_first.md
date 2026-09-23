@@ -350,3 +350,22 @@ caso marcado que empieza a pasar, dejar de exigir el motivo, una marca con el id
 - ❓ **Para confirmar con Daniel:** un Nivel **0** con 4 líneas de las cuales **una** es muerta. Hoy
   se descarta, porque se generalizó la R15 (que él dijo a mitad de camino, Nivel 6). No lo
   preguntamos.
+
+## Caso 9 — Nivel 0 con cuatro líneas, UNA muerta
+
+**Decisión: MEJORAR.** "Se puede permitir uno muerto siempre y cuando las mejoras no apliquen a
+él."
+
+Lectura, y cómo encaja con el caso 7:
+- **R15' · una línea muerta se tolera; se frena cuando se le GASTA una mejora**, sea la que la sube
+  (+1) o la que la creó (la 4ª línea de un disco que arrancó con 3). En 7_D1a la DEF la creó la
+  mejora del +3, así que ya se había gastado una mejora en ella → frenar. En el caso 9 viene de
+  origen → mejorar.
+- **R13 sigue: dos muertas → descartar.**
+- Cómo se sabe si una mejora creó la 4ª línea: si hay una mejora menos repartida que las hechas,
+  el disco arrancó con 3. **Premisa NO medida:** la línea agregada es la ÚLTIMA en pantalla (el
+  orden en que la lee el parser).
+- ⚠️ Un sabotaje que apagaba R13 **pasaba en verde**: en los ejemplos las muertas restan, el valor
+  esperado queda bajo y el disco se descarta igual. La regla estaba escrita y no se ejercía. Ahora
+  hay un test con dos muertas de peso exactamente 0 en un disco que por lo demás se mejoraría.
+- Casos: **11 de 12** (el caso 9 entra al fixture y pasa). Sabotajes 4/4 en rojo.

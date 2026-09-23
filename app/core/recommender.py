@@ -239,10 +239,11 @@ def _bonos_2pc_desde(disc_set_repo) -> Callable[[int], tuple[str, float] | None]
 def _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archetypes):
     """Un disco sin terminar: ¿vale la pena invertirle? (casos 6 y 7 de Daniel)
 
-    Se evalúa para todos los roles y vale el mejor que NO tenga líneas muertas (R11). Una línea
-    muerta conocida descarta (R13, R15): Daniel igual sube todo "para ver el valor final" (R14),
-    pero la RECOMENDACIÓN es frenar. Sin líneas muertas, MEJORAR si lo esperable llega al umbral de
-    mejora del PJ. Un disco sin terminar no se equipa ni se reserva: primero se sube.
+    Se evalúa para todos los roles y vale el mejor que sirva (R11). No sirve si tiene DOS líneas
+    muertas (R13) o si ya se gastó una mejora en una muerta (caso 7; caso 9: "se puede permitir uno
+    muerto siempre y cuando las mejoras no apliquen a él"). Daniel igual sube todo "para ver el
+    valor final" (R14), pero la RECOMENDACIÓN es frenar. Si sirve, MEJORAR cuando lo esperable
+    llega al umbral de mejora del PJ. Un disco sin terminar no se equipa ni se reserva.
     """
     evaluados = []
     for agent, sb in candidatos:
@@ -251,7 +252,8 @@ def _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archet
     evaluados.sort(key=lambda t: t[2].score_norm, reverse=True)
     top = [(a, sb) for a, sb, _ in evaluados][:5]
 
-    sanos = [t for t in evaluados if not t[2].lineas_muertas]
+    sanos = [t for t in evaluados
+             if len(t[2].lineas_muertas) <= 1 and not t[2].mejora_en_linea_muerta]
     if sanos:
         agent, sb, pot = sanos[0]
         if pot.score_norm >= agent.threshold_upgrade:
@@ -308,5 +310,6 @@ def recommendation_to_json(rec: Recommendation) -> str:
             "score_norm": round(rec.potencial.score_norm, 4),
             "lineas_muertas": rec.potencial.lineas_muertas,
             "cuarta_linea_supuesta": rec.potencial.cuarta_linea_supuesta,
+            "mejora_en_linea_muerta": rec.potencial.mejora_en_linea_muerta,
         },
     }, ensure_ascii=False)
