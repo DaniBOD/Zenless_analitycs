@@ -58,6 +58,50 @@ ALL_CANONICAL: frozenset[str] = (
     | frozenset().union(*CANONICAL_MAINS_VARIABLE.values())
 )
 
+
+# ---------------------------------------------------------------------------
+# Cuánto da UNA mejora de cada secundario (disco rango S)
+# ---------------------------------------------------------------------------
+# MEDIDO, no copiado: `valor / (1 + mejoras)` sobre los 386 discos del inventario el 2026-09-22.
+# Unánime en cada stat (Prob. Crítica 253/253, Daño Crítico 203/203, ATK% 181/181, …); la única
+# excepción fue un ATK de 9,5 en 152 lecturas, que es un disco de otro rango o una mala lectura.
+# Lo usa el scoring para pasar un bono de set a "mejoras equivalentes" (R7: el 2pc son stats).
+VALOR_POR_MEJORA: dict[str, float] = {
+    "Prob. Crítica": 2.4,
+    "Daño Crítico": 4.8,
+    "ATK%": 3.0,
+    "HP%": 3.0,
+    "DEF%": 4.8,
+    "Perforación": 9.0,
+    "Maestría de Anomalía": 9.0,
+    "ATK": 19.0,
+    "HP": 112.0,
+    "DEF": 15.0,
+}
+
+# Bono de 2 piezas (como lo guarda `disc_sets.bonus_2p_stat`, en inglés) → secundario canónico.
+# SÓLO los que son un secundario: un 2pc de Daño Hielo, Daño de Ataque Básico, Recarga o Impacto no
+# tiene "mejoras" a las que convertirse, y no se inventa un valor (RNF-02): queda sin modelar.
+_BONO_2PC_A_SUBSTAT: dict[str, str] = {
+    "CRIT Rate": "Prob. Crítica",
+    "CRIT DMG": "Daño Crítico",
+    "ATK": "ATK%",
+    "HP": "HP%",
+    "DEF": "DEF%",
+    "Anomaly Proficiency": "Maestría de Anomalía",
+}
+
+
+def bono_2pc_como_substat(stat_en: str | None, valor: str | None) -> tuple[str, float] | None:
+    """`('CRIT Rate', '+8%')` → `('Prob. Crítica', 8.0)`. `None` si el bono no es un secundario."""
+    canon = _BONO_2PC_A_SUBSTAT.get((stat_en or "").strip())
+    if canon is None or not valor:
+        return None
+    try:
+        return canon, float(valor.strip().lstrip("+").rstrip("%").strip())
+    except ValueError:
+        return None
+
 # ---------------------------------------------------------------------------
 # Mapa alias → canónico
 # Origen: audit inventory_discs_audit_20260504.md

@@ -281,3 +281,26 @@ caso marcado que empieza a pasar, dejar de exigir el motivo, una marca con el id
   sólo lo aceptan los disruptores y los defensores, y para ellos los secundarios de D3 valen poco.
 - Los negativos NO se tocaron (E3: ningún caso los discute todavía).
 - Sabotajes 5/5 en rojo. Siguen pendientes 3 (balance del crítico), 4 (4pc) y 6_D1 (potencial).
+
+### Paso 3 — la decisión compara, y el set es del build → **9 de 11**
+
+- `evaluar_cambio()`: cuánto mejora el build de un PJ si en ese slot se pone el disco nuevo =
+  (disco nuevo − disco actual) + (bonos de set del build después − antes). Un slot vacío vale 0,
+  y de ahí sale solo el "relleno temporal" (R10).
+- **El set se cuenta una vez, en el build**: el disco solo ya no cobra su set (antes el set entraba
+  como atributo del disco, por arquetipo).
+- **2pc = stats (R7)**: el bono se pasa a mejoras equivalentes con el **valor por mejora MEDIDO**
+  sobre los 386 discos del inventario (unánime por stat: CR 2,4 en 253/253, DC 4,8 en 203/203, …;
+  un test lo vuelve a medir en sólo lectura). Los 2pc que no son un secundario (Daño Hielo, Daño
+  de Ataque Básico, Recarga, Impacto) no suman y **se anotan**: no se inventa un valor.
+- **4pc (R5)**: tenerlo vale `VALOR_4PC_FRACCION = 0,5` del mejor disco posible para ese PJ, así
+  que romperlo cuesta eso y completarlo suma eso. Calibrado con UN caso (el 4: hacía falta > 0,42);
+  tentativo hasta que haya más.
+- `recomendar(..., builds=)`: con builds y un disco LIBRE en Nivel 15 → EQUIPAR a quien más mejora
+  (con el movimiento y su delta), RESERVA si es bueno para su rol pero no le gana a nadie, si no
+  DESCARTAR. Un disco que lleva otro PJ sigue por el camino viejo hasta el paso 7 ("A no pierde").
+  **Ningún llamador lo usa todavía**: se cablean en los pasos 7 y 8.
+- Sabotajes 8/8 en rojo. Pendientes: 3 (balance del crítico) y 6_D1 (potencial).
+- **Orden ajustado: 3 → 5 → 4 → 6 → 7 → 8.** Si el potencial (paso 4) entra antes que los ajustes
+  de Daniel (paso 5), D3 vuelve a salir "mejorar" para los disruptores, porque el default de la
+  DB todavía acepta PV % en su slot 4.

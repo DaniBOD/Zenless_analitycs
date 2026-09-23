@@ -29,9 +29,9 @@ from pathlib import Path
 
 import pytest
 
-from app.core.recommender import recomendar
+from app.core.recommender import evaluar_cambio, recomendar
 from app.core.score_normalizer import ScoringContext
-from app.core.scoring import score_disco
+from app.core.stats_vocab import VALOR_POR_MEJORA
 from app.db.repositories import Agent, Archetype, Disc, DiscSetArchetype
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "criterio_equipar" / "casos.json"
@@ -45,8 +45,6 @@ CASOS = DATOS["casos"]
 NO_REPRODUCE_TODAVIA: dict[str, str] = {
     "caso3": "empate exacto: el motor pesa CR y DC igual, no sabe que Ellen ya tiene DC de sobra "
              "(falta el balance del crítico con los stats del PJ)",
-    "caso4": "rompe el 4pc: recomendar() no conoce el 4pc del PJ (sólo el arquetipo del set, 0,7) "
-             "y castiga la línea de PV del actual",
     "caso6_D1": "descarta un Nivel 0 bueno: lo normaliza contra el máximo de un +15, no evalúa "
                 "potencial",
 }
@@ -133,36 +131,57 @@ def _roster() -> list[Agent]:
 
 
 # ---------------------------------------------------------------------------
-# Adaptador del MOTOR. Hoy: el motor de pesos del Hito 2.2, leído de la forma más favorable.
-# Los pasos siguientes de la etapa 1 cambian lo que hay DETRÁS de estas tres funciones, no el
+# Adaptador del MOTOR. Desde el paso 3 las comparaciones pasan por `evaluar_cambio()` (el disco
+# contra el que el PJ ya tiene, con el set medido en el build); los discos nuevos siguen por
+# `recomendar()`. Los pasos siguientes cambian lo que hay DETRÁS de estas tres funciones, no el
 # contrato de los casos.
 # ---------------------------------------------------------------------------
 
 CTX = ScoringContext()
 
 
-def _puntaje(d: dict, pj: str, slot: int) -> float:
-    """Igual que `recomendar()`: sin el 4pc/2pc del PJ, el set sólo cuenta por su arquetipo."""
-    agente = _pj(pj)
-    disco = _disco(d, slot=slot)
-    return score_disco(disco, agente, ARQUETIPOS[agente.arquetipo_primario_code], CTX,
-                       disc_set_archetypes=_set_arquetipos(disco.set_id)).score_norm
+def _bono_2pc(set_id: int) -> tuple[str, float] | None:
+    b = DATOS["sets_2pc"].get(str(set_id))
+    return None if b is None or b["stat"] not in VALOR_POR_MEJORA else (b["stat"], b["valor"])
+
+
+def _build(caso: dict, en_el_slot: dict) -> dict[int, Disc]:
+    """El build que declara el caso ("4pc": set, "2pc": set), con `en_el_slot` en su slot. Los
+    demás slots llevan discos SIN líneas: sólo aportan su set, que es lo que el caso declara."""
+    slot = caso["slot"]
+    build = {slot: _disco(en_el_slot, disc_id=slot, slot=slot)}
+    piezas = [(caso["build"].get("4pc"), 4), (caso["build"].get("2pc"), 2)]
+    libres = [s for s in range(1, 7) if s != slot]
+    for set_id, cuantas in piezas:
+        if set_id is None:
+            continue
+        faltan = cuantas - (1 if en_el_slot["set"] == set_id else 0)
+        for s in libres[:faltan]:
+            build[s] = _disco({"set": set_id, "main": None, "nivel": 15, "subs": []}, disc_id=s, slot=s)
+        libres = libres[faltan:]
+    for s in libres:
+        # Un set distinto por slot (negativo, no existe): relleno que no arma ningún 2pc de mentira.
+        build[s] = _disco({"set": -s, "main": None, "nivel": 15, "subs": []}, disc_id=s, slot=s)
+    return build
+
+
+def _cambio(caso: dict, actual: dict, nuevo: dict):
+    agente = _pj(caso["pj"])
+    return evaluar_cambio(agente, ARQUETIPOS[agente.arquetipo_primario_code], _build(caso, actual),
+                          _disco(nuevo, disc_id=99, slot=caso["slot"]), CTX, _bono_2pc)
 
 
 def decidir_comparacion(caso: dict) -> str:
-    """El motor actual no compara: puntúa cada disco solo. Se le concede el orden de sus
-    puntajes como 'su' elección. Empate exacto = no eligió."""
-    puntos = {k: _puntaje(d, caso["pj"], caso["slot"]) for k, d in caso["opciones"].items()}
-    orden = sorted(puntos.items(), key=lambda kv: kv[1], reverse=True)
-    if len(orden) > 1 and orden[0][1] == orden[1][1]:
+    """Dos opciones para el mismo slot del mismo build: la segunda contra la primera."""
+    (k1, d1), (k2, d2) = caso["opciones"].items()
+    delta = _cambio(caso, d1, d2).delta
+    if delta == 0:
         return "empate"
-    return orden[0][0]
+    return k2 if delta > 0 else k1
 
 
 def decidir_cambio(caso: dict) -> str:
-    actual = _puntaje(caso["actual"], caso["pj"], caso["slot"])
-    nuevo = _puntaje(caso["nuevo"], caso["pj"], caso["slot"])
-    return "cambiar" if nuevo > actual else "mantener"
+    return "cambiar" if _cambio(caso, caso["actual"], caso["nuevo"]).delta > 0 else "mantener"
 
 
 def decidir_disco_nuevo(caso: dict) -> tuple[str, float]:

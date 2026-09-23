@@ -13,7 +13,11 @@ if TYPE_CHECKING:
     from app.core.score_normalizer import ScoringContext
     from app.db.repositories import Agent, AgentRepo, ArchetypeRepo, Disc, DiscSetRepo
 
-from app.core.scoring import score_disco
+from collections import Counter
+from typing import Callable
+
+from app.core.scoring import principal_valido, score_disco
+from app.core.stats_vocab import VALOR_POR_MEJORA, bono_2pc_como_substat
 
 
 RECOMENDACIONES = ("equipar", "mejorar", "reserva", "descartar")
@@ -27,6 +31,99 @@ class Recommendation:
     score_norm: float
     top_candidatos: list[tuple["Agent", "ScoreBreakdown"]] = field(default_factory=list)
     desglose_top: "ScoreBreakdown | None" = None
+    #: Sólo en la decisión comparativa: a quién mejora el disco, y cuánto.
+    movimiento: "Cambio | None" = None
+
+
+# ---------------------------------------------------------------------------
+# Decisión COMPARATIVA (etapa 1, paso 3 — 2026-09-22)
+# ---------------------------------------------------------------------------
+# Las 8 respuestas de Daniel fueron comparativas ("¿cuál le equipás?", "¿le gana al que tiene?"),
+# y el recomendador decidía por un umbral absoluto sin mirar el slot del PJ. Acá el disco se mide
+# contra el que el PJ YA lleva en ese slot, y el set se mide en el BUILD, no en el disco: un set
+# sólo vale algo cuando junta 2 o 4 piezas.
+
+#: Cuánto vale TENER el 4pc activo, como fracción del mejor disco posible para ese PJ. R5: "el 4pc
+#: no se rompe salvo que sean secundarios excelentes, y sería muy puntual". Calibrado con el caso 4
+#: (secundarios +3,5 mejores y Daniel NO rompe: hace falta > 0,42). Con UN solo caso esto es
+#: tentativo: cada caso nuevo de 4pc lo ajusta.
+VALOR_4PC_FRACCION = 0.5
+
+
+@dataclass
+class Cambio:
+    """Qué pasa con el build de un PJ si en `slot` se pone el disco nuevo."""
+    agente_id: int
+    agente_nombre: str
+    slot: int
+    delta: float                    # > 0: el PJ mejora
+    delta_disco: float              # sólo el disco contra el disco
+    delta_sets: float               # lo que se gana o pierde en bonos de set
+    rompe_4pc: bool = False
+    completa_4pc: bool = False
+    notas: list[str] = field(default_factory=list)
+
+
+def _pesos_pj(agent: "Agent", arch) -> dict[str, float]:
+    """Los mismos pesos que usa `score_disco`: los del PJ, o los de su arquetipo."""
+    return agent.substat_preferences if agent.substat_preferences else arch.substats_positivos
+
+
+def valor_disco(disc: "Disc", agent: "Agent", arch, ctx: "ScoringContext") -> float:
+    """Lo que el disco aporta POR SÍ MISMO al PJ: líneas, principal y nivel. Sin el set, que es
+    del build (si el set entrara acá también, se contaría dos veces)."""
+    return score_disco(disc, agent, arch, ctx, disc_set_archetypes=[]).score_raw
+
+
+def _mejor_disco_posible(pesos: dict[str, float]) -> float:
+    positivos = sorted((p for p in pesos.values() if p > 0), reverse=True)[:4]
+    return sum(positivos) + 5 * (positivos[0] if positivos else 0.0)
+
+
+def valor_sets(
+    conteo: Counter, agent: "Agent", arch, bonos_2pc: Callable[[int], tuple[str, float] | None],
+) -> tuple[float, list[str]]:
+    """Lo que valen los bonos de set de un build: cada 2pc como sus stats (R7), y el 4pc como una
+    fracción del mejor disco posible (R5). Un 2pc que no es un secundario no suma y se ANOTA."""
+    pesos = _pesos_pj(agent, arch)
+    total, notas = 0.0, []
+    for set_id, piezas in conteo.items():
+        if set_id is None or piezas < 2:
+            continue
+        bono = bonos_2pc(set_id)
+        if bono is None:
+            notas.append(f"2pc del set {set_id} sin modelar (no es un secundario)")
+        else:
+            stat, valor = bono
+            total += valor / VALOR_POR_MEJORA[stat] * max(pesos.get(stat, 0.0), 0.0)
+        if piezas >= 4:
+            total += VALOR_4PC_FRACCION * _mejor_disco_posible(pesos)
+    return total, notas
+
+
+def evaluar_cambio(
+    agent: "Agent", arch, build: dict[int, "Disc"], nuevo: "Disc", ctx: "ScoringContext",
+    bonos_2pc: Callable[[int], tuple[str, float] | None],
+) -> Cambio:
+    """¿Cuánto mejora el build del PJ si en el slot del disco nuevo se pone el disco nuevo?"""
+    actual = build.get(nuevo.slot)
+    v_nuevo = valor_disco(nuevo, agent, arch, ctx)
+    v_actual = valor_disco(actual, agent, arch, ctx) if actual is not None else 0.0
+
+    antes = Counter(d.set_id for d in build.values())
+    despues = Counter(d.set_id for s, d in build.items() if s != nuevo.slot)
+    despues[nuevo.set_id] += 1
+    s_antes, notas = valor_sets(antes, agent, arch, bonos_2pc)
+    s_despues, _ = valor_sets(despues, agent, arch, bonos_2pc)
+
+    d_disco, d_sets = v_nuevo - v_actual, s_despues - s_antes
+    return Cambio(
+        agente_id=agent.id, agente_nombre=agent.nombre, slot=nuevo.slot,
+        delta=d_disco + d_sets, delta_disco=d_disco, delta_sets=d_sets,
+        rompe_4pc=any(n >= 4 and despues[s] < 4 for s, n in antes.items()),
+        completa_4pc=any(n >= 4 and antes[s] < 4 for s, n in despues.items()),
+        notas=notas,
+    )
 
 
 def recomendar(
@@ -35,10 +132,15 @@ def recomendar(
     archetype_repo: "ArchetypeRepo",
     disc_set_repo: "DiscSetRepo",
     ctx: "ScoringContext",
+    builds: "Callable[[int], dict[int, Disc]] | None" = None,
 ) -> Recommendation:
     """
-    Evalúa el disco contra los 46 agentes del roster.
-    Devuelve la mejor recomendación.
+    Evalúa el disco contra los agentes del roster y devuelve la mejor recomendación.
+
+    Con `builds` (agente_id → {slot: disco equipado}) y un disco LIBRE en Nivel 15 la decisión es
+    COMPARATIVA: EQUIPAR a quien más mejora el build, RESERVA si es bueno para su rol pero no le
+    gana a nadie, DESCARTAR si no. Sin `builds`, o para un disco que otro PJ lleva puesto (mover
+    uno ajeno es el paso 7: "sólo si el que lo tiene no pierde"), sigue el umbral absoluto de antes.
     """
     disc_archetypes = disc_set_repo.get_archetypes_for_set(disc.set_id)
 
@@ -62,6 +164,10 @@ def recomendar(
 
     if not candidatos:
         return Recommendation("descartar", None, None, 0.0)
+
+    libre = not (disc.equipado and disc.agente_asignado)
+    if builds is not None and disc.nivel == 15 and libre:
+        return _recomendar_comparando(disc, candidatos, archetype_repo, disc_set_repo, ctx, builds)
 
     top_agent, top_sb = candidatos[0]
 
@@ -112,6 +218,42 @@ def recomendar(
     )
 
 
+def _bonos_2pc_desde(disc_set_repo) -> Callable[[int], tuple[str, float] | None]:
+    get_bonus = getattr(disc_set_repo, "get_bonus", None)
+    if get_bonus is None:
+        return lambda set_id: None
+    cache: dict[int, tuple[str, float] | None] = {}
+
+    def bono(set_id: int) -> tuple[str, float] | None:
+        if set_id not in cache:
+            stat, valor, _ = get_bonus(set_id)
+            cache[set_id] = bono_2pc_como_substat(stat, valor)
+        return cache[set_id]
+    return bono
+
+
+def _recomendar_comparando(disc, candidatos, archetype_repo, disc_set_repo, ctx, builds):
+    bonos = _bonos_2pc_desde(disc_set_repo)
+    mejor: tuple["Agent", "ScoreBreakdown", Cambio] | None = None
+    for agent, sb in candidatos:
+        arch = archetype_repo.get_by_id(agent.arquetipo_primario_id)
+        cambio = evaluar_cambio(agent, arch, builds(agent.id), disc, ctx, bonos)
+        if cambio.delta > 0 and (mejor is None or cambio.delta > mejor[2].delta):
+            mejor = (agent, sb, cambio)
+    if mejor is not None:
+        agent, sb, cambio = mejor
+        return Recommendation("equipar", agent.id, agent.nombre, sb.score_norm,
+                              top_candidatos=candidatos[:5], desglose_top=sb, movimiento=cambio)
+
+    # No le gana a nadie hoy. ¿Es bueno para su rol? Entonces se guarda para un PJ futuro (Daniel:
+    # "un disco perfecto, pero no para la actualidad sino para el futuro").
+    top_agent, top_sb = candidatos[0]
+    arch = archetype_repo.get_by_id(top_agent.arquetipo_primario_id)
+    tipo = "reserva" if top_sb.score_norm >= arch.threshold_stock else "descartar"
+    return Recommendation(tipo, None, None, top_sb.score_norm,
+                          top_candidatos=candidatos[:5], desglose_top=top_sb)
+
+
 def recommendation_to_json(rec: Recommendation) -> str:
     return json.dumps({
         "tipo": rec.tipo,
@@ -122,4 +264,14 @@ def recommendation_to_json(rec: Recommendation) -> str:
             {"nombre": a.nombre, "score": round(sb.score_norm, 4)}
             for a, sb in rec.top_candidatos
         ],
+        "movimiento": None if rec.movimiento is None else {
+            "agente_id": rec.movimiento.agente_id,
+            "slot": rec.movimiento.slot,
+            "delta": round(rec.movimiento.delta, 4),
+            "delta_disco": round(rec.movimiento.delta_disco, 4),
+            "delta_sets": round(rec.movimiento.delta_sets, 4),
+            "rompe_4pc": rec.movimiento.rompe_4pc,
+            "completa_4pc": rec.movimiento.completa_4pc,
+            "notas": rec.movimiento.notas,
+        },
     }, ensure_ascii=False)
