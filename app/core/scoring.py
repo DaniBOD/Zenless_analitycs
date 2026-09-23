@@ -77,10 +77,67 @@ def _aporte_neg(peso: float, mejoras: int, ctx: "ScoringContext") -> float:
     return -abs(peso) * (1.0 + mejoras * ctx.roll_mult_neg)
 
 
+#: Stat de un rango (vocabulario de `agents` y `agent_thresholds`) → las líneas de disco que lo mueven.
+RANGO_A_LINEAS: dict[str, tuple[str, ...]] = {
+    "ataque": ("ATK%", "ATK"),
+    "pv": ("HP%", "HP"),
+    "defensa": ("DEF%", "DEF"),
+    "prob_critico": ("Prob. Crítica",),
+    "dano_critico": ("Daño Crítico",),
+    "maestria_anomalia": ("Maestría de Anomalía",),
+}
+
+
+def factor_rango(actual: float, techo: float | None) -> float:
+    """Cuánto vale sumar a un stat según dónde está respecto de su techo.
+
+    R16 (caso 8): pasado el tope "rinde menos pero sigue sumando" → `techo / actual`, que baja
+    cuanto más se pasa y nunca llega a 0. Dentro del rango o por debajo, 1: los bordes son blandos
+    (caso 1: 58 % contra un piso de 60 "es similar"). La curva es TENTATIVA: ningún caso fija
+    todavía cuánto rinde menos, sólo que rinde menos.
+    """
+    if techo is None or actual <= techo:
+        return 1.0
+    return techo / actual
+
+
+def ajustar_por_estado(pos: dict[str, float], agent: "Agent") -> dict[str, float]:
+    """Los pesos positivos corregidos por DÓNDE ESTÁ el PJ: balance del crítico y rangos.
+
+    Balance (caso 3, R4): el multiplicador medio del crítico es 1 + CR·DC; una mejora de CR vale
+    `2,4 % · DC` y una de DC `4,8 % · CR`. Se reparte el MISMO peso total de los dos según esa
+    proporción: con DC de sobra la CR pesa más, y con CR casi al 100 % pesa el DC. Arriba del 100 %
+    la CR ya no suma nada. Sin CR y DC del PJ, no se toca (y el repositorio lo avisa).
+    """
+    from app.core.stats_vocab import VALOR_POR_MEJORA
+
+    stats = getattr(agent, "stats", None) or {}
+    rangos = getattr(agent, "rangos", None) or {}
+    out = dict(pos)
+    cr, dc = stats.get("prob_critico"), stats.get("dano_critico")
+    if cr and dc and out.get("Prob. Crítica", 0) > 0 and out.get("Daño Crítico", 0) > 0:
+        medio = (out["Prob. Crítica"] + out["Daño Crítico"]) / 2
+        m_cr = 0.0 if cr >= 100 else VALOR_POR_MEJORA["Prob. Crítica"] * dc
+        m_dc = VALOR_POR_MEJORA["Daño Crítico"] * cr
+        out["Prob. Crítica"] = medio * 2 * m_cr / (m_cr + m_dc)
+        out["Daño Crítico"] = medio * 2 * m_dc / (m_cr + m_dc)
+    for stat, (_piso, techo) in rangos.items():
+        actual = stats.get(stat)
+        if actual is None:
+            continue
+        f = factor_rango(actual, techo)
+        for linea in RANGO_A_LINEAS.get(stat, ()):
+            if out.get(linea, 0) > 0:
+                out[linea] *= f
+    return out
+
+
 def _pesos(agent: "Agent", archetype: "Archetype") -> tuple[dict[str, float], dict[str, float]]:
-    """Los pesos que usa `score_disco`: los del PJ (o los del arquetipo) y los perjudiciales."""
+    """Los pesos de TODO el motor: los del PJ (o los de su arquetipo), corregidos por el estado del
+    PJ, y los perjudiciales. La usan `score_disco`, `potencial` y los bonos de set del recomendador:
+    una sola autoridad (B1)."""
     pos = agent.substat_preferences if agent.substat_preferences else archetype.substats_positivos
-    return pos, archetype.substats_perjudiciales
+    return ajustar_por_estado(pos, agent), archetype.substats_perjudiciales
 
 
 def aporte_linea(stat: str, mejoras: int, pesos_pos: dict[str, float],
@@ -234,8 +291,7 @@ def score_disco(
         score += main_score
 
     # 3. Substats — usar preferencias del agente o fallback al arquetipo
-    pesos_pos = agent.substat_preferences if agent.substat_preferences else archetype.substats_positivos
-    pesos_neg = archetype.substats_perjudiciales
+    pesos_pos, pesos_neg = _pesos(agent, archetype)
 
     subs_pos: list[SubstatContrib] = []
     subs_neg: list[SubstatContrib] = []

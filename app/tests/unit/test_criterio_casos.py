@@ -42,11 +42,11 @@ CASOS = DATOS["casos"]
 # ---------------------------------------------------------------------------
 # Lo que el motor ACTUAL todavía no reproduce. Medido el 2026-09-22 con este mismo test.
 # Cada paso de la etapa 1 que arregle uno tiene que sacarlo de acá (el xfail es estricto).
+#
+# VACÍO desde el paso 6: el motor reproduce los 12 casos (línea de base: 7 de 11). Un caso nuevo
+# de Daniel que el motor todavía no reproduzca entra acá, con la razón medida.
 # ---------------------------------------------------------------------------
-NO_REPRODUCE_TODAVIA: dict[str, str] = {
-    "caso3": "empate exacto: el motor pesa CR y DC igual, no sabe que Ellen ya tiene DC de sobra "
-             "(falta el balance del crítico con los stats del PJ)",
-}
+NO_REPRODUCE_TODAVIA: dict[str, str] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -90,12 +90,16 @@ def _set_arquetipos(set_id: int) -> list[DiscSetArchetype]:
     ]
 
 
-def _pj(nombre: str, agent_id: int = 100) -> Agent:
+def _pj(nombre: str, agent_id: int = 100, estado: dict | None = None) -> Agent:
+    """El PJ del caso, con su estado (stats actuales) y sus rangos: el default y los ajustes de
+    Daniel encima, igual que en el repositorio."""
     p = DATOS["pjs"][nombre]
     arq = ARQUETIPOS[p["arquetipo"]]
+    rangos = {s: tuple(r) for s, r in p.get("rangos_default", {}).items()}
+    rangos.update({s: tuple(r) for s, r in DATOS["ajustes_usuario"]["rangos"].get(nombre, {}).items()})
     return Agent(id=agent_id, nombre=nombre, arquetipo_primario_id=arq.id,
                  arquetipo_primario_code=arq.code, threshold_equip=0.75, threshold_upgrade=0.50,
-                 substat_preferences=dict(p["pesos"]))
+                 substat_preferences=dict(p["pesos"]), rangos=rangos, stats=dict(estado or {}))
 
 
 # Los tres repos que pide `recomendar()`, servidos desde el fixture en vez de la DB.
@@ -169,7 +173,7 @@ def _build(caso: dict, en_el_slot: dict) -> dict[int, Disc]:
 
 
 def _cambio(caso: dict, actual: dict, nuevo: dict):
-    agente = _pj(caso["pj"])
+    agente = _pj(caso["pj"], estado=caso.get("estado_pj"))
     return evaluar_cambio(agente, ARQUETIPOS[agente.arquetipo_primario_code], _build(caso, actual),
                           _disco(nuevo, disc_id=99, slot=caso["slot"]), CTX, _bono_2pc)
 

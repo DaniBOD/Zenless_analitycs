@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 from collections import Counter
 from typing import Callable
 
-from app.core.scoring import Potencial, potencial, principal_valido, score_disco
+from app.core.scoring import Potencial, _pesos, potencial, principal_valido, score_disco
 from app.core.stats_vocab import VALOR_POR_MEJORA, bono_2pc_como_substat
 
 
@@ -67,8 +67,9 @@ class Cambio:
 
 
 def _pesos_pj(agent: "Agent", arch) -> dict[str, float]:
-    """Los mismos pesos que usa `score_disco`: los del PJ, o los de su arquetipo."""
-    return agent.substat_preferences if agent.substat_preferences else arch.substats_positivos
+    """Los MISMOS pesos que usa `score_disco` — con el estado del PJ adentro. Tenía su propia copia
+    y un bono de set se valuaba sin el balance del crítico que sí veía el disco (B1)."""
+    return _pesos(agent, arch)[0]
 
 
 def valor_disco(disc: "Disc", agent: "Agent", arch, ctx: "ScoringContext") -> float:

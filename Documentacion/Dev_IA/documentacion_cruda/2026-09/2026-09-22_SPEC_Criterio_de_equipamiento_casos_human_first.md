@@ -369,3 +369,22 @@ Lectura, y cómo encaja con el caso 7:
   esperado queda bajo y el disco se descarta igual. La regla estaba escrita y no se ejercía. Ahora
   hay un test con dos muertas de peso exactamente 0 en un disco que por lo demás se mejoraría.
 - Casos: **11 de 12** (el caso 9 entra al fixture y pasa). Sabotajes 4/4 en rojo.
+
+### Paso 6 — el estado del PJ entra al peso: balance del crítico y rangos → **12 de 12**
+
+- **Balance del crítico** (caso 3, R4): el multiplicador medio es 1 + CR·DC, así que una mejora
+  de CR vale 2,4 %·DC y una de DC 4,8 %·CR. Se reparte el MISMO peso total de los dos según esa
+  proporción: cambia el balance, no la escala. Pasado el 100 % la CR no suma. Sólo necesita CR y DC
+  actuales, no la base de ATK.
+- **Rangos** (R16): pasado el techo, factor `techo / actual`: rinde menos, nunca 0. Dentro o por
+  debajo, 1 (bordes blandos, caso 1). ⚠️ **Ningún caso calibra la curva**: el caso 8 pasa con o sin
+  ella. Sólo está fijada la DIRECCIÓN; la magnitud es tentativa.
+- **Una sola función de pesos** para todo el motor (`scoring._pesos`): `score_disco`, `potencial` y
+  los bonos de set del recomendador, que tenía su propia copia y valuaba un 2pc de CR sin el balance
+  que sí veía el disco (B1).
+- `Agent.stats` sale de las columnas de `agents` que llena S18. **Hoy la DB los tiene en 1 de 52
+  PJs** (Claret: CR 95,2 / DC 93,2), así que en la app real el balance y los rangos casi no actúan
+  todavía. Sin stats, pesos fijos, y el repositorio lo dice UNA vez con el número.
+- Los casos llevan el estado del PJ con el vocabulario de la DB (`prob_critico`, `dano_critico`,
+  `ataque`) y los rangos de Ellen: el default de Prydwen con el ajuste de Daniel encima.
+- **Tus casos: 12 de 12.** Ya no queda ningún `xfail`. Sabotajes 9/9 en rojo.

@@ -41,12 +41,13 @@
 
   "ajustes_usuario": {
     "arquetipos": {"HP_DISRUPT": {"mains_4": ["Prob. Crítica", "Daño Crítico"]}},
-    "rangos": {"Ellen": {"ATK": [3000, 3200]}}
+    "rangos": {"Ellen": {"ataque": [3000, 3200]}}
   },
 
   "pjs": {
     "Ellen": {"arquetipo": "ATK_DPS",
-              "pesos": {"Prob. Crítica": 1.0, "Daño Crítico": 1.0, "ATK%": 0.8, "Perforación": 0.5, "ATK": 0.4, "HP%": -0.4, "DEF%": -0.6}}
+              "pesos": {"Prob. Crítica": 1.0, "Daño Crítico": 1.0, "ATK%": 0.8, "Perforación": 0.5, "ATK": 0.4, "HP%": -0.4, "DEF%": -0.6},
+              "rangos_default": {"prob_critico": [60, 72], "dano_critico": [150, 200], "ataque": [2400, 2800]}}
   },
 
   "roster_generico": {
@@ -57,7 +58,7 @@
 
   "casos": [
     {"id": "caso1", "tipo": "comparar", "pj": "Ellen", "slot": 2,
-     "estado_pj": {"Prob. Crítica": 58.0, "Daño Crítico": 175.0, "ATK": 3150},
+     "estado_pj": {"prob_critico": 58.0, "dano_critico": 175.0, "ataque": 3150},
      "build": {"4pc": 38, "2pc": null},
      "opciones": {
        "X": {"set": 38, "main": "ATK", "nivel": 15, "subs": [["Prob. Crítica", 7.2, 2], ["ATK%", 3.0, 0], ["ATK", 19.0, 0], ["DEF", 15.0, 0]]},
@@ -67,7 +68,7 @@
      "nota": "Mejoras irreales para un Nivel 15 (+2/+3 en vez de +5): no cambia la preferencia relativa."},
 
     {"id": "caso2", "tipo": "comparar", "pj": "Ellen", "slot": 2,
-     "estado_pj": {"Prob. Crítica": 65.0, "Daño Crítico": 175.0, "ATK": 3150},
+     "estado_pj": {"prob_critico": 65.0, "dano_critico": 175.0, "ataque": 3150},
      "build": {"4pc": 38, "2pc": null},
      "opciones": {
        "X": {"set": 38, "main": "ATK", "nivel": 15, "subs": [["Prob. Crítica", 7.2, 2], ["ATK%", 3.0, 0], ["ATK", 19.0, 0], ["DEF", 15.0, 0]]},
@@ -77,7 +78,7 @@
      "nota": "Mejoras irreales para un Nivel 15, igual que el caso 1."},
 
     {"id": "caso3", "tipo": "comparar", "pj": "Ellen", "slot": 2,
-     "estado_pj": {"Prob. Crítica": 65.0, "Daño Crítico": 175.0, "ATK": 3150},
+     "estado_pj": {"prob_critico": 65.0, "dano_critico": 175.0, "ataque": 3150},
      "build": {"4pc": 38, "2pc": null},
      "opciones": {
        "X": {"set": 38, "main": "ATK", "nivel": 15, "subs": [["Prob. Crítica", 7.2, 2], ["ATK%", 3.0, 0], ["ATK", 19.0, 0], ["Perforación", 9.0, 0]]},
@@ -95,7 +96,7 @@
      "razon": "El 4pc no se rompe salvo secundarios excelentes, y sería muy puntual; lo normal es romper un 2pc (R5, R6)."},
 
     {"id": "caso5", "tipo": "cambiar", "pj": "Ellen", "slot": 6,
-     "estado_pj": {"Prob. Crítica": 65.0, "Daño Crítico": 175.0},
+     "estado_pj": {"prob_critico": 65.0, "dano_critico": 175.0},
      "build": {"4pc": 38, "2pc": 48},
      "actual": {"set": 48, "main": "ATK%", "nivel": 15, "subs": [["Prob. Crítica", 4.8, 1], ["Daño Crítico", 4.8, 0], ["ATK", 57.0, 2], ["HP", 336.0, 2]]},
      "nuevo":  {"set": 27, "main": "ATK%", "nivel": 15, "subs": [["Prob. Crítica", 4.8, 1], ["Daño Crítico", 14.4, 2], ["ATK%", 9.0, 2], ["Perforación", 9.0, 0]]},
@@ -129,7 +130,7 @@
      "razon": "Sigue subiendo: la cuarta línea es plana (a medias) y la mejora fue a CR."},
 
     {"id": "caso8", "tipo": "comparar", "pj": "Ellen", "slot": 1,
-     "estado_pj": {"Prob. Crítica": 62.0, "Daño Crítico": 170.0, "ATK": 3350},
+     "estado_pj": {"prob_critico": 62.0, "dano_critico": 170.0, "ataque": 3350},
      "build": {"4pc": 38, "2pc": null},
      "opciones": {
        "X": {"set": 38, "main": "HP", "nivel": 15, "subs": [["ATK%", 12.0, 3], ["ATK", 38.0, 1], ["Prob. Crítica", 4.8, 1], ["Perforación", 9.0, 0]]},

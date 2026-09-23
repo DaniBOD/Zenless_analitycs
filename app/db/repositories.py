@@ -97,6 +97,8 @@ class Agent:
     #: stat (vocabulario de `agent_thresholds`: 'ataque', 'prob_critico'…) → (piso, techo). El
     #: default de `agent_thresholds` con los ajustes de Daniel encima. Cualquiera puede ser None.
     rangos: dict[str, tuple[float | None, float | None]] = field(default_factory=dict)
+    #: Stats ACTUALES del PJ (columnas de `agents`, las que llena S18). Vacío = no se leyeron.
+    stats: dict[str, float] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +154,27 @@ def _tabla_existe(con: sqlite3.Connection, nombre: str) -> bool:
     """Una DB anterior a la migración 40 no tiene las tablas de ajustes: sólo defaults."""
     return con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
                        (nombre,)).fetchone() is not None
+
+
+#: Las columnas de `agents` que S18 sabe leer y que el scoring usa como estado del PJ.
+_COLUMNAS_STATS: tuple[str, ...] = (
+    "prob_critico", "dano_critico", "ataque", "pv", "defensa", "impacto",
+    "tasa_anomalia", "maestria_anomalia", "tasa_perforacion", "perforacion", "rec_energia",
+)
+_AVISO_SIN_STATS_DADO = False
+
+
+def _avisar_pjs_sin_stats(agentes) -> None:
+    """D2: sin los stats actuales del PJ el scoring cae a pesos fijos — sin balance del crítico ni
+    rangos — y eso no se ve mirando. Se dice UNA vez por proceso, con el número."""
+    global _AVISO_SIN_STATS_DADO
+    agentes = list(agentes)
+    sin = [a for a in agentes if not (a.stats.get("prob_critico") and a.stats.get("dano_critico"))]
+    if sin and agentes and not _AVISO_SIN_STATS_DADO:
+        _AVISO_SIN_STATS_DADO = True
+        log.warning("[scoring] %d de %d PJs sin Prob./Daño Crítico actuales: para ellos no hay "
+                    "balance del crítico ni rangos hasta pasar por su pantalla de stats (S18)",
+                    len(sin), len(agentes))
 
 
 def _tiene_columnas(con: sqlite3.Connection, tabla: str, columnas: tuple[str, ...]) -> bool:
@@ -451,6 +474,12 @@ class AgentRepo:
             ):
                 rangos.setdefault(r["agente_id"], {})[r["stat"]] = (r["minimo"], r["maximo"])
 
+        stats: dict[int, dict[str, float]] = {}
+        columnas = [c for c in _COLUMNAS_STATS if _tiene_columnas(self._con, "agents", (c,))]
+        if columnas:
+            for r in self._con.execute(f"SELECT id, {', '.join(columnas)} FROM agents"):
+                stats[r["id"]] = {c: r[c] for c in columnas if r[c] is not None}
+
         thresholds = {}
         for r in self._con.execute(
             "SELECT agente_id, threshold_equip, threshold_upgrade FROM agent_score_thresholds"
@@ -494,7 +523,9 @@ class AgentRepo:
                 set_2p_id=r["set_2p_id"],
                 protected_build=bool(r["protected_build"]),
                 rangos=rangos.get(r["id"], {}),
+                stats=stats.get(r["id"], {}),
             )
+        _avisar_pjs_sin_stats(self._cache.values())
 
     def get_all(self) -> list[Agent]:
         self._load()
