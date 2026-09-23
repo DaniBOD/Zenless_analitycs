@@ -15,6 +15,7 @@ from itertools import combinations
 from pathlib import Path
 from typing import Callable
 
+from app.core.recommender import _bonos_2pc_desde, evaluar_salida
 from app.core.scoring import principal_valido, score_disco
 from app.core.score_normalizer import ScoringContext
 from app.db.repositories import (
@@ -382,6 +383,10 @@ def _admite_disco_ajeno(swap: dict | None) -> bool:
     es un traslado entre PJs que puntúan igual (sin preferencias propias, el score depende solo
     del arquetipo: medido 2026-09-12, 72 de 92 discos ajenos mal rotulados eran eso) y no mueve.
     Origen protegido o sin arquetipo ⇒ no se toca. Un disco libre o propio (`swap is None`) pasa.
+
+    Y desde el 2026-09-22 (decisión de Daniel, etapa 1 paso 7): el ORIGEN NO PUEDE PERDER, contando
+    un disco libre como reemplazo. Eso lo decide `recommender.evaluar_salida` —la misma regla que
+    usan las sugerencias (B1)— y llega acá como `motivo = "origen_pierde"`.
     """
     return swap is None or (swap["motivo"] is None and swap["neto"] > 0)
 
@@ -441,6 +446,27 @@ class BuildOptimizer:
     def close(self) -> None:
         self._con.close()
 
+    def _marcar_si_el_origen_pierde(self, swap: dict | None, disc: Disc, libres, bonos,
+                                    builds: dict[int, dict[int, Disc]] | None = None) -> None:
+        """Paso 7: el PJ que lleva el disco no puede perder, contando un libre como reemplazo.
+
+        Sólo se mira al origen si el destino GANA: con neto ≤ 0 el anti-traslado ya lo rechaza, y
+        evaluarlo igual quintuplicaba el optimizador (medido: mediana 62 → 319 ms por PJ).
+        """
+        if swap is None or swap["motivo"] is not None or swap["neto"] <= 0:
+            return
+        origen = self._agent_repo.get_by_id(disc.agente_asignado)
+        arch_origen = self._arch_repo.get_by_id(origen.arquetipo_primario_id)
+        builds = {} if builds is None else builds       # uno por origen dentro de una corrida
+        if origen.id not in builds:
+            builds[origen.id] = self._inv_disc_repo.find_equipped_by_agent(origen.id)
+        build = builds[origen.id]
+        salida = evaluar_salida(disc, origen, arch_origen, build, libres, self._ctx, bonos)
+        swap["reemplazo_id"] = salida.reemplazo_id
+        swap["delta_origen_con_reemplazo"] = salida.mejor_delta
+        if salida.mejor_delta < 0:
+            swap["motivo"] = "origen_pierde"
+
     def best_builds(
         self,
         agente_id: int,
@@ -472,13 +498,18 @@ class BuildOptimizer:
         # Inventario activo. Los discos que lleva OTRO PJ compiten solo si moverlos gana (B+D);
         # se filtra ANTES del greedy y del bonus pass: sacar un disco de una build ya armada
         # rompería su combinación de sets.
+        activos = self._inv_disc_repo.get_all_active()
+        libres = [d for d in activos if not d.equipado]
+        bonos = _bonos_2pc_desde(self._set_repo)
+        builds_origen: dict[int, dict[int, Disc]] = {}
         inv_discs: list[Disc] = []
-        for disc in self._inv_disc_repo.get_all_active():
+        for disc in activos:
             if disc.equipado and disc.agente_asignado not in (None, agente_id):
                 swap = _swap_de_disco_ajeno(
                     disc, agent, _disc_base_score(disc, agent, arch, self._ctx),
                     self._agent_repo, self._arch_repo, self._ctx,
                 )
+                self._marcar_si_el_origen_pierde(swap, disc, libres, bonos, builds_origen)
                 if not _admite_disco_ajeno(swap):
                     continue
             inv_discs.append(disc)

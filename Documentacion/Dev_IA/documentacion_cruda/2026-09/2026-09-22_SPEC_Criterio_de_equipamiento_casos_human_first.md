@@ -388,3 +388,22 @@ Lectura, y cómo encaja con el caso 7:
 - Los casos llevan el estado del PJ con el vocabulario de la DB (`prob_critico`, `dano_critico`,
   `ataque`) y los rangos de Ellen: el default de Prydwen con el ajuste de Daniel encima.
 - **Tus casos: 12 de 12.** Ya no queda ningún `xfail`. Sabotajes 9/9 en rojo.
+
+### Paso 7a — mover un disco de un PJ a otro sólo si el que lo tiene NO pierde
+
+- **Regla nueva de Daniel**, que reemplaza la del 2026-09-12 (movía si el destino ganaba más de lo
+  que perdía el origen, neto > 0): el ORIGEN tiene que quedar igual o mejor. Para eso cuenta que
+  puede recibir un disco LIBRE del inventario en ese slot, y también dejar el slot vacío, que puede
+  ser mejor que un disco que le resta.
+- Una sola regla para los dos que mueven discos (B1): `recommender.evaluar_salida`. La usan el
+  recomendador (para las sugerencias) y el optimizador (para admitir un disco ajeno en una build).
+  El optimizador conserva además su anti-traslado (neto > 0): mover sin ganar no es una mejora.
+- ⚠️ **El primer test estaba mal armado.** Daba por "igual de bueno" un reemplazo con ATK plano +3
+  en lugar de ATK% +3. Para un PJ que no valora el plano, ese reemplazo lo deja 2,0 abajo, y la
+  regla hizo bien en no mover. Se corrigió el test y ese caso quedó como test propio (R7: el ATK%
+  vale mucho más que el plano).
+- **Costo medido** (optimizador, 52 PJs, copia de la DB): 62 → 319 ms de mediana al aplicarlo. Se
+  bajó a **124 ms** (p90 142, máx 152) con dos cambios, medido uno por vez. Primero, mirar al origen
+  sólo si el destino gana (→ 140). Segundo, leer una sola vez el build de cada origen por corrida
+  (→ 124). El doble que antes, con 3× de margen bajo los 500 ms del RNF-06.
+- Sabotajes 7/7 en rojo.

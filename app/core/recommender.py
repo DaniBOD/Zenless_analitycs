@@ -64,6 +64,18 @@ class Cambio:
     rompe_4pc: bool = False
     completa_4pc: bool = False
     notas: list[str] = field(default_factory=list)
+    #: Sólo cuando el disco lo lleva OTRO PJ: de quién sale, qué disco libre lo reemplaza allá
+    #: (None = el slot queda vacío) y cómo queda el origen con ese reemplazo (≥ 0: no pierde).
+    origen_id: int | None = None
+    reemplazo_id: int | None = None
+    delta_origen: float | None = None
+
+
+@dataclass
+class Salida:
+    """Qué le pasa al PJ que LLEVA un disco si se lo sacan, con el mejor reemplazo libre."""
+    mejor_delta: float              # ≥ 0: queda igual o mejor ("A no pierde")
+    reemplazo_id: int | None        # el disco libre que lo reemplazaría; None = slot vacío
 
 
 def _pesos_pj(agent: "Agent", arch) -> dict[str, float]:
@@ -129,6 +141,31 @@ def evaluar_cambio(
     )
 
 
+def evaluar_salida(
+    disc: "Disc", origen: "Agent", arch, build: dict[int, "Disc"], libres: list["Disc"],
+    ctx: "ScoringContext", bonos_2pc: Callable[[int], tuple[str, float] | None],
+) -> Salida:
+    """Si a `origen` le sacan `disc`, ¿cómo queda con el mejor disco LIBRE para ese slot?
+
+    Regla de Daniel para mover un disco de un PJ a otro: "sin perjudicar al PJ que lo tiene
+    equipado". Se prueban todos los libres de ese slot que le sirvan (principal válido) y también
+    dejar el slot vacío — que puede ser MEJOR que un disco que le resta. Vale el mejor.
+    """
+    slot = disc.slot
+    sin_el = {s: d for s, d in build.items() if s != slot}
+    s_con, _ = valor_sets(Counter(d.set_id for d in build.values()), origen, arch, bonos_2pc)
+    s_sin, _ = valor_sets(Counter(d.set_id for d in sin_el.values()), origen, arch, bonos_2pc)
+    mejor = (-valor_disco(disc, origen, arch, ctx) + (s_sin - s_con), None)
+    for libre in libres:
+        if libre.slot != slot or libre.id == disc.id or not principal_valido(libre, arch):
+            continue
+        delta = evaluar_cambio(origen, arch, build, libre, ctx, bonos_2pc).delta
+        if delta > mejor[0]:
+            mejor = (delta, libre.id)
+    # Redondeado: dos discos que valen lo mismo no pueden volverse "pérdida" por coma flotante.
+    return Salida(mejor_delta=round(mejor[0], 6), reemplazo_id=mejor[1])
+
+
 def recomendar(
     disc: "Disc",
     agent_repo: "AgentRepo",
@@ -136,14 +173,16 @@ def recomendar(
     disc_set_repo: "DiscSetRepo",
     ctx: "ScoringContext",
     builds: "Callable[[int], dict[int, Disc]] | None" = None,
+    libres: "list[Disc] | None" = None,
 ) -> Recommendation:
     """
     Evalúa el disco contra los agentes del roster y devuelve la mejor recomendación.
 
     Con `builds` (agente_id → {slot: disco equipado}) y un disco LIBRE en Nivel 15 la decisión es
     COMPARATIVA: EQUIPAR a quien más mejora el build, RESERVA si es bueno para su rol pero no le
-    gana a nadie, DESCARTAR si no. Sin `builds`, o para un disco que otro PJ lleva puesto (mover
-    uno ajeno es el paso 7: "sólo si el que lo tiene no pierde"), sigue el umbral absoluto de antes.
+    gana a nadie, DESCARTAR si no. Un disco que ya lleva OTRO PJ se sugiere mover sólo si el que
+    lo tiene no pierde, contando los discos `libres` como reemplazo (paso 7); si no hay un
+    movimiento así, sigue el umbral absoluto de antes.
     """
     disc_archetypes = disc_set_repo.get_archetypes_for_set(disc.set_id)
 
@@ -171,6 +210,11 @@ def recomendar(
     libre = not (disc.equipado and disc.agente_asignado)
     if builds is not None and disc.nivel == 15 and libre:
         return _recomendar_comparando(disc, candidatos, archetype_repo, disc_set_repo, ctx, builds)
+    if builds is not None and libres is not None and disc.nivel == 15 and not libre:
+        mover = _recomendar_mover_ajeno(disc, candidatos, agent_repo, archetype_repo,
+                                        disc_set_repo, ctx, builds, libres)
+        if mover is not None:
+            return mover
     if disc.nivel is not None and disc.nivel < 15:
         return _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archetypes)
 
@@ -265,6 +309,38 @@ def _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archet
                           top_candidatos=top, desglose_top=sb, potencial=pot)
 
 
+def _recomendar_mover_ajeno(disc, candidatos, agent_repo, archetype_repo, disc_set_repo, ctx,
+                            builds, libres):
+    """Un disco que lleva A, ¿le sirve más a B? Sólo si A no pierde (con su mejor reemplazo libre)
+    y B gana. `None` si no hay un movimiento así: el disco se queda donde está."""
+    origen = next((a for a in agent_repo.get_all() if a.id == disc.agente_asignado), None)
+    if origen is None or origen.protected_build:
+        return None
+    arch_origen = archetype_repo.get_by_id(origen.arquetipo_primario_id)
+    if arch_origen is None:
+        return None
+    bonos = _bonos_2pc_desde(disc_set_repo)
+    salida = evaluar_salida(disc, origen, arch_origen, builds(origen.id), libres, ctx, bonos)
+    if salida.mejor_delta < 0:
+        return None                         # "sin perjudicar al PJ que lo tiene equipado"
+
+    mejor = None
+    for agent, sb in candidatos:
+        if agent.id == origen.id:
+            continue
+        arch = archetype_repo.get_by_id(agent.arquetipo_primario_id)
+        cambio = evaluar_cambio(agent, arch, builds(agent.id), disc, ctx, bonos)
+        if cambio.delta > 0 and (mejor is None or cambio.delta > mejor[2].delta):
+            mejor = (agent, sb, cambio)
+    if mejor is None:
+        return None
+    agent, sb, cambio = mejor
+    cambio.origen_id, cambio.reemplazo_id = origen.id, salida.reemplazo_id
+    cambio.delta_origen = salida.mejor_delta
+    return Recommendation("equipar", agent.id, agent.nombre, sb.score_norm,
+                          top_candidatos=candidatos[:5], desglose_top=sb, movimiento=cambio)
+
+
 def _recomendar_comparando(disc, candidatos, archetype_repo, disc_set_repo, ctx, builds):
     bonos = _bonos_2pc_desde(disc_set_repo)
     mejor: tuple["Agent", "ScoreBreakdown", Cambio] | None = None
@@ -306,6 +382,9 @@ def recommendation_to_json(rec: Recommendation) -> str:
             "rompe_4pc": rec.movimiento.rompe_4pc,
             "completa_4pc": rec.movimiento.completa_4pc,
             "notas": rec.movimiento.notas,
+            "origen_id": rec.movimiento.origen_id,
+            "reemplazo_id": rec.movimiento.reemplazo_id,
+            "delta_origen": rec.movimiento.delta_origen,
         },
         "potencial": None if rec.potencial is None else {
             "score_norm": round(rec.potencial.score_norm, 4),
