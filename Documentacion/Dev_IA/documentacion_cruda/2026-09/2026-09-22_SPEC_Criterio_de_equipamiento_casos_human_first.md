@@ -304,3 +304,26 @@ caso marcado que empieza a pasar, dejar de exigir el motivo, una marca con el id
 - **Orden ajustado: 3 → 5 → 4 → 6 → 7 → 8.** Si el potencial (paso 4) entra antes que los ajustes
   de Daniel (paso 5), D3 vuelve a salir "mejorar" para los disruptores, porque el default de la
   DB todavía acepta PV % en su slot 4.
+
+### Paso 5 — dos capas: el default y los ajustes de Daniel (migración 40)
+
+- Tres tablas nuevas: `ajustes_usuario_rangos`, `ajustes_usuario_pesos` y
+  `ajustes_usuario_arquetipo`. Los defaults (`agent_thresholds`, `agent_substat_preferences`,
+  `disc_archetypes`) **no se tocan**. El repositorio mezcla: el ajuste gana, y si se borra la fila
+  vuelve el default. Las reglas viven en el esquema (piso ≤ techo, peso en [-1, 1], sólo
+  `mains_4/5/6`, valor como lista JSON).
+- Cargado lo que Daniel ya dijo: disruptores en slot 4 = Prob. Crítica y Daño Crítico; Ellen ATK
+  3000-3200. Verificado en la app real: Ellen lee `ataque (3000, 3200)` y sus rangos de CR/DC
+  siguen en el default de Prydwen.
+- `mezclar_pesos`: con ajustes, la base son los pesos propios **o los del arquetipo**. Si no, un
+  PJ sin pesos propios al que se le ajusta UN stat quedaría con ese único stat y el resto en 0.
+- En los defaults de Prydwen casi nunca está el máximo, pero sí el óptimo: el óptimo hace de techo.
+- `rebuild_account_db` conserva las tres tablas (son declaraciones del usuario).
+- Migración ensayada sobre una copia y aplicada con backup: `backup_premig_20260922_212711`, cuyo
+  sha256 es el de la DB antes de migrar. 8 smoke checks exactos, `foreign_key_check` sin filas.
+- ⚠️ **La primera suite dio 34 rojos.** El repo pasó a leer SIEMPRE `substats_positivos` de
+  `disc_archetypes`, y 34 tests arman una DB mínima con sólo `id` y `code`. Esa columna sólo hace
+  falta cuando hay ajustes de pesos: ahora se lee sólo entonces, y `agent_thresholds` se lee sólo si
+  tiene las columnas del rango. Los tests del paso sobre la copia de la DB real no lo podían ver,
+  porque la copia tiene el esquema completo: por eso existe la suite completa.
+- Sabotajes 8/8 en rojo, antes y después del arreglo.

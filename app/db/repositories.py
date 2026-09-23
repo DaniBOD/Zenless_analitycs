@@ -5,7 +5,7 @@ Los writes los hacen sync_equip.py / sync_upgrade.py con sus propias transaccion
 import json
 import logging
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -94,6 +94,71 @@ class Agent:
     set_4p_id: int | None = None
     set_2p_id: int | None = None
     protected_build: bool = False
+    #: stat (vocabulario de `agent_thresholds`: 'ataque', 'prob_critico'…) → (piso, techo). El
+    #: default de `agent_thresholds` con los ajustes de Daniel encima. Cualquiera puede ser None.
+    rangos: dict[str, tuple[float | None, float | None]] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Dos capas: el default y los ajustes del usuario (etapa 1, paso 5 — migración 40)
+# ---------------------------------------------------------------------------
+# Daniel: "Prydwen es una base, pero de ahí puedo pulirlas yo a mano". Las tablas de default no se
+# tocan; los ajustes viven aparte y se mezclan al leer: el ajuste gana, y si se borra, vuelve el
+# default. Estas funciones son la ÚNICA regla de mezcla: las usa el repositorio y las usa el test
+# de los casos de Daniel, para que los dos mezclen igual (B1).
+
+#: Lo único que un ajuste de arquetipo puede tocar (la migración 40 lo hace cumplir con un CHECK).
+CAMPOS_AJUSTABLES_ARQUETIPO: frozenset[str] = frozenset({"mains_4", "mains_5", "mains_6"})
+
+
+def aplicar_ajustes_arquetipo(arch: "Archetype", ajustes: dict[str, list[str]]) -> "Archetype":
+    """El arquetipo default con los ajustes del usuario encima. Un campo desconocido se IGNORA con
+    un aviso: aplicarlo a ciegas podría pisar algo que el scoring no espera cambiado."""
+    validos = {}
+    for campo, valor in ajustes.items():
+        if campo in CAMPOS_AJUSTABLES_ARQUETIPO:
+            validos[campo] = list(valor)
+        else:
+            log.warning("[ajustes] campo %r del arquetipo %s no es ajustable: se ignora",
+                        campo, arch.code)
+    return replace(arch, **validos)
+
+
+def mezclar_pesos(propios: dict[str, float], del_arquetipo: dict[str, float],
+                  ajustes: dict[str, float]) -> dict[str, float]:
+    """Los pesos del PJ con los ajustes del usuario encima.
+
+    Sin ajustes, se devuelven los propios tal cual (vacío incluido: el scoring cae solo al
+    arquetipo). CON ajustes, la base son los propios o, si no tiene, los del arquetipo: si no, un
+    PJ sin pesos propios al que se le ajusta UN stat quedaría con ese único stat y el resto en 0.
+    """
+    if not ajustes:
+        return dict(propios)
+    return {**(propios or del_arquetipo), **ajustes}
+
+
+def rango_default(minimo: float | None, optimo: float | None,
+                  maximo: float | None) -> tuple[float | None, float | None] | None:
+    """(piso, techo) de una fila de `agent_thresholds`. Prydwen casi nunca da el máximo (NULL en la
+    mayoría de las filas) y sí el óptimo: en ese caso el óptimo hace de techo, que es como se lee
+    "ATK 2400-2800". Sin piso ni techo no hay rango."""
+    techo = maximo if maximo is not None else optimo
+    if minimo is None and techo is None:
+        return None
+    return (minimo, techo)
+
+
+def _tabla_existe(con: sqlite3.Connection, nombre: str) -> bool:
+    """Una DB anterior a la migración 40 no tiene las tablas de ajustes: sólo defaults."""
+    return con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                       (nombre,)).fetchone() is not None
+
+
+def _tiene_columnas(con: sqlite3.Connection, tabla: str, columnas: tuple[str, ...]) -> bool:
+    """La tabla existe y tiene TODAS esas columnas (las DB mínimas de los tests traen versiones
+    recortadas de las tablas)."""
+    presentes = {r[1] for r in con.execute(f"PRAGMA table_info({tabla})")}
+    return set(columnas) <= presentes
 
 
 @dataclass
@@ -187,6 +252,15 @@ class ArchetypeRepo:
                 mains_5=json.loads(r["mains_5"] or "[]"),
                 mains_6=json.loads(r["mains_6"] or "[]"),
             )
+        if _tabla_existe(self._con, "ajustes_usuario_arquetipo"):
+            por_code: dict[str, dict[str, list[str]]] = {}
+            for r in self._con.execute(
+                "SELECT code, campo, valor_json FROM ajustes_usuario_arquetipo"
+            ):
+                por_code.setdefault(r["code"], {})[r["campo"]] = json.loads(r["valor_json"])
+            for arch_id, arch in list(self._cache.items()):
+                if arch.code in por_code:
+                    self._cache[arch_id] = aplicar_ajustes_arquetipo(arch, por_code[arch.code])
 
     def get_all(self) -> list[Archetype]:
         self._load()
@@ -348,6 +422,35 @@ class AgentRepo:
             for r in self._con.execute("SELECT id, code FROM disc_archetypes")
         }
 
+        ajustes_pesos: dict[int, dict[str, float]] = {}
+        if _tabla_existe(self._con, "ajustes_usuario_pesos"):
+            for r in self._con.execute(
+                "SELECT agente_id, substat, peso FROM ajustes_usuario_pesos"
+            ):
+                ajustes_pesos.setdefault(r["agente_id"], {})[r["substat"]] = r["peso"]
+        # La base de la mezcla (los pesos del arquetipo) sólo hace falta si hay ajustes: leerla
+        # siempre rompía las DB mínimas de los tests, que no tienen esa columna.
+        arch_positivos: dict[str, dict[str, float]] = {}
+        if ajustes_pesos:
+            for r in self._con.execute("SELECT code, substats_positivos FROM disc_archetypes"):
+                arch_positivos[r["code"]] = json.loads(r["substats_positivos"] or "{}")
+
+        rangos: dict[int, dict[str, tuple[float | None, float | None]]] = {}
+        if _tiene_columnas(self._con, "agent_thresholds",
+                           ("agente_id", "stat", "valor_minimo", "valor_optimo", "valor_maximo")):
+            for r in self._con.execute(
+                "SELECT agente_id, stat, valor_minimo, valor_optimo, valor_maximo "
+                "FROM agent_thresholds"
+            ):
+                rango = rango_default(r["valor_minimo"], r["valor_optimo"], r["valor_maximo"])
+                if rango is not None:
+                    rangos.setdefault(r["agente_id"], {})[r["stat"]] = rango
+        if _tabla_existe(self._con, "ajustes_usuario_rangos"):
+            for r in self._con.execute(
+                "SELECT agente_id, stat, minimo, maximo FROM ajustes_usuario_rangos"
+            ):
+                rangos.setdefault(r["agente_id"], {})[r["stat"]] = (r["minimo"], r["maximo"])
+
         thresholds = {}
         for r in self._con.execute(
             "SELECT agente_id, threshold_equip, threshold_upgrade FROM agent_score_thresholds"
@@ -384,10 +487,13 @@ class AgentRepo:
                 arquetipo_primario_code=arch_code,
                 threshold_equip=t_equip,
                 threshold_upgrade=t_upgrade,
-                substat_preferences=prefs.get(r["id"], {}),
+                substat_preferences=mezclar_pesos(prefs.get(r["id"], {}),
+                                                  arch_positivos.get(arch_code, {}),
+                                                  ajustes_pesos.get(r["id"], {})),
                 set_4p_id=r["set_4p_id"],
                 set_2p_id=r["set_2p_id"],
                 protected_build=bool(r["protected_build"]),
+                rangos=rangos.get(r["id"], {}),
             )
 
     def get_all(self) -> list[Agent]:

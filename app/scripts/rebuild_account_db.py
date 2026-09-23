@@ -57,6 +57,9 @@ INVESTIGACION: tuple[str, ...] = (
 #: vuelve la tabla una auditoría de sincronía y no un flag de "ya se hizo".
 DECLARADO: tuple[str, ...] = (
     "roster_declarations",
+    # Mig 40 (2026-09-22): lo que Daniel corrige a mano sobre los defaults de Prydwen — rangos
+    # objetivo, pesos y principales por arquetipo. Son decisiones suyas, no observación.
+    "ajustes_usuario_rangos", "ajustes_usuario_pesos", "ajustes_usuario_arquetipo",
 )
 
 #: Estado de cuenta observable. Se re-censa.

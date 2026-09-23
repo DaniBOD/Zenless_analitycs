@@ -32,7 +32,8 @@ import pytest
 from app.core.recommender import evaluar_cambio, recomendar
 from app.core.score_normalizer import ScoringContext
 from app.core.stats_vocab import VALOR_POR_MEJORA
-from app.db.repositories import Agent, Archetype, Disc, DiscSetArchetype
+from app.db.repositories import (Agent, Archetype, Disc, DiscSetArchetype,
+                                 aplicar_ajustes_arquetipo)
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "criterio_equipar" / "casos.json"
 DATOS = json.loads(FIXTURE.read_text(encoding="utf-8"))
@@ -67,7 +68,11 @@ def _arquetipos() -> dict[str, Archetype]:
     return out
 
 
-ARQUETIPOS = _arquetipos()
+# Los ajustes de Daniel encima de los defaults, con la MISMA función que usa el repositorio.
+ARQUETIPOS = {
+    code: aplicar_ajustes_arquetipo(arch, DATOS["ajustes_usuario"]["arquetipos"].get(code, {}))
+    for code, arch in _arquetipos().items()
+}
 
 
 def _disco(d: dict, disc_id: int = 1, slot: int | None = None) -> Disc:
