@@ -445,3 +445,30 @@ Lectura, y cómo encaja con el caso 7:
   slot ocupado. Piper, que es destino de 5 movimientos, tiene una build de Anomalía con Daño Crítico,
   PV %, DEF % y DEF en casi todos los discos.
 - Sabotajes 7/7 en rojo, con la DB de dominio comparada por sha256 después de cada uno.
+
+### Primera revisión de Daniel sobre las sugerencias (2026-09-23)
+
+Se le mostraron las sugerencias sin conflicto y cuatro dudas. Respuestas:
+
+1. **#213 · Tasa de Perforación en el slot 5 → caso 10.** "Le sirve a atacantes como opción
+   secundaria y de momento a los armeros, Claret se ve muy beneficiada de esto, los supports/apoyo
+   se pueden beneficiar, por eso lo guardé (Rina por ejemplo) aunque es de nicho". → Migración 41
+   (capa de ajustes): ATK_DPS y SUPPORT_ER aceptan Tasa de Perforación en el slot 5; ARMORER_DEF ya
+   la aceptaba. Con eso #213 pasa de descartar (puntaje 0) a **equipar → Nekomata** (+1,90, que
+   tiene la build incompleta). ⚠️ "Secundaria" y "de nicho" no se modelan todavía: el principal
+   decide si el disco sirve, no cuánto vale frente a un Bono Daño.
+2. **#369 · Floración, slot 5 Bono Daño Hielo, Nv 0 (DEF, ATK%, DC) → caso 11.** "No está bien el
+   descarte actual de ese disco". Medido: el motor comparaba el valor esperado contra un umbral
+   FIJO (0,468 < 0,50), no contra lo que el PJ ya lleva. Pero subido le gana al slot 5 de Soukaku
+   (3,56 contra 2,90) y al de Lycaon (3,41 contra −1,00). Era un desvío de R12 ("mejorar si en lo
+   esperable le gana a algo") que el paso 4 implementó mal. Arreglado: con `builds`, MEJORAR pasa
+   por la misma comparación que un disco terminado (`evaluar_cambio`, con el valor esperado); las
+   guardas R13 y "mejora gastada en una muerta" siguen por encima, y valen POR PJ. #369 → **mejorar
+   → Lycaon**. Totales: mejorar 7 → 10, descartar 8 → 5. Sin `builds` (el fixture de casos) sigue
+   el umbral.
+3. **Piper destino de 5 movimientos → falta un dato: la PRIORIDAD DE BUILDEO.** "Actualmente no es
+   su mejor build, acá se me olvidó mencionar la prioridad de buildeo, por ejemplo Piper no la uso
+   casi nada mientras que Claret la quiero mejorar ahora, luego declaramos eso". Pendiente de
+   declarar (por PJ, en la capa de ajustes) y de decidir cómo pesa: orden de las sugerencias, o
+   que un PJ de prioridad baja no le saque discos a uno de prioridad alta.
+4. **Reserva en 0 → esperado.** "El sistema siempre busca mejoras en mis PJs".

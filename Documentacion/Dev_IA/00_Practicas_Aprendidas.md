@@ -163,6 +163,12 @@ modificaron la librería del usuario **con solo mirarla**; una borró 4 refs.
 evidencia: **testeá el sha256 antes y después**. Los tests que tocan la DB de dominio se aíslan
 por defecto (`autouse`), no por disciplina.
 
+**Se repitió (2026-09-23), y esta vez desde un sabotaje.** Un test de `sugerir_movimientos` corría
+el script "de sólo lectura" directo sobre la DB de dominio. El sabotaje que le sacaba el
+`mode=ro` le creó una tabla vacía. Un test que da por hecho que el código es de sólo lectura no
+puede verificar justo eso. **Todo test que lea la DB de dominio lo hace sobre una COPIA**, y un
+script de sabotaje compara el sha256 de la DB después de CADA sabotaje y aborta si cambió.
+
 ---
 
 ## C · Cuando la métrica miente
