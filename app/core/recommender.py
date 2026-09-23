@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 from collections import Counter
 from typing import Callable
 
-from app.core.scoring import principal_valido, score_disco
+from app.core.scoring import Potencial, potencial, principal_valido, score_disco
 from app.core.stats_vocab import VALOR_POR_MEJORA, bono_2pc_como_substat
 
 
@@ -33,6 +33,8 @@ class Recommendation:
     desglose_top: "ScoreBreakdown | None" = None
     #: Sólo en la decisión comparativa: a quién mejora el disco, y cuánto.
     movimiento: "Cambio | None" = None
+    #: Sólo para un disco sin terminar: lo que puede llegar a ser para el PJ elegido.
+    potencial: "Potencial | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +170,8 @@ def recomendar(
     libre = not (disc.equipado and disc.agente_asignado)
     if builds is not None and disc.nivel == 15 and libre:
         return _recomendar_comparando(disc, candidatos, archetype_repo, disc_set_repo, ctx, builds)
+    if disc.nivel is not None and disc.nivel < 15:
+        return _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archetypes)
 
     top_agent, top_sb = candidatos[0]
 
@@ -232,6 +236,32 @@ def _bonos_2pc_desde(disc_set_repo) -> Callable[[int], tuple[str, float] | None]
     return bono
 
 
+def _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archetypes):
+    """Un disco sin terminar: ¿vale la pena invertirle? (casos 6 y 7 de Daniel)
+
+    Se evalúa para todos los roles y vale el mejor que NO tenga líneas muertas (R11). Una línea
+    muerta conocida descarta (R13, R15): Daniel igual sube todo "para ver el valor final" (R14),
+    pero la RECOMENDACIÓN es frenar. Sin líneas muertas, MEJORAR si lo esperable llega al umbral de
+    mejora del PJ. Un disco sin terminar no se equipa ni se reserva: primero se sube.
+    """
+    evaluados = []
+    for agent, sb in candidatos:
+        arch = archetype_repo.get_by_id(agent.arquetipo_primario_id)
+        evaluados.append((agent, sb, potencial(disc, agent, arch, ctx, disc_archetypes)))
+    evaluados.sort(key=lambda t: t[2].score_norm, reverse=True)
+    top = [(a, sb) for a, sb, _ in evaluados][:5]
+
+    sanos = [t for t in evaluados if not t[2].lineas_muertas]
+    if sanos:
+        agent, sb, pot = sanos[0]
+        if pot.score_norm >= agent.threshold_upgrade:
+            return Recommendation("mejorar", agent.id, agent.nombre, pot.score_norm,
+                                  top_candidatos=top, desglose_top=sb, potencial=pot)
+    _, sb, pot = evaluados[0]
+    return Recommendation("descartar", None, None, pot.score_norm,
+                          top_candidatos=top, desglose_top=sb, potencial=pot)
+
+
 def _recomendar_comparando(disc, candidatos, archetype_repo, disc_set_repo, ctx, builds):
     bonos = _bonos_2pc_desde(disc_set_repo)
     mejor: tuple["Agent", "ScoreBreakdown", Cambio] | None = None
@@ -273,5 +303,10 @@ def recommendation_to_json(rec: Recommendation) -> str:
             "rompe_4pc": rec.movimiento.rompe_4pc,
             "completa_4pc": rec.movimiento.completa_4pc,
             "notas": rec.movimiento.notas,
+        },
+        "potencial": None if rec.potencial is None else {
+            "score_norm": round(rec.potencial.score_norm, 4),
+            "lineas_muertas": rec.potencial.lineas_muertas,
+            "cuarta_linea_supuesta": rec.potencial.cuarta_linea_supuesta,
         },
     }, ensure_ascii=False)

@@ -5,6 +5,7 @@ Función pura: (disco, agente) → ScoreBreakdown. Determinista.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from statistics import fmean
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -66,6 +67,33 @@ def _set_match_score(
     return "no_match", 0.0
 
 
+# La fórmula de UNA línea. La usan `score_disco` y `potencial`: si cada uno tuviera la suya, el
+# valor esperado dejaría de ser el promedio de los puntajes que el motor realmente da (B1).
+def _aporte_pos(peso: float, mejoras: int, ctx: "ScoringContext") -> float:
+    return peso * (1.0 + mejoras * ctx.roll_mult_pos)
+
+
+def _aporte_neg(peso: float, mejoras: int, ctx: "ScoringContext") -> float:
+    return -abs(peso) * (1.0 + mejoras * ctx.roll_mult_neg)
+
+
+def _pesos(agent: "Agent", archetype: "Archetype") -> tuple[dict[str, float], dict[str, float]]:
+    """Los pesos que usa `score_disco`: los del PJ (o los del arquetipo) y los perjudiciales."""
+    pos = agent.substat_preferences if agent.substat_preferences else archetype.substats_positivos
+    return pos, archetype.substats_perjudiciales
+
+
+def aporte_linea(stat: str, mejoras: int, pesos_pos: dict[str, float],
+                 pesos_neg: dict[str, float], ctx: "ScoringContext") -> float:
+    """Lo que suma UNA línea al puntaje, igual que dentro de `score_disco`."""
+    total = 0.0
+    if stat in pesos_pos:
+        total += _aporte_pos(pesos_pos[stat], mejoras, ctx)
+    if stat in pesos_neg:
+        total += _aporte_neg(pesos_neg[stat], mejoras, ctx)
+    return total
+
+
 def principal_valido(disc: "Disc", archetype: "Archetype") -> bool:
     """¿El principal de este disco le sirve a este arquetipo? Sólo pregunta en los slots 4-6.
 
@@ -81,6 +109,70 @@ def principal_valido(disc: "Disc", archetype: "Archetype") -> bool:
         return True
     permitidos = getattr(archetype, f"mains_{disc.slot}", None) or []
     return not permitidos or disc.main_stat in permitidos
+
+
+#: Niveles en los que un disco S recibe una mejora. MEDIDO sobre el inventario (2026-09-22): los
+#: Nivel 15 tienen 4 o 5 mejoras (283 y 74 discos), los Nivel 6 una y los Nivel 12 tres — o sea
+#: mejoras en +3/+6/+9/+12/+15, y la primera agrega la 4ª línea si el disco arrancó con 3.
+NIVELES_DE_MEJORA: tuple[int, ...] = (3, 6, 9, 12, 15)
+
+
+def mejoras_pendientes(nivel: int) -> int:
+    return sum(1 for n in NIVELES_DE_MEJORA if n > nivel)
+
+
+@dataclass
+class Potencial:
+    """Lo que un disco sin terminar puede llegar a ser para UN PJ, en promedio."""
+    score_raw: float                    # esperado en Nivel 15
+    score_norm: float
+    lineas_muertas: list[str]           # líneas YA conocidas que a este PJ no le sirven (peso ≤ 0)
+    cuarta_linea_supuesta: bool         # la 4ª se promedió con probabilidad uniforme (tentativo)
+
+
+def potencial(
+    disc: "Disc", agent: "Agent", archetype: "Archetype", ctx: "ScoringContext",
+    disc_set_archetypes: list | None = None,
+) -> Potencial:
+    """El puntaje ESPERADO del disco en Nivel 15, y sus líneas muertas.
+
+    Exacto por linealidad: cada mejora pendiente sube una de las 4 líneas con la misma
+    probabilidad, y el puntaje es lineal en las mejoras, así que el promedio de los 4ⁿ finales
+    posibles es el puntaje de hoy más `n ×` el promedio de lo que suma una mejora en cada línea.
+    Un test lo verifica contra la enumeración completa.
+
+    La 4ª línea de un disco que arrancó con 3 sale entre los secundarios que no están ni son el
+    principal, con probabilidad UNIFORME. No hay una fuente autorizada con la probabilidad real
+    (RNF-02): queda marcado en `cuarta_linea_supuesta`.
+    """
+    from app.core.stats_vocab import CANONICAL_SUBSTATS
+
+    base = score_disco(disc, agent, archetype, ctx, disc_set_archetypes=disc_set_archetypes)
+    pos, neg = _pesos(agent, archetype)
+    lineas = [(stat, mejoras or 0) for stat, _v, _u, mejoras in disc.subs]
+    pendientes = mejoras_pendientes(disc.nivel or 0)
+
+    raw = base.score_raw - base.nivel_bonus + min(ctx.nivel_bonus_max, 15 / 30.0)
+    por_mejora = [aporte_linea(s, 1, pos, neg, ctx) - aporte_linea(s, 0, pos, neg, ctx)
+                  for s, _ in lineas]
+    supuesta = False
+    if len(lineas) == 3 and pendientes > 0:
+        presentes = {s for s, _ in lineas} | {disc.main_stat}
+        posibles = sorted(s for s in CANONICAL_SUBSTATS if s not in presentes)
+        raw += fmean(aporte_linea(s, 0, pos, neg, ctx) for s in posibles)
+        por_mejora.append(fmean(aporte_linea(s, 1, pos, neg, ctx) - aporte_linea(s, 0, pos, neg, ctx)
+                                for s in posibles))
+        pendientes -= 1                 # la primera mejora agrega la línea, no la sube
+        supuesta = True
+    if por_mejora:
+        raw += pendientes * fmean(por_mejora)
+
+    return Potencial(
+        score_raw=raw,
+        score_norm=max(0.0, min(1.0, raw / ctx.score_maximo_teorico(archetype))),
+        lineas_muertas=[s for s, _ in lineas if aporte_linea(s, 0, pos, neg, ctx) <= 0],
+        cuarta_linea_supuesta=supuesta,
+    )
 
 
 def score_disco(
@@ -137,12 +229,12 @@ def score_disco(
     for (stat, val, unidad, rolls) in disc.subs:
         if stat in pesos_pos:
             peso = pesos_pos[stat]
-            contrib = peso * (1.0 + rolls * ctx.roll_mult_pos)
+            contrib = _aporte_pos(peso, rolls, ctx)
             subs_pos.append(SubstatContrib(stat, val, rolls, peso, contrib))
             score += contrib
         if stat in pesos_neg:
             peso = abs(pesos_neg[stat])
-            contrib = -peso * (1.0 + rolls * ctx.roll_mult_neg)
+            contrib = _aporte_neg(peso, rolls, ctx)
             subs_neg.append(SubstatContrib(stat, val, rolls, peso, contrib))
             score += contrib
 

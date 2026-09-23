@@ -46,8 +46,6 @@ CASOS = DATOS["casos"]
 NO_REPRODUCE_TODAVIA: dict[str, str] = {
     "caso3": "empate exacto: el motor pesa CR y DC igual, no sabe que Ellen ya tiene DC de sobra "
              "(falta el balance del crítico con los stats del PJ)",
-    "caso6_D1": "descarta un Nivel 0 bueno: lo normaliza contra el máximo de un +15, no evalúa "
-                "potencial",
 }
 
 

@@ -327,3 +327,26 @@ caso marcado que empieza a pasar, dejar de exigir el motivo, una marca con el id
   tiene las columnas del rango. Los tests del paso sobre la copia de la DB real no lo podían ver,
   porque la copia tiene el esquema completo: por eso existe la suite completa.
 - Sabotajes 8/8 en rojo, antes y después del arreglo.
+
+### Paso 4 — un disco sin terminar se juzga por lo que puede llegar a ser → **10 de 11**
+
+- `potencial()`: el puntaje **esperado en Nivel 15**, exacto por linealidad (cada mejora pendiente
+  sube una de las 4 líneas con la misma probabilidad y el puntaje es lineal en las mejoras). Dos
+  tests lo comparan contra la **enumeración completa**: 4³ = 64 finales para un Nivel 6, y cada 4ª
+  línea posible × 4⁴ repartos para un Nivel 0 de 3 líneas.
+- Premisa MEDIDA sobre el inventario antes de escribirlo: los Nivel 15 tienen 4 o 5 mejoras (283
+  y 74 discos, todos con 4 líneas), los Nivel 6 una, los Nivel 12 tres → mejoras en
+  +3/+6/+9/+12/+15, y la primera agrega la 4ª línea si faltaba.
+- La 4ª línea de un disco que arrancó con 3 se promedia entre los secundarios que no están ni son
+  el principal, con probabilidad **uniforme**: `cuarta_linea_supuesta = True`, tentativo hasta tener
+  la probabilidad real de una fuente autorizada (RNF-02).
+- Una **línea muerta conocida** (peso ≤ 0 para ese rol: si no suma, ocupa un lugar) descarta (R13,
+  R15). El disco se evalúa para todos los roles, y vale el mejor que **no** tenga líneas muertas
+  (R11): la DEF que mata a un atacante puede servirle a otro rol.
+- Un disco sin terminar sólo puede salir MEJORAR o DESCARTAR: primero se sube, después se equipa.
+- `score_disco` y `potencial` usan la MISMA fórmula por línea (`_aporte_pos` / `_aporte_neg`); si
+  cada uno tuviera la suya, el esperado dejaría de ser el promedio de lo que el motor puntúa.
+- Sabotajes 6/6 en rojo. Pendiente: el 3 (balance del crítico, paso 6).
+- ❓ **Para confirmar con Daniel:** un Nivel **0** con 4 líneas de las cuales **una** es muerta. Hoy
+  se descarta, porque se generalizó la R15 (que él dijo a mitad de camino, Nivel 6). No lo
+  preguntamos.
