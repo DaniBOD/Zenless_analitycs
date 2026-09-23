@@ -407,3 +407,26 @@ Lectura, y cómo encaja con el caso 7:
   sólo si el destino gana (→ 140). Segundo, leer una sola vez el build de cada origen por corrida
   (→ 124). El doble que antes, con 3× de margen bajo los 500 ms del RNF-06.
 - Sabotajes 7/7 en rojo.
+
+### Paso 7b — el motor sobre todo el inventario (`app/scripts/sugerir_movimientos.py`)
+
+- Evalúa los discos activos y deja `audit/sugerencias/<ts>_sugerencias_discos.{md,json}` con cinco
+  listas: mover (el que lo tiene no pierde), equipar un libre, mejorar, reserva y descartar. Las
+  que se pisarían (mismo slot del mismo PJ, o un disco comprometido dos veces) se toman de la de
+  más ganancia para abajo, y el resto queda **en conflicto**: no desaparece. Sólo lee la DB (se
+  abre con `mode=ro` y se compara el sha256).
+- ⚠️ **Un sabotaje escribió la DB de dominio.** El test "corre sobre la DB real" apuntaba a la DB
+  de verdad. El sabotaje que le sacaba el `mode=ro` al script le creó una tabla vacía
+  (`_sabotaje`). Se midió la diferencia con `iterdump`: esa tabla y nada más. Se guardó el estado
+  contaminado como backup y se restauró la versión del commit (sha256 idéntico al de antes,
+  `integrity_check` ok, sin FKs rotas). Ahora el test corre sobre una copia, y el script de
+  sabotaje compara el sha256 después de cada sabotaje y aborta si cambió. Es la misma lección de
+  `feedback_tests_contaminaron_db_dominio`: que algo sea de sólo lectura es justo lo que el test
+  no puede dar por hecho.
+- Un sabotaje quedó en verde: "un disco sin nivel se sugiere igual". La DB real tiene **0 de 380**
+  discos activos sin nivel, así que esa rama no corría nunca. Se agregó un test que la ejerce.
+- Sabotajes 5/5 en rojo. En 1,3 s sobre la DB real.
+- **Primera corrida (380 discos): mover 122 · equipar 57 · mejorar 8 · reserva 0 · descartar 7.
+  No se mostró**: salía Bono Daño Fuego → Lycaon (Hielo), Eléctrico → Piper (Físico), Hielo y Éter
+  → Manato (Fuego). Los arquetipos aceptan los seis Bono Daño en el slot 5 y nadie lo cruzaba con
+  el elemento del PJ. Se arregla en su propio commit.
