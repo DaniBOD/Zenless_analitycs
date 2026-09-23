@@ -119,10 +119,15 @@ def valor_sets(
 def evaluar_cambio(
     agent: "Agent", arch, build: dict[int, "Disc"], nuevo: "Disc", ctx: "ScoringContext",
     bonos_2pc: Callable[[int], tuple[str, float] | None],
+    valor_nuevo: float | None = None,
 ) -> Cambio:
-    """¿Cuánto mejora el build del PJ si en el slot del disco nuevo se pone el disco nuevo?"""
+    """¿Cuánto mejora el build del PJ si en el slot del disco nuevo se pone el disco nuevo?
+
+    `valor_nuevo` reemplaza el valor del disco nuevo: para uno sin terminar se pasa lo que se
+    espera que valga en Nivel 15 (`potencial`), y la comparación es la misma que para uno terminado.
+    """
     actual = build.get(nuevo.slot)
-    v_nuevo = valor_disco(nuevo, agent, arch, ctx)
+    v_nuevo = valor_disco(nuevo, agent, arch, ctx) if valor_nuevo is None else valor_nuevo
     v_actual = valor_disco(actual, agent, arch, ctx) if actual is not None else 0.0
 
     antes = Counter(d.set_id for d in build.values())
@@ -216,7 +221,8 @@ def recomendar(
         if mover is not None:
             return mover
     if disc.nivel is not None and disc.nivel < 15:
-        return _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archetypes)
+        return _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archetypes,
+                                         disc_set_repo, builds)
 
     top_agent, top_sb = candidatos[0]
 
@@ -281,14 +287,20 @@ def _bonos_2pc_desde(disc_set_repo) -> Callable[[int], tuple[str, float] | None]
     return bono
 
 
-def _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archetypes):
+def _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archetypes,
+                              disc_set_repo=None, builds=None):
     """Un disco sin terminar: ¿vale la pena invertirle? (casos 6 y 7 de Daniel)
 
     Se evalúa para todos los roles y vale el mejor que sirva (R11). No sirve si tiene DOS líneas
     muertas (R13) o si ya se gastó una mejora en una muerta (caso 7; caso 9: "se puede permitir uno
     muerto siempre y cuando las mejoras no apliquen a él"). Daniel igual sube todo "para ver el
-    valor final" (R14), pero la RECOMENDACIÓN es frenar. Si sirve, MEJORAR cuando lo esperable
-    llega al umbral de mejora del PJ. Un disco sin terminar no se equipa ni se reserva.
+    valor final" (R14), pero la RECOMENDACIÓN es frenar. Un disco sin terminar no se equipa ni se
+    reserva.
+
+    Si sirve, MEJORAR cuando lo esperable LE GANA a lo que un PJ ya lleva en ese slot (R12), con
+    la misma comparación que un disco terminado (`evaluar_cambio`, set incluido). Hallado con #369
+    (2026-09-23): contra el umbral fijo daba 0,468 < 0,50 y se descartaba, pero subido le gana al
+    slot 5 de Soukaku y al de Lycaon. Sin `builds` no hay contra qué comparar y sigue el umbral.
     """
     evaluados = []
     for agent, sb in candidatos:
@@ -299,7 +311,22 @@ def _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archet
 
     sanos = [t for t in evaluados
              if len(t[2].lineas_muertas) <= 1 and not t[2].mejora_en_linea_muerta]
-    if sanos:
+    if sanos and builds is not None:
+        bonos = _bonos_2pc_desde(disc_set_repo)
+        mejor = None
+        for agent, sb, pot in sanos:
+            arch = archetype_repo.get_by_id(agent.arquetipo_primario_id)
+            # El valor esperado SIN el set: el set lo pone `evaluar_cambio`, que lo mide en el build.
+            esperado = potencial(disc, agent, arch, ctx, []).score_raw
+            cambio = evaluar_cambio(agent, arch, builds(agent.id), disc, ctx, bonos,
+                                    valor_nuevo=esperado)
+            if cambio.delta > 0 and (mejor is None or cambio.delta > mejor[3].delta):
+                mejor = (agent, sb, pot, cambio)
+        if mejor is not None:
+            agent, sb, pot, _ = mejor
+            return Recommendation("mejorar", agent.id, agent.nombre, pot.score_norm,
+                                  top_candidatos=top, desglose_top=sb, potencial=pot)
+    elif sanos:
         agent, sb, pot = sanos[0]
         if pot.score_norm >= agent.threshold_upgrade:
             return Recommendation("mejorar", agent.id, agent.nombre, pot.score_norm,
