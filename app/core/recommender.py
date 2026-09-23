@@ -54,6 +54,8 @@ def recomendar(
             ctx=ctx,
             disc_set_archetypes=disc_archetypes,
         )
+        if not sb.principal_valido:
+            continue        # R9: para este rol el disco no sirve, por buenos que sean los subs
         candidatos.append((agent, sb))
 
     candidatos.sort(key=lambda x: x[1].score_norm, reverse=True)

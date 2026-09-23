@@ -32,6 +32,9 @@ class ScoreBreakdown:
     subs_positivos: list[SubstatContrib] = field(default_factory=list)
     subs_perjudiciales: list[SubstatContrib] = field(default_factory=list)
     nivel_bonus: float = 0.0
+    #: False = el principal no le sirve a este arquetipo (R9): el PJ NO es candidato para el disco,
+    #: por buenos que sean los secundarios. El puntaje se calcula igual, para poder mostrarlo.
+    principal_valido: bool = True
 
 
 def _set_match_score(
@@ -61,6 +64,23 @@ def _set_match_score(
                 return "secundario", peso_2pc_sec
 
     return "no_match", 0.0
+
+
+def principal_valido(disc: "Disc", archetype: "Archetype") -> bool:
+    """¿El principal de este disco le sirve a este arquetipo? Sólo pregunta en los slots 4-6.
+
+    Regla de Daniel (caso 6, R9): un principal equivocado mata al disco para ese rol, con
+    secundarios perfectos y todo. El scoring viejo le daba al principal el peso de UNA línea, así
+    que un PV % en slot 4 con cuatro buenas líneas empataba EXACTO (0,448) con un Daño Crítico
+    de tres. Es la única autoridad sobre esta pregunta: la usan el recomendador y el optimizador,
+    que antes la contestaba por su cuenta con un `if` propio (B1).
+
+    Una lista vacía de principales permitidos no restringe nada, igual que antes en el optimizador.
+    """
+    if disc.slot < 4 or not disc.main_stat:
+        return True
+    permitidos = getattr(archetype, f"mains_{disc.slot}", None) or []
+    return not permitidos or disc.main_stat in permitidos
 
 
 def score_disco(
@@ -146,4 +166,5 @@ def score_disco(
         subs_positivos=subs_pos,
         subs_perjudiciales=subs_neg,
         nivel_bonus=nivel_bonus,
+        principal_valido=principal_valido(disc, archetype),
     )

@@ -49,8 +49,6 @@ NO_REPRODUCE_TODAVIA: dict[str, str] = {
              "y castiga la línea de PV del actual",
     "caso6_D1": "descarta un Nivel 0 bueno: lo normaliza contra el máximo de un +15, no evalúa "
                 "potencial",
-    "caso6_D3": "acierta 'descartar' por la razón equivocada: mismo puntaje que D1, no ve que el "
-                "principal PV % no le sirve a ningún rol",
 }
 
 

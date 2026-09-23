@@ -15,7 +15,7 @@ from itertools import combinations
 from pathlib import Path
 from typing import Callable
 
-from app.core.scoring import score_disco
+from app.core.scoring import principal_valido, score_disco
 from app.core.score_normalizer import ScoringContext
 from app.db.repositories import (
     Agent, AgentRepo, Archetype, ArchetypeRepo,
@@ -220,22 +220,16 @@ def _greedy_candidates(
     Por cada slot: filtra por main compatible con el arquetipo y ordena por score base.
     Devuelve (candidates_per_slot, base_scores_by_disc_id).
     """
-    valid_mains: dict[int, list[str]] = {
-        4: arch.mains_4,
-        5: arch.mains_5,
-        6: arch.mains_6,
-    }
-    # Slots 1-3 tienen main fijo, cualquier disco de ese slot es compatible
+    # El principal lo decide `scoring.principal_valido`, la misma autoridad que usa el
+    # recomendador: si cada uno tuviera su regla, se separarían (B1).
     eligible: dict[int, list[tuple[float, Disc]]] = {s: [] for s in range(1, 7)}
     base_scores: dict[int, float] = {}
 
     for disc in inv_discs:
         if disc.slot < 1 or disc.slot > 6:
             continue
-        if disc.slot >= 4:
-            allowed = valid_mains.get(disc.slot, [])
-            if allowed and disc.main_stat and disc.main_stat not in allowed:
-                continue  # main incompatible → excluir
+        if not principal_valido(disc, arch):
+            continue  # main incompatible → excluir
         bs = _disc_base_score(disc, agent, arch, ctx)
         base_scores[disc.id] = bs
         eligible[disc.slot].append((bs, disc))

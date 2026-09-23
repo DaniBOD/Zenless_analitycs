@@ -267,3 +267,17 @@ El estado de cada PJ viaja adentro del caso, así que el test no lee la DB.
 Los cuatro quedan como `xfail` ESTRICTO: si un cambio arregla uno sin sacar la marca, el test se
 pone rojo, igual que si rompe uno que andaba. Sabotajes 4/4 en rojo (la decisión invertida, un
 caso marcado que empieza a pasar, dejar de exigir el motivo, una marca con el id mal escrito).
+
+### Paso 2 — el puntaje cuenta el stat, y el principal equivocado descalifica → **8 de 11**
+
+- Una línea pasa de `peso × (1 + 0,25·mejoras)` a `peso × (1 + mejoras)`: proporcional al stat.
+  El máximo teórico deja de suponer 5 mejoras en CADA línea (un disco imposible) y pasa a las 4
+  mejores líneas + las 5 mejoras en la mejor. Es una cota, no un valor exacto por slot: en 1-3 el
+  principal no suma, y en 4-6 su stat no puede repetirse abajo.
+- `scoring.principal_valido()` es la única autoridad sobre "¿este principal le sirve a este
+  rol?": la usan el recomendador (un PJ con el principal equivocado deja de ser candidato) y el
+  optimizador, que antes tenía su propio `if` para lo mismo (B1).
+- **Arregla 6_D3 por la razón correcta**: D3 ya no empata con D1 (0,25 contra 0,43), porque el PV %
+  sólo lo aceptan los disruptores y los defensores, y para ellos los secundarios de D3 valen poco.
+- Los negativos NO se tocaron (E3: ningún caso los discute todavía).
+- Sabotajes 5/5 en rojo. Siguen pendientes 3 (balance del crítico), 4 (4pc) y 6_D1 (potencial).
