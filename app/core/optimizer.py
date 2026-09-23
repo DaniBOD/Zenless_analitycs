@@ -229,7 +229,7 @@ def _greedy_candidates(
     for disc in inv_discs:
         if disc.slot < 1 or disc.slot > 6:
             continue
-        if not principal_valido(disc, arch):
+        if not principal_valido(disc, arch, agent):
             continue  # main incompatible → excluir
         bs = _disc_base_score(disc, agent, arch, ctx)
         base_scores[disc.id] = bs

@@ -157,7 +157,7 @@ def evaluar_salida(
     s_sin, _ = valor_sets(Counter(d.set_id for d in sin_el.values()), origen, arch, bonos_2pc)
     mejor = (-valor_disco(disc, origen, arch, ctx) + (s_sin - s_con), None)
     for libre in libres:
-        if libre.slot != slot or libre.id == disc.id or not principal_valido(libre, arch):
+        if libre.slot != slot or libre.id == disc.id or not principal_valido(libre, arch, origen):
             continue
         delta = evaluar_cambio(origen, arch, build, libre, ctx, bonos_2pc).delta
         if delta > mejor[0]:

@@ -151,7 +151,12 @@ def aporte_linea(stat: str, mejoras: int, pesos_pos: dict[str, float],
     return total
 
 
-def principal_valido(disc: "Disc", archetype: "Archetype") -> bool:
+#: Los principales elementales del slot 5 son "Bono Daño <elemento>", con el elemento escrito como
+#: en `agents.elemento` (vocabulario canónico de `stats_vocab`).
+PREFIJO_BONO_ELEMENTAL = "Bono Daño "
+
+
+def principal_valido(disc: "Disc", archetype: "Archetype", agent: "Agent | None" = None) -> bool:
     """¿El principal de este disco le sirve a este arquetipo? Sólo pregunta en los slots 4-6.
 
     Regla de Daniel (caso 6, R9): un principal equivocado mata al disco para ese rol, con
@@ -161,11 +166,21 @@ def principal_valido(disc: "Disc", archetype: "Archetype") -> bool:
     que antes la contestaba por su cuenta con un `if` propio (B1).
 
     Una lista vacía de principales permitidos no restringe nada, igual que antes en el optimizador.
+
+    Con `agent`, un "Bono Daño X" sólo sirve si X es SU elemento: el arquetipo acepta los seis,
+    pero un Bono Daño Fuego en una PJ de Hielo es tan equivocado como un PV % en un atacante
+    (hallado al correr el motor sobre el inventario entero, 2026-09-22). Un Lumen no acepta
+    ninguno —no existe "Bono Daño Lumen"—, y un PJ sin elemento cargado no se restringe (B2).
     """
     if disc.slot < 4 or not disc.main_stat:
         return True
     permitidos = getattr(archetype, f"mains_{disc.slot}", None) or []
-    return not permitidos or disc.main_stat in permitidos
+    if permitidos and disc.main_stat not in permitidos:
+        return False
+    elemento = getattr(agent, "elemento", None)
+    if elemento and disc.main_stat.startswith(PREFIJO_BONO_ELEMENTAL):
+        return disc.main_stat == PREFIJO_BONO_ELEMENTAL + elemento
+    return True
 
 
 #: Niveles en los que un disco S recibe una mejora. MEDIDO sobre el inventario (2026-09-22): los
@@ -328,5 +343,5 @@ def score_disco(
         subs_positivos=subs_pos,
         subs_perjudiciales=subs_neg,
         nivel_bonus=nivel_bonus,
-        principal_valido=principal_valido(disc, archetype),
+        principal_valido=principal_valido(disc, archetype, agent),
     )

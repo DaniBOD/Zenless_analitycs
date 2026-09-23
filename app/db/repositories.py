@@ -99,6 +99,8 @@ class Agent:
     rangos: dict[str, tuple[float | None, float | None]] = field(default_factory=dict)
     #: Stats ACTUALES del PJ (columnas de `agents`, las que llena S18). Vacío = no se leyeron.
     stats: dict[str, float] = field(default_factory=dict)
+    #: Como en `agents.elemento` ('Fuego', 'Hielo', …, 'Lumen'). Decide qué Bono Daño le sirve.
+    elemento: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -492,8 +494,10 @@ class AgentRepo:
         ):
             prefs.setdefault(r["agente_id"], {})[r["substat"]] = r["peso"]
 
+        con_elemento = _tiene_columnas(self._con, "agents", ("elemento",))
         for r in self._con.execute(
-            "SELECT id, nombre, rol, set_4p_id, set_2p_id, protected_build FROM agents"
+            "SELECT id, nombre, rol, set_4p_id, set_2p_id, protected_build"
+            + (", elemento" if con_elemento else "") + " FROM agents"
         ):
             arch_code = ARCHETYPES_BY_ROLE.get(r["rol"])
             if arch_code is None:
@@ -524,6 +528,7 @@ class AgentRepo:
                 protected_build=bool(r["protected_build"]),
                 rangos=rangos.get(r["id"], {}),
                 stats=stats.get(r["id"], {}),
+                elemento=r["elemento"] if con_elemento else None,
             )
         _avisar_pjs_sin_stats(self._cache.values())
 

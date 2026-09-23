@@ -430,3 +430,18 @@ Lectura, y cómo encaja con el caso 7:
   No se mostró**: salía Bono Daño Fuego → Lycaon (Hielo), Eléctrico → Piper (Físico), Hielo y Éter
   → Manato (Fuego). Los arquetipos aceptan los seis Bono Daño en el slot 5 y nadie lo cruzaba con
   el elemento del PJ. Se arregla en su propio commit.
+
+### Arreglo — un Bono Daño de otro elemento es un principal equivocado (R9)
+
+- `principal_valido(disc, arquetipo, pj)`: un "Bono Daño X" sólo sirve si X es el elemento del PJ
+  (`agents.elemento`, cargado en los 52 PJs). Lumen no acepta ninguno, porque no existe "Bono Daño
+  Lumen" (confirmado in-game el 2026-07-29). Un PJ sin elemento no se restringe (B2). Las tres
+  llamadas pasan el PJ: `score_disco`, `evaluar_salida` (un reemplazo tiene que ser del elemento
+  del origen) y el optimizador.
+- Resultado (380 discos): mover 122 → **109**, mejorar 8 → 7, descartar 7 → 8; equipar sigue en
+  57, pero los destinos ahora coinciden (Bono Daño Hielo → Lycaon, Éter → Yixuan, Hielo → Soukaku).
+- ¿Por qué tantas mejoras? Se midió que **no** son builds incompletas: sólo 3 PJs tienen menos de
+  6 discos (Antón 4, Ben 5, Nekomata 5), y 134 de las 166 sugerencias de equipar/mover van a un
+  slot ocupado. Piper, que es destino de 5 movimientos, tiene una build de Anomalía con Daño Crítico,
+  PV %, DEF % y DEF en casi todos los discos.
+- Sabotajes 7/7 en rojo, con la DB de dominio comparada por sha256 después de cada uno.

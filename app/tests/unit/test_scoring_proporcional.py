@@ -123,7 +123,7 @@ def test_el_optimizador_excluye_con_la_misma_regla():
 def test_el_optimizador_DELEGA_en_scoring(monkeypatch):
     """No alcanza con que coincidan hoy: el optimizador tiene que preguntarle a la MISMA función,
     o la próxima vez que cambie la regla se van a separar (B1)."""
-    monkeypatch.setattr(optimizer, "principal_valido", lambda disc, arch: False)
+    monkeypatch.setattr(optimizer, "principal_valido", lambda disc, arch, agent=None: False)
     bueno = _disco(slot=4, main="Daño Crítico", subs=[("Prob. Crítica", 2)])
     cands, _ = optimizer._greedy_candidates([bueno], DPS, ATK_DPS, ScoringContext())
     assert cands[4] == []
