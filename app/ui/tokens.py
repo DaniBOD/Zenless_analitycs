@@ -44,6 +44,17 @@ INFO            = "#5BC0EB"
 PURPLE          = "#9D4EDD"
 PINK            = "#FF4D8A"
 
+# Prioridad de buildeo (mig 42; handoff `design_v3_prioridad_de_buildeo`). Sólo se pintan alta y
+# baja: lima = alta (salta a la vista), pizarra = baja (relegado, no error). Ninguno reusa el ámbar
+# de "faltan datos", el naranja del ∞ ni los violetas.
+PRIO_ALTA         = "#C4F03A"   # barra, pestaña, chips
+PRIO_ALTA_TINTA   = "#1A2206"   # triángulo y texto SOBRE lima
+PRIO_BAJA         = "#8C95A8"   # borde de la pestaña, chip
+PRIO_BAJA_FONDO   = "#454B58"   # fondo de la pestaña
+PRIO_BAJA_TINTA   = "#D5DAE4"   # triángulo sobre la pestaña
+PRIO_BAJA_TEXTO   = "#C3C9D6"   # la palabra "baja"
+PRIO_NORMAL       = "#BFB8C9"   # chip de normal
+
 # Shell de la ventana (fase 1 de la interfaz, 2026-09-12) — mismos valores que panel.jsx
 BG_SIDEBAR_TOP  = "#0c0c0c"   # gradiente del sidebar, arriba
 BG_SIDEBAR_BOT  = "#050505"   # ... y abajo

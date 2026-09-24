@@ -20,14 +20,17 @@ import logging
 import sqlite3
 
 from PySide6.QtCore import Signal
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from app.core.roster_declaration import no_poseidos_declarados
 from app.ui import tokens as T
-from app.ui.roster.celda import AMBAR, NARANJA_INF, VIOLETA, CeldaRoster
-from app.ui.roster.datos import calcular_grilla, conteos_header, filtrar, leer_roster, ordenar
+from app.ui.roster.celda import AMBAR, NARANJA_INF, VIOLETA, CeldaRoster, pintar_marca_prioridad
+from app.ui.roster.datos import (
+    calcular_grilla, conteos_header, conteos_prioridad, filtrar, leer_roster, ordenar,
+)
 from app.ui.roster.filtros import BandaFiltros
 
 log = logging.getLogger(__name__)
@@ -57,6 +60,23 @@ def _no_obtenidos(con: sqlite3.Connection) -> set[str]:
     except sqlite3.Error:
         log.exception("[roster] no se pudo leer la declaración")
         return set()
+
+
+class _MuestraPrioridad(QWidget):
+    """La marca de prioridad en miniatura para la leyenda: la MISMA figura que la celda
+    (`pintar_marca_prioridad`), sobre un rectángulo de celda de 16×12."""
+
+    def __init__(self, prioridad: str):
+        super().__init__()
+        self.prioridad = prioridad
+        self.setFixedSize(16, 12)
+
+    def paintEvent(self, _ev):
+        p = QPainter(self)
+        p.setPen(QColor(T.BORDER_MID))
+        p.drawRect(0, 0, self.width() - 1, self.height() - 1)
+        pintar_marca_prioridad(p, self.prioridad, self.width(), s=0.55)
+        p.end()
 
 
 class _Cuerpo(QWidget):
@@ -171,6 +191,25 @@ class RosterView(QWidget):
             l = _lbl(texto, T.font_ui(8), color)
             l.setToolTip(ayuda)
             h.addWidget(l)
+        # Prioridad de buildeo: sólo si hay alguna declarada (`refrescar` las muestra u oculta).
+        self._leyenda_prio: dict[str, QWidget] = {}
+        for prio, texto, color, ayuda in (
+            ("alta", "prioridad alta", T.PRIO_ALTA,
+             "Barra lima + pestaña ▲: recibe discos primero y nadie de menor prioridad se los saca."),
+            ("baja", "prioridad baja", T.PRIO_BAJA_TEXTO,
+             "Pestaña ▼ pizarra: cede discos a PJs de prioridad mayor. Es una decisión, no un error."),
+        ):
+            item = QWidget()
+            ih = QHBoxLayout(item)
+            ih.setContentsMargins(0, 0, 0, 0)
+            ih.setSpacing(5)
+            ih.addWidget(_MuestraPrioridad(prio))
+            l = _lbl(texto, T.font_ui(8), color)
+            ih.addWidget(l)
+            item.setToolTip(ayuda)
+            item.hide()
+            self._leyenda_prio[prio] = item
+            h.addWidget(item)
         h.addStretch()
         # La leyenda nunca impone ancho: si no entra, se recorta a la derecha (tiene tooltips).
         f.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
@@ -193,6 +232,10 @@ class RosterView(QWidget):
             f"{k['filas']} filas  −{k['atuendos']} atuendo  = {k['distintos']} distintos"
             f"  +{k['no_obtenidos']} no obtenidos  = {k['conocidos']} conocidos")
         self._sin_umbrales.setText(f"{k['sin_thresholds']} sin umbrales" if k["sin_thresholds"] else "")
+        prio = conteos_prioridad(celdas_datos)
+        hay_prioridades = bool(prio["alta"] or prio["baja"])
+        for item in self._leyenda_prio.values():
+            item.setVisible(hay_prioridades)
 
         for c in self._celdas:
             c.deleteLater()

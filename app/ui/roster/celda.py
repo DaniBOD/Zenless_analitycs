@@ -11,6 +11,10 @@ Marcas (README del diseño v1, §2), cada una con su significado y nada más:
   en 60 cuando se diseñó: pintar el caso normal es ruido).
 - **discos** → seis casilleros; por encima de 6, `+n` (la grilla no se estira por una excepción).
 - **atuendo** → borde punteado violeta + `ATUENDO · <base>`.
+- **prioridad** (mig 42, handoff `design_v3_prioridad_de_buildeo`) → sólo alta y baja; normal no se
+  pinta (es la mayoría, como el nivel 60). Alta = barra superior lima + pestaña ▲; baja = sólo la
+  pestaña ▼ en pizarra, sin brillo: "apartado", no alerta. La pestaña ocupa la esquina superior
+  izquierda, así que el logo de facción se corre.
 
 Lo web-only del diseño (chamfers por `clip-path`, glows compuestos) no se porta.
 """
@@ -29,6 +33,56 @@ from app.ui.roster.datos import CeldaPJ
 AMBAR = "#F0AA3C"       # "le faltan datos" — mismo ámbar que el editor de roster
 VIOLETA = "#B06FF0"     # atuendo — el violeta del editor
 NARANJA_INF = "#FF8A3D" # rango ∞
+
+
+#: Pestaña de prioridad (diseño: `left 3, top 0`, 17×14) y barra de alta (3 px), a escala 1.
+_TAB_X, _TAB_W, _TAB_H, _BARRA_H = 3, 17, 14, 3
+#: Lo que se corre el logo de facción cuando hay pestaña: el contenido arranca en x = 6 (margen) y
+#: la fila separa 4 px, así que el logo cae en 6 + hueco + 4 — tiene que quedar a la derecha de la
+#: pestaña (3 + 17) con 2 px de aire.
+_HUECO_PRIO = _TAB_X + _TAB_W + 2 - 6 - 4
+
+
+def pintar_marca_prioridad(p: QPainter, prioridad: str, ancho: float, s: float = 1.0,
+                           barra: bool = True) -> None:
+    """La marca de prioridad, anclada arriba a la izquierda de un rectángulo de `ancho`. La usan la
+    celda y la leyenda (una sola figura). Normal no se pinta."""
+    if prioridad not in ("alta", "baja"):
+        return
+    p.save()
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    alta = prioridad == "alta"
+    if alta and barra:
+        p.fillRect(QRectF(0, 0, ancho, _BARRA_H * s), QColor(T.PRIO_ALTA))
+        # Halo. Con alfa por `setAlpha` y NO sumando "40" al string: Qt lee "#C4F03A40" como
+        # #AARRGGBB (alfa C4, color F03A40) y pintaba una línea ROJA bajo la barra (visto en la
+        # primera captura).
+        halo = QColor(T.PRIO_ALTA)
+        halo.setAlpha(0x40)
+        p.fillRect(QRectF(0, _BARRA_H * s, ancho, 2 * s), halo)
+    tab = QRectF(_TAB_X * s, 0, _TAB_W * s, _TAB_H * s)
+    if alta:
+        p.fillRect(tab, QColor(T.PRIO_ALTA))
+    else:
+        p.fillRect(tab, QColor(T.PRIO_BAJA_FONDO))
+        p.setPen(QPen(QColor(T.PRIO_BAJA), 1))          # sin borde superior
+        p.drawLine(tab.topLeft(), tab.bottomLeft())
+        p.drawLine(tab.bottomLeft(), tab.bottomRight())
+        p.drawLine(tab.bottomRight(), tab.topRight())
+    lado = max(2.0, round(_TAB_H * s * 0.3))
+    cx, cy, h = tab.center().x(), tab.center().y(), lado * 1.2
+    tri = QPainterPath()
+    if alta:
+        tri.moveTo(QPointF(cx - lado, cy + h / 2))
+        tri.lineTo(QPointF(cx + lado, cy + h / 2))
+        tri.lineTo(QPointF(cx, cy - h / 2))
+    else:
+        tri.moveTo(QPointF(cx - lado, cy - h / 2))
+        tri.lineTo(QPointF(cx + lado, cy - h / 2))
+        tri.lineTo(QPointF(cx, cy + h / 2))
+    tri.closeSubpath()
+    p.fillPath(tri, QColor(T.PRIO_ALTA_TINTA if alta else T.PRIO_BAJA_TINTA))
+    p.restore()
 
 
 def _lbl(texto: str, font, color: str) -> QLabel:
@@ -159,9 +213,14 @@ class CeldaRoster(QFrame):
         v.setContentsMargins(6, 5, 6, 5)
         v.setSpacing(2)
 
-        # fila 1: facción · rango
+        # fila 1: [hueco de la pestaña de prioridad] facción · rango
         fila1 = QHBoxLayout()
         fila1.setSpacing(4)
+        self.prioridad = celda.prioridad if celda.prioridad in ("alta", "baja") else None
+        self._hueco_prio = QWidget()
+        self._hueco_prio.setFixedSize(_HUECO_PRIO if self.prioridad else 0, 1)
+        self._hueco_prio.setStyleSheet("background: transparent; border: none;")
+        fila1.addWidget(self._hueco_prio)
         self._faccion = QLabel()
         self._faccion.setFixedSize(16, 16)
         self._faccion.setStyleSheet("background: transparent; border: none;")
@@ -219,8 +278,13 @@ class CeldaRoster(QFrame):
         #: (label, tamaño base en pt) — lo que crece cuando la celda crece.
         self._fuentes = [(self._nombre, 8), (self._detalle, 6 if celda.variante_de else 7),
                          (self._nivel, 7)]
+        ayudas = []
+        if self.prioridad:
+            ayudas.append(f"Prioridad de buildeo {self.prioridad}.")
         if celda.sin_thresholds:
-            self.setToolTip("Le faltan datos: sin umbrales (agent_thresholds) — onboarding a medias.")
+            ayudas.append("Le faltan datos: sin umbrales (agent_thresholds) — onboarding a medias.")
+        if ayudas:
+            self.setToolTip("\n".join(ayudas))
 
     # --- escala ---------------------------------------------------------------------------------
 
@@ -249,6 +313,10 @@ class CeldaRoster(QFrame):
             self._faccion.setPixmap(pm)
         self._rango.set_escala(s)
         self._discos.set_escala(s)
+        if self.prioridad:
+            # La pestaña (y su aire) crece con `s`, pero el margen (6) y el espaciado (4) no:
+            # (3 + 17 + 2)·s − 10. A escala 1 da `_HUECO_PRIO`.
+            self._hueco_prio.setFixedSize(round((_TAB_X + _TAB_W + 2) * s) - 10, 1)
 
     def escala_contenido(self) -> float:
         return self._escala_contenido
@@ -267,6 +335,10 @@ class CeldaRoster(QFrame):
 
     def paintEvent(self, ev):
         super().paintEvent(ev)
+        if self.prioridad:
+            p = QPainter(self)
+            pintar_marca_prioridad(p, self.prioridad, self.width(), self._escala_contenido)
+            p.end()
         if not self.marca_faltan_datos:
             return
         # Esquina rayada ámbar, arriba a la derecha, 13 px.

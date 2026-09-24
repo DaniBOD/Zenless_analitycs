@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 
 from app.ui import tokens as T
 from app.ui.roster.celda import AMBAR
-from app.ui.roster.datos import ESTADOS, CeldaPJ, cumple_estado
+from app.ui.roster.datos import ESTADOS, CeldaPJ, conteos_prioridad, cumple_estado
 
 _ORDEN_RANGO = ["∞", "S", "A"]
 
@@ -64,11 +64,17 @@ class BandaFiltros(QFrame):
         # Repartido para que ninguna fila pida más ancho que la ventana mínima (el cuerpo mide
         # ~1100 px): una fila de chips demasiado larga estiraba TODA la vista a 2500 px.
 
-        # fila 1 · elemento
+        # fila 1 · elemento … y a la derecha la prioridad de buildeo (handoff design_v3: en la fila
+        # de elemento, empujada a la derecha; la banda sigue en 104 px)
         f1 = self._fila("Elemento")
         for e in sorted(elementos):
             f1.addWidget(self._chip("elemento", e, f"{e} {elementos[e]}", T.color_elemento(e)))
         f1.addStretch()
+        prio = conteos_prioridad(celdas)
+        f1.addWidget(_titulo("Prioridad"))
+        for clave, texto, color in (("alta", "▲ Alta", T.PRIO_ALTA), ("normal", "Normal", T.PRIO_NORMAL),
+                                    ("baja", "▼ Baja", T.PRIO_BAJA)):
+            f1.addWidget(self._chip("prioridad", clave, f"{texto} {prio[clave]}", color))
         v.addLayout(f1)
 
         # fila 2 · rango + rol

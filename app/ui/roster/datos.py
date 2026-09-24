@@ -9,6 +9,8 @@ Cada marca visual de la celda tiene UNA fuente, y está acá y no en el widget:
 - **arma** = `inventory_weapons` equipada y no descartada.
 - **atuendo** = `roster_declaration._variantes_de_atuendo`, la regla del editor de roster: si acá
   se escribiera otra, las dos pantallas podrían discrepar sobre el mismo PJ.
+- **prioridad** (barra lima / pestaña) = `PrioridadRepo` (mig 42), la misma que lee el motor de
+  discos: la pantalla no puede mostrar una prioridad y el motor decidir con otra.
 
 El nivel se deja en `None` cuando no se leyó. Desde la reconstrucción de la DB (2026-08-17) está
 vacío para los 51: la celda dice "sin leer", no 1 ni 60.
@@ -20,6 +22,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from app.core.roster_declaration import _variantes_de_atuendo
+from app.db.repositories import PRIORIDADES, PrioridadRepo
 from app.ui.grilla import Grilla, calcular
 
 #: Orden de rangos: `∞` primero (con 1 PJ, alfabético lo perdería entre 37 S), después S y A.
@@ -48,6 +51,8 @@ class CeldaPJ:
     tiene_arma: bool
     sin_thresholds: bool
     variante_de: str | None
+    #: Prioridad de buildeo (mig 42): 'alta' | 'normal' | 'baja'. La autoridad es `PrioridadRepo`.
+    prioridad: str = "normal"
 
 
 def _tablas(con: sqlite3.Connection) -> set[str]:
@@ -77,12 +82,22 @@ def leer_roster(con: sqlite3.Connection) -> list[CeldaPJ]:
         con_umbrales = {r[0] for r in con.execute("SELECT DISTINCT agente_id FROM agent_thresholds")}
 
     variantes = _variantes_de_atuendo({str(f[1]) for f in filas})
+    prioridades = PrioridadRepo(con).get_all()
     return [
         CeldaPJ(id=i, nombre=n, rango=rango, elemento=elem, rol=rol, faccion=fac,
                 mindscape=m, nivel=nivel, discos=discos.get(i, 0), tiene_arma=i in con_arma,
-                sin_thresholds=i not in con_umbrales, variante_de=variantes.get(n))
+                sin_thresholds=i not in con_umbrales, variante_de=variantes.get(n),
+                prioridad=prioridades.get(i, "normal"))
         for i, n, rango, elem, rol, fac, m, nivel in filas
     ]
+
+
+def conteos_prioridad(celdas: Iterable[CeldaPJ]) -> dict[str, int]:
+    """alta / normal / baja sobre el roster completo, en el orden de `PRIORIDADES`."""
+    n = {p: 0 for p in PRIORIDADES}
+    for c in celdas:
+        n[c.prioridad if c.prioridad in n else "normal"] += 1
+    return n
 
 
 def ordenar(celdas: Iterable[CeldaPJ]) -> list[CeldaPJ]:
@@ -121,8 +136,8 @@ def cumple_estado(c: CeldaPJ, estado: str) -> bool:
 def filtrar(celdas: Iterable[CeldaPJ], filtros: Mapping[str, set[str]]) -> list[CeldaPJ]:
     """Dentro de un eje las opciones SUMAN (Fuego o Hielo); entre ejes RESTAN (Fuego y S).
 
-    Ejes: `elemento`, `rango`, `faccion`, `rol` (valores de la celda) y `estado` (claves de ESTADOS).
-    Un eje vacío o ausente no filtra.
+    Ejes: `elemento`, `rango`, `faccion`, `rol`, `prioridad` (valores de la celda) y `estado`
+    (claves de ESTADOS). Un eje vacío o ausente no filtra.
     """
     salida = []
     for c in celdas:
