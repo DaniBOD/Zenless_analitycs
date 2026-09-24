@@ -79,6 +79,32 @@ def test_los_otros_roles_no_leen_laceracion_ni_afiladura():
     assert ex["laceracion"] is None and ex["afiladura"] is None
 
 
+#: OCR full-frame de Paddle sobre el S18 de Ye Shunguang en vivo (2026-09-23), tal cual. Su
+#: elemento se muestra como "Hoja afilada": "afilad\w*" lo tomaba por la afiladura del Armero con
+#: el PV (11012) como valor, y con eso se descartaban su ATK y su ER → nunca completaba.
+OCR_YE = (
+    "Ciudad HURIE' $ Pinäculo Yunkui Ye shunguang CALYPTIC-LEVEL DISASTER TIME ENVIRONMENT BECOI "
+    "Qingming> Hoja Nivel 60 Atacante afilada PV 11012 Ataque 2879 Defensa 863 Impacto 83 "
+    "Probabilidad de 48.2 % Dano Critico 208.4 % Critico Tasa de Anomalia 94 Maestria de Anomalia "
+    "120 32 % Recuperación de Tasa de Perforacion 1.2 Energia Atributos secundarios Preparación 31 "
+    "activos para el combate CINEMA 0/6 Atributos base Habilidades Eqguipamiento"
+)
+
+
+def test_hoja_afilada_no_es_la_afiladura_del_armero():
+    assert p._extract_by_regex(OCR_YE)["afiladura"] is None
+
+
+def test_ye_shunguang_sale_completa_como_atacante():
+    if not DB.exists():
+        pytest.skip("sin DB de dominio")
+    r = p.parse_agent_stats(_frame(), _Ocr(OCR_YE))
+    assert r.acumulacion_afiladura is None and r.dano_laceracion is None
+    assert r.ataque == 2879 and r.recuperacion_energia == pytest.approx(1.2)
+    assert r.rol != "Armero"
+    assert stats_completos(r), missing_stat_labels(r)
+
+
 # --- el parse completo -------------------------------------------------------------------------
 
 def test_claret_sale_completa_y_la_afiladura_no_cae_en_er():
@@ -146,6 +172,16 @@ def test_el_aggregator_conserva_laceracion_y_afiladura():
 
 # --- contra la captura y la DB reales ----------------------------------------------------------
 
+#: La fila que la migración 35 escribió desde esta misma captura (2026-09-17), copiada del SQL.
+#: NO se lee de la DB: la fila viva cambia cada vez que Daniel pasa por el S18 de Claret (en la
+#: pasada del 2026-09-23 su PV pasó a 8754 y su DEF a 2144) y la captura no.
+FILA_MIG35 = {
+    "nivel": 60, "pv": 8360, "defensa": 927, "impacto": 93, "prob_critico": 95.2,
+    "dano_critico": 93.2, "tasa_anomalia": 86, "maestria_anomalia": 79, "tasa_perforacion": 32.0,
+    "dano_laceracion": 150.0, "acumulacion_afiladura": 1.5, "ataque": None, "rec_energia": None,
+}
+
+
 @pytest.mark.skipif(not CAPTURA.exists(), reason="captura de Claret no presente")
 def test_la_captura_real_coincide_con_la_fila_de_la_migracion():
     """El cruce que en Aria se hizo a mano, automático: si el parser y la migración 35 dejan de
@@ -157,13 +193,7 @@ def test_la_captura_real_coincide_con_la_fila_de_la_migracion():
     from app.core.ocr_paddle import PaddleBackend
     img = cv2.imdecode(np.fromfile(str(CAPTURA), dtype=np.uint8), cv2.IMREAD_COLOR)
     r = p.parse_agent_stats(img, PaddleBackend())
-    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
-    con.row_factory = sqlite3.Row
-    try:
-        fila = con.execute("SELECT * FROM agents WHERE nombre = 'Claret Flint'").fetchone()
-    finally:
-        con.close()
-    assert fila is not None
+    fila = FILA_MIG35
     assert (r.agente_nombre, r.rol, r.nivel) == ("Claret Flint", "Armero", fila["nivel"])
     assert (r.pv, r.defensa, r.impacto) == (fila["pv"], fila["defensa"], fila["impacto"])
     assert (r.tasa_anomalia, r.maestria_anomalia) == (fila["tasa_anomalia"], fila["maestria_anomalia"])

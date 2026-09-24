@@ -31,9 +31,10 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
+import unicodedata
 from pathlib import Path
 
-from app.core.parser_agent_stats import AgentStatsParsed
+from app.core.parser_agent_stats import AgentStatsParsed, invalidar_roster
 from app.db.connection import is_readonly
 
 log = logging.getLogger(__name__)
@@ -65,6 +66,17 @@ _STAT_MAP: tuple[tuple[str, str, str], ...] = (
 # subir nivel / cambiar discos son >> esto).
 _PCT_TOL = 0.1
 _FLOAT_TOL = 0.01
+
+
+#: Stats que sólo muestra la ficha de un rol → ese rol (como en `agents.rol`, sin acentos).
+_ROL_POR_STAT_EXCLUSIVO = {
+    "fuerza_bruta": "disruptivos", "acumulacion_adrenalina": "disruptivos",
+    "dano_laceracion": "armero", "acumulacion_afiladura": "armero",
+}
+
+
+def _sin_acentos(s: str | None) -> str:
+    return unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().strip().lower()
 
 
 def _db_value(attr_value: float, kind: str) -> int | float:
@@ -115,12 +127,36 @@ class AgentStatsSyncer:
                                 "35?): esos stats no se persisten",
                                 [c for _, c, _ in _STAT_MAP if c not in existentes])
                 cols = ", ".join(col for _, col, _ in mapa)
+                con_elem = "elemento" in existentes
+                con_rol = "rol" in existentes
+                extra = ("elemento, " if con_elem else "") + ("rol, " if con_rol else "")
                 row = con.execute(
-                    f"SELECT id, {cols} FROM agents WHERE nombre = ?", (nombre,)
+                    f"SELECT id, {extra}{cols} FROM agents WHERE nombre = ?", (nombre,)
                 ).fetchone()
                 if row is None:
                     # OCR resolvió a un nombre que no está en `agents` → no inventar.
                     log.debug("[agent_sync] '%s' no esta en agents — sin persistir.", nombre)
+                    return None
+                # Última defensa (QA 2026-09-24): una ficha Soporte/Fuego se guardó en Grace
+                # (Anomalía/Eléctrico) porque el nombre se resolvió mal. Si el ELEMENTO de la
+                # pantalla contradice al del PJ, la ficha no es suya → no escribir. Sólo el elemento:
+                # el rol del banner osciló entre frames en la misma ficha (Soporte ↔ Ataque).
+                elem_pantalla = _sin_acentos(stats.elemento)
+                elem_db = _sin_acentos(row["elemento"]) if con_elem else ""
+                if elem_pantalla and elem_db and elem_pantalla != elem_db:
+                    log.warning("[agent_sync] %s: la ficha dice elemento %s y el PJ es %s — no se "
+                                "persiste (¿nombre mal resuelto?)", nombre, stats.elemento,
+                                row["elemento"])
+                    return None
+                # Lo mismo con el ROL, pero sólo el PROBADO por stats exclusivos (el del banner
+                # oscila): la ficha de Billy Estelar (Fuerza Bruta) se guardó en Billy (Ataque).
+                probados = {rol for k, rol in _ROL_POR_STAT_EXCLUSIVO.items()
+                            if getattr(stats, k, None) is not None}
+                rol_db = _sin_acentos(row["rol"]) if con_rol else ""
+                if probados and rol_db and rol_db not in probados:
+                    log.warning("[agent_sync] %s: la ficha tiene stats de %s y el PJ es %s — no se "
+                                "persiste (¿nombre mal resuelto?)", nombre, "/".join(sorted(probados)),
+                                row["rol"])
                     return None
 
                 updates: dict[str, int | float] = {}
@@ -139,6 +175,7 @@ class AgentStatsSyncer:
                 params = list(updates.values()) + [row["id"]]
                 with con:                              # transacción atómica (RNF-01)
                     con.execute(f"UPDATE agents SET {set_clause} WHERE id = ?", params)
+                invalidar_roster()     # la identificación por stats tiene que ver la fila nueva
                 log.info(
                     "[agent_sync] %s (id=%d) ← %d campo(s): %s",
                     nombre, row["id"], len(updates),

@@ -602,6 +602,25 @@ def _norm_name(s: str) -> str:
 _ROSTER_CACHE: list[dict] | None = None
 
 
+def invalidar_roster() -> None:
+    """La próxima identificación relee el roster de la DB. La llama el guardado de stats: la
+    identificación POR STATS compara contra estas filas, y con la foto del arranque una fila mal
+    escrita se autoconfirmaba (Billy Estelar → Billy, QA 2026-09-24)."""
+    global _ROSTER_CACHE
+    _ROSTER_CACHE = None
+
+#: Nombre que muestra la ficha (S18) → nombre canónico en `agents`, para los PJs cuya ficha dice
+#: OTRA cosa que el roster. Sale de capturas de la pantalla (RNF-02), no se deduce: Lucy se muestra
+#: "Luciana de Montefio" y Nekomata "Nekomiya Mana" (capturas en vivo del 2026-09-24). Antes las
+#: resolvía la capa por stats, que desde el rebuild de la DB (stats a 0) no tiene con qué comparar —
+#: y sin nombre no se guarda nada. Un PJ cuyo nombre del roster SÍ es palabra de su nombre en
+#: pantalla ("Grace" en "Grace Howard") no hace falta: el matcher ya lo toma como subconjunto.
+NOMBRES_EN_PANTALLA: dict[str, str] = {
+    "Luciana de Montefio": "Lucy",
+    "Nekomiya Mana": "Nekomata",
+}
+
+
 def _get_roster() -> list[dict]:
     """
     Carga (y cachea) el roster de la DB: lista de dicts con nombre/rol/elemento
@@ -633,6 +652,12 @@ def _get_roster() -> list[dict]:
             conn.close()
         except Exception:
             roster = []
+        # El nombre en pantalla entra como OTRA forma del mismo PJ: devuelve el canónico.
+        por_nombre = {ag["nombre"]: ag for ag in roster}
+        for en_pantalla, canon in NOMBRES_EN_PANTALLA.items():
+            if canon in por_nombre:
+                norm = _norm_name(en_pantalla)
+                roster.append({**por_nombre[canon], "norm": norm, "tokens": set(norm.split())})
         _ROSTER_CACHE = roster
     return _ROSTER_CACHE
 
@@ -725,7 +750,16 @@ def _match_agent_scored(
     best_sim = None          # similitud cruda del ELEGIDO
     mejor_parecido = None    # el más parecido, haya pasado el umbral o no
     mejor_sim = -1.0
-    for ag in _get_roster():
+    # DOMINADOS (QA 2026-09-24): si se leyeron enteras las palabras de "Billy Estelar", "Billy"
+    # (sus palabras están contenidas en las de aquél) no es candidato: gana el más específico. Sin
+    # esto el bono de rol decidía, y el banner mal recortado leyó "Ataque" → Billy.
+    roster = _get_roster()
+    leidos = [ag for ag in roster if ag["tokens"] and ag["tokens"] <= ocr_tokens]
+    dominados = {id(ag) for ag in leidos
+                 if any(ag["tokens"] < otro["tokens"] for otro in leidos)}
+    for ag in roster:
+        if id(ag) in dominados:
+            continue
         name_sim = _name_similarity(ocr_tokens, ocr_norm, ag["tokens"], ag["norm"])
         if name_sim > mejor_sim:
             mejor_sim, mejor_parecido = name_sim, ag
@@ -1047,9 +1081,12 @@ _RE_LACERACION = re.compile(
 # Armero — "Acumulación Automática de / afiladura" (label de 2 líneas, como la Adrenalina). En la
 # ficha de Claret el valor quedó ANTES del token: "tasa de perforacion 32 % 1.5 de afiladura". La
 # ventana del valor-antes excluye '%': el "32 %" de TP pegado no puede ser la afiladura.
+# El token es "afiladur", no "afilad": el elemento de Ye Shunguang se muestra "Hoja afilada", y con
+# "afilad" se leía como afiladura con su PV de valor ("afilada PV 11012") → pasaba por Armero y
+# perdía ATK y ER, así que nunca completaba (QA en vivo 2026-09-23).
 _RE_AFILADURA = re.compile(
-    r"(\d+(?:\.\d+)?)[^\d\n%]{0,6}?afilad\w*"      # "1.5 de afiladura"
-    r"|afilad\w*[^\d\n]{0,12}?(\d+(?:\.\d+)?)"     # "afiladura 1.5"
+    r"(\d+(?:\.\d+)?)[^\d\n%]{0,6}?afiladur\w*"    # "1.5 de afiladura"
+    r"|afiladur\w*[^\d\n]{0,12}?(\d+(?:\.\d+)?)"   # "afiladura 1.5"
 )
 # Agente: nombre (1-2 palabras capitalizadas en texto original) antes de "Nivel".
 # Se aplica sobre el texto ORIGINAL (no normalizado) para preservar mayúsculas.
