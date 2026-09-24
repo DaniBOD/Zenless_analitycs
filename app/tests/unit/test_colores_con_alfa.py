@@ -18,12 +18,13 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtGui import QColor                      # noqa: E402
-from PySide6.QtWidgets import QApplication           # noqa: E402
+from PySide6.QtWidgets import QApplication, QFrame   # noqa: E402
 
 from app.ui.armas import celda as celda_armas         # noqa: E402
 from app.ui.armas.celda import CeldaArma              # noqa: E402
 from app.ui.armas.datos import FilaArma               # noqa: E402
-from app.ui.armas.view import _TarjetaPJ              # noqa: E402
+from app.tests.unit.test_armas_datos import _arma      # noqa: E402
+from app.ui.armas.view import ArmasView, _TarjetaPJ   # noqa: E402
 from app.ui.roster import celda as celda_roster       # noqa: E402
 from app.ui.roster.celda import CeldaRoster           # noqa: E402
 from app.ui.roster.datos import CeldaPJ               # noqa: E402
@@ -123,3 +124,33 @@ def test_armas_el_borde_de_la_tarjeta_de_pj_sin_arma_es_ambar(qapp):
     borde = QColor(img.pixel(x, 0))
     esperado = _mezcla(celda_armas.AMBAR, 0x88, fondo)
     assert _cerca(borde, esperado), (borde.name(), esperado.name())
+
+
+def test_armas_el_borde_del_aviso_de_pjs_sin_arma_es_ambar(qapp, db_esquema_real):
+    """El aviso arriba de las tarjetas (modo auditoría "PJs sin arma"): mismo stylesheet, mismo
+    error, con el ámbar al 40 %. El fondo se mide adentro del aviso, donde no hay texto."""
+    con = db_esquema_real
+    con.executescript("""
+        INSERT INTO weapons (id, nombre, nombre_en, rareza, tipo_especialidad) VALUES
+            (1, 'Llanto mielgo', 'Weeping Gemini', 'A', 'Anomalía');
+        INSERT INTO agents (id, nombre, rango, elemento, rol, faccion, protected_build) VALUES
+            (1, 'Yanagi', 'S', 'Eléctrico', 'Anomalía', 'Hollow Special Operations Section 6', 0),
+            (3, 'Anby', 'A', 'Eléctrico', 'Aturdimiento', 'Cunning Hares', 0);
+    """)
+    _arma(con, 10, 1, agente=1, equipado=1)
+    v = ArmasView(con)
+    v.resize(1100, 756)
+    v.show()
+    try:
+        v.filtros.chip("auditoria", "pjs_sin_arma").click()
+        qapp.processEvents()
+        aviso = v.findChild(QFrame, "aviso_pjs")
+        assert aviso is not None and aviso.isVisible()
+        img = aviso.grab().toImage()
+        x = aviso.width() - 6
+        fondo = QColor(img.pixel(x, 3))
+        borde = QColor(img.pixel(x, 0))
+        esperado = _mezcla(celda_armas.AMBAR, 0x66, fondo)
+        assert _cerca(borde, esperado), (borde.name(), esperado.name())
+    finally:
+        v.close()

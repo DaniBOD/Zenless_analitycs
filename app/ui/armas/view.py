@@ -276,7 +276,7 @@ class ArmasView(QWidget):
         aviso = QFrame()
         aviso.setObjectName("aviso_pjs")
         aviso.setStyleSheet(f"QFrame#aviso_pjs {{ background: rgba(240,170,60,0.08);"
-                            f" border: 1px solid {AMBAR}66; border-left: 3px solid {AMBAR}; }}")
+                            f" border: 1px solid {_con_alfa(AMBAR, 0x66)}; border-left: 3px solid {AMBAR}; }}")
         av = QVBoxLayout(aviso)
         av.setContentsMargins(12, 8, 12, 8)
         av.addWidget(_lbl(f"LOS {len(self._pjs)} PJs SIN W-ENGINE EQUIPADO — DATO DEL ROSTER",
