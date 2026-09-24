@@ -10,8 +10,12 @@ su alfa sobre el fondo que se MIDE al lado de la marca, no sobre uno supuesto.
 """
 from __future__ import annotations
 
+import io
 import os
+import re
 import sys
+import tokenize
+from pathlib import Path
 
 import pytest
 
@@ -154,3 +158,55 @@ def test_armas_el_borde_del_aviso_de_pjs_sin_arma_es_ambar(qapp, db_esquema_real
         assert _cerca(borde, esperado), (borde.name(), esperado.name())
     finally:
         v.close()
+
+
+# --- la guarda ---------------------------------------------------------------------------------
+
+_UI = Path(__file__).resolve().parents[2] / "ui"
+_DOS_HEX = re.compile(r"""^[rRbBuU]?["'][0-9A-Fa-f]{2}["']$""")
+_FSTRING_ALFA = re.compile(r"\}[0-9A-Fa-f]{2}(?![0-9A-Za-z])")
+
+
+def alfas_pegados(fuente: str) -> list[tuple[int, str]]:
+    """Donde el código le pega dos dígitos hex a un color: `x + "40"` o `f"{x}88"`. Mira TOKENS,
+    así un comentario que cuenta el error no cuenta como el error."""
+    hallados, previo = [], None
+    for tok in tokenize.generate_tokens(io.StringIO(fuente).readline):
+        if tok.type == tokenize.STRING:
+            if previo is not None and previo.string == "+" and _DOS_HEX.match(tok.string):
+                hallados.append((tok.start[0], tok.line.strip()))
+            elif tok.string[:1] in "fF" and _FSTRING_ALFA.search(tok.string):
+                hallados.append((tok.start[0], tok.line.strip()))
+        if tok.type not in (tokenize.NL, tokenize.COMMENT):
+            previo = tok
+    return hallados
+
+
+@pytest.mark.parametrize("codigo", [
+    'QColor(AMBAR + "40")',
+    "QColor(AMBAR + '66')",
+    'css = f"border: 1px solid {AMBAR}88;"',
+    'css = f"border: 1px solid {T.YELLOW}66; color: red"',
+])
+def test_la_guarda_ve_las_dos_formas(codigo):
+    assert alfas_pegados(codigo + "\n")
+
+
+@pytest.mark.parametrize("codigo", [
+    'x = "#F0AA3C"  # antes era AMBAR + "40"',
+    'css = f"border: {grosor}px solid {AMBAR};"',
+    'texto = f"{n}abc"',         # siguen más letras: es una palabra, no un alfa
+    'total = a + "1"',
+])
+def test_la_guarda_no_ve_fantasmas(codigo):
+    assert not alfas_pegados(codigo + "\n")
+
+
+def test_ninguna_pantalla_le_pega_el_alfa_al_hex():
+    """Qt lee #RRGGBBAA como #AARRGGBB, en QColor y en QSS. El alfa va con `setAlpha` (o
+    `QColor.name(HexArgb)` para un stylesheet), nunca pegado al string."""
+    archivos = sorted(_UI.rglob("*.py"))
+    assert len(archivos) > 20, _UI          # que la guarda esté mirando la carpeta de verdad
+    hallados = [f"{f.relative_to(_UI)}:{n}: {linea}" for f in archivos
+                for n, linea in alfas_pegados(f.read_text(encoding="utf-8"))]
+    assert not hallados, "\n".join(hallados)
