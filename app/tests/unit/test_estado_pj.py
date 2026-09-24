@@ -109,6 +109,9 @@ def test_el_repo_carga_los_stats_y_avisa_cuantos_faltan(tmp_path, caplog, monkey
     shutil.copy(DB_REAL, copia)
     con = sqlite3.connect(copia)
     con.execute("UPDATE agents SET prob_critico=65, dano_critico=175, ataque=3150 WHERE nombre='Ellen'")
+    # Los demás SIN crítico, en la copia: el test no puede depender de cuántos PJs tengan stats en
+    # la DB viva (con la pasada por S18 del 2026-09-24 pasaron a 52/52 y el aviso desapareció).
+    con.execute("UPDATE agents SET prob_critico=NULL, dano_critico=NULL WHERE nombre<>'Ellen'")
     con.commit()
     con.close()
     monkeypatch.setattr(repos, "_AVISO_SIN_STATS_DADO", False)
