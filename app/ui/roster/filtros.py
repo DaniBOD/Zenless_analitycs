@@ -43,7 +43,11 @@ class BandaFiltros(QFrame):
     """`cambiaron()` cada vez que se toca un chip. `seleccion()` → dict para `datos.filtrar`."""
 
     cambiaron = Signal()
+    #: El chip de estado vacío pide entrar al modo edición de prioridades.
+    marcar_pedido = Signal()
     ALTO = 104
+    _PRIO_CHIPS = (("alta", "▲ Alta", T.PRIO_ALTA), ("normal", "Normal", T.PRIO_NORMAL),
+                   ("baja", "▼ Baja", T.PRIO_BAJA))
 
     def __init__(self, celdas: list[CeldaPJ], parent: QWidget | None = None):
         super().__init__(parent)
@@ -70,11 +74,22 @@ class BandaFiltros(QFrame):
         for e in sorted(elementos):
             f1.addWidget(self._chip("elemento", e, f"{e} {elementos[e]}", T.color_elemento(e)))
         f1.addStretch()
-        prio = conteos_prioridad(celdas)
         f1.addWidget(_titulo("Prioridad"))
-        for clave, texto, color in (("alta", "▲ Alta", T.PRIO_ALTA), ("normal", "Normal", T.PRIO_NORMAL),
-                                    ("baja", "▼ Baja", T.PRIO_BAJA)):
-            f1.addWidget(self._chip("prioridad", clave, f"{texto} {prio[clave]}", color))
+        for clave, texto, color in self._PRIO_CHIPS:
+            f1.addWidget(self._chip("prioridad", clave, texto, color))
+        # Estado vacío (nadie declarado): en lugar de los chips, una invitación que entra al modo
+        # edición. Filtrar por "alta 0" no sirve de nada; decir que la función existe, sí.
+        self.btn_marcar = QPushButton("Sin declarar · Marcar ▸")
+        self.btn_marcar.setFont(T.font_ui(8))
+        self.btn_marcar.setToolTip("El motor de discos no sabe a quién querés mejorar: marcá la "
+                                   "prioridad de cada PJ.")
+        self.btn_marcar.setStyleSheet(
+            f"QPushButton {{ color: {T.TEXT_SECONDARY}; background: rgba(196,240,58,0.05);"
+            f" border: 1px dashed {T.PRIO_ALTA}; padding: 2px 8px; }}"
+            f"QPushButton:hover {{ color: {T.PRIO_ALTA}; }}")
+        self.btn_marcar.clicked.connect(self.marcar_pedido.emit)
+        f1.addWidget(self.btn_marcar)
+        self.actualizar_prioridad(conteos_prioridad(celdas))
         v.addLayout(f1)
 
         # fila 2 · rango + rol
@@ -134,6 +149,18 @@ class BandaFiltros(QFrame):
 
     def chip(self, eje: str, valor: str) -> QPushButton:
         return self._chips[(eje, valor)]
+
+    def actualizar_prioridad(self, conteos: dict[str, int]) -> None:
+        """Conteos de alta/normal/baja EN EL LUGAR (rearmar la banda perdería la selección) y, si
+        nadie tiene prioridad, el chip "Sin declarar" en vez de los tres."""
+        vacio = not (conteos.get("alta") or conteos.get("baja"))
+        for clave, texto, _color in self._PRIO_CHIPS:
+            b = self._chips[("prioridad", clave)]
+            b.setText(f"{texto} {conteos.get(clave, 0)}")
+            if vacio and b.isChecked():
+                b.setChecked(False)
+            b.setVisible(not vacio)
+        self.btn_marcar.setVisible(vacio)
 
     def seleccion(self) -> dict[str, set[str]]:
         sel: dict[str, set[str]] = {}

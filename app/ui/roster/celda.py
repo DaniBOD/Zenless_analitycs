@@ -20,11 +20,12 @@ Lo web-only del diseño (chamfers por `clip-path`, glows compuestos) no se porta
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from app.core.asset_resolver import agent_avatar_path, faction_logo_path
 from app.ui import tokens as T
@@ -188,10 +189,64 @@ class _Discos(QWidget):
         p.end()
 
 
+class _BotoneraPrioridad(QWidget):
+    """Modo edición (handoff design_v3): tres segmentos ▲ · – · ▼ con destino explícito, un click
+    y listo. Descartados por el diseño: el ciclo normal→alta→baja (para llegar a baja pasa por alta
+    y recalcula dos veces) y la selección múltiple (no ahorra clicks para ~15 PJs)."""
+
+    elegida = Signal(str)
+    _SEGMENTOS = (("alta", "▲"), ("normal", "–"), ("baja", "▼"))
+
+    def __init__(self, valor: str):
+        super().__init__()
+        self.setStyleSheet("background: transparent;")
+        h = QHBoxLayout(self)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(2)
+        self.botones: dict[str, QPushButton] = {}
+        for clave, glifo in self._SEGMENTOS:
+            b = QPushButton(glifo)
+            b.setCheckable(True)
+            b.setFixedHeight(15)
+            b.setFont(T.font_ui(7))
+            b.setToolTip({"alta": "Prioridad alta", "normal": "Prioridad normal",
+                          "baja": "Prioridad baja"}[clave])
+            b.setStyleSheet(self._css(clave))
+            b.clicked.connect(lambda _c=False, k=clave: self._click(k))
+            h.addWidget(b, 1)
+            self.botones[clave] = b
+        self.set_valor(valor)
+
+    @staticmethod
+    def _css(clave: str) -> str:
+        fondo, tinta = {"alta": (T.PRIO_ALTA, T.PRIO_ALTA_TINTA),
+                        "normal": ("rgba(255,255,255,0.2)", T.TEXT_PRIMARY),
+                        "baja": ("#5A6070", "#EEF0F5")}[clave]
+        borde = {"alta": T.PRIO_ALTA, "normal": "rgba(255,255,255,0.35)", "baja": T.PRIO_BAJA}[clave]
+        return (f"QPushButton {{ color: {T.TEXT_MUTED}; background: rgba(255,255,255,0.04);"
+                f" border: 1px solid {T.BORDER_SUBTLE}; padding: 0; }}"
+                f"QPushButton:hover {{ color: {T.PRIO_ALTA}; border-color: {T.PRIO_ALTA}; }}"
+                f"QPushButton:checked {{ color: {tinta}; background: {fondo}; border-color: {borde}; }}")
+
+    def set_valor(self, valor: str) -> None:
+        self.valor = valor
+        for clave, b in self.botones.items():
+            b.setChecked(clave == valor)
+
+    def _click(self, clave: str) -> None:
+        # El click de Qt ya tildó el segmento; se deshace: lo marca la vista recién cuando la
+        # escritura salió (si falla o la app está en solo lectura, la celda no puede mostrar un
+        # valor que no quedó guardado).
+        self.set_valor(self.valor)
+        self.elegida.emit(clave)
+
+
 class CeldaRoster(QFrame):
-    """Una celda clickeable. `clicked(agente_id)`."""
+    """Una celda clickeable. `clicked(agente_id)`; en modo edición, `prioridad_elegida(id, valor)`
+    y el click NO pide la ficha."""
 
     clicked = Signal(int)
+    prioridad_elegida = Signal(int, str)
 
     def __init__(self, celda: CeldaPJ, parent: QWidget | None = None):
         super().__init__(parent)
@@ -272,7 +327,19 @@ class CeldaRoster(QFrame):
         fila4.addStretch()
         self._discos = _Discos(celda.discos)
         fila4.addWidget(self._discos)
+        # Modo edición de prioridades: la botonera REEMPLAZA nivel y discos mientras dura el modo.
+        self.botonera = _BotoneraPrioridad(celda.prioridad)
+        self.botonera.elegida.connect(lambda valor: self.prioridad_elegida.emit(self.celda.id, valor))
+        self.botonera.hide()
+        fila4.addWidget(self.botonera, 1)
         v.addLayout(fila4)
+        self.editando = False
+        self._guardado = _lbl("GUARDADO", T.font_caps(6, bold=True), T.PRIO_ALTA_TINTA)
+        self._guardado.setParent(self)
+        self._guardado.setStyleSheet(f"color: {T.PRIO_ALTA_TINTA}; background: {T.PRIO_ALTA};"
+                                     " border: none; padding: 0 4px;")
+        self._guardado.hide()
+        self._css_base = self.styleSheet()
 
         self._escala_contenido = 1.0
         #: (label, tamaño base en pt) — lo que crece cuando la celda crece.
@@ -313,13 +380,58 @@ class CeldaRoster(QFrame):
             self._faccion.setPixmap(pm)
         self._rango.set_escala(s)
         self._discos.set_escala(s)
-        if self.prioridad:
-            # La pestaña (y su aire) crece con `s`, pero el margen (6) y el espaciado (4) no:
-            # (3 + 17 + 2)·s − 10. A escala 1 da `_HUECO_PRIO`.
-            self._hueco_prio.setFixedSize(round((_TAB_X + _TAB_W + 2) * s) - 10, 1)
+        self._ajustar_hueco()
 
     def escala_contenido(self) -> float:
         return self._escala_contenido
+
+    # --- prioridad de buildeo -------------------------------------------------------------------
+
+    def _ajustar_hueco(self) -> None:
+        """Lo que se corre el logo de facción para no quedar bajo la pestaña. La pestaña (y su aire)
+        crece con la escala, pero el margen (6) y el espaciado (4) no: (3 + 17 + 2)·s − 10, que a
+        escala 1 da `_HUECO_PRIO`. Sin prioridad, 0."""
+        ancho = round((_TAB_X + _TAB_W + 2) * self._escala_contenido) - 10 if self.prioridad else 0
+        self._hueco_prio.setFixedSize(ancho, 1)
+
+    def set_modo_edicion(self, on: bool) -> None:
+        """La botonera reemplaza nivel y discos; el borde en hover pasa a lima y el click deja de
+        pedir la ficha."""
+        self.editando = on
+        self._nivel.setVisible(not on)
+        self._discos.setVisible(not on)
+        self.botonera.setVisible(on)
+        self.setCursor(Qt.CursorShape.ArrowCursor if on else Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet(self._css_base + (
+            f"QFrame#celda_roster:hover {{ border: 1px solid {T.PRIO_ALTA}; }}" if on else ""))
+        if not on:
+            self._guardado.hide()
+
+    def set_prioridad(self, prioridad: str) -> None:
+        """Actualiza la celda en el lugar (sin rearmar la grilla: se perderían los filtros)."""
+        self.celda = replace(self.celda, prioridad=prioridad)
+        self.prioridad = prioridad if prioridad in ("alta", "baja") else None
+        self._ajustar_hueco()
+        self.botonera.set_valor(prioridad)
+        self.update()
+
+    def marcar_guardado(self, ms: int = 2000) -> None:
+        """Anillo lima + "GUARDADO" sobre la botonera, un rato. Sin toast: es un ajuste del
+        usuario, no algo que pasó en el juego."""
+        self.setStyleSheet(self._css_base + f"QFrame#celda_roster {{ border: 1px solid {T.PRIO_ALTA}; }}")
+        self._guardado.adjustSize()
+        self._guardado.move((self.width() - self._guardado.width()) // 2,
+                            self.height() - self._guardado.height() - 21)
+        self._guardado.show()
+        self._guardado.raise_()
+        QTimer.singleShot(ms, self._fin_guardado)
+
+    def _fin_guardado(self) -> None:
+        try:
+            self._guardado.hide()
+            self.set_modo_edicion(self.editando)
+        except RuntimeError:
+            pass        # la celda se destruyó (refrescar) antes de que venciera el timer
 
     # --- introspección para tests -----------------------------------------------------------------
 
@@ -329,7 +441,8 @@ class CeldaRoster(QFrame):
     # --- eventos --------------------------------------------------------------------------------
 
     def mouseReleaseEvent(self, ev):
-        if ev.button() == Qt.MouseButton.LeftButton and self.rect().contains(ev.position().toPoint()):
+        if (not self.editando and ev.button() == Qt.MouseButton.LeftButton
+                and self.rect().contains(ev.position().toPoint())):
             self.clicked.emit(self.celda.id)
         super().mouseReleaseEvent(ev)
 
