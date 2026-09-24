@@ -23,6 +23,7 @@ from PySide6.QtWidgets import QApplication           # noqa: E402
 from app.ui.armas import celda as celda_armas         # noqa: E402
 from app.ui.armas.celda import CeldaArma              # noqa: E402
 from app.ui.armas.datos import FilaArma               # noqa: E402
+from app.ui.armas.view import _TarjetaPJ              # noqa: E402
 from app.ui.roster import celda as celda_roster       # noqa: E402
 from app.ui.roster.celda import CeldaRoster           # noqa: E402
 from app.ui.roster.datos import CeldaPJ               # noqa: E402
@@ -109,3 +110,16 @@ def test_armas_la_esquina_de_dato_faltante_es_ambar_no_roja(qapp):
     relleno = _relleno_de_la_esquina(img, lado)
     esperado = _mezcla(celda_armas.AMBAR, 0x33, fondo)
     assert _cerca(relleno, esperado), (relleno.name(), esperado.name())
+
+
+def test_armas_el_borde_de_la_tarjeta_de_pj_sin_arma_es_ambar(qapp):
+    """Stylesheet: el QSS lee el hex igual que QColor, así que `{AMBAR}88` también pintaba otro
+    color. El borde de arriba se compara con el ámbar al 53 % sobre el fondo de la tarjeta, medido
+    dos píxeles más abajo."""
+    w = _TarjetaPJ({"nombre": "Anby", "elemento": "Eléctrico"})
+    img = w.grab().toImage()
+    x = w.width() - 20
+    fondo = QColor(img.pixel(x, 2))
+    borde = QColor(img.pixel(x, 0))
+    esperado = _mezcla(celda_armas.AMBAR, 0x88, fondo)
+    assert _cerca(borde, esperado), (borde.name(), esperado.name())

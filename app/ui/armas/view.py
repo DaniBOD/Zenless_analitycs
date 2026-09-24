@@ -27,7 +27,7 @@ import sqlite3
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
@@ -50,6 +50,14 @@ def _lbl(texto: str, font, color: str, wrap: bool = False) -> QLabel:
     l.setWordWrap(wrap)
     l.setStyleSheet(f"color: {color}; background: transparent; border: none;")
     return l
+
+
+def _con_alfa(color: str, alfa: int) -> str:
+    """`color` con opacidad `alfa` (0-255) para un stylesheet. El QSS lee un hex de 8 dígitos como
+    #AARRGGBB, así que pegarle el alfa al final ("#F0AA3C88") pinta OTRO color; que lo escriba Qt."""
+    c = QColor(color)
+    c.setAlpha(alfa)
+    return c.name(QColor.NameFormat.HexArgb)
 
 
 def _plural(n: int, singular: str, plural: str) -> str:
@@ -107,8 +115,9 @@ class _TarjetaPJ(QPushButton):
         self.setFixedSize(232, 78)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         acento = T.color_elemento(pj.get("elemento"))
+        borde = _con_alfa(AMBAR, 0x88)
         self.setStyleSheet(
-            f"QPushButton#tarjeta_pj {{ background: {T.BG_PANEL}; border: 1px solid {AMBAR}88;"
+            f"QPushButton#tarjeta_pj {{ background: {T.BG_PANEL}; border: 1px solid {borde};"
             f" border-left: 3px solid {acento}; text-align: left; }}"
             f"QPushButton#tarjeta_pj:hover {{ border-color: {AMBAR}; }}")
         h = QHBoxLayout(self)
