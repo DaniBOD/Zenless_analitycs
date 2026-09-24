@@ -20,6 +20,9 @@ pytest.importorskip("PySide6")
 from PySide6.QtGui import QColor                      # noqa: E402
 from PySide6.QtWidgets import QApplication           # noqa: E402
 
+from app.ui.armas import celda as celda_armas         # noqa: E402
+from app.ui.armas.celda import CeldaArma              # noqa: E402
+from app.ui.armas.datos import FilaArma               # noqa: E402
 from app.ui.roster import celda as celda_roster       # noqa: E402
 from app.ui.roster.celda import CeldaRoster           # noqa: E402
 from app.ui.roster.datos import CeldaPJ               # noqa: E402
@@ -87,3 +90,22 @@ def test_roster_el_halo_del_rango_infinito_es_naranja_no_magenta(qapp):
     halo = QColor(img.pixel(o.x() + w._rango.width() // 2, o.y()))
     esperado = _mezcla(celda_roster.NARANJA_INF, 0x66, fondo)
     assert _cerca(halo, esperado), (halo.name(), esperado.name())
+
+
+# --- Armas -------------------------------------------------------------------------------------
+
+def test_armas_la_esquina_de_dato_faltante_es_ambar_no_roja(qapp):
+    """Sin ícono en el catálogo la celda lleva la esquina rayada ámbar al 20 %."""
+    fila = FilaArma(id=1, weapon_id=1, nombre="A", nombre_en=None, rareza="A", especialidad=None,
+                    stat_base_valor=None, stat_base_tipo=None, stat=None, stat_valor=None,
+                    nivel=None, refinamiento=None, equipado=False, dueno=None, dueno_id=None,
+                    dueno_avatar=None, icono=None, copias=1)
+    w = CeldaArma(fila)
+    w.resize(celda_armas.CELDA_W, celda_armas.CELDA_H)
+    w.layout().activate()
+    img = w.grab().toImage()
+    lado = 13
+    fondo = QColor(img.pixel(img.width() - lado - 2, 2))
+    relleno = _relleno_de_la_esquina(img, lado)
+    esperado = _mezcla(celda_armas.AMBAR, 0x33, fondo)
+    assert _cerca(relleno, esperado), (relleno.name(), esperado.name())

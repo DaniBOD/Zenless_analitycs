@@ -357,7 +357,9 @@ class CeldaArma(QFrame):
             tri.lineTo(QPointF(w, lado))
             tri.closeSubpath()
             p.setClipPath(tri)
-            p.fillPath(tri, QColor(AMBAR + "33"))
+            relleno = QColor(AMBAR)      # alfa por `setAlpha`: "#F0AA3C33" es #AARRGGBB (rojo)
+            relleno.setAlpha(0x33)
+            p.fillPath(tri, relleno)
             p.setPen(QPen(QColor(AMBAR), 1.2))
             for k in range(-lado, lado * 2, 4):
                 p.drawLine(QPointF(w - lado + k, 0), QPointF(w + k, lado))
