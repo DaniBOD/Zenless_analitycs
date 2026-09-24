@@ -1034,8 +1034,14 @@ _RE_FUERZA_BRUTA = re.compile(
 # BIDIRECCIONAL (captura el número %-terminado ADYACENTE al label, antes o después).
 # La ventana entre valor y label es [^\d\n] (sin dígitos): no puede cruzar otra
 # fila porque cualquier otro valor (un dígito) corta la ventana → sin falsos +.
+#
+# Armero (QA en vivo 2026-09-24, Claret): la celda vecina es "Acumulación Automática / de
+# afiladura" y su 1ª línea también se intercala: "32 % acumulacion automatica tasa de perforacion".
+# Son 24 caracteres, más que la ventana de 20 → TP=None en 58 de 100 frames medidos (en rachas de
+# hasta 10). Esa etiqueta se admite EXPLÍCITA en vez de ensanchar la ventana, que sí podría cruzar
+# a otra fila.
 _RE_TASA_PERFORACION = re.compile(
-    r"(\d+(?:\.\d+)?)\s*%[^\d\n]{0,20}?tasa\s*(?:de\s*)?perfor"   # "<valor> % [recuperacion de] tasa de perforacion" (flip v3.0)
+    r"(\d+(?:\.\d+)?)\s*%[^\d\n]{0,20}?(?:acumulac\w*\s+autom\w*\s*)?tasa\s*(?:de\s*)?perfor"   # "<valor> % [recuperacion de | acumulacion automatica] tasa de perforacion" (flip v3.0)
     r"|tasa\s*(?:de\s*)?perfor\w*[^\d%\n]{0,10}(\d+(?:\.\d+)?)\s*%"  # "tasa de perforacion <valor> %" (orden v2.x)
 )
 # Recup Energía: "Recuperación de Energía" se renderiza en 2 LÍNEAS en el

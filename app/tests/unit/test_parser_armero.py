@@ -105,6 +105,41 @@ def test_ye_shunguang_sale_completa_como_atacante():
     assert stats_completos(r), missing_stat_labels(r)
 
 
+#: OCR full-frame de Paddle sobre el S18 de Claret en vivo (2026-09-24), tal cual. La 1ª línea de
+#: "Acumulación Automática de afiladura" quedó ENTRE el 32 % y su etiqueta: pasó en 58 de 100
+#: frames, y la TP no se leía → Claret se quedaba en "falta TP (10/11)" hasta que tocaba un frame
+#: con el otro orden.
+OCR_CLARET_FLIP = (
+    "1 Ciudad $ Taller Flint de Roscaelifer Claret Flint SPHERICAL DIMENSION THA DUE TO UNKNOWN "
+    "INFLUEN Claret Nivel 60 MAX Eléctrico 2Armero PV 8754 Dato de laceración 150 % Defensa 2144 "
+    "Impacto 93 Probabilidad de 109.6 % Critico Dano Critico 93.2 % Tasa de Anomalia 80 Maestria de "
+    "Anomalia 79 32 % Acumulación Automática Tasa de Perforación 1.5 de afiladura Atributos "
+    "secundarios Preparación 23 activos para el combate CINENA 0/6 Atributos base Habilidades "
+    "Equipamiento"
+)
+
+
+def test_la_tp_se_lee_con_la_etiqueta_de_la_afiladura_intercalada():
+    ex = p._extract_by_regex(OCR_CLARET_FLIP)
+    assert ex["tasa_perforacion"] == "32"
+    assert ex["afiladura"] == "1.5" and ex["laceracion"] == "150"
+
+
+def test_claret_con_la_etiqueta_intercalada_sale_completa():
+    if not DB.exists():
+        pytest.skip("sin DB de dominio")
+    r = p.parse_agent_stats(_frame(), _Ocr(OCR_CLARET_FLIP))
+    assert r.agente_nombre == "Claret Flint" and r.rol == "Armero"
+    assert r.tasa_perforacion == pytest.approx(0.32)
+    assert stats_completos(r), missing_stat_labels(r)
+
+
+def test_la_etiqueta_intercalada_no_habilita_a_cruzar_filas():
+    """Lo que se admite es ESA etiqueta, no una ventana más ancha: otro texto de 24 caracteres
+    entre un porcentaje y la etiqueta de TP sigue sin leerse como TP."""
+    assert p._extract_by_regex("93.2 % texto ajeno de otra fila tasa de perforacion")["tasa_perforacion"] is None
+
+
 # --- el parse completo -------------------------------------------------------------------------
 
 def test_claret_sale_completa_y_la_afiladura_no_cae_en_er():
