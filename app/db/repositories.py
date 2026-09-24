@@ -157,6 +157,18 @@ def rango_default(minimo: float | None, optimo: float | None,
 #: Prioridad de buildeo (mig 42), de mayor a menor. 'normal' NO se guarda: es la ausencia de fila.
 PRIORIDADES: tuple[str, ...] = ("alta", "normal", "baja")
 
+#: Cambia cada vez que se COMMITEA una prioridad. `AgentRepo` cachea los PJs por instancia, y el
+#: controller y la captura en vivo tienen instancias que viven toda la sesión: sin esto, una
+#: prioridad editada en el Roster no llegaba al motor hasta reiniciar la app.
+_GENERACION_PRIORIDAD = 0
+
+
+def prioridades_cambiaron() -> None:
+    """Lo llama quien escribe una prioridad, DESPUÉS del commit: los `AgentRepo` del proceso
+    releen en su próximo uso."""
+    global _GENERACION_PRIORIDAD
+    _GENERACION_PRIORIDAD += 1
+
 
 class PrioridadRepo:
     """La prioridad de buildeo de cada PJ: la declara Daniel en la app (Roster, modal de PJ).
@@ -478,10 +490,12 @@ class AgentRepo:
     def __init__(self, con: sqlite3.Connection):
         self._con = con
         self._cache: dict[int, Agent] | None = None
+        self._generacion = -1
 
     def _load(self):
-        if self._cache is not None:
+        if self._cache is not None and self._generacion == _GENERACION_PRIORIDAD:
             return
+        self._generacion = _GENERACION_PRIORIDAD
         self._cache = {}
 
         arch_rows = {
