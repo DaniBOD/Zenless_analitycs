@@ -101,6 +101,20 @@ Este documento describe el modelo relacional completo de la base, post-aplicaci�
 | `disc_set_archetype` | 31 (26 sets + 5 dobles) | Mapping N:M con `prioridad` (1=primario, 2=secundario) |
 | `inventory_disc_evaluations` | 0 | Histórico de recomendaciones del scoring engine. Crece con uso |
 
+### Capa 4b — Ajustes del usuario sobre los defaults (migraciones 40 y 42)
+
+Dos capas: los defaults de las tablas de arriba (Prydwen, Game8… con su `fuente`) **no se tocan**; lo
+que Daniel corrige a mano vive en tablas propias y el repositorio lo mezcla — **el ajuste gana, y si
+se borra la fila vuelve el default**. Una tabla por tipo de dato, para que SQLite haga cumplir sus
+reglas con `CHECK`. Detalle y procedencia de cada fila: cabecera de cada `.sql`.
+
+| Tabla | Mig | Filas iniciales | Descripción |
+|-------|-----|-----------------|-------------|
+| `ajustes_usuario_rangos` | 40 | 1 (Ellen · ataque 3000–3200) | Rango objetivo por PJ y stat (`minimo ≤ maximo`, al menos uno) |
+| `ajustes_usuario_pesos` | 40 | 0 | Peso de un substat por PJ, en [-1, 1] |
+| `ajustes_usuario_arquetipo` | 40 | 1 (HP_DISRUPT · mains_4) · 3 desde mig 41 (+ ATK_DPS y SUPPORT_ER · mains_5) | Principales permitidos por slot (`mains_4/5/6`, array JSON) |
+| `ajustes_usuario_prioridad` | 42 | 0 (los 52 en normal) | Prioridad de buildeo: `alta` / `baja`; **normal = sin fila**. Bloquea sugerir mover un disco hacia un PJ de prioridad más baja |
+
 ### Capa 5 — Optimizador de discos (migración 02 — RF-06)
 
 | Tabla | Filas iniciales | Descripción |

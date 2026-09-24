@@ -60,6 +60,8 @@ DECLARADO: tuple[str, ...] = (
     # Mig 40 (2026-09-22): lo que Daniel corrige a mano sobre los defaults de Prydwen — rangos
     # objetivo, pesos y principales por arquetipo. Son decisiones suyas, no observación.
     "ajustes_usuario_rangos", "ajustes_usuario_pesos", "ajustes_usuario_arquetipo",
+    # Mig 42 (2026-09-24): la prioridad de buildeo de cada PJ, que Daniel declara en la app.
+    "ajustes_usuario_prioridad",
 )
 
 #: Estado de cuenta observable. Se re-censa.
