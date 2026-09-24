@@ -371,10 +371,18 @@ class RosterView(QWidget):
         if not res.escribio:
             self._mostrar_estado(f"NO SE GUARDÓ: {res.motivo_no_escribio}", AMBAR)
             return
-        celda.set_prioridad(prioridad)
+        self.prioridad_actualizada(agente_id, prioridad)
         celda.marcar_guardado()
         self._mostrar_estado(
             f"● SUGERENCIAS DE DISCOS RECALCULADAS · {datetime.now():%H:%M:%S}", T.PRIO_ALTA)  # noqa: DTZ005
+
+    def prioridad_actualizada(self, agente_id: int, prioridad: str) -> None:
+        """La prioridad de un PJ quedó guardada (acá o en su ficha): se actualiza esa celda EN EL
+        LUGAR, con los conteos, el filtro y la leyenda. Rearmar la grilla perdería los filtros."""
+        celda = next((c for c in self._celdas if c.celda.id == agente_id), None)
+        if celda is None:
+            return
+        celda.set_prioridad(prioridad)
         self._actualizar_prioridad_ui()
         self._aplicar_filtros()          # un PJ puede salir del filtro de prioridad activo
 

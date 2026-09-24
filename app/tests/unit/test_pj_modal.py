@@ -133,7 +133,9 @@ def test_el_modal_no_muestra_scoring_ni_botones_de_accion(qapp, con):
     for prohibido in ("BUILD COMPLETION", "OPTIMIZAR", "SUGERIR EQUIPO", "VER RUNS", "% COMPLETION"):
         assert prohibido not in textos
     botones = [b.text() for b in m.findChildren(QPushButton)]
-    assert botones == ["×"], f"el único botón es cerrar: {botones}"
+    # Cerrar y, desde la mig 42, los tres segmentos del selector de prioridad (Daniel, 2026-09-24:
+    # la prioridad se edita en la app). Ningún botón de acción del mockup.
+    assert botones == ["×", "▲ Alta", "Normal", "▼ Baja"], f"sólo cerrar y la prioridad: {botones}"
     assert "YANAGI" in textos and "LLANTO MIELGO" in textos and "P5" in textos
     assert "4 PIEZAS" in textos and "2 PIEZAS" in textos
     m.close()

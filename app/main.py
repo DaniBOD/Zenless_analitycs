@@ -336,7 +336,12 @@ class MainWindow(ShellWindow):
             log.exception("[roster] no se pudo armar la ficha del PJ %s", agente_id)
             return
         if ficha is not None:
-            PjModal(ficha, parent=self).exec()
+            modal = PjModal(ficha, parent=self)
+            # La prioridad se puede cambiar desde la ficha: el Roster actualiza esa celda.
+            roster = getattr(self, "_roster_view", None)
+            if roster is not None:
+                modal.prioridad_cambiada.connect(roster.prioridad_actualizada)
+            modal.exec()
 
     def _abrir_ficha_disco(self, disco_id: int):
         """Click en una fila de Discos → el modal de ese disco. Desde ahí, click en el dueño abre

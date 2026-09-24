@@ -85,6 +85,8 @@ class FichaPJ:
     arte: str | None = None
     faccion_logo: str | None = None
     extra: dict = field(default_factory=dict)
+    #: Prioridad de buildeo (mig 42): 'alta' | 'normal' | 'baja', de `PrioridadRepo`.
+    prioridad: str = "normal"
 
 
 def formatear_stat(columna: str, valor) -> str | None:
@@ -148,10 +150,18 @@ def ficha_pj(con: sqlite3.Connection, agente_id: int) -> FichaPJ | None:
     bono_v = a.get("bono_dano_elemento")
     bono = f"Bono {a.get('elemento')} {float(bono_v):g}%" if bono_v is not None else None
 
+    from app.db.repositories import PrioridadRepo
+    prioridad = "normal"
+    try:
+        prioridad = PrioridadRepo(con).get(agente_id)
+    except sqlite3.Error:
+        log.exception("[modal] no se pudo leer la prioridad de %s", a["nombre"])
+
     avatar = agent_avatar_path(a["nombre"], "ico")
     arte = agent_avatar_path(a["nombre"], "extend")
     logo_fac = faction_logo_path(a.get("faccion"))
     return FichaPJ(
+        prioridad=prioridad,
         id=a["id"], nombre=a["nombre"], rango=a.get("rango"), elemento=a.get("elemento"),
         rol=a.get("rol"), faccion=a.get("faccion"), mindscape=a.get("mindscape"),
         nivel=a.get("nivel"),

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import (
     QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 from app.ui import tokens as T
 from app.ui.live.hexagon import BuildHexagon
 from app.ui.pj_modal.datos import FichaPJ, stats_de_rol
+from app.ui.roster.celda import AMBAR as AMBAR_AVISO
 
 ANCHO, ALTO = 1000, 640
 HERO_H = 200
@@ -124,10 +125,110 @@ class _Gauge(QWidget):
         p.end()
 
 
+#: La nota del selector: qué IMPLICA cada valor (handoff design_v3). Sin toast al cambiar.
+PRIO_NOTA = {
+    "alta": "Recibe discos primero · nadie de menor prioridad se los saca",
+    "normal": "Por defecto · se mueve sólo si quien lo tiene no pierde",
+    "baja": "Cede discos a PJs de prioridad mayor",
+}
+
+
+class _SelectorPrioridad(QFrame):
+    """Prioridad de buildeo en la ficha del PJ (handoff design_v3): 262 px sobre el hero, a la
+    izquierda de la cruz. Guarda al click con `EditorPrioridades` — una sesión por ficha abierta,
+    así que un backup por ficha, no por click (RNF-01)."""
+
+    cambiada = Signal(str)
+    ANCHO = 262
+
+    def __init__(self, agente_id: int, nombre: str, valor: str, db_path=None, parent=None):
+        super().__init__(parent)
+        from app.core.prioridad import EditorPrioridades
+        from app.db.connection import is_readonly
+        self._id, self._nombre, self.valor = agente_id, nombre, valor
+        self._editor = EditorPrioridades(db_path)
+        self.setObjectName("selector_prioridad")
+        self.setFixedWidth(self.ANCHO)
+        self.setStyleSheet("QFrame#selector_prioridad { background: rgba(14,12,18,0.8);"
+                           " border: 1px solid rgba(255,255,255,0.16); }")
+        v = QVBoxLayout(self)
+        v.setContentsMargins(10, 8, 10, 9)
+        v.setSpacing(6)
+        titulo = QLabel("PRIORIDAD DE BUILDEO")
+        titulo.setFont(T.font_caps(7, bold=True))
+        titulo.setStyleSheet("color: rgba(255,255,255,0.72); background: transparent; border: none;")
+        v.addWidget(titulo)
+        fila = QHBoxLayout()
+        fila.setSpacing(3)
+        self.botones: dict[str, QPushButton] = {}
+        for clave, texto in (("alta", "▲ Alta"), ("normal", "Normal"), ("baja", "▼ Baja")):
+            b = QPushButton(texto)
+            b.setCheckable(True)
+            b.setFixedHeight(26)
+            b.setFont(T.font_caps(8, bold=True))
+            b.setStyleSheet(self._css(clave))
+            b.clicked.connect(lambda _c=False, k=clave: self._elegir(k))
+            fila.addWidget(b, 1)
+            self.botones[clave] = b
+        v.addLayout(fila)
+        self.nota = QLabel()
+        self.nota.setFont(T.font_ui(7))
+        self.nota.setWordWrap(True)
+        v.addWidget(self.nota)
+        self._marcar(valor)
+        self._decir(PRIO_NOTA[valor], "rgba(255,255,255,0.7)")
+        if is_readonly():
+            for b in self.botones.values():
+                b.setEnabled(False)
+            self._decir("Modo solo lectura: la prioridad no se puede cambiar.", T.TEXT_MUTED)
+
+    @staticmethod
+    def _css(clave: str) -> str:
+        fondo, tinta, borde = {"alta": (T.PRIO_ALTA, T.PRIO_ALTA_TINTA, T.PRIO_ALTA),
+                               "normal": ("rgba(255,255,255,0.2)", "#ffffff", "rgba(255,255,255,0.45)"),
+                               "baja": ("#5A6070", "#ffffff", T.PRIO_BAJA)}[clave]
+        return (f"QPushButton {{ color: rgba(255,255,255,0.72); background: rgba(255,255,255,0.05);"
+                f" border: 1px solid rgba(255,255,255,0.16); }}"
+                f"QPushButton:hover {{ border-color: {T.PRIO_ALTA}; }}"
+                f"QPushButton:checked {{ color: {tinta}; background: {fondo}; border-color: {borde}; }}")
+
+    def _marcar(self, valor: str) -> None:
+        self.valor = valor
+        for clave, b in self.botones.items():
+            b.setChecked(clave == valor)
+
+    def _decir(self, texto: str, color: str) -> None:
+        self.nota.setText(texto)
+        self.nota.setStyleSheet(f"color: {color}; background: transparent; border: none;")
+
+    def _elegir(self, clave: str) -> None:
+        # El click de Qt ya tildó el segmento: se deshace y se marca recién si la escritura salió.
+        self._marcar(self.valor)
+        if clave == self.valor:
+            return
+        import sqlite3
+        try:
+            res = self._editor.guardar(self._id, clave, self._nombre)
+        except (sqlite3.Error, ValueError) as e:
+            self._decir(f"No se guardó: {e}", AMBAR_AVISO)
+            return
+        if not res.escribio:
+            self._decir(f"No se guardó: {res.motivo_no_escribio}", AMBAR_AVISO)
+            return
+        self._marcar(clave)
+        self._decir(f"● Sugerencias de discos recalculadas. {PRIO_NOTA[clave]}", T.PRIO_ALTA)
+        self.cambiada.emit(clave)
+
+
 class PjModal(QDialog):
-    def __init__(self, ficha: FichaPJ, parent: QWidget | None = None):
+    #: (agente_id, prioridad) cada vez que se guarda una prioridad desde la ficha: la ventana se lo
+    #: pasa al Roster para que actualice esa celda.
+    prioridad_cambiada = Signal(int, str)
+
+    def __init__(self, ficha: FichaPJ, parent: QWidget | None = None, db_path=None):
         super().__init__(parent)
         self.ficha = ficha
+        self._db_path = db_path
         self.acento = T.color_elemento(ficha.elemento)
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setModal(True)
@@ -168,6 +269,11 @@ class PjModal(QDialog):
             f"QPushButton:hover {{ background: {self.acento}; color: {T.BG_BASE}; }}")
         self.btn_cerrar.move(ANCHO - 4 - 14 - 28, 14)
         self.btn_cerrar.clicked.connect(self.close)
+
+        # Prioridad de buildeo: a la izquierda de la cruz, 12 px de aire (handoff design_v3).
+        self.selector_prioridad = _SelectorPrioridad(f.id, f.nombre, f.prioridad, self._db_path, hero)
+        self.selector_prioridad.move(ANCHO - 4 - 14 - 28 - 12 - _SelectorPrioridad.ANCHO, 14)
+        self.selector_prioridad.cambiada.connect(lambda p: self.prioridad_cambiada.emit(f.id, p))
 
         ident = QWidget(hero)
         h = QHBoxLayout(ident)
