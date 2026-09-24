@@ -101,6 +101,8 @@ class Agent:
     stats: dict[str, float] = field(default_factory=dict)
     #: Como en `agents.elemento` ('Fuego', 'Hielo', …, 'Lumen'). Decide qué Bono Daño le sirve.
     elemento: str | None = None
+    #: Prioridad de buildeo que declara Daniel (mig 42): 'alta', 'normal' o 'baja'.
+    prioridad: str = "normal"
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +152,46 @@ def rango_default(minimo: float | None, optimo: float | None,
     if minimo is None and techo is None:
         return None
     return (minimo, techo)
+
+
+#: Prioridad de buildeo (mig 42), de mayor a menor. 'normal' NO se guarda: es la ausencia de fila.
+PRIORIDADES: tuple[str, ...] = ("alta", "normal", "baja")
+
+
+class PrioridadRepo:
+    """La prioridad de buildeo de cada PJ: la declara Daniel en la app (Roster, modal de PJ).
+
+    Una sola forma de decir "normal" (B1): no tener fila. Por eso guardar 'normal' BORRA la fila, y
+    leer un PJ sin fila da 'normal'. Como el resto de los repositorios, no hace commit: la
+    transacción es de quien llama.
+    """
+
+    def __init__(self, con: sqlite3.Connection):
+        self._con = con
+
+    def get_all(self) -> dict[int, str]:
+        """agente_id → 'alta' | 'baja'. Los que no aparecen están en normal. Una DB anterior a la
+        migración 42 no tiene la tabla: todos en normal."""
+        if not _tabla_existe(self._con, "ajustes_usuario_prioridad"):
+            return {}
+        return {r[0]: r[1] for r in self._con.execute(
+            "SELECT agente_id, prioridad FROM ajustes_usuario_prioridad")}
+
+    def get(self, agente_id: int) -> str:
+        return self.get_all().get(agente_id, "normal")
+
+    def guardar(self, agente_id: int, prioridad: str) -> None:
+        if prioridad not in PRIORIDADES:
+            raise ValueError(f"prioridad desconocida: {prioridad!r} (válidas: {PRIORIDADES})")
+        if prioridad == "normal":
+            self._con.execute("DELETE FROM ajustes_usuario_prioridad WHERE agente_id = ?",
+                              (agente_id,))
+            return
+        self._con.execute(
+            "INSERT INTO ajustes_usuario_prioridad (agente_id, prioridad) VALUES (?, ?) "
+            "ON CONFLICT(agente_id) DO UPDATE SET prioridad = excluded.prioridad, "
+            "actualizado = CURRENT_TIMESTAMP",
+            (agente_id, prioridad))
 
 
 def _tabla_existe(con: sqlite3.Connection, nombre: str) -> bool:
@@ -494,6 +536,8 @@ class AgentRepo:
         ):
             prefs.setdefault(r["agente_id"], {})[r["substat"]] = r["peso"]
 
+        prioridades = PrioridadRepo(self._con).get_all()
+
         con_elemento = _tiene_columnas(self._con, "agents", ("elemento",))
         for r in self._con.execute(
             "SELECT id, nombre, rol, set_4p_id, set_2p_id, protected_build"
@@ -529,6 +573,7 @@ class AgentRepo:
                 rangos=rangos.get(r["id"], {}),
                 stats=stats.get(r["id"], {}),
                 elemento=r["elemento"] if con_elemento else None,
+                prioridad=prioridades.get(r["id"], "normal"),
             )
         _avisar_pjs_sin_stats(self._cache.values())
 
