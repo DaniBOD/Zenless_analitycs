@@ -18,6 +18,7 @@ from typing import Callable
 
 from app.core.scoring import Potencial, _pesos, potencial, principal_valido, score_disco
 from app.core.stats_vocab import VALOR_POR_MEJORA, bono_2pc_como_substat
+from app.db.repositories import PRIORIDADES
 
 
 RECOMENDACIONES = ("equipar", "mejorar", "reserva", "descartar")
@@ -171,6 +172,39 @@ def evaluar_salida(
     return Salida(mejor_delta=round(mejor[0], 6), reemplazo_id=mejor[1])
 
 
+# ---------------------------------------------------------------------------
+# Prioridad de buildeo (migración 42)
+# ---------------------------------------------------------------------------
+# Daniel (2026-09-24): con los stats reales, 32 de 108 movimientos iban a Piper, "que no uso casi
+# nada", sacándole discos a PJs que sí usa. Eligió tres niveles y que la prioridad BLOQUEE:
+#   - nunca se sugiere sacarle un disco a un PJ para dárselo a otro de prioridad MÁS BAJA;
+#   - entre iguales sigue "el que lo tiene no pierde" (`evaluar_salida`);
+#   - los discos van primero a los de prioridad alta ("recibe discos primero").
+# Estas funciones son la única regla (B1): las usan el recomendador, el optimizador y el orden de
+# las sugerencias del reporte.
+
+def nivel_prioridad(prioridad: str | None) -> int:
+    """alta 2 · normal 1 · baja 0, tomado del orden de `PRIORIDADES`. Desconocido = normal."""
+    if prioridad not in PRIORIDADES:
+        prioridad = "normal"
+    return len(PRIORIDADES) - 1 - PRIORIDADES.index(prioridad)
+
+
+def puede_recibir_de(destino: "Agent", origen: "Agent") -> bool:
+    """¿Se le puede sugerir a `destino` un disco que hoy lleva `origen`? No si es de menor
+    prioridad: un PJ relegado no le saca discos a uno que el usuario quiere mejorar."""
+    return nivel_prioridad(destino.prioridad) >= nivel_prioridad(origen.prioridad)
+
+
+def _elegir(opciones: list[tuple["Agent", "ScoreBreakdown", Cambio]]):
+    """De los cambios que MEJORAN (delta > 0), el del PJ de mayor prioridad; entre iguales, el que
+    más gana. `None` si ninguno mejora."""
+    utiles = [o for o in opciones if o[2].delta > 0]
+    if not utiles:
+        return None
+    return max(utiles, key=lambda o: (nivel_prioridad(o[0].prioridad), o[2].delta))
+
+
 def recomendar(
     disc: "Disc",
     agent_repo: "AgentRepo",
@@ -313,17 +347,18 @@ def _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archet
              if len(t[2].lineas_muertas) <= 1 and not t[2].mejora_en_linea_muerta]
     if sanos and builds is not None:
         bonos = _bonos_2pc_desde(disc_set_repo)
-        mejor = None
+        opciones, pots = [], {}
         for agent, sb, pot in sanos:
             arch = archetype_repo.get_by_id(agent.arquetipo_primario_id)
             # El valor esperado SIN el set: el set lo pone `evaluar_cambio`, que lo mide en el build.
             esperado = potencial(disc, agent, arch, ctx, []).score_raw
-            cambio = evaluar_cambio(agent, arch, builds(agent.id), disc, ctx, bonos,
-                                    valor_nuevo=esperado)
-            if cambio.delta > 0 and (mejor is None or cambio.delta > mejor[3].delta):
-                mejor = (agent, sb, pot, cambio)
+            opciones.append((agent, sb, evaluar_cambio(agent, arch, builds(agent.id), disc, ctx,
+                                                       bonos, valor_nuevo=esperado)))
+            pots[agent.id] = pot
+        mejor = _elegir(opciones)   # a quién subirlo: mismo orden que un libre
         if mejor is not None:
-            agent, sb, pot, _ = mejor
+            agent, sb, _ = mejor
+            pot = pots[agent.id]
             return Recommendation("mejorar", agent.id, agent.nombre, pot.score_norm,
                                   top_candidatos=top, desglose_top=sb, potencial=pot)
     elif sanos:
@@ -338,8 +373,9 @@ def _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archet
 
 def _recomendar_mover_ajeno(disc, candidatos, agent_repo, archetype_repo, disc_set_repo, ctx,
                             builds, libres):
-    """Un disco que lleva A, ¿le sirve más a B? Sólo si A no pierde (con su mejor reemplazo libre)
-    y B gana. `None` si no hay un movimiento así: el disco se queda donde está."""
+    """Un disco que lleva A, ¿le sirve más a B? Sólo si A no pierde (con su mejor reemplazo libre),
+    B gana y B no es de menor prioridad que A (mig 42). Entre los B posibles, el de mayor
+    prioridad. `None` si no hay un movimiento así: el disco se queda donde está."""
     origen = next((a for a in agent_repo.get_all() if a.id == disc.agente_asignado), None)
     if origen is None or origen.protected_build:
         return None
@@ -351,14 +387,13 @@ def _recomendar_mover_ajeno(disc, candidatos, agent_repo, archetype_repo, disc_s
     if salida.mejor_delta < 0:
         return None                         # "sin perjudicar al PJ que lo tiene equipado"
 
-    mejor = None
+    opciones = []
     for agent, sb in candidatos:
-        if agent.id == origen.id:
+        if agent.id == origen.id or not puede_recibir_de(agent, origen):
             continue
         arch = archetype_repo.get_by_id(agent.arquetipo_primario_id)
-        cambio = evaluar_cambio(agent, arch, builds(agent.id), disc, ctx, bonos)
-        if cambio.delta > 0 and (mejor is None or cambio.delta > mejor[2].delta):
-            mejor = (agent, sb, cambio)
+        opciones.append((agent, sb, evaluar_cambio(agent, arch, builds(agent.id), disc, ctx, bonos)))
+    mejor = _elegir(opciones)
     if mejor is None:
         return None
     agent, sb, cambio = mejor
@@ -370,12 +405,11 @@ def _recomendar_mover_ajeno(disc, candidatos, agent_repo, archetype_repo, disc_s
 
 def _recomendar_comparando(disc, candidatos, archetype_repo, disc_set_repo, ctx, builds):
     bonos = _bonos_2pc_desde(disc_set_repo)
-    mejor: tuple["Agent", "ScoreBreakdown", Cambio] | None = None
+    opciones = []
     for agent, sb in candidatos:
         arch = archetype_repo.get_by_id(agent.arquetipo_primario_id)
-        cambio = evaluar_cambio(agent, arch, builds(agent.id), disc, ctx, bonos)
-        if cambio.delta > 0 and (mejor is None or cambio.delta > mejor[2].delta):
-            mejor = (agent, sb, cambio)
+        opciones.append((agent, sb, evaluar_cambio(agent, arch, builds(agent.id), disc, ctx, bonos)))
+    mejor = _elegir(opciones)       # un libre va primero a los de prioridad alta
     if mejor is not None:
         agent, sb, cambio = mejor
         return Recommendation("equipar", agent.id, agent.nombre, sb.score_norm,

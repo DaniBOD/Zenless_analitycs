@@ -15,7 +15,7 @@ from itertools import combinations
 from pathlib import Path
 from typing import Callable
 
-from app.core.recommender import _bonos_2pc_desde, evaluar_salida
+from app.core.recommender import _bonos_2pc_desde, evaluar_salida, puede_recibir_de
 from app.core.scoring import principal_valido, score_disco
 from app.core.score_normalizer import ScoringContext
 from app.db.repositories import (
@@ -374,6 +374,10 @@ def _swap_de_disco_ajeno(
     swap["neto"] = round(score_destino - score_origen, 4)
     if origen.protected_build:
         swap["motivo"] = "origen_protegido"
+    elif not puede_recibir_de(target_agent, origen):
+        # Mig 42: la misma regla que las sugerencias (B1) — un PJ de menor prioridad no le saca
+        # discos a uno de mayor.
+        swap["motivo"] = "origen_con_mas_prioridad"
     return swap
 
 
@@ -387,6 +391,9 @@ def _admite_disco_ajeno(swap: dict | None) -> bool:
     Y desde el 2026-09-22 (decisión de Daniel, etapa 1 paso 7): el ORIGEN NO PUEDE PERDER, contando
     un disco libre como reemplazo. Eso lo decide `recommender.evaluar_salida` —la misma regla que
     usan las sugerencias (B1)— y llega acá como `motivo = "origen_pierde"`.
+
+    Y desde la mig 42: el destino no puede ser de menor prioridad que el origen
+    (`motivo = "origen_con_mas_prioridad"`, `recommender.puede_recibir_de`).
     """
     return swap is None or (swap["motivo"] is None and swap["neto"] > 0)
 

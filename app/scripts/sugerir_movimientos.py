@@ -36,7 +36,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app.core.audit_paths import reservar_rutas, resolve_audit_dir  # noqa: E402
-from app.core.recommender import recomendar  # noqa: E402
+from app.core.recommender import nivel_prioridad, recomendar  # noqa: E402
 from app.core.score_normalizer import ScoringContext  # noqa: E402
 from app.db.repositories import (AgentRepo, ArchetypeRepo, Disc, DiscSetRepo,  # noqa: E402
                                  InventoryDiscRepo)
@@ -57,6 +57,7 @@ class Sugerencia:
     delta: float | None = None
     score: float | None = None
     conflicto: str | None = None
+    prioridad: str = "normal"     # la del PJ destino (mig 42)
 
 
 def _sha256(p: Path) -> str:
@@ -69,6 +70,28 @@ def _describir(d: Disc, sets: dict[int, str]) -> str:
             f"{d.main_stat or '?'} · Nv {d.nivel if d.nivel is not None else '?'} · {subs}")
 
 
+def resolver_conflictos(crudas: list[Sugerencia]) -> None:
+    """Las que mueven discos no se pueden pisar: dos no pueden llenar el mismo slot del mismo PJ ni
+    usar el mismo disco (como el que se mueve o como el que repone). Se toman primero las de los PJs
+    de mayor prioridad (mig 42: "recibe discos primero") y, entre iguales, de la de más ganancia
+    para abajo. La que pierde queda marcada `conflicto`, no desaparece."""
+    tomados_slot: dict[tuple[int, int], int] = {}
+    tomados_disco: dict[int, int] = {}
+    for s in sorted((x for x in crudas if x.tipo in ("equipar", "mover")),
+                    key=lambda x: (nivel_prioridad(x.prioridad), x.delta or 0.0), reverse=True):
+        clave = (s.destino_id, s.slot)
+        usados = [s.disc_id] + ([s.reemplazo_id] if s.reemplazo_id else [])
+        if clave in tomados_slot:
+            s.conflicto = f"ese slot ya lo toma el disco #{tomados_slot[clave]}"
+        elif any(u in tomados_disco for u in usados):
+            u = next(u for u in usados if u in tomados_disco)
+            s.conflicto = f"el disco #{u} ya está comprometido en otra sugerencia"
+        else:
+            tomados_slot[clave] = s.disc_id
+            for u in usados:
+                tomados_disco[u] = s.disc_id
+
+
 def generar(db_path: Path) -> dict:
     """Evalúa todo el inventario. Devuelve el reporte como dict (no escribe nada)."""
     con = sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)
@@ -77,6 +100,7 @@ def generar(db_path: Path) -> dict:
         agentes, arqs, sets_repo = AgentRepo(con), ArchetypeRepo(con), DiscSetRepo(con)
         inv = InventoryDiscRepo(con)
         nombres = {a.id: a.nombre for a in agentes.get_all()}
+        prioridades = {a.id: a.prioridad for a in agentes.get_all()}
         sets = {s.id: s.nombre for s in sets_repo.get_all()}
         activos = inv.get_all_active()
         libres = [d for d in activos if not d.equipado]
@@ -112,25 +136,12 @@ def generar(db_path: Path) -> dict:
             else:
                 crudas.append(Sugerencia(rec.tipo, d.id, desc, rec.agente_nombre, rec.agente_id,
                                          d.slot, score=round(rec.score_norm, 3)))
+        for s in crudas:
+            s.prioridad = prioridades.get(s.destino_id, "normal")
     finally:
         con.close()
 
-    # Las que mueven discos no se pueden pisar: de la de más ganancia para abajo.
-    tomados_slot: dict[tuple[int, int], int] = {}
-    tomados_disco: dict[int, int] = {}
-    for s in sorted((x for x in crudas if x.tipo in ("equipar", "mover")),
-                    key=lambda x: x.delta or 0.0, reverse=True):
-        clave = (s.destino_id, s.slot)
-        usados = [s.disc_id] + ([s.reemplazo_id] if s.reemplazo_id else [])
-        if clave in tomados_slot:
-            s.conflicto = f"ese slot ya lo toma el disco #{tomados_slot[clave]}"
-        elif any(u in tomados_disco for u in usados):
-            u = next(u for u in usados if u in tomados_disco)
-            s.conflicto = f"el disco #{u} ya está comprometido en otra sugerencia"
-        else:
-            tomados_slot[clave] = s.disc_id
-            for u in usados:
-                tomados_disco[u] = s.disc_id
+    resolver_conflictos(crudas)
 
     por_tipo: dict[str, list[dict]] = {}
     for s in crudas:
@@ -166,6 +177,8 @@ def _markdown(rep: dict) -> str:
             linea = f"- {s['disco']}"
             if s["destino"]:
                 linea += f" → **{s['destino']}**"
+                if s.get("prioridad", "normal") != "normal":
+                    linea += f" (prioridad {s['prioridad']})"
             if s["origen"]:
                 linea += f" (sale de {s['origen']}"
                 linea += f"; lo repone el #{s['reemplazo_id']})" if s["reemplazo_id"] else "; queda vacío y no pierde)"
