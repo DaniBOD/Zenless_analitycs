@@ -37,6 +37,7 @@ from app.core.parser_disc_s17 import (
 )
 from app.core.parser_agent_stats import (
     AgentStatsParsed, parse_agent_stats, AgentStatsAggregator, read_menu_agent,
+    missing_stat_labels, stats_completos,
 )
 from app.core.agent_identifier import AgentIdentifier
 from app.core.ocr_backend import OcrBackend
@@ -290,6 +291,11 @@ _S18_SIG_MAX = 2.5
 # agente mueve mucho esta región (nombre/rol/elemento distintos); el shimmer del mismo
 # agente queda bien por debajo. Algo más holgado que el de stats por los bordes del texto.
 _S18_SIG_NAME_MAX = 3.0
+# Relecturas de un panel S18 QUIETO cuya lectura (agregada) sigue INCOMPLETA (QA 2026-09-23): la
+# TP de Claret faltó en 1 de 6 frames seguidos, y como una lectura incompleta comprometía la firma
+# el panel no se volvía a leer nunca. Se relee hasta este tope por PJ; al llegar, se AVISA con lo
+# que falta (no queda mudo) y se deja de releer (RNF-06). Volver a entrar a S18 reintenta.
+_S18_REINTENTOS_INCOMPLETO = 8
 # Gate del menú de personajes S15 (Fase M.1, RNF-06): firma 32×32 gris de la barra del
 # nombre (bottom-left); re-OCR solo si cambió el PJ seleccionado. Un cambio de PJ mueve mucho
 # el texto del nombre (diffs reales medidos 12-37); el shimmer/anti-aliasing del MISMO PJ
@@ -581,6 +587,9 @@ class Monitor:
         # sin cambio visual no hay nada nuevo que extraer). Self-correcting: cualquier
         # cambio (agente nuevo, level-up) supera el umbral → re-OCR.
         self._s18_last_sig = None
+        # Lecturas S18 incompletas seguidas del MISMO PJ (ver `_S18_REINTENTOS_INCOMPLETO`).
+        self._s18_incompletos = 0
+        self._s18_incompleto_de: str | None = None
         # Throttle del fallback deep_detect S18 sobre S12 (RNF-06).
         self._last_deep_detect_t = 0.0
         # Firma del último frame S12 al que se le intentó deep_detect (gate anti-re-OCR).
@@ -4611,6 +4620,11 @@ class Monitor:
                 "[S18] Perfil de agente reconocido — extracción continua activa "
                 "(conf=%.2f)", state.confidence,
             )
+            # Volver a entrar a S18 reintenta un panel que había quedado incompleto (su firma
+            # quedó comprometida al llegar al tope y, si no cambió, se saltearía para siempre).
+            if self._s18_incompletos:
+                self._s18_last_sig = None
+            self._s18_incompletos, self._s18_incompleto_de = 0, None
 
         # Gate RNF-06: saltar el OCR si el panel S18 no cambió desde el último ciclo.
         # La extracción continua existe para detectar cambio de agente; sin cambio visual no
@@ -4644,6 +4658,25 @@ class Monitor:
         )
         if not usable:
             self._s18_last_sig = None
+        elif not stats_completos(result):
+            # Utilizable pero INCOMPLETA (QA 2026-09-23: Claret 10/11, faltaba la TP): tampoco
+            # compromete la firma, así el panel quieto se relee y el aggregator completa. Antes
+            # la comprometía y la lectura quedaba trabada en el parcial para siempre.
+            nombre = getattr(result, "agente_nombre", None)
+            if nombre != self._s18_incompleto_de:
+                self._s18_incompleto_de, self._s18_incompletos = nombre, 0
+            self._s18_incompletos += 1
+            if self._s18_incompletos < _S18_REINTENTOS_INCOMPLETO:
+                self._s18_last_sig = None
+            elif self._s18_incompletos == _S18_REINTENTOS_INCOMPLETO:
+                log.warning(
+                    "[S18] %s sigue incompleto tras %d lecturas (falta %s): no se persiste y se "
+                    "deja de releer el panel quieto — salir y volver a entrar lo reintenta",
+                    nombre or "PJ sin nombre", self._s18_incompletos,
+                    ", ".join(missing_stat_labels(result)) or "el nombre",
+                )
+        else:
+            self._s18_incompletos, self._s18_incompleto_de = 0, None
 
         # Detección explícita de cambio de agente para el log + latch — SOLO si es utilizable.
         if usable and getattr(result, "agente_nombre", None):

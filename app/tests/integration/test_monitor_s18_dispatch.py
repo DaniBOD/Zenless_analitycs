@@ -262,9 +262,13 @@ def test_monitor_dispatch_continuo_re_extrae_en_cambio(monkeypatch):
     """
     Extracción CONTINUA con gate RNF-06 (2026-06-20): mientras se está en S18, el gate
     re-extrae cuando el PANEL cambia (otro agente / level-up) y saltea el panel IDÉNTICO
-    (evita re-OCR de un panel estático = fuga). Una extracción UTILIZABLE (con stats reales)
-    commitea la firma → el siguiente dispatch del MISMO frame se saltea; un frame con el
+    (evita re-OCR de un panel estático = fuga). Una extracción COMPLETA (nombre + los 11 stats
+    del rol) commitea la firma → el siguiente dispatch del MISMO frame se saltea; un frame con el
     panel cambiado re-extrae.
+
+    Hasta el 2026-09-23 alcanzaba con que fuera UTILIZABLE (PV o ATK), y este test lo fijaba con
+    una lectura de 4 stats sin nombre. Eso era el bug de Claret: una lectura incompleta trababa el
+    panel para siempre. La incompleta se cubre en `test_monitor_s18_incompleto.py`.
     """
     if not S18_FIXTURES:
         pytest.skip("Sin fixtures S18")
@@ -278,8 +282,11 @@ def test_monitor_dispatch_continuo_re_extrae_en_cambio(monkeypatch):
 
     monkeypatch.setattr(
         monitor_mod, "parse_agent_stats",
-        # Extracción UTILIZABLE (pv/ataque presentes) → commitea la firma del panel.
-        lambda f, o: AgentStatsParsed(nivel=60, pv=10797, ataque=2531, defensa=925,
+        # Extracción COMPLETA (nombre + los 11 stats) → commitea la firma del panel.
+        lambda f, o: AgentStatsParsed(agente_nombre="Ellen", nivel=60, pv=10797, ataque=2531,
+                                      defensa=925, impacto=93, prob_crit=0.6, dano_crit=1.5,
+                                      tasa_anomalia=90, maestria_anomalia=93,
+                                      tasa_perforacion=0.0, recuperacion_energia=1.2,
                                       confianza_global=0.95),
     )
 
