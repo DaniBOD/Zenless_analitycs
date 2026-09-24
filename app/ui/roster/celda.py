@@ -464,7 +464,9 @@ class CeldaRoster(QFrame):
         tri.lineTo(QPointF(w, lado))
         tri.closeSubpath()
         p.setClipPath(tri)
-        p.fillPath(tri, QColor(AMBAR + "40"))
+        relleno = QColor(AMBAR)          # alfa por `setAlpha`: "#F0AA3C40" es #AARRGGBB (rojo)
+        relleno.setAlpha(0x40)
+        p.fillPath(tri, relleno)
         p.setPen(QPen(QColor(AMBAR), 1.5))
         for k in range(-lado, lado * 2, 4):
             p.drawLine(QPointF(w - lado + k, 0), QPointF(w + k, lado))
