@@ -134,6 +134,15 @@ def test_claret_con_la_etiqueta_intercalada_sale_completa():
     assert stats_completos(r), missing_stat_labels(r)
 
 
+def test_el_dc_se_lee_con_la_segunda_linea_del_cr_intercalada():
+    """Frame real de Claret (2026-09-24): "Probabilidad de / Crítico" es de dos líneas y la segunda
+    quedó después de "Daño Crítico". Le pasa a cualquier PJ, no sólo al Armero."""
+    ex = p._extract_by_regex(OCR_CLARET_FLIP.replace(
+        "Probabilidad de 109.6 % Critico Dano Critico 93.2 %",
+        "Probabilidad de 109.6 % Dano Critico Critico 93.2 %"))
+    assert ex["dano_crit"] == "93.2" and ex["prob_crit"] == "109.6"
+
+
 def test_la_etiqueta_intercalada_no_habilita_a_cruzar_filas():
     """Lo que se admite es ESA etiqueta, no una ventana más ancha: otro texto de 24 caracteres
     entre un porcentaje y la etiqueta de TP sigue sin leerse como TP."""

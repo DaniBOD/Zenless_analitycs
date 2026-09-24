@@ -997,8 +997,11 @@ _RE_DEFENSA = re.compile(r"\bdefensa\s*(\d+)")
 _RE_IMPACTO = re.compile(r"\b[il]+m\s*pacto\s*(\d+)")
 # Prob CRIT: "probabilidad de 19.4%" — tolera "prob", "probabili", etc.
 _RE_PROB_CRIT = re.compile(r"prob\w*\s*(?:de\s*)?(?:critico|crit)?\s*(\d+(?:\.\d+)?)\s*%")
-# Daño Crítico: "dano critico 93.2 %" — accents ya stripped por normalizador
-_RE_DANO_CRIT = re.compile(r"da\w{0,3}o\s*crit\w*\s*(\d+(?:\.\d+)?)\s*%")
+# Daño Crítico: "dano critico 93.2 %" — accents ya stripped por normalizador.
+# La etiqueta de la Prob. Crítica es de 2 líneas ("Probabilidad de / Crítico") y Paddle a veces
+# intercala su 2ª línea después de la del DC: "dano critico critico 93.2 %" (QA en vivo 2026-09-24,
+# 6 de 62 frames de Claret). Se admite ese "critico" repetido; el acumulador lo tapaba con otro frame.
+_RE_DANO_CRIT = re.compile(r"da\w{0,3}o\s*crit\w*\s*(?:crit\w*\s*)?(\d+(?:\.\d+)?)\s*%")
 # Tasa de Anomalía
 _RE_TASA_ANOMALIA = re.compile(r"tasa\s*(?:de\s*)?anomal\w*\s*(\d+)")
 # Maestría de Anomalía
