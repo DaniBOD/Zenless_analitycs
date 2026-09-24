@@ -75,3 +75,15 @@ def test_roster_la_esquina_de_faltan_datos_es_ambar_no_roja(qapp):
     relleno = _relleno_de_la_esquina(img, lado)
     esperado = _mezcla(celda_roster.AMBAR, 0x40, fondo)
     assert _cerca(relleno, esperado), (relleno.name(), esperado.name())
+
+
+def test_roster_el_halo_del_rango_infinito_es_naranja_no_magenta(qapp):
+    """El halo es el trazo de 3 px alrededor de la cápsula: su fila de arriba cae sobre el fondo (la
+    cápsula maciza arranca un píxel más abajo). Se lo compara con el naranja al 40 % sobre la
+    esquina del mismo widget, que queda afuera de la cápsula redondeada."""
+    w, img = _captura_roster(_celda_pj(rango="∞"))
+    o = w._rango.mapTo(w, w._rango.rect().topLeft())
+    fondo = QColor(img.pixel(o.x(), o.y()))
+    halo = QColor(img.pixel(o.x() + w._rango.width() // 2, o.y()))
+    esperado = _mezcla(celda_roster.NARANJA_INF, 0x66, fondo)
+    assert _cerca(halo, esperado), (halo.name(), esperado.name())

@@ -134,7 +134,9 @@ class _Rango(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
         if self.rango == "∞":
-            p.setPen(QPen(QColor(NARANJA_INF + "66"), 3))
+            halo = QColor(NARANJA_INF)   # alfa por `setAlpha`: "#FF8A3D66" es #AARRGGBB (magenta)
+            halo.setAlpha(0x66)
+            p.setPen(QPen(halo, 3))
             p.setBrush(QBrush(QColor(NARANJA_INF)))
             p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
             p.setPen(QColor(T.BG_BASE))
