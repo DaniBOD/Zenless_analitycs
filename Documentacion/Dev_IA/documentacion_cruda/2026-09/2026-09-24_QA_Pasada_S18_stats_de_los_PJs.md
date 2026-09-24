@@ -132,6 +132,26 @@ arranque. El criterio para que esté todo en orden:
 - El tope de 8 reintentos (§1) con un 58 % de fallos se alcanzaba en ~1 de cada 80 visitas; con
   el arreglo ya no debería dispararse en Claret.
 
+## 9. Corrida de verificación con los arreglos (2026-09-24, 09:42–11:07): 52/52 ✅
+
+Con todo lo anterior pusheado (hasta `6a32626`, suite 3198/3198), Daniel repitió la pasada entera.
+Criterio de §7, cumplido:
+
+- **52/52 PJs leídos y 0 diferencias** contra `audit/stats_s18_20260924_final.json`, campo por
+  campo (`cruzar_con_foto.py` en el scratchpad; un sabotaje que fuerza una diferencia la detecta,
+  así que el cruce no pasa en vacío).
+- **0 escrituras**: el sha de la DB no cambió (`ce3d52dd4275`). Cero discrepancias con la primera
+  pasada, incluido el PV de Anby (11 161).
+- **0 "no se persiste", 0 "sigue incompleto", 0 errores.**
+- **Todos completan al entrar:** 50 en la primera lectura, N.º 11 en 2 s. Claret, en la primera
+  lectura: el arreglo de la TP se ve en vivo.
+- **Ju Fufu** fue el único que no completó en la pasada: se reconoció y 3 s después Daniel ya
+  estaba en el siguiente. Al volver a entrar completó en la primera lectura. No se sabe qué le
+  faltaba en esos 3 s (el "[parcial]" va sólo al panel de la UI); no se repitió.
+- El log rotó a mitad de la corrida y `app.log` quedó con líneas de un log viejo intercaladas: para
+  auditar una corrida hay que leer `app.log.1` + `app.log` y filtrar por la fecha de la línea (las
+  líneas de un traceback no la tienen: filtrarlas por prefijo deja pasar tracebacks viejos).
+
 ## Auditoría final
 
 `auditar_pasada.py` (scratchpad) cruza cada "Stats agente" del log con la fila final:
