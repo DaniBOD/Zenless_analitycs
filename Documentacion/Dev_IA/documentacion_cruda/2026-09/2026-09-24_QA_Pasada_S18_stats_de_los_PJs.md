@@ -22,6 +22,7 @@ equivocado.
 - **Causa:** el gate de firma de S18 (RNF-06) se comprometía con cualquier lectura UTILIZABLE (PV o
   ATK). Una utilizable pero incompleta lo comprometía igual → el panel quieto no se volvía a leer
   y el aggregator no tenía con qué completar. La TP de Claret falta en 1 de cada 6 frames.
+  **Corrección (§8):** ese "1 de cada 6" estaba mal medido: sobre 100 frames faltó en 58.
 - **Arreglo (`monitor.py`):** una lectura incompleta no compromete la firma, hasta
   `_S18_REINTENTOS_INCOMPLETO = 8` por PJ. Al llegar al tope lo AVISA con lo que falta (antes el
   "[parcial]" iba sólo al panel de la UI, no al log). Volver a entrar a S18 reintenta.
@@ -105,6 +106,31 @@ arranque. El criterio para que esté todo en orden:
   resolviendo mal.
 - **Sin avisos** "sigue incompleto": si aparece alguno, hay un stat que el parser no lee en ese PJ.
 - Después: la suite completa, sin la app corriendo, y recién ahí el push.
+
+## 8. Segunda corrida (2026-09-24, mañana): Claret "había que volver a entrar"
+
+- **Síntoma (Daniel):** la primera visita a Claret no completaba; pasando por otro PJ y volviendo,
+  sí. El panel decía "falta TP (10/11)".
+- **Hipótesis mía, FALSA otra vez:** que un frame de transición le dejaba pegado el rol del PJ
+  anterior (Anomalía) en el aggregator. La reproduje aislada, pero el panel de Daniel decía
+  "falta TP", no "falta ATK, ER": el rol estaba bien. Segunda vez en esta pasada que un mecanismo
+  reproducido no era el que pasó; lo que lo desmiente es el dato de la pantalla, así que se pide
+  ANTES de arreglar.
+- **Medición:** un script aparte (sólo pixels) leyó 100 frames de Claret mientras Daniel entraba y
+  salía. TP=None en **58**, en rachas de hasta 10. Volver a entrar no tenía nada que ver: era azar.
+- **Causa:** el OCR de los frames malos es siempre el mismo: `… 79 32 % Acumulación Automática Tasa
+  de Perforación 1.5 de afiladura …`. La 1ª línea de la etiqueta vecina ("Acumulación Automática /
+  de afiladura") queda entre el valor y su etiqueta; son 24 caracteres y el patrón del orden
+  invertido admitía 20. El orden de las cajas cambia frame a frame con el fondo animado.
+- **Arreglo (`4582c08`):** esa etiqueta se admite EXPLÍCITA, sin ensanchar la ventana (que podría
+  cruzar a otra fila; un sabotaje con ventana 30 hace caer la guarda). Frames reales guardados:
+  TP **0/62 → 62/62**.
+- **Lo que destapó (`ca6bdcb`):** con la TP arreglada, 6 de esos 62 frames seguían sin **DC**:
+  `Dano Critico Critico 93.2 %` (la 2ª línea de "Probabilidad de / Crítico" intercalada). El
+  aggregator lo tapaba con otro frame, y le puede pasar a cualquier PJ. Con los dos: **62/62
+  completos en una sola lectura**.
+- El tope de 8 reintentos (§1) con un 58 % de fallos se alcanzaba en ~1 de cada 80 visitas; con
+  el arreglo ya no debería dispararse en Claret.
 
 ## Auditoría final
 
