@@ -134,6 +134,9 @@ def test_borrar_el_ajuste_devuelve_el_default(db_con_mig):
 
 
 def test_un_ajuste_de_peso_llega_al_agente_sin_borrar_el_resto(db_con_mig):
+    # Contra los pesos de ANTES del ajuste, no contra números fijos: la base es la guía del PJ
+    # (mig 43) y cambia cuando se recaptura. Lo que se cuida es que un ajuste pise SU stat y nada más.
+    antes = _agente(db_con_mig, "Ellen").substat_preferences
     con = sqlite3.connect(db_con_mig)
     ellen_id = con.execute("SELECT id FROM agents WHERE nombre='Ellen'").fetchone()[0]
     con.execute("INSERT INTO ajustes_usuario_pesos (agente_id, substat, peso) VALUES (?, 'ATK%', 1.0)",
@@ -141,8 +144,9 @@ def test_un_ajuste_de_peso_llega_al_agente_sin_borrar_el_resto(db_con_mig):
     con.commit()
     con.close()
     pesos = _agente(db_con_mig, "Ellen").substat_preferences
-    assert pesos["ATK%"] == 1.0
-    assert pesos["Prob. Crítica"] == 1.0 and "Perforación" in pesos
+    assert antes["ATK%"] != 1.0 and pesos["ATK%"] == 1.0
+    assert {k: v for k, v in pesos.items() if k != "ATK%"} == {k: v for k, v in antes.items() if k != "ATK%"}
+    assert "Prob. Crítica" in pesos and "Perforación" in pesos
 
 
 @pytest.mark.parametrize("sql", [

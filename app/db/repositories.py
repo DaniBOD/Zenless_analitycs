@@ -6,7 +6,7 @@ import json
 import logging
 import sqlite3
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable
 
 if TYPE_CHECKING:
     from app.core.parser_disc import DiscParsed
@@ -128,6 +128,30 @@ def aplicar_ajustes_arquetipo(arch: "Archetype", ajustes: dict[str, list[str]]) 
             log.warning("[ajustes] campo %r del arquetipo %s no es ajustable: se ignora",
                         campo, arch.code)
     return replace(arch, **validos)
+
+
+#: Nivel de un substat en la guía del PJ (`pj_stats_recomendados`, mig 43: "A = B > C" da A y B en
+#: el 1 y C en el 2) → su peso. Daniel (2026-09-25) aceptó la escala de los perfiles por rol
+#: (1,0 / 0,8 / 0,6 / 0,4) y que un substat que la guía NO nombra valga 0 para ese PJ.
+PESO_POR_NIVEL: dict[int, float] = {1: 1.0, 2: 0.8, 3: 0.6}
+PESO_NIVEL_MINIMO = 0.4
+
+
+def peso_de_nivel(nivel: int) -> float:
+    return PESO_POR_NIVEL.get(nivel, PESO_NIVEL_MINIMO)
+
+
+def pesos_de_la_guia(filas: "Iterable[tuple[int, str, int, str]]") -> dict[int, dict[str, float]]:
+    """(agente_id, variante, nivel, stat) de los SUBSTATS, en el orden de la guía → los pesos de
+    cada PJ. Con varias builds en la guía (César, Pulchra, Sunna, Astra Yao, Yuzuha) vale la
+    PRIMERA: es la que la guía pone arriba. Elegir otra es un ajuste del usuario, no del motor."""
+    primera: dict[int, str] = {}
+    out: dict[int, dict[str, float]] = {}
+    for agente, variante, nivel, stat in filas:
+        if primera.setdefault(agente, variante) != variante:
+            continue
+        out.setdefault(agente, {})[stat] = peso_de_nivel(nivel)
+    return out
 
 
 def mezclar_pesos(propios: dict[str, float], del_arquetipo: dict[str, float],
@@ -591,6 +615,14 @@ class AgentRepo:
             "SELECT agente_id, substat, peso FROM agent_substat_preferences"
         ):
             prefs.setdefault(r["agente_id"], {})[r["substat"]] = r["peso"]
+
+        # La guía del PJ (mig 43) manda sobre los pesos viejos de `agent_substat_preferences`
+        # (10 PJs, de versiones anteriores de Prydwen); un PJ sin substats en la guía (Ju Fufu,
+        # Zhao) sigue con esos o con su arquetipo.
+        if _tabla_existe(self._con, "pj_stats_recomendados"):
+            prefs.update(pesos_de_la_guia(self._con.execute(
+                "SELECT agente_id, variante, nivel, stat FROM pj_stats_recomendados "
+                "WHERE linea = 'substat' ORDER BY rowid")))
 
         prioridades = PrioridadRepo(self._con).get_all()
 

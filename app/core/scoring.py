@@ -137,7 +137,11 @@ def _pesos(agent: "Agent", archetype: "Archetype") -> tuple[dict[str, float], di
     PJ, y los perjudiciales. La usan `score_disco`, `potencial` y los bonos de set del recomendador:
     una sola autoridad (B1)."""
     pos = agent.substat_preferences if agent.substat_preferences else archetype.substats_positivos
-    return ajustar_por_estado(pos, agent), archetype.substats_perjudiciales
+    # Un stat que le SIRVE al PJ no lo penaliza su rol: la guía de Nangong Yu (aturdidora) pone la
+    # Competencia de Anomalía primera y el perfil STUN la castigaba con -0,8; la de Pan Yinhu
+    # (defensa) pone el ATK% primero y DEFENSE lo castigaba con -0,8 (2026-09-25).
+    neg = {s: p for s, p in archetype.substats_perjudiciales.items() if pos.get(s, 0) <= 0}
+    return ajustar_por_estado(pos, agent), neg
 
 
 def aporte_linea(stat: str, mejoras: int, pesos_pos: dict[str, float],
