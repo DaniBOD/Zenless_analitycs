@@ -724,6 +724,11 @@ def _name_similarity(ocr_tokens: set[str], ocr_norm: str,
     return max(ratio, jaccard)
 
 
+def _palabras(tokens: set[str]) -> set[str]:
+    """Los tokens de 2+ caracteres: los que prueban que se leyó un nombre (ver DOMINADOS)."""
+    return {t for t in tokens if len(t) >= 2}
+
+
 def _match_agent_scored(
     name_text: str,
     rol_screen: str | None = None,
@@ -757,10 +762,14 @@ def _match_agent_scored(
     # DOMINADOS (QA 2026-09-24): si se leyeron enteras las palabras de "Billy Estelar", "Billy"
     # (sus palabras están contenidas en las de aquél) no es candidato: gana el más específico. Sin
     # esto el bono de rol decidía, y el banner mal recortado leyó "Ataque" → Billy.
+    # Sólo con palabras de 2+ letras (QA 2026-09-25): en la ficha de Anby el OCR trajo "0 Ciudad" y
+    # el subtítulo espaciado "A n b y", y con esa "n" y ese "0" sueltos se "leyeron enteras" las
+    # palabras de "N.º 0: Anby" → Anby quedó dominada y su ficha se guardó en N.º 0. Una letra suelta
+    # es ruido de cualquier pantalla, no la prueba de haber leído un nombre más específico.
     roster = _get_roster()
     leidos = [ag for ag in roster if ag["tokens"] and ag["tokens"] <= ocr_tokens]
     dominados = {id(ag) for ag in leidos
-                 if any(ag["tokens"] < otro["tokens"] for otro in leidos)}
+                 if any(_palabras(ag["tokens"]) < _palabras(otro["tokens"]) for otro in leidos)}
     for ag in roster:
         if id(ag) in dominados:
             continue
