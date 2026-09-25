@@ -106,6 +106,9 @@ class Agent:
     #: Principales que le sirven en los slots 4-6 SEGÚN SU GUÍA (mig 43), con los ajustes de Daniel
     #: al rol encima. Un slot ausente = decide el arquetipo (`scoring.principal_valido`).
     mains: dict[int, tuple[str, ...]] = field(default_factory=dict)
+    #: De dónde sale el build objetivo (`set_4p_id`/`set_2p_id`, R19): 'declarado', 'equipado',
+    #: 'guia_fuera' (lo equipado no está en la guía), 'guia_sin_4pc' o None (sin guía ni declaración).
+    origen_build: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +181,46 @@ def mezclar_principales(de_la_guia: set[str], default_rol: list[str], ajustado_r
     agregados = set(ajustado_rol) - set(default_rol)
     quitados = set(default_rol) - set(ajustado_rol)
     return tuple(sorted((de_la_guia | agregados) - quitados))
+
+
+def _dos_recomendado(dos: list[tuple[int, int, bool]]) -> int | None:
+    """El 2pc que la guía marca "(Recommended)" (el primero de su renglón); si no marca ninguno, el
+    primero de la lista; sin 2pc en la guía (Evelyn), None."""
+    if not dos:
+        return None
+    marcados = sorted((g, s) for g, s, rec in dos if rec)
+    return (marcados or sorted((g, s) for g, s, _ in dos))[0][1]
+
+
+def resolver_build_objetivo(
+    declarado: "BuildDeclarado | None",
+    equipado: "dict[int, int]",
+    guia: "list[tuple[int, list[tuple[int, int, bool]]]]",
+) -> tuple[int | None, int | None, str | None]:
+    """R19 (Daniel, 2026-09-25): (set_4p, set_2p, origen) del build que el motor usa para un PJ.
+
+    1. Lo que declaró Daniel, esté o no en la guía ("son builds mías que veo óptimas").
+    2. Si no, lo que tiene EQUIPADO, si el 4pc está en la guía ("que sean razonables"). Su 2pc vale
+       si la guía lo combina con ese 4pc; si no, el recomendado de ese 4pc.
+    3. Si no, el primero de la guía con su 2pc recomendado.
+
+    `equipado`: set_id → piezas equipadas. `guia`: [(set_4p, [(grupo, set_2p, recomendado)])] en el
+    orden de la guía. Sin guía ni declaración: (None, None, None), sin build objetivo.
+    """
+    if declarado is not None:
+        return declarado.set_4p_id, declarado.set_2p_id, "declarado"
+    if not guia:
+        return None, None, None
+    opciones = dict(guia)
+    cuatro = next((s for s, n in equipado.items() if n >= 4), None)
+    if cuatro in opciones:
+        dos = opciones[cuatro]
+        validos = {s for _, s, _ in dos}
+        dos_equipado = next((s for s, n in sorted(equipado.items(), key=lambda x: -x[1])
+                             if s != cuatro and n >= 2 and s in validos), None)
+        return cuatro, dos_equipado or _dos_recomendado(dos), "equipado"
+    s4, dos = guia[0]
+    return s4, _dos_recomendado(dos), "guia_fuera" if cuatro is not None else "guia_sin_4pc"
 
 
 def mezclar_pesos(propios: dict[str, float], del_arquetipo: dict[str, float],
@@ -665,6 +708,26 @@ class AgentRepo:
                                        "WHERE campo LIKE 'mains_%'"):
                 mains_ajustados.setdefault(r["code"], {})[int(r["campo"][-1])] = json.loads(r["valor_json"])
 
+        # Build objetivo (R19): lo declarado, lo equipado si la guía lo avala, o la guía. Lo equipado
+        # se lee al cargar: si Daniel cambia el 4pc de un PJ en el juego, lo ve la próxima carga.
+        declarados = BuildObjetivoRepo(self._con).get_all()
+        guia_sets: dict[int, list[tuple[int, list[tuple[int, int, bool]]]]] = {}
+        if _tabla_existe(self._con, "pj_sets_4pc"):
+            dos_por: dict[tuple[int, int], list[tuple[int, int, bool]]] = {}
+            for r in self._con.execute("SELECT agente_id, set_4p_id, set_id, grupo, recomendado "
+                                       "FROM pj_sets_2pc ORDER BY grupo"):
+                dos_por.setdefault((r[0], r[1]), []).append((r[2], r[3], bool(r[4])))
+            for r in self._con.execute("SELECT agente_id, set_id FROM pj_sets_4pc ORDER BY agente_id, orden"):
+                guia_sets.setdefault(r[0], []).append(
+                    (r[1], [(g, s, rec) for s, g, rec in dos_por.get((r[0], r[1]), [])]))
+        equipados: dict[int, dict[int, int]] = {}
+        if _tiene_columnas(self._con, "inventory_discs", ("agente_asignado", "equipado", "set_id")):
+            for r in self._con.execute(
+                "SELECT agente_asignado, set_id, COUNT(*) FROM inventory_discs "
+                "WHERE equipado = 1 AND agente_asignado IS NOT NULL "
+                "AND (descartado = 0 OR descartado IS NULL) GROUP BY agente_asignado, set_id"):
+                equipados.setdefault(r[0], {})[r[1]] = r[2]
+
         prioridades = PrioridadRepo(self._con).get_all()
 
         con_elemento = _tiene_columnas(self._con, "agents", ("elemento",))
@@ -686,6 +749,10 @@ class AgentRepo:
                                 _ARQUETIPO_POR_DEFECTO)
             arch_id = arch_rows.get(arch_code, 1)
             t_equip, t_upgrade = thresholds.get(r["id"], (0.75, 0.50))
+            s4, s2, origen_build = resolver_build_objetivo(
+                declarados.get(r["id"]), equipados.get(r["id"], {}), guia_sets.get(r["id"], []))
+            if origen_build is None:        # sin guía ni declaración: lo que diga `agents` (observado)
+                s4, s2 = r["set_4p_id"], r["set_2p_id"]
             self._cache[r["id"]] = Agent(
                 id=r["id"],
                 nombre=r["nombre"],
@@ -696,8 +763,9 @@ class AgentRepo:
                 substat_preferences=mezclar_pesos(prefs.get(r["id"], {}),
                                                   arch_positivos.get(arch_code, {}),
                                                   ajustes_pesos.get(r["id"], {})),
-                set_4p_id=r["set_4p_id"],
-                set_2p_id=r["set_2p_id"],
+                set_4p_id=s4,
+                set_2p_id=s2,
+                origen_build=origen_build,
                 protected_build=bool(r["protected_build"]),
                 rangos=rangos.get(r["id"], {}),
                 stats=stats.get(r["id"], {}),

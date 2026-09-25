@@ -139,8 +139,11 @@ def test_el_optimizador_no_le_pone_a_miyabi_un_bono_de_otro_elemento(db_miyabi, 
     """El control (Hielo) tiene que entrar: si no, el caso no discrimina nada."""
     from app.core.optimizer import BuildOptimizer
     con = sqlite3.connect(db_miyabi)
+    con.row_factory = sqlite3.Row
+    # Un set de SU build objetivo (R20): el caso es del elemento, no del set.
+    set_objetivo = AgentRepo(con).get_by_id(MIYABI_ID).set_4p_id
     with con:
-        disco = _insert_disc(con, 5, 48, main, 30.0, _SUBS, agente=None, equipado=0)
+        disco = _insert_disc(con, 5, set_objetivo, main, 30.0, _SUBS, agente=None, equipado=0)
     con.close()
     opt = BuildOptimizer(db_miyabi)
     try:

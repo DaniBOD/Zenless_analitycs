@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 from collections import Counter
 from typing import Callable
 
-from app.core.scoring import Potencial, _pesos, potencial, principal_valido, score_disco
+from app.core.scoring import Potencial, _pesos, potencial, principal_valido, score_disco, set_valido
 from app.core.stats_vocab import VALOR_POR_MEJORA, bono_2pc_como_substat
 from app.db.repositories import PRIORIDADES
 
@@ -64,6 +64,9 @@ class Cambio:
     delta_sets: float               # lo que se gana o pierde en bonos de set
     rompe_4pc: bool = False
     completa_4pc: bool = False
+    #: Deja por debajo de su cuenta (4 y 2) un set del build objetivo que estaba ACTIVO: R20
+    #: "mejorar en base a los sets que ya tiene", no desarmar el build (`_elegir` lo descarta).
+    rompe_objetivo: bool = False
     notas: list[str] = field(default_factory=list)
     #: Sólo cuando el disco lo lleva OTRO PJ: de quién sale, qué disco libre lo reemplaza allá
     #: (None = el slot queda vacío) y cómo queda el origen con ese reemplazo (≥ 0: no pierde).
@@ -138,11 +141,14 @@ def evaluar_cambio(
     s_despues, _ = valor_sets(despues, agent, arch, bonos_2pc)
 
     d_disco, d_sets = v_nuevo - v_actual, s_despues - s_antes
+    objetivo = [(s, n) for s, n in ((getattr(agent, "set_4p_id", None), 4),
+                                    (getattr(agent, "set_2p_id", None), 2)) if s is not None]
     return Cambio(
         agente_id=agent.id, agente_nombre=agent.nombre, slot=nuevo.slot,
         delta=d_disco + d_sets, delta_disco=d_disco, delta_sets=d_sets,
         rompe_4pc=any(n >= 4 and despues[s] < 4 for s, n in antes.items()),
         completa_4pc=any(n >= 4 and antes[s] < 4 for s, n in despues.items()),
+        rompe_objetivo=any(antes[s] >= n > despues[s] for s, n in objetivo),
         notas=notas,
     )
 
@@ -159,15 +165,26 @@ def evaluar_salida(
     """
     slot = disc.slot
     sin_el = {s: d for s, d in build.items() if s != slot}
-    s_con, _ = valor_sets(Counter(d.set_id for d in build.values()), origen, arch, bonos_2pc)
-    s_sin, _ = valor_sets(Counter(d.set_id for d in sin_el.values()), origen, arch, bonos_2pc)
-    mejor = (-valor_disco(disc, origen, arch, ctx) + (s_sin - s_con), None)
+    antes = Counter(d.set_id for d in build.values())
+    despues_vacio = Counter(d.set_id for d in sin_el.values())
+    s_con, _ = valor_sets(antes, origen, arch, bonos_2pc)
+    s_sin, _ = valor_sets(despues_vacio, origen, arch, bonos_2pc)
+    # R20: dejar el slot vacío o reponerlo con otro disco NO puede desarmarle al origen un set de su
+    # build objetivo que estaba activo (un 2pc que el motor no sabe valorar se perdería "gratis").
+    objetivo = [(s, n) for s, n in ((getattr(origen, "set_4p_id", None), 4),
+                                    (getattr(origen, "set_2p_id", None), 2)) if s is not None]
+    vacio_rompe = any(antes[s] >= n > despues_vacio[s] for s, n in objetivo)
+    mejor = (float("-inf") if vacio_rompe else -valor_disco(disc, origen, arch, ctx) + (s_sin - s_con),
+             None)
     for libre in libres:
-        if libre.slot != slot or libre.id == disc.id or not principal_valido(libre, arch, origen):
+        if (libre.slot != slot or libre.id == disc.id or not principal_valido(libre, arch, origen)
+                or not set_valido(libre, origen)):
             continue
-        delta = evaluar_cambio(origen, arch, build, libre, ctx, bonos_2pc).delta
-        if delta > mejor[0]:
-            mejor = (delta, libre.id)
+        cambio = evaluar_cambio(origen, arch, build, libre, ctx, bonos_2pc)
+        if cambio.rompe_objetivo:
+            continue
+        if cambio.delta > mejor[0]:
+            mejor = (cambio.delta, libre.id)
     # Redondeado: dos discos que valen lo mismo no pueden volverse "pérdida" por coma flotante.
     return Salida(mejor_delta=round(mejor[0], 6), reemplazo_id=mejor[1])
 
@@ -199,7 +216,7 @@ def puede_recibir_de(destino: "Agent", origen: "Agent") -> bool:
 def _elegir(opciones: list[tuple["Agent", "ScoreBreakdown", Cambio]]):
     """De los cambios que MEJORAN (delta > 0), el del PJ de mayor prioridad; entre iguales, el que
     más gana. `None` si ninguno mejora."""
-    utiles = [o for o in opciones if o[2].delta > 0]
+    utiles = [o for o in opciones if o[2].delta > 0 and not o[2].rompe_objetivo]
     if not utiles:
         return None
     return max(utiles, key=lambda o: (nivel_prioridad(o[0].prioridad), o[2].delta))
@@ -245,18 +262,23 @@ def recomendar(
 
     if not candidatos:
         return Recommendation("descartar", None, None, 0.0)
+    # R20: a quién se le puede SUGERIR (equipar, mover, mejorar) lo decide también el set. Guardar
+    # o descartar se sigue juzgando por rol con todos los candidatos: un disco excelente de un set
+    # que hoy no usa nadie se guarda para el futuro, no se tira por eso.
+    aptos = [(a, sb) for a, sb in candidatos if set_valido(disc, a)]
 
     libre = not (disc.equipado and disc.agente_asignado)
     if builds is not None and disc.nivel == 15 and libre:
-        return _recomendar_comparando(disc, candidatos, archetype_repo, disc_set_repo, ctx, builds)
+        return _recomendar_comparando(disc, candidatos, aptos, archetype_repo, disc_set_repo, ctx,
+                                      builds)
     if builds is not None and libres is not None and disc.nivel == 15 and not libre:
-        mover = _recomendar_mover_ajeno(disc, candidatos, agent_repo, archetype_repo,
+        mover = _recomendar_mover_ajeno(disc, candidatos, aptos, agent_repo, archetype_repo,
                                         disc_set_repo, ctx, builds, libres)
         if mover is not None:
             return mover
     if disc.nivel is not None and disc.nivel < 15:
         return _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archetypes,
-                                         disc_set_repo, builds)
+                                         disc_set_repo, builds, aptos)
 
     top_agent, top_sb = candidatos[0]
 
@@ -322,7 +344,7 @@ def _bonos_2pc_desde(disc_set_repo) -> Callable[[int], tuple[str, float] | None]
 
 
 def _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archetypes,
-                              disc_set_repo=None, builds=None):
+                              disc_set_repo=None, builds=None, aptos=None):
     """Un disco sin terminar: ¿vale la pena invertirle? (casos 6 y 7 de Daniel)
 
     Se evalúa para todos los roles y vale el mejor que sirva (R11). No sirve si tiene DOS líneas
@@ -348,7 +370,10 @@ def _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archet
     if sanos and builds is not None:
         bonos = _bonos_2pc_desde(disc_set_repo)
         opciones, pots = [], {}
+        ids_aptos = {a.id for a, _ in aptos} if aptos is not None else None
         for agent, sb, pot in sanos:
+            if ids_aptos is not None and agent.id not in ids_aptos:
+                continue                    # R20: no se le sube un disco de un set que no usa
             arch = archetype_repo.get_by_id(agent.arquetipo_primario_id)
             # El valor esperado SIN el set: el set lo pone `evaluar_cambio`, que lo mide en el build.
             esperado = potencial(disc, agent, arch, ctx, []).score_raw
@@ -371,8 +396,8 @@ def _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archet
                           top_candidatos=top, desglose_top=sb, potencial=pot)
 
 
-def _recomendar_mover_ajeno(disc, candidatos, agent_repo, archetype_repo, disc_set_repo, ctx,
-                            builds, libres):
+def _recomendar_mover_ajeno(disc, candidatos, aptos, agent_repo, archetype_repo, disc_set_repo,
+                            ctx, builds, libres):
     """Un disco que lleva A, ¿le sirve más a B? Sólo si A no pierde (con su mejor reemplazo libre),
     B gana y B no es de menor prioridad que A (mig 42). Entre los B posibles, el de mayor
     prioridad. `None` si no hay un movimiento así: el disco se queda donde está."""
@@ -388,7 +413,7 @@ def _recomendar_mover_ajeno(disc, candidatos, agent_repo, archetype_repo, disc_s
         return None                         # "sin perjudicar al PJ que lo tiene equipado"
 
     opciones = []
-    for agent, sb in candidatos:
+    for agent, sb in aptos:
         if agent.id == origen.id or not puede_recibir_de(agent, origen):
             continue
         arch = archetype_repo.get_by_id(agent.arquetipo_primario_id)
@@ -403,10 +428,10 @@ def _recomendar_mover_ajeno(disc, candidatos, agent_repo, archetype_repo, disc_s
                           top_candidatos=candidatos[:5], desglose_top=sb, movimiento=cambio)
 
 
-def _recomendar_comparando(disc, candidatos, archetype_repo, disc_set_repo, ctx, builds):
+def _recomendar_comparando(disc, candidatos, aptos, archetype_repo, disc_set_repo, ctx, builds):
     bonos = _bonos_2pc_desde(disc_set_repo)
     opciones = []
-    for agent, sb in candidatos:
+    for agent, sb in aptos:
         arch = archetype_repo.get_by_id(agent.arquetipo_primario_id)
         opciones.append((agent, sb, evaluar_cambio(agent, arch, builds(agent.id), disc, ctx, bonos)))
     mejor = _elegir(opciones)       # un libre va primero a los de prioridad alta
