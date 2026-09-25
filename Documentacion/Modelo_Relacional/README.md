@@ -101,7 +101,7 @@ Este documento describe el modelo relacional completo de la base, post-aplicaci�
 | `disc_set_archetype` | 31 (26 sets + 5 dobles) | Mapping N:M con `prioridad` (1=primario, 2=secundario) |
 | `inventory_disc_evaluations` | 0 | Histórico de recomendaciones del scoring engine. Crece con uso |
 
-### Capa 4b — Ajustes del usuario sobre los defaults (migraciones 40 y 42)
+### Capa 4b — Ajustes del usuario sobre los defaults (migraciones 40, 42 y 43)
 
 Dos capas: los defaults de las tablas de arriba (Prydwen, Game8… con su `fuente`) **no se tocan**; lo
 que Daniel corrige a mano vive en tablas propias y el repositorio lo mezcla — **el ajuste gana, y si
@@ -114,6 +114,20 @@ reglas con `CHECK`. Detalle y procedencia de cada fila: cabecera de cada `.sql`.
 | `ajustes_usuario_pesos` | 40 | 0 | Peso de un substat por PJ, en [-1, 1] |
 | `ajustes_usuario_arquetipo` | 40 | 1 (HP_DISRUPT · mains_4) · 3 desde mig 41 (+ ATK_DPS y SUPPORT_ER · mains_5) | Principales permitidos por slot (`mains_4/5/6`, array JSON) |
 | `ajustes_usuario_prioridad` | 42 | 0 (los 52 en normal) | Prioridad de buildeo: `alta` / `baja`; **normal = sin fila**. Bloquea sugerir mover un disco hacia un PJ de prioridad más baja |
+| `ajustes_usuario_build` | 43 | 0 | Build objetivo por PJ: `set_4p_id` obligatorio, `set_2p_id` opcional y distinto. **Sin fila = no declaró**: el motor usa los sets equipados si están entre los recomendados, si no el primero recomendado (R19) |
+
+### Capa 4c — Builds recomendados por PJ (migración 43)
+
+Conocimiento de las guías, **por PJ** (el set y los stats de un PJ pueden apartarse de su rol:
+Nangong Yu es aturdidora con build de Anomalía). Se guarda lo que dice la guía, con `fuente`, `url`,
+`version_guia` y `capturado` por fila; pasar de niveles a pesos es del motor. Carga:
+`app/scripts/cargar_builds_prydwen.py`. Evidencia: `audit/prydwen/`.
+
+| Tabla | Descripción |
+|-------|-------------|
+| `pj_sets_4pc` | 4pc recomendados en el orden de la guía (`orden`); `rango_fuente` = el número que muestra la guía (puede repetirse), `puntaje_fuente` = el % calculado cuando lo da |
+| `pj_sets_2pc` | 2pc que la guía combina con ESE 4pc (FK compuesta a `pj_sets_4pc`); `grupo` = renglón de la guía (mismo renglón = alternativas), `recomendado` = el renglón marcado "(Recommended)" |
+| `pj_stats_recomendados` | Principales de los discos 4-6 y substats como NIVELES (`A = B > C` → A y B nivel 1, C nivel 2); `variante` separa builds alternativas de una guía (`'única'` si tiene una) |
 
 ### Capa 5 — Optimizador de discos (migración 02 — RF-06)
 

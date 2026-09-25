@@ -50,6 +50,9 @@ CATALOGO: tuple[str, ...] = (
 INVESTIGACION: tuple[str, ...] = (
     "agent_thresholds", "agent_score_thresholds", "agent_substat_preferences",
     "pj_weapon_synergy", "agent_awakenings",
+    # Mig 43 (2026-09-25): los builds recomendados por PJ (sets 4pc/2pc, principales y substats
+    # por niveles), capturados de Prydwen con la versión de cada guía.
+    "pj_sets_4pc", "pj_sets_2pc", "pj_stats_recomendados",
 )
 
 #: Declaraciones del usuario. **No son observación**: son lo que el usuario afirma sobre su propia
@@ -62,6 +65,8 @@ DECLARADO: tuple[str, ...] = (
     "ajustes_usuario_rangos", "ajustes_usuario_pesos", "ajustes_usuario_arquetipo",
     # Mig 42 (2026-09-24): la prioridad de buildeo de cada PJ, que Daniel declara en la app.
     "ajustes_usuario_prioridad",
+    # Mig 43 (2026-09-25): el build objetivo (4pc + 2pc) que Daniel elige en la ficha del PJ.
+    "ajustes_usuario_build",
 )
 
 #: Estado de cuenta observable. Se re-censa.

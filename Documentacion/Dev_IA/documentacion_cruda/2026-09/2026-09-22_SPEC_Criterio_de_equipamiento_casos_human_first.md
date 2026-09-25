@@ -472,3 +472,32 @@ Se le mostraron las sugerencias sin conflicto y cuatro dudas. Respuestas:
    declarar (por PJ, en la capa de ajustes) y de decidir cómo pesa: orden de las sugerencias, o
    que un PJ de prioridad baja no le saque discos a uno de prioridad alta.
 4. **Reserva en 0 → esperado.** "El sistema siempre busca mejoras en mis PJs".
+
+### Segunda revisión de Daniel: las sugerencias con prioridades (2026-09-25)
+
+Se le mostraron las 28 firmes de `audit/sugerencias/20260925_000654_781001` con los tres discos de
+cada una (el que llega, el que está, el que repone). Con las dos primeras alcanzó:
+
+- **Caso 12 · #152 → Ye Shunguang (+6,30).** "No le sirve Armonía umbría en general porque el PJ no
+  genera réplicas". Medido: los +6,30 son todos de substats (Prob. Crítica +3, Perforación +2); el
+  disco reemplaza al #275 y **rompe el 2pc de Tecno tetraodóntido** (Tasa de Perforación +8 %), que
+  vale 0 porque ese 2pc no es un substat. Pasa con **19 de 30 sets**: su 2pc "sin modelar" no cuesta
+  nada al romperse.
+- **Caso 13 · #163 → Nangong Yu (+6,12).** "No le sirve Balada porque las 2pc son para daño crítico;
+  ella es una stunner/anómala con una build peculiar". Medido: rompe el 2pc de Jazz Caótico, y el
+  arquetipo STUN le da a la Prob. Crítica el peso mayor (1,13). Falta el perfil de stats PROPIO.
+- **Raíz:** `agents.set_4p_id/set_2p_id` están en NULL en los 52 PJs (eran la build observada y nadie
+  la reconstruye desde el rebuild del 2026-08-17); el set sólo entra por `disc_set_archetype`, que
+  es por ROL, no por PJ.
+- **Hallazgo aparte:** en 3 slots dos firmes se pisan (Piper s3, Nangong Yu s6, Dialyn s2):
+  `resolver_conflictos` no reserva el slot del ORIGEN que ocupa el disco que repone.
+
+**Decisiones (2026-09-25):**
+
+- **R18 · el set es del PJ, no del rol.** Base de conocimiento por PJ desde las wikis (Prydwen
+  primaria, Game8 cruce; fuente y URL por fila; lo no confirmado queda NULL): sets de 4pc y 2pc en
+  orden, y en la misma pasada los principales de los slots 4-6 y la prioridad de substats.
+- **R19 · build objetivo:** el que declara Daniel en la ficha del PJ (capa de ajustes); si no hay,
+  los sets equipados **si están entre los recomendados** para ese PJ; si no, el primero recomendado.
+- **R20 · un disco de un set fuera del build objetivo no es candidato** para ese PJ, por buenos que
+  sean sus substats (como R9 con el principal).
