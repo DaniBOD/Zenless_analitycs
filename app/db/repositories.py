@@ -109,6 +109,9 @@ class Agent:
     #: De dónde sale el build objetivo (`set_4p_id`/`set_2p_id`, R19): 'declarado', 'equipado',
     #: 'guia_fuera' (lo equipado no está en la guía), 'guia_sin_4pc' o None (sin guía ni declaración).
     origen_build: str | None = None
+    #: Stats fijos (mig 45, R21): stat (vocabulario de `agents`) → el valor que su kit necesita.
+    #: Sólo los que valen con su build objetivo (el de Monarca del Pináculo, si ése es su 4pc).
+    stats_fijos: dict[str, float] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +224,17 @@ def resolver_build_objetivo(
         return cuatro, dos_equipado or _dos_recomendado(dos), "equipado"
     s4, dos = guia[0]
     return s4, _dos_recomendado(dos), "guia_fuera" if cuatro is not None else "guia_sin_4pc"
+
+
+def _fijos_del_pj(filas: "list[tuple[int, str, float, int | None]]", agente_id: int,
+                  set_4p_id: int | None) -> dict[str, float]:
+    """Los stats fijos que valen para el PJ con su build objetivo; con dos para el mismo stat
+    (Dialyn: 100 % por su kit y 50 % por Monarca del Pináculo), el mayor."""
+    out: dict[str, float] = {}
+    for agente, stat, objetivo, requiere in filas:
+        if agente == agente_id and (requiere is None or requiere == set_4p_id):
+            out[stat] = max(out.get(stat, objetivo), objetivo)
+    return out
 
 
 def mezclar_pesos(propios: dict[str, float], del_arquetipo: dict[str, float],
@@ -731,6 +745,11 @@ class AgentRepo:
                 "AND (descartado = 0 OR descartado IS NULL) GROUP BY agente_asignado, set_id"):
                 equipados.setdefault(r[0], {})[r[1]] = r[2]
 
+        fijos_filas: list[tuple[int, str, float, int | None]] = []
+        if _tabla_existe(self._con, "pj_stats_fijos"):
+            fijos_filas = [tuple(r) for r in self._con.execute(
+                "SELECT agente_id, stat, objetivo, requiere_set_4p_id FROM pj_stats_fijos")]
+
         prioridades = PrioridadRepo(self._con).get_all()
 
         con_elemento = _tiene_columnas(self._con, "agents", ("elemento",))
@@ -769,6 +788,7 @@ class AgentRepo:
                 set_4p_id=s4,
                 set_2p_id=s2,
                 origen_build=origen_build,
+                stats_fijos=_fijos_del_pj(fijos_filas, r["id"], s4),
                 protected_build=bool(r["protected_build"]),
                 rangos=rangos.get(r["id"], {}),
                 stats=stats.get(r["id"], {}),

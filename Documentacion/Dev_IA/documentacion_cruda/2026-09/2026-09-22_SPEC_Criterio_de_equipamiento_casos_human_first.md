@@ -505,3 +505,23 @@ cada una (el que llega, el que está, el que repone). Con las dos primeras alcan
   builds mías que veo óptimas, dejalo como builds creadas por el usuario". Declarados en
   `ajustes_usuario_build`. Corolario: **una build declarada vale aunque la guía no la nombre**; la
   guía es el default, no un límite.
+
+### Tercera revisión de Daniel: el motor por PJ (2026-09-25, tarde)
+
+Sobre `audit/sugerencias/20260925_100942_416192` ("va mucho mejor ahora"):
+
+- **Caso 11 vs R20 → mandan los sets.** "Pesa mucho más los sets": el #369 (Floración, slot 5 Hielo)
+  se descarta porque Floración no está en el build objetivo de Lycaon ni de Soukaku. El caso 11
+  queda SUPERADO por R20 (el fixture lo sigue probando sin build objetivo, por rol).
+- **Aplicadas en el juego:** #85 Anby → Dialyn (repone #92) y #188 Astra Yao → Ju Fufu (repone
+  #192). "Realizalos en la db para que tenga trazabilidad" → mig 44 (`movimientos_discos`).
+- **Caso 14 · #151 N.º 0: Anby → Gatillo (+1,06) NO.** "Tiene en la pasiva más impacto a cuanta
+  más probabilidad tenga, y aunque swapear el disco se ve bueno bajaría mucho su Prob. Crítica."
+  Medido: 75,4 % → 68,2 %; su habilidad adicional da +1,5 % de aturdimiento de réplicas por cada 1 %
+  sobre 40 %, hasta 90 % → −10,8 puntos de aturdimiento.
+- **R21 · stats fijos.** "Podemos tener intervalos de stats pero algunos PJ requieren un stat fijo
+  para aprovechar todo su potencial, como Astra Yao y Zhao, que requieren cierto ATK (Astra) y HP
+  (Zhao) para aportar el buff de sus pasivas al equipo." Un cambio no se sugiere si BAJA un stat
+  fijo del PJ y lo deja por debajo del objetivo (ni al que recibe ni al que entrega). Objetivos
+  con su cuenta en `pj_stats_fijos` (mig 45), desde los kits en Prydwen con la pasiva al Lv. 7.
+- **Descartes:** se revisan después de las sugerencias.

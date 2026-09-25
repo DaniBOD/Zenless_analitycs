@@ -128,6 +128,7 @@ Nangong Yu es aturdidora con build de Anomalía). Se guarda lo que dice la guía
 | `pj_sets_4pc` | 4pc recomendados en el orden de la guía (`orden`); `rango_fuente` = el número que muestra la guía (puede repetirse), `puntaje_fuente` = el % calculado cuando lo da |
 | `pj_sets_2pc` | 2pc que la guía combina con ESE 4pc (FK compuesta a `pj_sets_4pc`); `grupo` = renglón de la guía (mismo renglón = alternativas), `recomendado` = el renglón marcado "(Recommended)" |
 | `pj_stats_recomendados` | Principales de los discos 4-6 y substats como NIVELES (`A = B > C` → A y B nivel 1, C nivel 2); `variante` separa builds alternativas de una guía (`'única'` si tiene una) |
+| `pj_stats_fijos` | (mig 45) El valor de un stat que el KIT del PJ necesita para rendir completo (Gatillo 90 % de Prob. Crítica, Astra Yao 3.429 de ATK, Zhao 27.000 PV…), con `cuenta` y fuente; `requiere_set_4p_id` = vale sólo con ese 4pc objetivo (Monarca del Pináculo: 50 %). R21: un cambio no deja al PJ por debajo (`app.core.stats_fijos`) |
 
 ### Capa 4d — Historial de movimientos de discos (migración 44)
 

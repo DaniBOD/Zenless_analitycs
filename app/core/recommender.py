@@ -17,6 +17,7 @@ from collections import Counter
 from typing import Callable
 
 from app.core.scoring import Potencial, _pesos, potencial, principal_valido, score_disco, set_valido
+from app.core.stats_fijos import rompe_stat_fijo
 from app.core.stats_vocab import VALOR_POR_MEJORA, bono_2pc_como_substat
 from app.db.repositories import PRIORIDADES
 
@@ -67,6 +68,9 @@ class Cambio:
     #: Deja por debajo de su cuenta (4 y 2) un set del build objetivo que estaba ACTIVO: R20
     #: "mejorar en base a los sets que ya tiene", no desarmar el build (`_elegir` lo descarta).
     rompe_objetivo: bool = False
+    #: R21 (mig 45): el stat fijo que el cambio le baja al PJ dejándolo por debajo de su objetivo
+    #: (`app.core.stats_fijos`); None si no rompe ninguno. `_elegir` lo descarta.
+    rompe_stat_fijo: str | None = None
     notas: list[str] = field(default_factory=list)
     #: Sólo cuando el disco lo lleva OTRO PJ: de quién sale, qué disco libre lo reemplaza allá
     #: (None = el slot queda vacío) y cómo queda el origen con ese reemplazo (≥ 0: no pierde).
@@ -137,6 +141,7 @@ def evaluar_cambio(
     antes = Counter(d.set_id for d in build.values())
     despues = Counter(d.set_id for s, d in build.items() if s != nuevo.slot)
     despues[nuevo.set_id] += 1
+    build_despues = {**build, nuevo.slot: nuevo}
     s_antes, notas = valor_sets(antes, agent, arch, bonos_2pc)
     s_despues, _ = valor_sets(despues, agent, arch, bonos_2pc)
 
@@ -149,6 +154,7 @@ def evaluar_cambio(
         rompe_4pc=any(n >= 4 and despues[s] < 4 for s, n in antes.items()),
         completa_4pc=any(n >= 4 and antes[s] < 4 for s, n in despues.items()),
         rompe_objetivo=any(antes[s] >= n > despues[s] for s, n in objetivo),
+        rompe_stat_fijo=rompe_stat_fijo(agent, build, build_despues),
         notas=notas,
     )
 
@@ -173,7 +179,9 @@ def evaluar_salida(
     # build objetivo que estaba activo (un 2pc que el motor no sabe valorar se perdería "gratis").
     objetivo = [(s, n) for s, n in ((getattr(origen, "set_4p_id", None), 4),
                                     (getattr(origen, "set_2p_id", None), 2)) if s is not None]
-    vacio_rompe = any(antes[s] >= n > despues_vacio[s] for s, n in objetivo)
+    # R21: tampoco puede dejarlo por debajo de un stat fijo que el disco le sostenía.
+    vacio_rompe = (any(antes[s] >= n > despues_vacio[s] for s, n in objetivo)
+                   or rompe_stat_fijo(origen, build, sin_el) is not None)
     mejor = (float("-inf") if vacio_rompe else -valor_disco(disc, origen, arch, ctx) + (s_sin - s_con),
              None)
     for libre in libres:
@@ -181,7 +189,7 @@ def evaluar_salida(
                 or not set_valido(libre, origen)):
             continue
         cambio = evaluar_cambio(origen, arch, build, libre, ctx, bonos_2pc)
-        if cambio.rompe_objetivo:
+        if cambio.rompe_objetivo or cambio.rompe_stat_fijo:
             continue
         if cambio.delta > mejor[0]:
             mejor = (cambio.delta, libre.id)
@@ -216,7 +224,8 @@ def puede_recibir_de(destino: "Agent", origen: "Agent") -> bool:
 def _elegir(opciones: list[tuple["Agent", "ScoreBreakdown", Cambio]]):
     """De los cambios que MEJORAN (delta > 0), el del PJ de mayor prioridad; entre iguales, el que
     más gana. `None` si ninguno mejora."""
-    utiles = [o for o in opciones if o[2].delta > 0 and not o[2].rompe_objetivo]
+    utiles = [o for o in opciones
+              if o[2].delta > 0 and not o[2].rompe_objetivo and not o[2].rompe_stat_fijo]
     if not utiles:
         return None
     return max(utiles, key=lambda o: (nivel_prioridad(o[0].prioridad), o[2].delta))

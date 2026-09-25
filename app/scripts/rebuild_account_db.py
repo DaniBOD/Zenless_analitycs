@@ -53,6 +53,8 @@ INVESTIGACION: tuple[str, ...] = (
     # Mig 43 (2026-09-25): los builds recomendados por PJ (sets 4pc/2pc, principales y substats
     # por niveles), capturados de Prydwen con la versión de cada guía.
     "pj_sets_4pc", "pj_sets_2pc", "pj_stats_recomendados",
+    # Mig 45 (2026-09-25): los stats fijos por PJ (lo que su kit necesita), con la cuenta y la fuente.
+    "pj_stats_fijos",
 )
 
 #: Declaraciones del usuario. **No son observación**: son lo que el usuario afirma sobre su propia
