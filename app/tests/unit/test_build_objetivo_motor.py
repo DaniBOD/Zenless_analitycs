@@ -180,3 +180,15 @@ def test_dejar_vacio_un_slot_del_2pc_objetivo_no_cuenta_como_no_pierde(con):
              5: malo, 6: _disco(s2, 6, 6)}
     salida = evaluar_salida(malo, ye, arch, build, [], ScoringContext(), lambda _: None)
     assert salida.mejor_delta < 0
+
+
+def test_elegir_exige_una_mejora_minima():
+    """#93 → Ju Fufu salía con +0,00: el mismo disco que ella lleva, con los stats en otro orden."""
+    from app.core.recommender import MEJORA_MINIMA
+
+    class A:
+        prioridad = "normal"
+    assert _elegir([(A(), None, _cambio(1e-9))]) is None
+    assert _elegir([(A(), None, _cambio(0.027))]) is None
+    assert _elegir([(A(), None, _cambio(MEJORA_MINIMA))])[2].delta == MEJORA_MINIMA
+    assert _elegir([(A(), None, _cambio(0.156))])[2].delta == 0.156

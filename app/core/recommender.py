@@ -221,11 +221,19 @@ def puede_recibir_de(destino: "Agent", origen: "Agent") -> bool:
     return nivel_prioridad(destino.prioridad) >= nivel_prioridad(origen.prioridad)
 
 
+#: La mejora mínima para sugerir un cambio, en las unidades del puntaje (1,0 = una mejora de un
+#: secundario de peso máximo). Daniel (2026-09-25) aceptó "una exigencia mínima" tras ver #93 →
+#: Ju Fufu con +0,00: #93 y el #385 que ella lleva tienen los mismos stats en otro orden, y la coma
+#: flotante lo hacía "mejor". El reporte de ese día tenía un hueco entre 0,027 (#251 → Sporos, mover
+#: por 3 % de una mejora) y 0,156: un décimo de mejora cae en el hueco. Parámetro, no dato del juego.
+MEJORA_MINIMA = 0.1
+
+
 def _elegir(opciones: list[tuple["Agent", "ScoreBreakdown", Cambio]]):
-    """De los cambios que MEJORAN (delta > 0), el del PJ de mayor prioridad; entre iguales, el que
-    más gana. `None` si ninguno mejora."""
+    """De los cambios que MEJORAN (delta ≥ `MEJORA_MINIMA`), el del PJ de mayor prioridad; entre
+    iguales, el que más gana. `None` si ninguno mejora."""
     utiles = [o for o in opciones
-              if o[2].delta > 0 and not o[2].rompe_objetivo and not o[2].rompe_stat_fijo]
+              if o[2].delta >= MEJORA_MINIMA and not o[2].rompe_objetivo and not o[2].rompe_stat_fijo]
     if not utiles:
         return None
     return max(utiles, key=lambda o: (nivel_prioridad(o[0].prioridad), o[2].delta))
