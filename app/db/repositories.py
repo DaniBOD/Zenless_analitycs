@@ -206,6 +206,48 @@ class PrioridadRepo:
             (agente_id, prioridad))
 
 
+@dataclass(frozen=True)
+class BuildDeclarado:
+    set_4p_id: int
+    set_2p_id: int | None = None
+
+
+class BuildObjetivoRepo:
+    """El build de sets que Daniel declara para un PJ (mig 43): un 4pc y, opcional, un 2pc.
+
+    Sin fila = no declaró; qué build usa el motor entonces (lo equipado si está en la guía, o el
+    primero de la guía) lo decide el motor (R19), no este repositorio. Cualquier set vale, esté o no
+    en la guía: "son builds mías que veo óptimas" (Daniel, 2026-09-25, sobre Gatillo y Grace). Como
+    el resto de los repositorios, no hace commit.
+    """
+
+    def __init__(self, con: sqlite3.Connection):
+        self._con = con
+
+    def get_all(self) -> dict[int, BuildDeclarado]:
+        """agente_id → build declarado. Una DB anterior a la migración 43: ninguno."""
+        if not _tabla_existe(self._con, "ajustes_usuario_build"):
+            return {}
+        return {r[0]: BuildDeclarado(r[1], r[2]) for r in self._con.execute(
+            "SELECT agente_id, set_4p_id, set_2p_id FROM ajustes_usuario_build")}
+
+    def get(self, agente_id: int) -> BuildDeclarado | None:
+        return self.get_all().get(agente_id)
+
+    def guardar(self, agente_id: int, set_4p_id: int, set_2p_id: int | None = None) -> None:
+        if set_2p_id is not None and set_2p_id == set_4p_id:
+            raise ValueError("el 2pc no puede ser el mismo set que el 4pc")
+        self._con.execute(
+            "INSERT INTO ajustes_usuario_build (agente_id, set_4p_id, set_2p_id) VALUES (?, ?, ?) "
+            "ON CONFLICT(agente_id) DO UPDATE SET set_4p_id = excluded.set_4p_id, "
+            "set_2p_id = excluded.set_2p_id, actualizado = CURRENT_TIMESTAMP",
+            (agente_id, set_4p_id, set_2p_id))
+
+    def borrar(self, agente_id: int) -> None:
+        """Volver al automático (R19)."""
+        self._con.execute("DELETE FROM ajustes_usuario_build WHERE agente_id = ?", (agente_id,))
+
+
 def _tabla_existe(con: sqlite3.Connection, nombre: str) -> bool:
     """Una DB anterior a la migración 40 no tiene las tablas de ajustes: sólo defaults."""
     return con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
