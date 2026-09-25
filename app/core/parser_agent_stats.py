@@ -147,7 +147,11 @@ def _banner_rol_elem_region(full_text: str) -> str:
     el primer 'PV'. Se corta antes de los stats para NO capturar 'Anomalía' de
     los labels 'Tasa/Maestría de Anomalía' (que contaminarían el rol).
     """
-    idx_pv = full_text.find("PV")
+    # Sin distinguir mayúsculas: el OCR leyó "pV" en la ficha de Anby (QA 2026-09-25), no se cortó,
+    # la región de 200 caracteres tomó la etiqueta "Ataque 1150" y, como "ataque" se busca antes que
+    # "aturdidor", el rol salió Ataque → su ficha se guardó en N.º 0: Anby.
+    m_pv = re.search(r"\bPV\b", full_text, re.IGNORECASE)
+    idx_pv = m_pv.start() if m_pv else -1
     region = full_text[:idx_pv] if idx_pv > 0 else full_text[:200]
     mi = region.rfind("MAX")
     if mi >= 0:
