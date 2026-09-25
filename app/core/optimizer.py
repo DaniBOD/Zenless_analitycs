@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 from app.core.recommender import _bonos_2pc_desde, evaluar_salida, puede_recibir_de
-from app.core.scoring import principal_valido, score_disco, set_valido
+from app.core.scoring import principal_valido, score_disco
 from app.core.score_normalizer import ScoringContext
 from app.db.repositories import (
     Agent, AgentRepo, Archetype, ArchetypeRepo,
@@ -231,8 +231,6 @@ def _greedy_candidates(
             continue
         if not principal_valido(disc, arch, agent):
             continue  # main incompatible → excluir
-        if not set_valido(disc, agent):
-            continue  # R20: set fuera del build objetivo del PJ
         bs = _disc_base_score(disc, agent, arch, ctx)
         base_scores[disc.id] = bs
         eligible[disc.slot].append((bs, disc))

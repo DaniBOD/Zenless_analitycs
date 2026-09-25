@@ -197,8 +197,9 @@ def set_valido(disc: "Disc", agent: "Agent") -> bool:
 
     El build objetivo es `agent.set_4p_id` + `agent.set_2p_id` (R19, `resolver_build_objetivo`).
     Sin 4pc objetivo no se restringe nada; sin 2pc objetivo (la guía no da ninguno: Evelyn), el
-    2pc queda libre. Es la única autoridad de esta pregunta: la usan el recomendador y el
-    optimizador (B1)."""
+    2pc queda libre. Es la única autoridad de esta pregunta (B1). La usa el recomendador (las
+    sugerencias); el optimizador de builds (RF-06) NO filtra con ella: sin discos del set objetivo
+    para un slot armaría builds de 5, y ya prioriza el objetivo por el bono de set (`set_4p_id`)."""
     s4 = getattr(agent, "set_4p_id", None)
     if s4 is None:
         return True

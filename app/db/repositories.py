@@ -700,8 +700,9 @@ class AgentRepo:
                 "SELECT agente_id, variante, linea, stat FROM pj_stats_recomendados "
                 "WHERE linea LIKE 'principal_%' ORDER BY rowid"))
         mains_rol: dict[str, dict[int, list[str]]] = {}
-        for r in self._con.execute("SELECT code, mains_4, mains_5, mains_6 FROM disc_archetypes"):
-            mains_rol[r["code"]] = {n: json.loads(r[f"mains_{n}"] or "[]") for n in (4, 5, 6)}
+        if _tiene_columnas(self._con, "disc_archetypes", ("code", "mains_4", "mains_5", "mains_6")):
+            for r in self._con.execute("SELECT code, mains_4, mains_5, mains_6 FROM disc_archetypes"):
+                mains_rol[r["code"]] = {n: json.loads(r[f"mains_{n}"] or "[]") for n in (4, 5, 6)}
         mains_ajustados: dict[str, dict[int, list[str]]] = {}
         if _tabla_existe(self._con, "ajustes_usuario_arquetipo"):
             for r in self._con.execute("SELECT code, campo, valor_json FROM ajustes_usuario_arquetipo "
