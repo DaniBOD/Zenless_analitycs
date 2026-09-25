@@ -129,6 +129,12 @@ Nangong Yu es aturdidora con build de Anomalía). Se guarda lo que dice la guía
 | `pj_sets_2pc` | 2pc que la guía combina con ESE 4pc (FK compuesta a `pj_sets_4pc`); `grupo` = renglón de la guía (mismo renglón = alternativas), `recomendado` = el renglón marcado "(Recommended)" |
 | `pj_stats_recomendados` | Principales de los discos 4-6 y substats como NIVELES (`A = B > C` → A y B nivel 1, C nivel 2); `variante` separa builds alternativas de una guía (`'única'` si tiene una) |
 
+### Capa 4d — Historial de movimientos de discos (migración 44)
+
+| Tabla | Descripción |
+|-------|-------------|
+| `movimientos_discos` | Una fila por disco que cambia de lugar: `equipa` (pasa a `hacia_agente_id`, desde otro PJ o libre) o `desplazado` (el que ocupaba el slot queda libre: el juego no recuerda quién lo llevaba). `lote` agrupa una tanda, `fuente` quién lo afirma (`declarado_usuario`…), `referencia` de qué sugerencia salió. Escribe `app.core.movimientos.EditorMovimientos`. Rebuild: VACIAR (cuelga de `inventory_discs`) |
+
 ### Capa 5 — Optimizador de discos (migración 02 — RF-06)
 
 | Tabla | Filas iniciales | Descripción |

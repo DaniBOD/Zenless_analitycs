@@ -73,6 +73,9 @@ DECLARADO: tuple[str, ...] = (
 VACIAR: tuple[str, ...] = (
     "inventory_discs", "inventory_disc_evaluations", "agent_discs",
     "inventory_weapons", "optimizer_pending_actions",
+    # Mig 44 (2026-09-25): el historial de movimientos cuelga de `inventory_discs`, que se re-censa
+    # con ids nuevos; un historial de ids que ya no existen no se puede leer.
+    "movimientos_discos",
 )
 
 #: Ya estaban vacías (features de fases posteriores). Se crean y quedan vacías.
