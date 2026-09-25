@@ -44,6 +44,10 @@ def db(tmp_path):
         con.execute("DELETE FROM inventory_disc_evaluations")
         con.execute("DELETE FROM optimizer_pending_actions")
         con.execute("DELETE FROM inventory_discs")
+        # Estos tests son de la mecánica (equipar, conflictos, nivel), no de la prioridad de buildeo:
+        # con las de Daniel (mig 42), un libre bueno se lo lleva un PJ de alta y no el elegido acá.
+        # La prioridad tiene sus tests propios (`test_prioridad_motor.py`).
+        con.execute("DELETE FROM ajustes_usuario_prioridad")
         flojo = _insert_disc(con, 1, 48, "HP", 2200.0, _FLOJO, agente=pj, equipado=1)
     con.close()
     return copia, pj, flojo
