@@ -253,14 +253,16 @@ PRIORIDADES: tuple[str, ...] = ("alta", "normal", "baja")
 #: Cambia cada vez que se COMMITEA una prioridad. `AgentRepo` cachea los PJs por instancia, y el
 #: controller y la captura en vivo tienen instancias que viven toda la sesión: sin esto, una
 #: prioridad editada en el Roster no llegaba al motor hasta reiniciar la app.
-_GENERACION_PRIORIDAD = 0
+_GENERACION_AGENTES = 0
 
 
-def prioridades_cambiaron() -> None:
-    """Lo llama quien escribe una prioridad, DESPUÉS del commit: los `AgentRepo` del proceso
-    releen en su próximo uso."""
-    global _GENERACION_PRIORIDAD
-    _GENERACION_PRIORIDAD += 1
+def agentes_cambiaron() -> None:
+    """Lo llama quien escribe algo que `AgentRepo` carga (la prioridad, el build objetivo, los
+    discos equipados que deciden el objetivo por R19), DESPUÉS del commit: los `AgentRepo` del
+    proceso releen en su próximo uso. Una sola señal para todo: con una por dato, el que escribe
+    un dato nuevo se olvida de avisar (le pasó al build objetivo, 2026-09-25)."""
+    global _GENERACION_AGENTES
+    _GENERACION_AGENTES += 1
 
 
 class PrioridadRepo:
@@ -628,9 +630,9 @@ class AgentRepo:
         self._generacion = -1
 
     def _load(self):
-        if self._cache is not None and self._generacion == _GENERACION_PRIORIDAD:
+        if self._cache is not None and self._generacion == _GENERACION_AGENTES:
             return
-        self._generacion = _GENERACION_PRIORIDAD
+        self._generacion = _GENERACION_AGENTES
         self._cache = {}
 
         arch_rows = {

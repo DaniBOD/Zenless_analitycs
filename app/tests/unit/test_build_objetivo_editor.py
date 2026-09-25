@@ -114,3 +114,20 @@ def test_readonly_no_escribe_ni_respalda(copia, monkeypatch):
     r = EditorBuildObjetivo(copia).guardar(grace, _set(copia, "Blues Libre"))
     assert not r.escribio and r.motivo_no_escribio
     assert _leer(copia, grace) is None and _backups(copia) == []
+
+
+def test_un_agentrepo_abierto_ve_el_build_nuevo(copia):
+    """Como con la prioridad: el controller y la captura en vivo tienen un `AgentRepo` de toda la
+    sesión. Sin el aviso, el motor seguía con el build objetivo viejo hasta reiniciar."""
+    from app.db.repositories import AgentRepo
+    grace = _agente(copia, "Grace")
+    con = sqlite3.connect(copia)
+    con.row_factory = sqlite3.Row
+    repo = AgentRepo(con)
+    antes = repo.get_by_id(grace).set_4p_id
+    # En la copia no hay builds declarados: Grace cae en el primero de su guía (Metal Eléctrico).
+    jazz = _set(copia, "Jazz Caótico")
+    assert antes != jazz
+    EditorBuildObjetivo(copia).guardar(grace, jazz, None)
+    assert repo.get_by_id(grace).set_4p_id == jazz
+    con.close()

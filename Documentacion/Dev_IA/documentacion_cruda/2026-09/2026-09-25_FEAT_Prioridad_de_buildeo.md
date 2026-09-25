@@ -42,7 +42,7 @@ mismo delta). **Con Claret alta + Piper baja (en una copia):** Piper 32 → 0.
   aparte (`814818b`…`4546383`), con una guarda sobre `app/ui`.
 - **El caché de `AgentRepo`**: el controller y la captura en vivo tienen instancias de toda la
   sesión; una prioridad editada no llegaba al motor hasta reiniciar, y "sugerencias recalculadas"
-  habría mentido. `prioridades_cambiaron()` tras el commit.
+  habría mentido. `prioridades_cambiaron()` tras el commit (desde 2026-09-25, `agentes_cambiaron()`: una señal para todo lo que carga `AgentRepo`).
 - **Un sabotaje salió verde** (la botonera dejando tildado lo no guardado): el test miraba un
   atributo interno, no el segmento tildado. Corregido.
 - **La etiqueta NUEVO** tomaba el alto entero del header (captura). Alto fijo.

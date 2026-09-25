@@ -12,7 +12,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.db.repositories import BuildObjetivoRepo
+from app.db.repositories import BuildObjetivoRepo, agentes_cambiaron
 
 log = logging.getLogger(__name__)
 
@@ -78,5 +78,8 @@ class EditorBuildObjetivo:
             raise
         finally:
             con.close()
+        # El objetivo vive en `Agent.set_4p_id/set_2p_id`: sin avisar, el motor seguía con el
+        # build viejo hasta reiniciar la app.
+        agentes_cambiaron()
         log.info("[build] %s", descripcion)
         return res

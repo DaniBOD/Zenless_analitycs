@@ -9,7 +9,7 @@ backup por click dejaría 15 copias de la DB de ~700 KB; el estado previo que im
 ANTES de empezar a editar. Cada click sigue siendo su propia transacción con sus PRAGMA. Una
 sesión nueva (otra instancia del editor) hace su propio backup.
 
-Después de cada commit se avisa a los `AgentRepo` del proceso (`prioridades_cambiaron`): si no, el
+Después de cada commit se avisa a los `AgentRepo` del proceso (`agentes_cambiaron`): si no, el
 motor seguía con la prioridad vieja hasta reiniciar, y la pantalla diría "sugerencias
 recalculadas" sin que fuera cierto.
 """
@@ -20,7 +20,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.db.repositories import PRIORIDADES, PrioridadRepo, prioridades_cambiaron
+from app.db.repositories import PRIORIDADES, PrioridadRepo, agentes_cambiaron
 
 log = logging.getLogger(__name__)
 
@@ -81,6 +81,6 @@ class EditorPrioridades:
         finally:
             con.close()
 
-        prioridades_cambiaron()
+        agentes_cambiaron()
         log.info("[prioridad] %s → %s", nombre or f"PJ {agente_id}", prioridad)
         return res
