@@ -112,6 +112,9 @@ class Agent:
     #: Stats fijos (mig 45, R21): stat (vocabulario de `agents`) → el valor que su kit necesita.
     #: Sólo los que valen con su build objetivo (el de Monarca del Pináculo, si ése es su 4pc).
     stats_fijos: dict[str, float] = field(default_factory=dict)
+    #: Todos los sets que su guía lista (4pc y 2pc, mig 43) más su build objetivo. R22: un disco
+    #: único en la cuenta se conserva si su set le sirve a algún PJ al que le sirve su principal.
+    sets_guia: frozenset[int] = frozenset()
 
 
 # ---------------------------------------------------------------------------
@@ -789,6 +792,9 @@ class AgentRepo:
                 set_2p_id=s2,
                 origen_build=origen_build,
                 stats_fijos=_fijos_del_pj(fijos_filas, r["id"], s4),
+                sets_guia=frozenset(
+                    {s for s in (s4, s2) if s is not None}
+                    | {s for s4g, dos in guia_sets.get(r["id"], []) for s in (s4g, *(x[1] for x in dos))}),
                 protected_build=bool(r["protected_build"]),
                 rangos=rangos.get(r["id"], {}),
                 stats=stats.get(r["id"], {}),

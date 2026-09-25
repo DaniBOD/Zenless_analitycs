@@ -229,6 +229,52 @@ def puede_recibir_de(destino: "Agent", origen: "Agent") -> bool:
 MEJORA_MINIMA = 0.1
 
 
+# ---------------------------------------------------------------------------
+# R22: el único de su tipo no se tira (2026-09-25)
+# ---------------------------------------------------------------------------
+# Daniel, por el #157 (Armonía umbría, slot 5, Bono Daño Eléctrico): "si no hay ningún disco del
+# mismo set que posea esos stats es mejor guardarlo, por ejemplo un metal polar que sirve a PJ de
+# hielo igual sirve tener un disco slot 5 con bono daño hielo aunque se tenga un substat no
+# preferible, ya que la pasiva del set va bien con los stats además de que no se posee un disco
+# similar en la cuenta". El tipo es (set, slot, principal). Un disco que se descartaría se
+# conserva —reserva si está terminado, guardar sin subir si no— cuando:
+#   - es el único de su tipo: ningún otro lo cubre. Uno EQUIPADO siempre cubre; entre LIBRES se
+#     conserva uno (el de más nivel; empate, el más antiguo), para que no se tiren todos;
+#   - le sirve a alguien: su set está en la guía de un PJ al que le sirve su principal (R9).
+# Sin el inventario (en vivo, sin `builds` ni `libres`) no se juzga: sigue la regla de antes (B2).
+
+def _tipo_de_disco(d: "Disc") -> tuple:
+    return d.set_id, d.slot, d.main_stat
+
+
+def unico_en_la_cuenta(disc: "Disc", inventario: "list[Disc]") -> bool:
+    """¿Ningún OTRO disco de la cuenta cubre el tipo (set, slot, principal) de `disc`?"""
+    mismos = [o for o in inventario if o.id != disc.id and _tipo_de_disco(o) == _tipo_de_disco(disc)]
+    if any(o.equipado and o.agente_asignado for o in mismos):
+        return False
+    clave = lambda d: (d.nivel or 0, -d.id)      # noqa: E731 — desempate, no calidad
+    return all(clave(disc) > clave(o) for o in mismos)
+
+
+def _inventario(agent_repo, builds, libres) -> "list[Disc] | None":
+    if builds is None or libres is None:
+        return None
+    vistos = {d.id: d for d in libres}
+    for a in agent_repo.get_all():
+        for d in builds(a.id).values():
+            vistos[d.id] = d
+    return list(vistos.values())
+
+
+def se_conserva_por_unico(disc: "Disc", candidatos, inventario: "list[Disc] | None") -> bool:
+    """R22: ¿un disco que se descartaría se conserva por ser el único de su tipo que le sirve a
+    alguien? `candidatos` ya son los PJ a los que les sirve el principal (R9)."""
+    if inventario is None:
+        return False
+    sirve = any(disc.set_id in getattr(a, "sets_guia", frozenset()) for a, _ in candidatos)
+    return sirve and unico_en_la_cuenta(disc, inventario)
+
+
 def _elegir(opciones: list[tuple["Agent", "ScoreBreakdown", Cambio]]):
     """De los cambios que MEJORAN (delta ≥ `MEJORA_MINIMA`), el del PJ de mayor prioridad; entre
     iguales, el que más gana. `None` si ninguno mejora."""
@@ -285,9 +331,10 @@ def recomendar(
     aptos = [(a, sb) for a, sb in candidatos if set_valido(disc, a)]
 
     libre = not (disc.equipado and disc.agente_asignado)
+    inventario = _inventario(agent_repo, builds, libres)
     if builds is not None and disc.nivel == 15 and libre:
         return _recomendar_comparando(disc, candidatos, aptos, archetype_repo, disc_set_repo, ctx,
-                                      builds)
+                                      builds, inventario)
     if builds is not None and libres is not None and disc.nivel == 15 and not libre:
         mover = _recomendar_mover_ajeno(disc, candidatos, aptos, agent_repo, archetype_repo,
                                         disc_set_repo, ctx, builds, libres)
@@ -295,7 +342,7 @@ def recomendar(
             return mover
     if disc.nivel is not None and disc.nivel < 15:
         return _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archetypes,
-                                         disc_set_repo, builds, aptos)
+                                         disc_set_repo, builds, aptos, inventario)
 
     top_agent, top_sb = candidatos[0]
 
@@ -361,7 +408,7 @@ def _bonos_2pc_desde(disc_set_repo) -> Callable[[int], tuple[str, float] | None]
 
 
 def _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archetypes,
-                              disc_set_repo=None, builds=None, aptos=None):
+                              disc_set_repo=None, builds=None, aptos=None, inventario=None):
     """Un disco sin terminar: ¿vale la pena invertirle? (casos 6 y 7 de Daniel)
 
     Se evalúa para todos los roles y vale el mejor que sirva (R11). No sirve si tiene DOS líneas
@@ -420,6 +467,9 @@ def _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archet
             return Recommendation("guardar", None, None, pot.score_norm,
                                   top_candidatos=top, desglose_top=sb, potencial=pot)
     _, sb, pot = evaluados[0]
+    if se_conserva_por_unico(disc, candidatos, inventario):     # R22: se guarda, no se le invierte
+        return Recommendation("guardar", None, None, pot.score_norm,
+                              top_candidatos=top, desglose_top=sb, potencial=pot)
     return Recommendation("descartar", None, None, pot.score_norm,
                           top_candidatos=top, desglose_top=sb, potencial=pot)
 
@@ -456,7 +506,8 @@ def _recomendar_mover_ajeno(disc, candidatos, aptos, agent_repo, archetype_repo,
                           top_candidatos=candidatos[:5], desglose_top=sb, movimiento=cambio)
 
 
-def _recomendar_comparando(disc, candidatos, aptos, archetype_repo, disc_set_repo, ctx, builds):
+def _recomendar_comparando(disc, candidatos, aptos, archetype_repo, disc_set_repo, ctx, builds,
+                           inventario=None):
     bonos = _bonos_2pc_desde(disc_set_repo)
     opciones = []
     for agent, sb in aptos:
@@ -473,6 +524,8 @@ def _recomendar_comparando(disc, candidatos, aptos, archetype_repo, disc_set_rep
     top_agent, top_sb = candidatos[0]
     arch = archetype_repo.get_by_id(top_agent.arquetipo_primario_id)
     tipo = "reserva" if top_sb.score_norm >= arch.threshold_stock else "descartar"
+    if tipo == "descartar" and se_conserva_por_unico(disc, candidatos, inventario):
+        tipo = "reserva"                                        # R22
     return Recommendation(tipo, None, None, top_sb.score_norm,
                           top_candidatos=candidatos[:5], desglose_top=top_sb)
 
