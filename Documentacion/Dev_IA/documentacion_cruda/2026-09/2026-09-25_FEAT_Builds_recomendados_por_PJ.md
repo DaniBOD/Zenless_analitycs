@@ -57,6 +57,27 @@ completo: Antón, Ben, Manato, Nekomata, Piper, Seth, Soukaku.
 | editor | `BuildObjetivoRepo` + `app/core/build_objetivo.EditorBuildObjetivo` (RNF-01, un backup por sesión, el mismo camino que usará la ficha). 6 tests, 6 sabotajes en rojo |
 | declarados | **Gatillo** 4pc Armonía umbría + 2pc Tecno Pícido; **Grace** 4pc Blues Libre + 2pc Jazz Caótico. Daniel: "son builds mías que veo óptimas, dejalo como builds creadas por el usuario". `audit/builds_declarados_20260925.md` |
 
+## El motor (R18-R20), en tres cambios
+
+Daniel aceptó la escala de pesos ("esos pesos también deben ser ajustables por el usuario") y pidió
+un **asesor**: si el usuario pone algo que no le sirve al PJ (ej. DEF% como prioridad en Ellen), se
+respeta, pero el sistema avisa "esto no te beneficia, te recomiendo Daño y Prob. Crítica". Grace y
+Gatillo, con sus builds propias, tienen que salir coherentes (Blues Libre/Jazz Caótico dan
+Competencia de Anomalía, el n.º 1 de Grace; Tecno Pícido da Prob. Crítica, el n.º 1 de Gatillo).
+
+| cambio | commit | efecto medido (copia, contra 20260925_000654) |
+|---|---|---|
+| (a) pesos de la guía por PJ; el rol no penaliza lo que la guía valora | `ca480cf` | 168 → 154; **#163 → Nangong Yu desaparece** |
+| (b) principales 4-6 de la guía, con los ajustes de Daniel al rol encima (lo agregado se suma, lo quitado se resta) | `326e3ff` | 154 → 155, 16 cambian de destino |
+| (c) build objetivo: R19 en `AgentRepo`, R20 en `scoring.set_valido`, no desarmar un set objetivo activo | `7f0fedf` + fix | 155 → 88; **#152 → Ye Shunguang desaparece**; mover 96 → 16, equipar 58 → 32, reserva 0 → 22, descartar 4 → 16 |
+
+Origen del objetivo: 39 equipado, 2 declarado, 4 guía (4pc fuera de la guía), 7 guía (sin 4pc).
+R20 decide a quién se le SUGIERE; guardar/descartar sigue por rol (un disco excelente de un set que
+nadie usa hoy se guarda).
+
+**Conflicto a resolver con Daniel:** el caso 11 (#369, Floración Hielo slot 5, Nv 0: "no está bien el
+descarte") volvió a **descartar**: Floración no está en el build objetivo de Lycaon ni de Soukaku.
+
 ## Lo que encontraron las verificaciones
 
 - **Un test se rompió con un commit de DATOS.** `test_sugerir_movimientos` elegía "el primer PJ de
@@ -66,8 +87,16 @@ completo: Antón, Ben, Manato, Nekomata, Piper, Seth, Soukaku.
   **la suite corre también antes de pushear datos.** Arreglo: el fixture borra las prioridades en
   su copia (la prioridad tiene sus tests propios).
 
+- **37 rojos de la suite tras (c)**, dos causas: `AgentRepo` leía `disc_archetypes.mains_*` sin
+  guarda (las DB mínimas de los tests no las traen), y el optimizador de builds filtraba con
+  `set_valido` y, sin discos del set objetivo para un slot, armaba builds de 5. Guarda con
+  `_tiene_columnas`; R20 queda sólo en el recomendador (el optimizador ya prioriza el objetivo por el
+  bono de set).
+- Un sabotaje salió **verde** (el slot vacío del origen): el test sacaba un disco con valor, y
+  dejar el slot vacío ya perdía por sí solo. Test nuevo con un disco que RESTA.
+
 ## Abierto
 
-- Pasar de niveles a pesos (propuesta: 1,0 / 0,8 / 0,6 / 0,4; lo no nombrado = 0) — decide Daniel.
-- Motor: R18-R20 + principales por PJ.
+- El asesor de coherencia (sets y pesos declarados contra la guía) y el editor de pesos en la ficha.
+- Caso 11 contra R20.
 - UI: selector del build objetivo (brief entregado).
