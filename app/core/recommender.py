@@ -22,12 +22,12 @@ from app.core.stats_vocab import VALOR_POR_MEJORA, bono_2pc_como_substat
 from app.db.repositories import PRIORIDADES
 
 
-RECOMENDACIONES = ("equipar", "mejorar", "reserva", "descartar")
+RECOMENDACIONES = ("equipar", "mejorar", "reserva", "guardar", "descartar")
 
 
 @dataclass
 class Recommendation:
-    tipo: str                   # equipar | mejorar | reserva | descartar
+    tipo: str                   # equipar | mejorar | reserva | guardar | descartar
     agente_id: int | None
     agente_nombre: str | None
     score_norm: float
@@ -370,6 +370,11 @@ def _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archet
     valor final" (R14), pero la RECOMENDACIÓN es frenar. Un disco sin terminar no se equipa ni se
     reserva.
 
+    Si sirve pero subido no le ganaría a nadie de hoy, GUARDAR (sin subir) cuando lo esperable
+    alcanza el umbral de reserva de su rol: es lo que se haría con un disco terminado de la misma
+    calidad (reserva), sin gastarle materiales. Daniel (2026-09-25), por el #356 (potencial 1,00,
+    cero líneas muertas) que se descartaba: "me gusta el guardar sin subir".
+
     Si sirve, MEJORAR cuando lo esperable LE GANA a lo que un PJ ya lleva en ese slot (R12), con
     la misma comparación que un disco terminado (`evaluar_cambio`, set incluido). Hallado con #369
     (2026-09-23): contra el umbral fijo daba 0,468 < 0,50 y se descartaba, pero subido le gana al
@@ -407,6 +412,12 @@ def _recomendar_por_potencial(disc, candidatos, archetype_repo, ctx, disc_archet
         agent, sb, pot = sanos[0]
         if pot.score_norm >= agent.threshold_upgrade:
             return Recommendation("mejorar", agent.id, agent.nombre, pot.score_norm,
+                                  top_candidatos=top, desglose_top=sb, potencial=pot)
+    if sanos:
+        agent, sb, pot = sanos[0]
+        arch = archetype_repo.get_by_id(agent.arquetipo_primario_id)
+        if arch is not None and pot.score_norm >= arch.threshold_stock:
+            return Recommendation("guardar", None, None, pot.score_norm,
                                   top_candidatos=top, desglose_top=sb, potencial=pot)
     _, sb, pot = evaluados[0]
     return Recommendation("descartar", None, None, pot.score_norm,

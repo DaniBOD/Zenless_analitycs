@@ -108,7 +108,8 @@ class _RepoPorId(_Repos):
 def test_las_guardas_valen_por_pj_aunque_otro_pj_lo_tenga_sano():
     """Con DEF y PV muertas para el atacante, y vivas para el defensor. Al defensor le sirve pero
     no le gana a lo que lleva; al atacante le "ganaría" (lleva un disco que resta), pero para él
-    tiene dos muertas → nadie lo sube."""
+    tiene dos muertas → nadie lo sube. Para el defensor sirve y lo esperable alcanza su umbral de
+    reserva: desde 2026-09-25 se GUARDA sin subir, no se tira."""
     atacante = _pj(1, "atacante")
     defensor = Agent(id=2, nombre="defensor", arquetipo_primario_id=2, arquetipo_primario_code="DEFENSE",
                      threshold_equip=0.75, threshold_upgrade=0.50, substat_preferences={},
@@ -120,7 +121,8 @@ def test_las_guardas_valen_por_pj_aunque_otro_pj_lo_tenga_sano():
     repo = _Repos([atacante, defensor])
     rec = recomendar(_disco(1, dos_muertas, 0), repo, _RepoPorId([ARCH, DEF_ARCH]), repo, CTX,
                      builds=lambda i: builds.get(i, {}))
-    assert rec.tipo == "descartar", (rec.tipo, rec.agente_nombre)
+    assert rec.tipo == "guardar", (rec.tipo, rec.agente_nombre)
+    assert rec.agente_id is None
 
 
 def test_dos_lineas_muertas_se_descartan_aunque_le_gane_a_un_disco_malo():

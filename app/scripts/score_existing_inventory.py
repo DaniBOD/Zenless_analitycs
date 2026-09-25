@@ -64,6 +64,7 @@ def run_batch(dry_run: bool = False, verbose: bool = False) -> dict:
         "equipar":  sum(1 for r in results if r["tipo"] == "equipar"),
         "mejorar":  sum(1 for r in results if r["tipo"] == "mejorar"),
         "reserva":  sum(1 for r in results if r["tipo"] == "reserva"),
+        "guardar":  sum(1 for r in results if r["tipo"] == "guardar"),
         "descartar":sum(1 for r in results if r["tipo"] == "descartar"),
         "score_max":max((r["score_norm"] for r in results), default=0.0),
         "score_avg":sum(r["score_norm"] for r in results) / max(len(results), 1),
@@ -132,6 +133,7 @@ def write_report(stats: dict, dry_run: bool):
         f"| Equipar | {stats['equipar']} |",
         f"| Mejorar | {stats['mejorar']} |",
         f"| Reserva | {stats['reserva']} |",
+        f"| Guardar sin subir | {stats['guardar']} |",
         f"| Descartar | {stats['descartar']} |",
         f"| Score máximo | {stats['score_max']:.4f} |",
         f"| Score promedio | {stats['score_avg']:.4f} |",
@@ -161,7 +163,7 @@ def main():
     stats = run_batch(dry_run=args.dry_run, verbose=args.verbose)
 
     print(f"  Total: {stats['total']}")
-    print(f"  equipar={stats['equipar']}  mejorar={stats['mejorar']}  reserva={stats['reserva']}  descartar={stats['descartar']}")
+    print(f"  equipar={stats['equipar']}  mejorar={stats['mejorar']}  reserva={stats['reserva']}  guardar={stats['guardar']}  descartar={stats['descartar']}")
     print(f"  score_max={stats['score_max']:.4f}  score_avg={stats['score_avg']:.4f}")
     print(f"  Tiempo: {stats['elapsed_s']:.2f}s")
 

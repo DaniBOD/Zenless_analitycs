@@ -166,7 +166,9 @@ def _markdown(rep: dict) -> str:
            "quedan marcadas **en conflicto**: se toma la de más ganancia.", ""]
     titulos = [("mover", "Mover de un PJ a otro (el que lo tiene NO pierde)"),
                ("equipar", "Equipar un disco libre"), ("mejorar", "Vale la pena subir"),
-               ("reserva", "Guardar para un PJ futuro"), ("descartar", "Descartar")]
+               ("reserva", "Guardar para un PJ futuro"),
+               ("guardar", "Guardar sin subir (sirve, pero subido no le ganaría a nadie de hoy)"),
+               ("descartar", "Descartar")]
     for tipo, titulo in titulos:
         lista = rep["sugerencias"].get(tipo, [])
         out += [f"## {titulo} — {len(lista)}", ""]
@@ -205,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
     rutas[1].write_text(_markdown(rep), encoding="utf-8")
     t = rep["totales"]
     print(f"{t['inventario_activo']} discos · " + " · ".join(
-        f"{k} {t.get(k, 0)}" for k in ("mover", "equipar", "mejorar", "reserva", "descartar")))
+        f"{k} {t.get(k, 0)}" for k in ("mover", "equipar", "mejorar", "reserva", "guardar", "descartar")))
     print(f"→ {rutas[1]}")
     return 0
 

@@ -98,6 +98,8 @@ VARIANTS: dict[str, dict] = {
     "equipar":   {"label": "EQUIPAR",   "color": POSITIVE, "tone": "yellow", "icon": "check"},
     "mejorar":   {"label": "MEJORAR",   "color": INFO,     "tone": "info",   "icon": "up"},
     "reserva":   {"label": "RESERVA",   "color": YELLOW,   "tone": "yellow", "icon": "stack"},
+    # Disco sin terminar que sirve pero, subido, no le ganaría a nadie hoy: guardarlo SIN subirlo.
+    "guardar":   {"label": "GUARDAR",   "color": YELLOW,   "tone": "yellow", "icon": "stack"},
     "descartar": {"label": "DESCARTAR", "color": WARNING,  "tone": "purple", "icon": "trash"},
     "lategame":  {"label": "RUN REGISTRADA", "color": YELLOW, "tone": "yellow", "icon": "feed"},
     # --- Confirmaciones PASIVAS (violeta = "esto ya pasó") -------------------------------
@@ -177,5 +179,5 @@ def color(hex_str: str, alpha: float = 1.0) -> QColor:
 
 
 def variant(name: str) -> dict:
-    """Devuelve la config del variant 'equipar' / 'mejorar' / 'reserva' / 'descartar' / 'lategame'."""
+    """Devuelve la config del variant 'equipar' / 'mejorar' / 'reserva' / 'guardar' / 'descartar' / 'lategame'."""
     return VARIANTS.get(name, VARIANTS["reserva"])

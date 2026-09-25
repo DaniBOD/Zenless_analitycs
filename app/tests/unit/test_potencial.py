@@ -212,3 +212,43 @@ def test_un_disco_sin_terminar_no_se_equipa_ni_se_reserva():
     """Primero se sube: aunque su potencial sea altísimo, la salida es MEJORAR."""
     rec = _reco(_disco([("Prob. Crítica", 3), ("ATK%", 0), ("Perforación", 0), ("ATK", 0)], 12), [DPS])
     assert rec.tipo == "mejorar"
+
+
+def test_guardar_sin_subir_pide_un_rol_que_lo_tenga_SANO():
+    """"Guardar sin subir" (2026-09-25) es para un disco que SIRVE: con dos líneas muertas no se
+    guarda aunque lo esperable alcance el umbral de reserva. Aislado como R13: las muertas pesan 0
+    (no restan) y el umbral de reserva es bajo, así que sin la guarda de "sano" se guardaría."""
+    guarda_facil = Archetype(
+        id=1, code="ATK_DPS",
+        substats_positivos={"Prob. Crítica": 1.0, "Daño Crítico": 1.0, "ATK%": 1.0, "ATK": 0.4,
+                            "Perforación": 0.7},
+        substats_perjudiciales={}, threshold_stock=0.3,
+        mains_4=["Prob. Crítica", "Daño Crítico", "ATK%"])
+    d = _disco([("Prob. Crítica", 0), ("ATK%", 0), ("HP", 0), ("DEF", 0)], 0)
+    assert potencial(d, DPS, guarda_facil, CTX).score_norm >= guarda_facil.threshold_stock,         "lo esperable tiene que alcanzar el umbral de reserva, o no aísla la guarda"
+
+    class _Solo(_Repos):
+        def get_by_id(self, _):
+            return guarda_facil
+
+    assert recomendar(d, _Solo([DPS]), _Solo([guarda_facil]), _Solo([]), CTX).tipo == "descartar"
+
+
+def test_sano_que_no_llega_a_mejorar_se_guarda_sin_subir():
+    """Sin builds (en vivo): sano, lo esperable bajo el umbral de mejora pero sobre el de reserva."""
+    bajo = Archetype(
+        id=1, code="ATK_DPS",
+        substats_positivos={"Prob. Crítica": 1.0, "Daño Crítico": 1.0, "ATK%": 1.0, "ATK": 0.4,
+                            "Perforación": 0.7},
+        substats_perjudiciales={}, threshold_stock=0.05,
+        mains_4=["Prob. Crítica", "Daño Crítico", "ATK%"])
+    d = _disco([("ATK", 0), ("HP", 0), ("Perforación", 0)], 0)
+    pot = potencial(d, DPS, bajo, CTX)
+    assert bajo.threshold_stock <= pot.score_norm < DPS.threshold_upgrade, pot.score_norm
+
+    class _Solo(_Repos):
+        def get_by_id(self, _):
+            return bajo
+
+    rec = recomendar(d, _Solo([DPS]), _Solo([bajo]), _Solo([]), CTX)
+    assert rec.tipo == "guardar" and rec.agente_id is None and rec.potencial is not None
