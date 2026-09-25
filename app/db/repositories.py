@@ -103,6 +103,9 @@ class Agent:
     elemento: str | None = None
     #: Prioridad de buildeo que declara Daniel (mig 42): 'alta', 'normal' o 'baja'.
     prioridad: str = "normal"
+    #: Principales que le sirven en los slots 4-6 SEGÚN SU GUÍA (mig 43), con los ajustes de Daniel
+    #: al rol encima. Un slot ausente = decide el arquetipo (`scoring.principal_valido`).
+    mains: dict[int, tuple[str, ...]] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +155,29 @@ def pesos_de_la_guia(filas: "Iterable[tuple[int, str, int, str]]") -> dict[int, 
             continue
         out.setdefault(agente, {})[stat] = peso_de_nivel(nivel)
     return out
+
+
+def principales_de_la_guia(filas: "Iterable[tuple[int, str, str, str]]") -> dict[int, dict[int, set[str]]]:
+    """(agente_id, variante, linea, stat) de los PRINCIPALES ('principal_4/5/6'), en el orden de la
+    guía → los principales de cada PJ por slot. Todo lo que la guía nombra en ese disco vale,
+    cualquiera sea su nivel ("PEN Ratio% = ATK%": los dos). Como los pesos, vale la primera build."""
+    primera: dict[int, str] = {}
+    out: dict[int, dict[int, set[str]]] = {}
+    for agente, variante, linea, stat in filas:
+        if primera.setdefault(agente, variante) != variante:
+            continue
+        out.setdefault(agente, {}).setdefault(int(linea[-1]), set()).add(stat)
+    return out
+
+
+def mezclar_principales(de_la_guia: set[str], default_rol: list[str], ajustado_rol: list[str]) -> tuple[str, ...]:
+    """Los principales de la guía con los ajustes de Daniel AL ROL encima: lo que agregó se suma
+    (mig 41: Tasa de Perforación en el slot 5 de atacantes y soportes) y lo que sacó se resta
+    aunque la guía lo nombre (caso 6: el PV % en el slot 4 de los disruptores). Misma regla que los
+    pesos: el ajuste del usuario gana."""
+    agregados = set(ajustado_rol) - set(default_rol)
+    quitados = set(default_rol) - set(ajustado_rol)
+    return tuple(sorted((de_la_guia | agregados) - quitados))
 
 
 def mezclar_pesos(propios: dict[str, float], del_arquetipo: dict[str, float],
@@ -624,6 +650,21 @@ class AgentRepo:
                 "SELECT agente_id, variante, nivel, stat FROM pj_stats_recomendados "
                 "WHERE linea = 'substat' ORDER BY rowid")))
 
+        # Principales por PJ (mig 43), con los ajustes de Daniel al rol encima.
+        guia_mains: dict[int, dict[int, set[str]]] = {}
+        if _tabla_existe(self._con, "pj_stats_recomendados"):
+            guia_mains = principales_de_la_guia(self._con.execute(
+                "SELECT agente_id, variante, linea, stat FROM pj_stats_recomendados "
+                "WHERE linea LIKE 'principal_%' ORDER BY rowid"))
+        mains_rol: dict[str, dict[int, list[str]]] = {}
+        for r in self._con.execute("SELECT code, mains_4, mains_5, mains_6 FROM disc_archetypes"):
+            mains_rol[r["code"]] = {n: json.loads(r[f"mains_{n}"] or "[]") for n in (4, 5, 6)}
+        mains_ajustados: dict[str, dict[int, list[str]]] = {}
+        if _tabla_existe(self._con, "ajustes_usuario_arquetipo"):
+            for r in self._con.execute("SELECT code, campo, valor_json FROM ajustes_usuario_arquetipo "
+                                       "WHERE campo LIKE 'mains_%'"):
+                mains_ajustados.setdefault(r["code"], {})[int(r["campo"][-1])] = json.loads(r["valor_json"])
+
         prioridades = PrioridadRepo(self._con).get_all()
 
         con_elemento = _tiene_columnas(self._con, "agents", ("elemento",))
@@ -662,6 +703,12 @@ class AgentRepo:
                 stats=stats.get(r["id"], {}),
                 elemento=r["elemento"] if con_elemento else None,
                 prioridad=prioridades.get(r["id"], "normal"),
+                mains={
+                    slot: mezclar_principales(
+                        stats_guia, mains_rol.get(arch_code, {}).get(slot, []),
+                        mains_ajustados.get(arch_code, {}).get(slot, mains_rol.get(arch_code, {}).get(slot, [])))
+                    for slot, stats_guia in guia_mains.get(r["id"], {}).items()
+                },
             )
         _avisar_pjs_sin_stats(self._cache.values())
 

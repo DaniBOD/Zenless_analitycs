@@ -178,7 +178,10 @@ def principal_valido(disc: "Disc", archetype: "Archetype", agent: "Agent | None"
     """
     if disc.slot < 4 or not disc.main_stat:
         return True
-    permitidos = getattr(archetype, f"mains_{disc.slot}", None) or []
+    # Los del PJ (su guía, mig 43) mandan sobre los de su rol: la guía de Nangong Yu (aturdidora)
+    # pide Competencia de Anomalía en el disco 4, que el perfil STUN no admite.
+    del_pj = (getattr(agent, "mains", None) or {}).get(disc.slot)
+    permitidos = list(del_pj) if del_pj else (getattr(archetype, f"mains_{disc.slot}", None) or [])
     if permitidos and disc.main_stat not in permitidos:
         return False
     elemento = getattr(agent, "elemento", None)
