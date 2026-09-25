@@ -120,6 +120,12 @@ y #407 (PV% en Tecno tetraodóntido) son únicos pero su set no le sirve a nadie
 
 ## Lo que encontraron las verificaciones
 
+- **El repaso de S18 escribió la ficha de Anby en N.º 0: Anby.** El OCR leyó "pV" (el banner del
+  rol no se cortaba y tomó la etiqueta "Ataque") y la "n" y el "0" sueltos hacían que N.º 0
+  dominara a Anby; cada causa sola alcanzaba. Se detectó comparando la DB con el backup del
+  arranque tabla por tabla, se restauró N.º 0 y se reprodujo sobre el frame en sólo lectura antes
+  de arreglar (`37f1b66`, `6018d1e`; línea de base de 28 frames: único cambio, Anby). Registro:
+  `audit/stats_s18_post_swaps_20260925.md`.
 - **Un test se rompió con un commit de DATOS.** `test_sugerir_movimientos` elegía "el primer PJ de
   Ataque" de la copia de la DB (N.º 11) y esperaba que el libre bueno fuera a él; con las
   prioridades de Daniel (commit `25934f1`, pusheado sin suite por ser "sólo datos") se lo lleva un
