@@ -525,3 +525,22 @@ Sobre `audit/sugerencias/20260925_100942_416192` ("va mucho mejor ahora"):
   fijo del PJ y lo deja por debajo del objetivo (ni al que recibe ni al que entrega). Objetivos
   con su cuenta en `pj_stats_fijos` (mig 45), desde los kits en Prydwen con la pasiva al Lv. 7.
 - **Descartes:** se revisan después de las sugerencias.
+
+### Cuarta revisión de Daniel: los descartes (2026-09-25, noche)
+
+- **Pasiva núcleo: siempre al nivel máximo.** Todos sus PJs la tienen en Lv. 7, "igual que el
+  sistema vea siempre este nivel como objetivo aunque el nivel de la pasiva sea menor". Los fijos
+  de `pj_stats_fijos` se calculan con el Lv. 7 y no dependen del nivel real.
+- **Mejora mínima.** #93 → Ju Fufu salía con +0,00 (el #385 que ella lleva tiene los mismos stats en
+  otro orden). "Una exigencia mínima estaría bien" → `MEJORA_MINIMA = 0,1` en `_elegir` (parámetro:
+  el reporte tenía un hueco entre 0,027 y 0,156).
+- **Guardar sin subir.** Un disco sin terminar, sano para algún rol, que subido no le ganaría a
+  nadie hoy, iba a "descartar" mientras uno terminado de la misma calidad iba a "reserva". "Me
+  gusta el guardar sin subir" → recomendación `guardar` cuando lo esperable alcanza el umbral de
+  reserva de su rol.
+- **R22 · el único de su tipo no se tira.** Por el #157 (Armonía umbría, slot 5, Bono Daño
+  Eléctrico): "si no hay ningún disco del mismo set que posea esos stats es mejor guardarlo [...]
+  aunque se tenga un substat no preferible, ya que la pasiva del set va bien con los stats además
+  de que no se posee un disco similar en la cuenta". Tipo = (set, slot, principal). Se conserva
+  (reserva o guardar) si ningún otro lo cubre (uno equipado cubre; entre libres gemelos queda uno)
+  y su set está en la guía de un PJ al que le sirve el principal.

@@ -104,6 +104,20 @@ Gatillo (75,4 / 90), Miyabi (51,4 / 80), Dialyn (89,8 / 100), Seth, Soukaku, Rem
 Qingyi (Impacto 193 / 220), Anby (43,4 / 50, Monarca). Los de Dialyn, Anby, Ju Fufu y Astra son de
 antes de los swaps: hace falta repasarlos por S18.
 
+## Cuarta revisión: los descartes
+
+Daniel confirmó las pasivas en Lv. 7 y pidió que ése sea siempre el objetivo. Sobre los 16
+descartes del reporte `20260925_124403_372452`:
+
+| paso | commit | qué |
+|---|---|---|
+| mejora mínima | `0ebd129` | `MEJORA_MINIMA = 0,1`: #93 → Ju Fufu (+0,00) sale; ahora va a Pulchra (+3,70), que perdía contra el +0,00 por la prioridad |
+| guardar sin subir | `097ba56` | recomendación `guardar`: sin terminar, sano, no le gana a nadie, lo esperable alcanza la reserva de su rol |
+| R22 | `c65b5a5` | el único de su tipo (set, slot, principal) que le sirve a alguien se conserva |
+
+Descartar 16 → 5: #406, #308 y #182 tienen un gemelo equipado; #368 (Bono Daño Físico en Floración)
+y #407 (PV% en Tecno tetraodóntido) son únicos pero su set no le sirve a nadie con ese principal.
+
 ## Lo que encontraron las verificaciones
 
 - **Un test se rompió con un commit de DATOS.** `test_sugerir_movimientos` elegía "el primer PJ de
@@ -118,12 +132,16 @@ antes de los swaps: hace falta repasarlos por S18.
   `set_valido` y, sin discos del set objetivo para un slot, armaba builds de 5. Guarda con
   `_tiene_columnas`; R20 queda sólo en el recomendador (el optimizador ya prioriza el objetivo por el
   bono de set).
+- "Guardar sin subir" exige un rol que tenga el disco SANO: el primer test de esa guarda salía
+  **verde** con la guarda apagada (las líneas muertas ya lo dejaban bajo el umbral). Aislado como
+  R13: muertas que pesan 0 y un umbral de reserva que lo esperable alcanza.
 - Un sabotaje salió **verde** (el slot vacío del origen): el test sacaba un disco con valor, y
   dejar el slot vacío ya perdía por sí solo. Test nuevo con un disco que RESTA.
 
 ## Abierto
 
 - El asesor de coherencia (sets y pesos declarados contra la guía) y el editor de pesos en la ficha.
-- Pasivas núcleo al Lv. 7 (supuesto): confirmar con Daniel, sobre todo Astra Yao.
+- R22 en vivo: el toast no tiene el inventario (sin `builds` ni `libres`) y no juzga la unicidad.
+  Llega con el paso 8.
 - Burnice (RE 1,8 → 2,8): el texto viene con un "6" delante, puede ser su M6.
 - UI: selector del build objetivo (brief entregado).
