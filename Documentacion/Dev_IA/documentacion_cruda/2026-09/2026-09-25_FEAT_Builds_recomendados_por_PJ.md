@@ -78,6 +78,32 @@ nadie usa hoy se guarda).
 **Conflicto a resolver con Daniel:** el caso 11 (#369, Floración Hielo slot 5, Nv 0: "no está bien el
 descarte") volvió a **descartar**: Floración no está en el build objetivo de Lycaon ni de Soukaku.
 
+## Tercera revisión: movimientos y stats fijos
+
+Daniel ("va mucho mejor ahora"): los sets pesan más que el caso 11; aplicó en el juego #85 → Dialyn
+y #188 → Ju Fufu y pidió registrarlos con trazabilidad; y rechazó #151 → Gatillo: su pasiva
+convierte Prob. Crítica en aturdimiento hasta 90 %, y el disco se la bajaba 7,2 puntos. De ahí,
+"stats fijos" (Astra Yao ATK, Zhao PV): relevados los kits de los 52 en Prydwen con la pasiva núcleo
+en Lv. 7 (el deslizador de la guía se mueve por teclado desde el navegador), y las cuentas hechas a
+mano.
+
+| paso | commit | qué |
+|---|---|---|
+| señal única | `3ddcbd9` | `agentes_cambiaron()`: el editor del build objetivo no avisaba a los `AgentRepo` (el motor seguía con el build viejo hasta reiniciar) |
+| mig 44 | `7e6a47f` | `movimientos_discos` + `EditorMovimientos` (tanda entera o nada, el desplazado queda libre); los dos swaps de Daniel registrados |
+| mig 45 + R21 | ver git | `pj_stats_fijos` (16 de kit + 8 de Monarca del Pináculo) y `app/core/stats_fijos`: un cambio no deja a un PJ por debajo de su fijo |
+
+**La cuenta sin la base.** S18 da el total de cada stat. Las líneas que suman directo (Prob.
+Crítica, Tasa de Perforación, Competencia de Anomalía) son exactas; para las que son un % de la base
+(ATK%, PV%, Impacto, Maestría, Recarga) se usa una cota SUPERIOR de la base, `(total − plano de los
+discos) / (1 + % de los discos)`: los bonos invisibles (arma, pasivas, sets) sólo pueden achicarla,
+así que la pérdida se sobreestima. El motor puede frenar de más, nunca dejar a un PJ abajo.
+
+Hoy por debajo de su fijo: Astra Yao (3.419 / 3.429), Rina (66,4 / 72), Velina (2,16 / 2,88),
+Gatillo (75,4 / 90), Miyabi (51,4 / 80), Dialyn (89,8 / 100), Seth, Soukaku, Remielle, Ju Fufu,
+Qingyi (Impacto 193 / 220), Anby (43,4 / 50, Monarca). Los de Dialyn, Anby, Ju Fufu y Astra son de
+antes de los swaps: hace falta repasarlos por S18.
+
 ## Lo que encontraron las verificaciones
 
 - **Un test se rompió con un commit de DATOS.** `test_sugerir_movimientos` elegía "el primer PJ de
@@ -98,5 +124,6 @@ descarte") volvió a **descartar**: Floración no está en el build objetivo de 
 ## Abierto
 
 - El asesor de coherencia (sets y pesos declarados contra la guía) y el editor de pesos en la ficha.
-- Caso 11 contra R20.
+- Pasivas núcleo al Lv. 7 (supuesto): confirmar con Daniel, sobre todo Astra Yao.
+- Burnice (RE 1,8 → 2,8): el texto viene con un "6" delante, puede ser su M6.
 - UI: selector del build objetivo (brief entregado).
