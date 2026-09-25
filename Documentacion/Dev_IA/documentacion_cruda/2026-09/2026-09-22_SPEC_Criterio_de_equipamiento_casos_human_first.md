@@ -501,3 +501,7 @@ cada una (el que llega, el que está, el que repone). Con las dos primeras alcan
   los sets equipados **si están entre los recomendados** para ese PJ; si no, el primero recomendado.
 - **R20 · un disco de un set fuera del build objetivo no es candidato** para ese PJ, por buenos que
   sean sus substats (como R9 con el principal).
+- **Gatillo y Grace (alta) llevan un 4pc que la guía no lista** (Armonía umbría; Blues Libre): "son
+  builds mías que veo óptimas, dejalo como builds creadas por el usuario". Declarados en
+  `ajustes_usuario_build`. Corolario: **una build declarada vale aunque la guía no la nombre**; la
+  guía es el default, no un límite.

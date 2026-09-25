@@ -53,6 +53,9 @@ completo: Antón, Ben, Manato, Nekomata, Piper, Seth, Soukaku.
 |---|---|
 | mig 43 | `pj_sets_4pc`, `pj_sets_2pc`, `pj_stats_recomendados` (INVESTIGACION), `ajustes_usuario_build` (DECLARADO). 7 tests, 6 sabotajes en rojo |
 | cargador | `app/scripts/cargar_builds_prydwen.py`: parser de la captura + carga RNF-01 que reemplaza lo de fuente 'prydwen'. 34 tests, 8 sabotajes en rojo |
+| carga real | 52 PJs, 119 / 461 / 549 filas; `audit/carga_builds_prydwen_20260925.md` |
+| editor | `BuildObjetivoRepo` + `app/core/build_objetivo.EditorBuildObjetivo` (RNF-01, un backup por sesión, el mismo camino que usará la ficha). 6 tests, 6 sabotajes en rojo |
+| declarados | **Gatillo** 4pc Armonía umbría + 2pc Tecno Pícido; **Grace** 4pc Blues Libre + 2pc Jazz Caótico. Daniel: "son builds mías que veo óptimas, dejalo como builds creadas por el usuario". `audit/builds_declarados_20260925.md` |
 
 ## Lo que encontraron las verificaciones
 
