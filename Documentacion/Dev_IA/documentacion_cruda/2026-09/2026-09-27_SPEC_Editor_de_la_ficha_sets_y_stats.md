@@ -28,6 +28,8 @@ Probabilidad crítica'"*; y que sus builds propias de Grace y Gatillo "tengan se
 | esa subida, ¿sólo para el set? | **set y kit**: vale para todos los stats fijos (condiciones del 4pc y pasivas) |
 | ¿un fijo por encima del set? | **"No, al menos que si lo pones por encima del set predefinido que al menos sea un set secundario (set de 2pc)"** → R24: un fijo puede romper el 2pc, **nunca el 4pc** |
 | ¿cuándo se rompe el 2pc? | **sólo si el cambio lo ALCANZA** (y supera la mejora mínima); acercarse no alcanza |
+| ¿y qué queda en su lugar? | **"si cumple el set 2pc obvio debe cumplir la stat fijada y el set 2pc que esté en segunda recomendación de la lista"** → se **arma el 2pc alternativo** de la guía, con una sugerencia de **a dos discos** |
+| ¿sólo el segundo de la lista? | **el siguiente disponible**: el renglón 2; si ningún par cumple, el 3, y así. Nunca un 2pc fuera de la lista |
 
 ## El orden en que decide el motor (de más fuerte a más débil)
 
@@ -35,7 +37,7 @@ Probabilidad crítica'"*; y que sus builds propias de Grace y Gatillo "tengan se
 |---|---|---|
 | 1 | **4pc del set elegido** | filtro: nunca se rompe un 4pc activo del objetivo; un disco de otro set no se le sugiere (R20) |
 | 2 | **stats fijos** (condiciones del 4pc + kit + usuario) | veto: ningún cambio lo deja por debajo (R21). **Nuevo (R23):** mientras esté por debajo, sus líneas pesan como Imprescindible. **Nuevo (R24):** para ALCANZARLO se puede romper el 2pc |
-| 3 | **2pc del set elegido** | filtro como el 4pc (R20), salvo la excepción de R24 |
+| 3 | **2pc del set elegido** | filtro como el 4pc (R20), salvo R24: se puede cambiar por el siguiente 2pc de la guía, de a dos discos |
 | 4 | principal válido del slot | filtro (R9) |
 | 5 | niveles de substats → pesos | puntaje entre los discos que pasaron los filtros |
 | 6 | bono del set en el puntaje | el 2pc como su stat; el 4pc completo, una fracción del mejor disco posible |
@@ -94,20 +96,23 @@ Todo en `AgentRepo._load`; el motor lee el resultado y no sabe de dónde vino ca
   PLANAS de un stat de base (ATK, PV, DEF planos) quedan en su nivel: una mejora de ATK plano rinde
   bastante menos que una de ATK%, y subirla a 1,0 la igualaría. Sin el stat leído (S18 vacío) no se
   sube nada (B2: no se juzga sin dato). Al alcanzar el objetivo, vuelve el nivel elegido.
-- **R24 · un fijo vital puede romper el 2pc, nunca el 4pc.** Para un PJ por debajo de un fijo, un
-  disco de un TERCER set se vuelve candidato sólo para un slot que hoy ocupa una pieza del 2pc objetivo.
-  El cambio se acepta si, a la vez:
-  1. no rompe el 4pc objetivo;
-  2. deja al PJ **cumpliendo** el fijo (y no le baja ningún otro por debajo del suyo, R21);
-  3. supera `MEJORA_MINIMA`.
+- **R24 · un fijo vital puede cambiar el 2pc por el siguiente de la guía, nunca el 4pc.** Es una
+  sugerencia de **a dos discos** que ARMA el 2pc alternativo:
+  1. sólo si el 4pc objetivo está ACTIVO (4 piezas) y hay un fijo con stat leído por debajo;
+  2. los dos slots que no ocupa el 4pc son los que se reemplazan;
+  3. se prueban los 2pc que la guía combina con ese 4pc (`pj_sets_2pc.grupo`) en orden, sin el 2pc
+     actual: el primer renglón con algún par válido gana; dentro del renglón (puede traer dos sets
+     equivalentes), el par de mayor mejora;
+  4. el par sale de discos **LIBRES** del mismo set, uno por slot, con principal válido (R9). Mover
+     discos de otros PJs de a pares queda fuera de alcance;
+  5. el par vale si deja al PJ **cumpliendo** el fijo que le faltaba, no le baja ningún otro por
+     debajo del suyo (R21) y la mejora del par supera `MEJORA_MINIMA`.
 
-  La sugerencia lo dice: *"rompe tu 2pc de X para llegar a Y"*. "Cumpliendo" se prueba con la
+  La sugerencia lo dice: *"cambia tu 2pc de X por Y para llegar a Z"*. "Cumpliendo" se prueba con la
   cota prudente de R21, que **no cuenta** las ganancias % de un stat de base. En la práctica R24 aplica
   a los stats que suman directo (Prob. Crítica, Tasa de Perforación, Maestría de Anomalía) y a lo
   plano: para ATK% / PV% no se puede probar que se llega sin conocer la base, y no se supone (B2).
-  Dos cosas a medir al implementarlo: cuántas sugerencias nuevas aparecen, y si alguna rompe un 2pc
-  cuyo bono el motor no sabe valorar (esos se pierden "gratis" en el puntaje; la condición 2 es
-  la que lo justifica).
+  A medir al implementarlo: cuántas sugerencias nuevas aparecen (se listan para Daniel).
 - **Build objetivo:** R19, sin cambios.
 - Cada guardado llama `agentes_cambiaron()`: el cambio llega al motor sin reiniciar.
 
@@ -154,7 +159,7 @@ Imprescindible da el ⚠️.
 2. Mig 46 + condiciones de set verificadas (con su registro en `audit/`).
 3. La mezcla en el repositorio (niveles, principales, fijos) — invariante sin ajustes.
 4. R23 — medido sobre el reporte, antes/después.
-5. R24 — medido igual; cada sugerencia que rompe un 2pc, listada para Daniel.
+5. R24 — medido igual; cada par sugerido, listado para Daniel.
 6. El asesor de coherencia.
 7. El editor (`ficha_pj.py`).
 8. El brief de la pantalla.
