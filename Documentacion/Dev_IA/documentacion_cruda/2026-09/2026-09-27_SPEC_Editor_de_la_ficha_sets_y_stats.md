@@ -1,6 +1,7 @@
 # SPEC · El editor de la ficha del PJ: sets y stats que se vuelven pesos (2026-09-27)
 
-**Estado:** diseño aprobado por partes con Daniel el 2026-09-27; falta su revisión de este documento.
+**Estado:** motor, asesor y editor **hechos** (2026-09-27, ver "Implementación"); la pantalla espera
+el mockup de Claude Design (`BRIEF_ficha_sets_y_stats.md`).
 Sigue a [FEAT Builds recomendados por PJ](2026-09-25_FEAT_Builds_recomendados_por_PJ.md) (R18-R22) y
 retoma dos pendientes: el asesor de coherencia y el editor de pesos en la ficha.
 
@@ -163,6 +164,42 @@ Imprescindible da el ⚠️.
 6. El asesor de coherencia.
 7. El editor (`ficha_pj.py`).
 8. El brief de la pantalla.
+
+## Implementación (2026-09-27)
+
+| paso | commit | qué |
+|---|---|---|
+| SPEC | `57cfd4f` `f46a4f8` `7f43219` | diseño, R24, R24 de a pares |
+| mig 46 | `47c6a0d` | tablas de la ficha + 10 condiciones de set verificadas en Fandom |
+| mezcla | `cbb2207` | niveles → pesos, principales, fijos kit + set + usuario; mig 46 aplicada |
+| R23 | `a46e890` | un fijo sin cumplir se busca |
+| R24 | `551b8ba` | cambiar el 2pc por el siguiente de la guía, de a dos discos |
+| asesor | `9dbcd25` `7f91352` | `app/core/coherencia.py` + lectores en `app/core/ficha_pj.py` |
+| editor | `b8866e4` | `EditorFichaPJ` + `foto()` |
+| brief | `0671f9d` | `BRIEF_ficha_sets_y_stats.md` (reemplaza a `BRIEF_build_objetivo.md`) |
+
+### Lo medido
+
+- **Invariante de la mig 46** (52 PJs, código viejo sobre la DB vieja vs nuevo sobre la migrada):
+  pesos, principales y build idénticos; fijos idénticos salvo dos condiciones NUEVAS, ya cumplidas:
+  Claret Flint (Rosa espinosa, DEF 1.800; tiene 2.144) y **Miyabi** (Balada, Tasa de Anomalía 115;
+  tiene 116: a un punto de perder el +30 % de Daño Crítico, ahora R21 se lo protege). Reporte de
+  sugerencias idéntico.
+- **R23 con "1,0 a secas" no cambiaba nada** (A1): el balance del crítico le dejaba a Anby (48,2 / 50)
+  el Daño Crítico en 1,16, y el motor seguía prefiriéndolo. "Imprescindible" pasó a ser el TOPE del
+  perfil (nunca menos de 1,0). Con eso: #76 pasa de reserva a equipar a Anby (+0,16, en conflicto).
+- R23 sólo mueve SECUNDARIOS: el principal suma un puntaje fijo, no pesado. Impacto (Qingyi), Tasa de
+  Perforación (Rina), Recarga (Velina) y Tasa de Anomalía (Yuzuha) sólo vienen como principal: los
+  cuidan R21 y R24.
+- **R24: 0 pares hoy.** Anby, Dialyn y Velina no tienen discos libres del 2pc alternativo en esos
+  slots; Miyabi tiene candidatos pero le faltan 28,6 de Prob. Crítica; a Remielle le falta el del
+  slot 6; el fijo de Yuzuha sólo viene como principal del slot 6. Actúa cuando se farmeen.
+- **Fandom vs `disc_sets`:** Firmamento llameante da el ATK +10 % a cualquiera (sólo el Daño Crítico
+  es para Éter): alcance `parte`. "Anomaly Mastery" = Tasa de Anomalía (tabla de idiomas de la
+  wiki); la cuenta del fijo de Yuzuha decía "Maestría" y se corrigió.
+- Dos sabotajes salieron **verdes** y dejaron un test cada uno: el asesor con un substat que la guía
+  no nombra marcado "no sirve"; el editor, porque el helper de los tests invalidaba el caché por su
+  cuenta y nada probaba que el editor avise al motor.
 
 ## Fuera de alcance
 
