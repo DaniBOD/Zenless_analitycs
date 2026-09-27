@@ -350,7 +350,8 @@ class MainWindow(ShellWindow):
             return
         from app.ui.disco_modal.modal import DiscoModal
         try:
-            modal = DiscoModal(self._ui_con, disco_id, parent=self)
+            modal = DiscoModal(self._ui_con, disco_id, parent=self,
+                               servicio=getattr(self._discos_view, "servicio", None))
         except Exception:
             log.exception("[discos] no se pudo armar la ficha del disco %s", disco_id)
             return

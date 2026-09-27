@@ -5,7 +5,7 @@
 | encabezado con chips `EQUIPADO · Yanagi` y `SCORE 87.3 · S` | el de estado sí; **el de score no** |
 | col 1: set, main, substats con rolls, efectos del conjunto | igual; el badge de rareza **no** (no hay columna) |
 | col 2: PJs compatibles ranked | **el dueño con su build** y este slot destacado (decisión de Daniel) |
-| col 3: arquetipo, score proyectado, recomendación, historial | **otros discos del mismo set y slot**, sin score |
+| col 3: arquetipo, score proyectado, recomendación, historial | **la sugerencia del motor** (2026-09-27) y abajo **otros discos del mismo set y slot** |
 | pie: bloquear, descartar, reasignar, mejorar, confirmar | **nada** |
 
 Recibe `(con, disco_id)` y no una ficha armada: una alternativa clickeada cambia el disco que se
@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.ui import tokens as T
-from app.ui.disco_modal.datos import FichaDisco, ficha_disco
+from app.ui.disco_modal.datos import FichaDisco, detalle_sugerencia, ficha_disco
 from app.ui.formato import formatear_valor
 from app.ui.live.hexagon import BuildHexagon
 from app.ui.live.item_card import TENENCIA_TEXTO
@@ -79,9 +79,13 @@ class _Rolls(QWidget):
 class DiscoModal(QDialog):
     pj_pedido = Signal(int)
 
-    def __init__(self, con: sqlite3.Connection, disco_id: int, parent: QWidget | None = None):
+    def __init__(self, con: sqlite3.Connection, disco_id: int, parent: QWidget | None = None,
+                 servicio=None):
         super().__init__(parent)
         self._con = con
+        #: `ServicioSugerencias` de la pantalla Discos (None = sin recuadro de sugerencia).
+        self._servicio = servicio
+        self.caja_sugerencia: QFrame | None = None
         self._ficha: FichaDisco | None = None
         self.hexagono: BuildHexagon | None = None
         self.boton_dueno: QPushButton | None = None
@@ -111,6 +115,7 @@ class DiscoModal(QDialog):
             self._root.removeWidget(self._contenido)
             self._contenido.deleteLater()
         self.hexagono, self.boton_dueno, self._alternativas = None, None, {}
+        self.caja_sugerencia = None
         self._contenido = QWidget()
         v = QVBoxLayout(self._contenido)
         v.setContentsMargins(0, 0, 0, 0)
@@ -302,10 +307,14 @@ class DiscoModal(QDialog):
         v = QVBoxLayout(w)
         v.setContentsMargins(18, 0, 0, 0)
         v.setSpacing(6)
+        if self._servicio is not None:
+            self.caja_sugerencia = self._caja_de_sugerencia(d.id)
+            v.addWidget(self.caja_sugerencia)
+            v.addSpacing(6)
         v.addWidget(_caps(f"Otros discos · slot {d.slot} · {d.set or 'sin set'}"))
         if not f.alternativas:
             v.addWidget(_lbl("no hay otros discos de este set en este slot", T.font_ui(9), T.TEXT_MUTED, wrap=True))
-        visibles = f.alternativas[:12]
+        visibles = f.alternativas[:6 if self._servicio is not None else 12]
         for a in visibles:
             dueno = a.dueno or TENENCIA_TEXTO["libre"][0]
             b = QPushButton(f"#{a.id:05d}   {a.main or '—'} {formatear_valor(a.main_valor, a.main_unidad)}"
@@ -327,6 +336,32 @@ class DiscoModal(QDialog):
         v.addWidget(_lbl("orden: libres primero, después por nivel", T.font_ui(7), T.TEXT_DIM))
         v.addStretch()
         return w
+
+    def _caja_de_sugerencia(self, disco_id: int) -> QFrame:
+        """El recuadro "Sugerencia" (donde el mockup tenía "Recomendación final")."""
+        from app.ui.discos.datos import texto_sugerencia
+        from app.ui.tokens import SUGERENCIA
+        ultimo = self._servicio.ultimo
+        sd = None if ultimo is None else ultimo.get(disco_id)
+        texto, tipo, conflicto, _tip = texto_sugerencia(sd)
+        color = SUGERENCIA.get(tipo, ("", T.TEXT_MUTED))[1] if tipo else T.BORDER_MID
+        caja, cv = self._caja("caja_sugerencia", color, "rgba(255,255,255,0.03)")
+        cv.addWidget(_caps("Sugerencia del motor", color if tipo else T.TEXT_MUTED))
+        if ultimo is None:
+            cv.addWidget(_lbl("calculando…", T.font_ui(9), T.TEXT_MUTED))
+            return caja
+        if sd is None:
+            cv.addWidget(_lbl("Nada que hacer: está bien donde está.", T.font_ui(9), T.TEXT_SECONDARY, wrap=True))
+            return caja
+        titulo = _lbl(texto, T.font_display(12, bold=True), color)
+        cv.addWidget(titulo)
+        for linea in detalle_sugerencia(self._con, sd):
+            cv.addWidget(_lbl(linea, T.font_ui(8), T.TEXT_SECONDARY, wrap=True))
+        if conflicto:                           # apagado, como en la tabla
+            c = QColor(color)
+            titulo.setStyleSheet(f"color: rgba({c.red()}, {c.green()}, {c.blue()}, 0.45);"
+                                 " background: transparent; border: none;")
+        return caja
 
     # --- eventos ------------------------------------------------------------------------------------
 

@@ -7,6 +7,9 @@ Decisiones de Daniel (2026-09-13) que se hacen cumplir:
 - **Columna 2 = el dueño con su build** y este slot destacado; un disco libre dice "LIBRE" y no
   dibuja hexágono (no hay build de nadie que mostrar).
 - **Columna 3 = otros discos del mismo set y slot**, clickeables, sin score.
+
+Desde el 2026-09-27 la columna 3 suma arriba la **sugerencia del motor** (Fase A, ya calibrado),
+cuando la ventana le pasa el servicio: `test_disco_modal_sugerencia.py`. Sin servicio, como antes.
 """
 from __future__ import annotations
 
