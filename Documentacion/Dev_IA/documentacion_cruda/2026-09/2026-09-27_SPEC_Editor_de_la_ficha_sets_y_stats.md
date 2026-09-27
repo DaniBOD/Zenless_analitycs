@@ -26,21 +26,28 @@ Probabilidad crítica'"*; y que sus builds propias de Grace y Gatillo "tengan se
 | la pantalla | **motor ya, pantalla con brief**: datos, motor, avisos y editor probados por código; un brief único a Claude Design; la pantalla cuando vuelva el mockup |
 | prioridad del set | **el set primero**. Además: mientras el PJ está por DEBAJO de un fijo, ese stat **sube a Imprescindible** hasta cumplirlo |
 | esa subida, ¿sólo para el set? | **set y kit**: vale para todos los stats fijos (condiciones del 4pc y pasivas) |
+| ¿un fijo por encima del set? | **"No, al menos que si lo pones por encima del set predefinido que al menos sea un set secundario (set de 2pc)"** → R24: un fijo puede romper el 2pc, **nunca el 4pc** |
+| ¿cuándo se rompe el 2pc? | **sólo si el cambio lo ALCANZA** (y supera la mejora mínima); acercarse no alcanza |
 
 ## El orden en que decide el motor (de más fuerte a más débil)
 
 | # | qué | cómo actúa |
 |---|---|---|
-| 1 | **set elegido (4pc + 2pc)** | filtro: un disco de otro set no se le sugiere (R20); nunca se rompe un 4pc/2pc activo del objetivo |
-| 2 | **stats fijos** (condiciones del 4pc + kit + usuario) | veto: ningún cambio lo deja por debajo (R21). **Nuevo (R23):** mientras esté por debajo, sus líneas pesan como Imprescindible |
-| 3 | principal válido del slot | filtro (R9) |
-| 4 | niveles de substats → pesos | puntaje entre los discos que pasaron los filtros |
-| 5 | bono del set en el puntaje | el 2pc como su stat; el 4pc completo, una fracción del mejor disco posible |
-| 6 | prioridad del PJ | quién recibe primero |
+| 1 | **4pc del set elegido** | filtro: nunca se rompe un 4pc activo del objetivo; un disco de otro set no se le sugiere (R20) |
+| 2 | **stats fijos** (condiciones del 4pc + kit + usuario) | veto: ningún cambio lo deja por debajo (R21). **Nuevo (R23):** mientras esté por debajo, sus líneas pesan como Imprescindible. **Nuevo (R24):** para ALCANZARLO se puede romper el 2pc |
+| 3 | **2pc del set elegido** | filtro como el 4pc (R20), salvo la excepción de R24 |
+| 4 | principal válido del slot | filtro (R9) |
+| 5 | niveles de substats → pesos | puntaje entre los discos que pasaron los filtros |
+| 6 | bono del set en el puntaje | el 2pc como su stat; el 4pc completo, una fracción del mejor disco posible |
+| 7 | prioridad del PJ | quién recibe primero |
 
 Consecuencias: una condición del set que choca con los niveles del usuario **gana el set** (el fijo
 se aplica igual, con aviso); un disco "mejor" en substats pero de otro set nunca le gana a uno del set
-elegido.
+elegido, salvo que sea la única forma de cumplir un fijo y sólo a costa del 2pc.
+
+**Hoy (medido en el código, 2026-09-27) el caso NO está cubierto:** `set_valido` deja afuera todo
+disco de un set que no sea el 4pc o el 2pc objetivo, y `rompe_objetivo` descarta cualquier cambio que
+baje el 4pc **o el 2pc** de su cuenta. Un fijo nunca puede ganarle al 2pc.
 
 ## Parte 1 · Los datos (migración 46)
 
@@ -87,6 +94,20 @@ Todo en `AgentRepo._load`; el motor lee el resultado y no sabe de dónde vino ca
   PLANAS de un stat de base (ATK, PV, DEF planos) quedan en su nivel: una mejora de ATK plano rinde
   bastante menos que una de ATK%, y subirla a 1,0 la igualaría. Sin el stat leído (S18 vacío) no se
   sube nada (B2: no se juzga sin dato). Al alcanzar el objetivo, vuelve el nivel elegido.
+- **R24 · un fijo vital puede romper el 2pc, nunca el 4pc.** Para un PJ por debajo de un fijo, un
+  disco de un TERCER set se vuelve candidato sólo para un slot que hoy ocupa una pieza del 2pc objetivo.
+  El cambio se acepta si, a la vez:
+  1. no rompe el 4pc objetivo;
+  2. deja al PJ **cumpliendo** el fijo (y no le baja ningún otro por debajo del suyo, R21);
+  3. supera `MEJORA_MINIMA`.
+
+  La sugerencia lo dice: *"rompe tu 2pc de X para llegar a Y"*. "Cumpliendo" se prueba con la
+  cota prudente de R21, que **no cuenta** las ganancias % de un stat de base. En la práctica R24 aplica
+  a los stats que suman directo (Prob. Crítica, Tasa de Perforación, Maestría de Anomalía) y a lo
+  plano: para ATK% / PV% no se puede probar que se llega sin conocer la base, y no se supone (B2).
+  Dos cosas a medir al implementarlo: cuántas sugerencias nuevas aparecen, y si alguna rompe un 2pc
+  cuyo bono el motor no sabe valorar (esos se pierden "gratis" en el puntaje; la condición 2 es
+  la que lo justifica).
 - **Build objetivo:** R19, sin cambios.
 - Cada guardado llama `agentes_cambiaron()`: el cambio llega al motor sin reiniciar.
 
@@ -122,10 +143,10 @@ Imprescindible da el ⚠️.
   de la guía; un PJ con Monarca y el fijo derivado del set; Anby buscando su Prob. Crítica (48,2 / 50);
   el vacío de un PJ nuevo sin guía.
 - **Pruebas:** cada regla con su test y su sabotaje (nivel → peso; el ajuste pisa a la guía; borrar
-  vuelve a la guía; cada aviso; R23 sube por debajo y vuelve al cumplir; sin stat leído no sube).
+  vuelve a la guía; cada aviso; R23 sube por debajo y vuelve al cumplir; sin stat leído no sube; R24 rompe el 2pc sólo si alcanza, nunca el 4pc, y no con una ganancia % no probada).
   **Invariante de la migración:** con cero ajustes, pesos, principales y fijos de los 52 PJs
   **idénticos** a antes de la mig 46 (medido antes/después), y el reporte de sugerencias igual
-  **salvo lo que cambia R23**, que se mide y se reporta aparte.
+  **salvo lo que cambian R23 y R24**, que se mide y se reporta aparte.
 
 ## Orden de entrega (un commit por paso; suite completa antes de cada push)
 
@@ -133,9 +154,10 @@ Imprescindible da el ⚠️.
 2. Mig 46 + condiciones de set verificadas (con su registro en `audit/`).
 3. La mezcla en el repositorio (niveles, principales, fijos) — invariante sin ajustes.
 4. R23 — medido sobre el reporte, antes/después.
-5. El asesor de coherencia.
-6. El editor (`ficha_pj.py`).
-7. El brief de la pantalla.
+5. R24 — medido igual; cada sugerencia que rompe un 2pc, listada para Daniel.
+6. El asesor de coherencia.
+7. El editor (`ficha_pj.py`).
+8. El brief de la pantalla.
 
 ## Fuera de alcance
 
