@@ -1,5 +1,8 @@
 # Brief Claude Design — Build objetivo por PJ (modal de PJ)
 
+> ⚠️ **Reemplazado (2026-09-27) por [`BRIEF_ficha_sets_y_stats.md`](BRIEF_ficha_sets_y_stats.md)**, que incluye
+> estos sets más principales, secundarios, stats fijos y avisos. Se conserva como historia.
+
 > **Qué se pide:** que el usuario pueda **ver y declarar el build de sets** que quiere para cada
 > PJ (**un 4pc + un 2pc**) dentro de la ficha del PJ, con la guía a la vista para elegir bien.
 > Como la prioridad de buildeo, es un dato que pone él, no algo que el sistema lee de la pantalla.
