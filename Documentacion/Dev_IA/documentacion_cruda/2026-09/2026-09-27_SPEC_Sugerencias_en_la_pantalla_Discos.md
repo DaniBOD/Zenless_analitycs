@@ -1,6 +1,7 @@
 # SPEC · Las sugerencias del motor en la pantalla Discos (2026-09-27)
 
-**Estado:** diseño aprobado por Daniel el 2026-09-27 ("si me cierra, escribilo y arrancá").
+**Estado:** **hecho** el 2026-09-27 (ver "Implementación"). Diseño aprobado por Daniel ese día
+("si me cierra, escribilo y arrancá").
 
 ## Qué pidió Daniel
 
@@ -66,6 +67,29 @@ respuesta de la interfaz (RNF-06) → se calcula en un hilo aparte y la tabla se
 5. Modal.
 6. Verificación visual: la vista y el modal renderizados fuera de pantalla (`QWidget.grab`) con los
    datos reales, mirados uno por uno.
+
+## Implementación (2026-09-27)
+
+| paso | commit | qué |
+|---|---|---|
+| SPEC | `e7e6dfb` | este documento |
+| motor | `0f0b193` | `app/core/sugerencias.py` + `por_disco`; el script queda envoltorio (reporte idéntico, JSON comparado) |
+| hilo | `35eee70` | `ServicioSugerencias` |
+| tabla | `a7350d2` | columna, filtro, lateral, leyenda, `tokens.SUGERENCIA` |
+| modal | `4a3d344` | recuadro "Sugerencia del motor" en la columna 3 |
+
+### Lo que encontraron las verificaciones
+
+- **Una señal `dict` de Qt perdía los ids.** `Signal(dict)` pasa por un QVariantMap, que sólo acepta
+  claves de texto: el resultado llegaba `{}` en silencio y la columna habría quedado vacía para siempre.
+  Lo encontró el test del hilo (el resultado llegando de verdad, no a mano). La señal es `object`.
+- **Un sabotaje salió verde**: el aviso de repintado del modelo (`dataChanged`) era código muerto,
+  porque la vista recarga las filas cuando llega el resultado (el filtro de sugerencia también cambia).
+  Se sacó; el camino real (recargar) tiene su test y su sabotaje.
+- `capitalize()` pasaba a minúscula el resto de la nota del par ("disco sacudestrellas").
+- **Verificación visual** (vista y modales renderizados fuera de pantalla con la DB real): el lateral
+  cuenta mover 9 · equipar 32 · mejorar 2 · reserva 24 · guardar 9 · descartar 5, igual que el
+  reporte; #211 (mover a Seth, repone #213) y #76 (equipar a Anby en conflicto) se leen completos.
 
 ## Fuera de alcance
 
