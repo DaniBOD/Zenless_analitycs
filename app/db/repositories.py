@@ -115,6 +115,12 @@ class Agent:
     #: Todos los sets que su guía lista (4pc y 2pc, mig 43) más su build objetivo. R22: un disco
     #: único en la cuenta se conserva si su set le sirve a algún PJ al que le sirve su principal.
     sets_guia: frozenset[int] = frozenset()
+    #: Como en `agents.rol` ('Ataque', 'Aturdimiento', …). Decide las condiciones de rol del 4pc.
+    rol: str | None = None
+    #: R24 (SPEC 2026-09-27): los 2pc que la guía combina con su 4pc objetivo, en el orden de la
+    #: guía (`pj_sets_2pc.grupo`), SIN su 2pc actual. Cada renglón puede traer dos sets
+    #: equivalentes ("Blues Libre / Jazz Caótico").
+    alternativas_2pc: tuple[tuple[int, ...], ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -229,15 +235,73 @@ def resolver_build_objetivo(
     return s4, _dos_recomendado(dos), "guia_fuera" if cuatro is not None else "guia_sin_4pc"
 
 
-def _fijos_del_pj(filas: "list[tuple[int, str, float, int | None]]", agente_id: int,
-                  set_4p_id: int | None) -> dict[str, float]:
-    """Los stats fijos que valen para el PJ con su build objetivo; con dos para el mismo stat
-    (Dialyn: 100 % por su kit y 50 % por Monarca del Pináculo), el mayor."""
-    out: dict[str, float] = {}
-    for agente, stat, objetivo, requiere in filas:
-        if agente == agente_id and (requiere is None or requiere == set_4p_id):
-            out[stat] = max(out.get(stat, objetivo), objetivo)
+def peso_de_nivel_usuario(nivel: int) -> float:
+    """El nivel que el usuario elige en la ficha (mig 46) → peso: 1..4 como los niveles de la guía
+    (1,0 / 0,8 / 0,6 / 0,4) y 0 = "no sirve". Se guarda el nivel; el peso es cosa del motor."""
+    return 0.0 if nivel == 0 else peso_de_nivel(nivel)
+
+
+@dataclass(frozen=True)
+class CondicionSet:
+    """Una condición del 4pc de un set (`set_condiciones_4pc`, mig 46)."""
+    set_id: int
+    tipo: str                       # 'stat' | 'rol' | 'elemento'
+    stat: str | None = None
+    umbral: float | None = None
+    rol: str | None = None
+    elemento: str | None = None
+    alcance: str = "todo"           # 'todo' | 'parte'
+    texto: str = ""
+
+
+def cumple_condiciones_4pc(condiciones: "Iterable[CondicionSet]", set_4p_id: int | None,
+                           rol: str | None, elemento: str | None) -> bool:
+    """¿El PJ cumple el rol/elemento que gobiernan TODO el efecto del 4pc? (Monarca: Aturdimiento).
+    Sin el rol o el elemento del PJ no se juzga: se da por cumplida (B2, no se descarta sin dato)."""
+    for c in condiciones:
+        if c.set_id != set_4p_id or c.alcance != "todo":
+            continue
+        if c.tipo == "rol" and rol is not None and c.rol != rol:
+            return False
+        if c.tipo == "elemento" and elemento is not None and c.elemento != elemento:
+            return False
+    return True
+
+
+def fijos_del_pj(kit: "dict[str, float]", condiciones: "Iterable[CondicionSet]",
+                 ajustes: "dict[str, float | None]", set_4p_id: int | None,
+                 rol: str | None = None, elemento: str | None = None) -> dict[str, float]:
+    """Los stats fijos que valen para el PJ (SPEC 2026-09-27, parte 2):
+
+    1. los de su kit (`pj_stats_fijos`, las pasivas);
+    2. las condiciones de STAT del 4pc objetivo, si el PJ cumple el rol/elemento que gobierna el
+       efecto (Monarca: Prob. Crítica ≥ 50 sólo para un Aturdimiento);
+    3. encima, los del usuario: un objetivo lo pone o lo cambia, `None` lo desactiva.
+
+    El mismo stat desde el kit y el set: el objetivo mayor (Dialyn: 100 por su kit, 50 por Monarca).
+    """
+    condiciones = list(condiciones)
+    out = dict(kit)
+    if cumple_condiciones_4pc(condiciones, set_4p_id, rol, elemento):
+        for c in condiciones:
+            if c.set_id == set_4p_id and c.tipo == "stat":
+                out[c.stat] = max(out.get(c.stat, c.umbral), c.umbral)
+    for stat, objetivo in ajustes.items():
+        if objetivo is None:
+            out.pop(stat, None)
+        else:
+            out[stat] = objetivo
     return out
+
+
+def _alternativas_2pc(dos: "list[tuple[int, int, bool]]", actual: int | None) -> tuple[tuple[int, ...], ...]:
+    """Los renglones de 2pc de la guía para un 4pc (`[(grupo, set, recomendado)]`), en orden y sin
+    el 2pc actual (R24)."""
+    grupos: dict[int, list[int]] = {}
+    for g, s, _ in sorted(dos):
+        if s != actual:
+            grupos.setdefault(g, []).append(s)
+    return tuple(tuple(v) for _, v in sorted(grupos.items()))
 
 
 def mezclar_pesos(propios: dict[str, float], del_arquetipo: dict[str, float],
@@ -657,12 +721,14 @@ class AgentRepo:
             for r in self._con.execute("SELECT id, code FROM disc_archetypes")
         }
 
+        # Los NIVELES que el usuario eligió en la ficha (mig 46) → pesos. Reemplaza al peso crudo
+        # de `ajustes_usuario_pesos` (mig 40, retirada vacía en la 46).
         ajustes_pesos: dict[int, dict[str, float]] = {}
-        if _tabla_existe(self._con, "ajustes_usuario_pesos"):
+        if _tabla_existe(self._con, "ajustes_usuario_substats"):
             for r in self._con.execute(
-                "SELECT agente_id, substat, peso FROM ajustes_usuario_pesos"
+                "SELECT agente_id, substat, nivel FROM ajustes_usuario_substats"
             ):
-                ajustes_pesos.setdefault(r["agente_id"], {})[r["substat"]] = r["peso"]
+                ajustes_pesos.setdefault(r["agente_id"], {})[r["substat"]] = peso_de_nivel_usuario(r["nivel"])
         # La base de la mezcla (los pesos del arquetipo) sólo hace falta si hay ajustes: leerla
         # siempre rompía las DB mínimas de los tests, que no tienen esa columna.
         arch_positivos: dict[str, dict[str, float]] = {}
@@ -748,10 +814,27 @@ class AgentRepo:
                 "AND (descartado = 0 OR descartado IS NULL) GROUP BY agente_asignado, set_id"):
                 equipados.setdefault(r[0], {})[r[1]] = r[2]
 
-        fijos_filas: list[tuple[int, str, float, int | None]] = []
+        # Fijos del kit (mig 45). Las filas con `requiere_set_4p_id` eran copias de la condición de
+        # Monarca: desde la 46 la condición vive en `set_condiciones_4pc` y esas filas no existen.
+        kit: dict[int, dict[str, float]] = {}
         if _tabla_existe(self._con, "pj_stats_fijos"):
-            fijos_filas = [tuple(r) for r in self._con.execute(
-                "SELECT agente_id, stat, objetivo, requiere_set_4p_id FROM pj_stats_fijos")]
+            for a, stat, objetivo in self._con.execute(
+                    "SELECT agente_id, stat, objetivo FROM pj_stats_fijos WHERE requiere_set_4p_id IS NULL"):
+                kit.setdefault(a, {})[stat] = max(kit.get(a, {}).get(stat, objetivo), objetivo)
+        condiciones: list[CondicionSet] = []
+        if _tabla_existe(self._con, "set_condiciones_4pc"):
+            condiciones = [CondicionSet(*r) for r in self._con.execute(
+                "SELECT set_id, tipo, stat, umbral, rol, elemento, alcance, texto FROM set_condiciones_4pc")]
+        fijos_usuario: dict[int, dict[str, float | None]] = {}
+        if _tabla_existe(self._con, "ajustes_usuario_fijos"):
+            for a, stat, objetivo in self._con.execute(
+                    "SELECT agente_id, stat, objetivo FROM ajustes_usuario_fijos"):
+                fijos_usuario.setdefault(a, {})[stat] = objetivo
+        mains_usuario: dict[int, dict[int, tuple[str, ...]]] = {}
+        if _tabla_existe(self._con, "ajustes_usuario_principales"):
+            for a, slot, valor in self._con.execute(
+                    "SELECT agente_id, slot, valor_json FROM ajustes_usuario_principales"):
+                mains_usuario.setdefault(a, {})[slot] = tuple(sorted(json.loads(valor)))
 
         prioridades = PrioridadRepo(self._con).get_all()
 
@@ -791,7 +874,10 @@ class AgentRepo:
                 set_4p_id=s4,
                 set_2p_id=s2,
                 origen_build=origen_build,
-                stats_fijos=_fijos_del_pj(fijos_filas, r["id"], s4),
+                stats_fijos=fijos_del_pj(kit.get(r["id"], {}), condiciones, fijos_usuario.get(r["id"], {}),
+                                         s4, r["rol"], r["elemento"] if con_elemento else None),
+                rol=r["rol"],
+                alternativas_2pc=_alternativas_2pc(dict(guia_sets.get(r["id"], [])).get(s4, []), s2),
                 sets_guia=frozenset(
                     {s for s in (s4, s2) if s is not None}
                     | {s for s4g, dos in guia_sets.get(r["id"], []) for s in (s4g, *(x[1] for x in dos))}),
@@ -801,10 +887,12 @@ class AgentRepo:
                 elemento=r["elemento"] if con_elemento else None,
                 prioridad=prioridades.get(r["id"], "normal"),
                 mains={
-                    slot: mezclar_principales(
+                    **{slot: mezclar_principales(
                         stats_guia, mains_rol.get(arch_code, {}).get(slot, []),
                         mains_ajustados.get(arch_code, {}).get(slot, mains_rol.get(arch_code, {}).get(slot, [])))
-                    for slot, stats_guia in guia_mains.get(r["id"], {}).items()
+                       for slot, stats_guia in guia_mains.get(r["id"], {}).items()},
+                    # Lo que el usuario eligió para un slot (mig 46) reemplaza a la guía EN ese slot.
+                    **mains_usuario.get(r["id"], {}),
                 },
             )
         _avisar_pjs_sin_stats(self._cache.values())

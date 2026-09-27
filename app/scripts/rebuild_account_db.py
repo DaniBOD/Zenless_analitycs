@@ -55,6 +55,8 @@ INVESTIGACION: tuple[str, ...] = (
     "pj_sets_4pc", "pj_sets_2pc", "pj_stats_recomendados",
     # Mig 45 (2026-09-25): los stats fijos por PJ (lo que su kit necesita), con la cuenta y la fuente.
     "pj_stats_fijos",
+    # Mig 46 (2026-09-27): lo que exige el 4pc de cada set (stat, rol o elemento), verificado en Fandom.
+    "set_condiciones_4pc",
 )
 
 #: Declaraciones del usuario. **No son observación**: son lo que el usuario afirma sobre su propia
@@ -64,11 +66,14 @@ DECLARADO: tuple[str, ...] = (
     "roster_declarations",
     # Mig 40 (2026-09-22): lo que Daniel corrige a mano sobre los defaults de Prydwen — rangos
     # objetivo, pesos y principales por arquetipo. Son decisiones suyas, no observación.
-    "ajustes_usuario_rangos", "ajustes_usuario_pesos", "ajustes_usuario_arquetipo",
+    "ajustes_usuario_rangos", "ajustes_usuario_arquetipo",
     # Mig 42 (2026-09-24): la prioridad de buildeo de cada PJ, que Daniel declara en la app.
     "ajustes_usuario_prioridad",
     # Mig 43 (2026-09-25): el build objetivo (4pc + 2pc) que Daniel elige en la ficha del PJ.
     "ajustes_usuario_build",
+    # Mig 46 (2026-09-27): lo que Daniel elige en la ficha — niveles de substats (reemplazan al peso
+    # crudo de `ajustes_usuario_pesos`, retirado), principales por slot y stats fijos.
+    "ajustes_usuario_substats", "ajustes_usuario_principales", "ajustes_usuario_fijos",
 )
 
 #: Estado de cuenta observable. Se re-censa.

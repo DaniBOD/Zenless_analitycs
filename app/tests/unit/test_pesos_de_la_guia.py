@@ -3,7 +3,8 @@
 Caso 13 (SPEC, 2026-09-25): el motor le mandaba a Nangong Yu un disco de crítico (+6,12) porque la
 trataba como aturdidora estándar (perfil STUN, Prob. Crítica 1,13). Su guía: "Anomaly Proficiency >
 ATK% > PEN > ATK", ni un crítico. Daniel aceptó la escala 1,0 / 0,8 / 0,6 / 0,4 por nivel y que lo que
-la guía no nombra valga 0; sus ajustes (`ajustes_usuario_pesos`) siguen ganando.
+la guía no nombra valga 0; sus ajustes (desde la mig 46, NIVELES en `ajustes_usuario_substats`)
+siguen ganando.
 
 Sobre una COPIA de la DB de dominio (la guía cargada el 2026-09-25).
 """
@@ -40,7 +41,7 @@ def con(tmp_path):
     shutil.copy(DB_REAL, copia)
     c = sqlite3.connect(copia)
     c.row_factory = sqlite3.Row
-    c.execute("DELETE FROM ajustes_usuario_pesos")
+    c.execute("DELETE FROM ajustes_usuario_substats")
     c.commit()
     yield c
     c.close()
@@ -78,8 +79,18 @@ def test_sin_substats_en_la_guia_sigue_el_default(con):
 
 def test_el_ajuste_de_daniel_gana_sobre_la_guia(con):
     nangong = _agente(con, "Nangong Yu")
-    con.execute("INSERT INTO ajustes_usuario_pesos (agente_id, substat, peso) VALUES (?, 'DEF%', 0.5)",
+    con.execute("INSERT INTO ajustes_usuario_substats (agente_id, substat, nivel) VALUES (?, 'DEF%', 3)",
                 (nangong.id,))
     con.commit()
     p = _agente(con, "Nangong Yu").substat_preferences
-    assert p["DEF%"] == 0.5 and p["Maestría de Anomalía"] == 1.0   # la base es la guía, no el rol
+    assert p["DEF%"] == 0.6 and p["Maestría de Anomalía"] == 1.0   # la base es la guía, no el rol
+
+
+def test_no_sirve_es_cero_aunque_la_guia_lo_valore(con):
+    """Nivel 0 = "no sirve": pisa a la guía con 0 (no con el mínimo de 0,4)."""
+    nangong = _agente(con, "Nangong Yu")
+    con.execute("INSERT INTO ajustes_usuario_substats (agente_id, substat, nivel) VALUES (?, 'ATK', 0)",
+                (nangong.id,))
+    con.commit()
+    p = _agente(con, "Nangong Yu").substat_preferences
+    assert p["ATK"] == 0.0 and p["ATK%"] == 0.8

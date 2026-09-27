@@ -139,7 +139,8 @@ def test_un_ajuste_de_peso_llega_al_agente_sin_borrar_el_resto(db_con_mig):
     antes = _agente(db_con_mig, "Ellen").substat_preferences
     con = sqlite3.connect(db_con_mig)
     ellen_id = con.execute("SELECT id FROM agents WHERE nombre='Ellen'").fetchone()[0]
-    con.execute("INSERT INTO ajustes_usuario_pesos (agente_id, substat, peso) VALUES (?, 'ATK%', 1.0)",
+    # Desde la mig 46 el usuario elige NIVELES (1 = Imprescindible → 1,0), no pesos crudos.
+    con.execute("INSERT INTO ajustes_usuario_substats (agente_id, substat, nivel) VALUES (?, 'ATK%', 1)",
                 (ellen_id,))
     con.commit()
     con.close()
@@ -152,13 +153,13 @@ def test_un_ajuste_de_peso_llega_al_agente_sin_borrar_el_resto(db_con_mig):
 @pytest.mark.parametrize("sql", [
     "INSERT INTO ajustes_usuario_rangos (agente_id, stat, minimo, maximo) VALUES (1, 'x', 3200, 3000)",
     "INSERT INTO ajustes_usuario_rangos (agente_id, stat, minimo, maximo) VALUES (1, 'x', NULL, NULL)",
-    "INSERT INTO ajustes_usuario_pesos (agente_id, substat, peso) VALUES (1, 'ATK%', 1.5)",
     "INSERT INTO ajustes_usuario_arquetipo (code, campo, valor_json) VALUES ('ATK_DPS', 'threshold_stock', '[1]')",
     "INSERT INTO ajustes_usuario_arquetipo (code, campo, valor_json) VALUES ('ATK_DPS', 'mains_4', '\"ATK%\"')",
 ])
 def test_la_db_rechaza_un_ajuste_invalido(db_con_mig, sql):
-    """Las reglas viven en el esquema, no en quien lee: piso ≤ techo, algún borde, peso en
-    [-1, 1], sólo campos ajustables, y una LISTA de principales."""
+    """Las reglas viven en el esquema, no en quien lee: piso ≤ techo, algún borde, sólo campos
+    ajustables, y una LISTA de principales. (El peso crudo se retiró en la mig 46; los niveles
+    tienen sus CHECK en `test_mig46_ficha_sets_y_stats.py`.)"""
     con = sqlite3.connect(db_con_mig)
     with pytest.raises(sqlite3.IntegrityError):
         con.execute(sql)
@@ -173,6 +174,7 @@ def test_rebuild_conserva_los_ajustes():
         import rebuild_account_db as rb
     finally:
         sys.path.pop(0)
-    for t in ("ajustes_usuario_rangos", "ajustes_usuario_pesos", "ajustes_usuario_arquetipo"):
+    for t in ("ajustes_usuario_rangos", "ajustes_usuario_arquetipo", "ajustes_usuario_substats",
+              "ajustes_usuario_principales", "ajustes_usuario_fijos"):
         assert t in rb.DECLARADO, t
         assert t not in rb.VACIAR

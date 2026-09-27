@@ -101,7 +101,7 @@ Este documento describe el modelo relacional completo de la base, post-aplicaci�
 | `disc_set_archetype` | 31 (26 sets + 5 dobles) | Mapping N:M con `prioridad` (1=primario, 2=secundario) |
 | `inventory_disc_evaluations` | 0 | Histórico de recomendaciones del scoring engine. Crece con uso |
 
-### Capa 4b — Ajustes del usuario sobre los defaults (migraciones 40, 42 y 43)
+### Capa 4b — Ajustes del usuario sobre los defaults (migraciones 40, 42, 43 y 46)
 
 Dos capas: los defaults de las tablas de arriba (Prydwen, Game8… con su `fuente`) **no se tocan**; lo
 que Daniel corrige a mano vive en tablas propias y el repositorio lo mezcla — **el ajuste gana, y si
@@ -111,9 +111,12 @@ reglas con `CHECK`. Detalle y procedencia de cada fila: cabecera de cada `.sql`.
 | Tabla | Mig | Filas iniciales | Descripción |
 |-------|-----|-----------------|-------------|
 | `ajustes_usuario_rangos` | 40 | 1 (Ellen · ataque 3000–3200) | Rango objetivo por PJ y stat (`minimo ≤ maximo`, al menos uno) |
-| `ajustes_usuario_pesos` | 40 | 0 | Peso de un substat por PJ, en [-1, 1] |
+| ~~`ajustes_usuario_pesos`~~ | 40 → retirada en 46 | 0 | Guardaba el peso crudo; reemplazada por los NIVELES de `ajustes_usuario_substats` |
 | `ajustes_usuario_arquetipo` | 40 | 1 (HP_DISRUPT · mains_4) · 3 desde mig 41 (+ ATK_DPS y SUPPORT_ER · mains_5) | Principales permitidos por slot (`mains_4/5/6`, array JSON) |
 | `ajustes_usuario_prioridad` | 42 | 0 (los 52 en normal) | Prioridad de buildeo: `alta` / `baja`; **normal = sin fila**. Bloquea sugerir mover un disco hacia un PJ de prioridad más baja |
+| `ajustes_usuario_substats` | 46 | 0 | NIVEL de un substat por PJ en la ficha: 1..4 = Imprescindible / Muy bueno / Bueno / Sirve (1,0 / 0,8 / 0,6 / 0,4) y 0 = No sirve. Se guarda el nivel, no el peso |
+| `ajustes_usuario_principales` | 46 | 0 | Principales de un slot 4-6 (array JSON); reemplaza a la guía **en ese slot** |
+| `ajustes_usuario_fijos` | 46 | 0 | Stat fijo del usuario: `objetivo` lo pone o lo cambia, **NULL lo desactiva** |
 | `ajustes_usuario_build` | 43 | 0 | Build objetivo por PJ: `set_4p_id` obligatorio, `set_2p_id` opcional y distinto. **Sin fila = no declaró**: el motor usa los sets equipados si están entre los recomendados, si no el primero recomendado (R19) |
 
 ### Capa 4c — Builds recomendados por PJ (migración 43)
@@ -128,7 +131,8 @@ Nangong Yu es aturdidora con build de Anomalía). Se guarda lo que dice la guía
 | `pj_sets_4pc` | 4pc recomendados en el orden de la guía (`orden`); `rango_fuente` = el número que muestra la guía (puede repetirse), `puntaje_fuente` = el % calculado cuando lo da |
 | `pj_sets_2pc` | 2pc que la guía combina con ESE 4pc (FK compuesta a `pj_sets_4pc`); `grupo` = renglón de la guía (mismo renglón = alternativas), `recomendado` = el renglón marcado "(Recommended)" |
 | `pj_stats_recomendados` | Principales de los discos 4-6 y substats como NIVELES (`A = B > C` → A y B nivel 1, C nivel 2); `variante` separa builds alternativas de una guía (`'única'` si tiene una) |
-| `pj_stats_fijos` | (mig 45) El valor de un stat que el KIT del PJ necesita para rendir completo (Gatillo 90 % de Prob. Crítica, Astra Yao 3.429 de ATK, Zhao 27.000 PV…), con `cuenta` y fuente; `requiere_set_4p_id` = vale sólo con ese 4pc objetivo (Monarca del Pináculo: 50 %). R21: un cambio no deja al PJ por debajo (`app.core.stats_fijos`) |
+| `pj_stats_fijos` | (mig 45) El valor de un stat que el KIT del PJ necesita para rendir completo (Gatillo 90 % de Prob. Crítica, Astra Yao 3.429 de ATK, Zhao 27.000 PV…), con `cuenta` y fuente; `requiere_set_4p_id` = vale sólo con ese 4pc objetivo (Monarca del Pináculo: 50 %). R21: un cambio no deja al PJ por debajo (`app.core.stats_fijos`). **Desde la mig 46** `requiere_set_4p_id` queda sin uso: las condiciones del set viven en `set_condiciones_4pc` |
+| `set_condiciones_4pc` | (mig 46) Lo que exige el 4pc de un set: un stat ≥ umbral (Monarca: Prob. Crítica 50, Balada: Tasa de Anomalía 115, Rosa espinosa: DEF 1.800), un rol o un elemento; `alcance` = si gobierna TODO el efecto o una PARTE. Verificadas en Fandom (`audit/set_condiciones_4pc_20260927.md`). Las de stat se vuelven fijos del PJ con ese 4pc objetivo si cumple el rol/elemento de alcance `todo` |
 
 ### Capa 4d — Historial de movimientos de discos (migración 44)
 
