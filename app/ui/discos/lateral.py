@@ -3,6 +3,9 @@
 Del mockup se sacaron "acciones rápidas" (filtrar, limpiar descartes, re-puntuar) y el "insight"
 de IA: la pantalla sólo informa (decisión de Daniel, 2026-09-13). En su lugar entra "libres por
 slot", que es la pregunta que el inventario sí puede contestar hoy.
+
+Arriba, el recuadro SUGERENCIAS (SPEC 2026-09-27, donde el mockup tenía el insight): cuántos discos
+tienen cada sugerencia del motor; click en uno filtra la tabla por ese tipo.
 """
 from __future__ import annotations
 
@@ -56,6 +59,7 @@ class _BarraSet(QPushButton):
 
 class LateralDiscos(QFrame):
     set_elegido = Signal(str)
+    sugerencia_elegida = Signal(str)
 
     def __init__(self, filas: list[FilaDisco], parent: QWidget | None = None):
         super().__init__(parent)
@@ -68,6 +72,13 @@ class LateralDiscos(QFrame):
         v = QVBoxLayout(self)
         v.setContentsMargins(12, 12, 12, 12)
         v.setSpacing(2)
+        v.addWidget(_caps("Sugerencias"))
+        self._caja_sug = QVBoxLayout()
+        self._caja_sug.setSpacing(1)
+        v.addLayout(self._caja_sug)
+        self._botones_sug: dict[str, QPushButton] = {}
+        self.set_sugerencias(None)
+        v.addSpacing(12)
         v.addWidget(_caps("Distribución por set"))
         dist = distribucion_por_set(filas)
         maximo = dist[0][1] if dist else 1
@@ -104,7 +115,39 @@ class LateralDiscos(QFrame):
             v.addLayout(h)
         v.addStretch()
 
+    def set_sugerencias(self, conteo: dict[str, int] | None) -> None:
+        """El conteo por tipo (None = el motor todavía calcula). Una fila por tipo con al menos uno."""
+        from app.core.sugerencias import TIPOS
+        from app.ui.tokens import SUGERENCIA
+        while self._caja_sug.count():
+            w = self._caja_sug.takeAt(0).widget()
+            if w is not None:
+                w.deleteLater()
+        self._botones_sug = {}
+        if conteo is None:
+            self._caja_sug.addWidget(_caps("calculando…", T.TEXT_DIM))
+            return
+        hay = [t for t in TIPOS if conteo.get(t)]
+        if not hay:
+            self._caja_sug.addWidget(_caps("nada que hacer", T.TEXT_DIM))
+            return
+        for tipo in hay:
+            etiqueta, color = SUGERENCIA[tipo]
+            b = QPushButton(f"{etiqueta}  ·  {conteo[tipo]}")
+            b.setFont(T.font_caps(8, bold=True))
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setToolTip(f"Filtrar la tabla: {etiqueta.lower()}")
+            b.setStyleSheet(f"QPushButton {{ color: {color}; background: transparent; border: none;"
+                            f" text-align: left; padding: 2px 4px; }}"
+                            f"QPushButton:hover {{ background: rgba(255,255,255,0.05); }}")
+            b.clicked.connect(lambda _c=False, t=tipo: self.sugerencia_elegida.emit(t))
+            self._botones_sug[tipo] = b
+            self._caja_sug.addWidget(b)
+
     # --- introspección para tests -----------------------------------------------------------------
+
+    def boton_sugerencia(self, tipo: str) -> QPushButton:
+        return self._botones_sug[tipo]
 
     def boton_set(self, nombre: str) -> _BarraSet:
         return self._botones[nombre]

@@ -12,5 +12,14 @@ from app.ui.discos.view import DiscosView
 
 
 def build_discos_view(con: sqlite3.Connection | None) -> DiscosView:
-    """`con` es la conexión de LECTURA de la UI (la misma del roster y del hexágono)."""
-    return DiscosView(con)
+    """`con` es la conexión de LECTURA de la UI (la misma del roster y del hexágono). Las
+    sugerencias del motor se calculan aparte, con su propia conexión (`ServicioSugerencias`)."""
+    servicio = None
+    if con is not None:
+        from app.db.connection import get_db_path
+        from app.ui.discos.servicio_sugerencias import ServicioSugerencias
+        servicio = ServicioSugerencias(get_db_path())
+    vista = DiscosView(con, servicio=servicio)
+    if servicio is not None:
+        servicio.setParent(vista)
+    return vista

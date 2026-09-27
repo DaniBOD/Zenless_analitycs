@@ -5,6 +5,9 @@ definición de qué pasa un filtro, compartida con los tests puros. El modelo s�
 
 Íconos en caché por set y por PJ, no por fila: 385 filas con su logo y su avatar son 385 lecturas
 de disco si se cargan en `data()`.
+
+La columna SUGERENCIA (SPEC 2026-09-27) va donde el mockup tenía SCORE. Sus datos llegan después
+que las filas (se calculan en otro hilo): `set_sugerencias` los guarda y la vista recarga las filas.
 """
 from __future__ import annotations
 
@@ -13,7 +16,7 @@ from PySide6.QtGui import QBrush, QColor, QPixmap
 
 from app.core.asset_resolver import agent_avatar_path, set_logo_path
 from app.ui import tokens as T
-from app.ui.discos.datos import FilaDisco, formatear_valor, subs_texto
+from app.ui.discos.datos import FilaDisco, formatear_valor, subs_texto, texto_sugerencia
 from app.ui.live.item_card import TENENCIA_TEXTO
 
 #: Nivel de un disco que no está en 15: se tiñe, como el nivel ≠ 60 del Roster.
@@ -23,12 +26,24 @@ AMBAR_NIVEL = "#F0AA3C"
 NIVEL_SIN_LEER = "—"
 ICONO = 18
 
-COLUMNAS = ["#ID", "SET", "SL", "MAIN", "SUBS", "ROLLS", "NV", "ASIGNADO A", "ESTADO"]
-C_ID, C_SET, C_SLOT, C_MAIN, C_SUBS, C_ROLLS, C_NV, C_DUENO, C_ESTADO = range(len(COLUMNAS))
+COLUMNAS = ["#ID", "SET", "SL", "MAIN", "SUBS", "ROLLS", "NV", "SUGERENCIA", "ASIGNADO A", "ESTADO"]
+C_ID, C_SET, C_SLOT, C_MAIN, C_SUBS, C_ROLLS, C_NV, C_SUG, C_DUENO, C_ESTADO = range(len(COLUMNAS))
+#: Mientras el motor calcula (en otro hilo), la celda dice esto.
+CALCULANDO = "…"
 
 
-def _clave_orden(col: int):
+def _orden_sugerencia(sd) -> tuple:
+    """Por tipo, en el orden de `TIPOS`; dentro del tipo, la de más mejora primero; sin nada, al final."""
+    from app.core.sugerencias import TIPOS
+    if sd is None or sd.propia is None:
+        return (len(TIPOS) + (0 if sd is not None else 1), 0.0)
+    s = sd.propia
+    return (TIPOS.index(s["tipo"]) if s["tipo"] in TIPOS else len(TIPOS), -(s.get("delta") or 0.0))
+
+
+def _clave_orden(col: int, sugerencias: dict):
     return {
+        C_SUG: lambda f: _orden_sugerencia(sugerencias.get(f.id)),
         C_ID: lambda f: f.id,
         C_SET: lambda f: ((f.set or "").casefold(), f.slot),
         C_SLOT: lambda f: (f.slot, (f.set or "").casefold()),
@@ -47,8 +62,19 @@ class ModeloDiscos(QAbstractTableModel):
         self._filas: list[FilaDisco] = []
         self._orden: tuple[int, Qt.SortOrder] = (C_SET, Qt.SortOrder.AscendingOrder)
         self._iconos: dict[str, QPixmap | None] = {}
+        #: {disc_id: SugerenciaDisco}; None = todavía no llegaron (se muestra CALCULANDO).
+        self._sug: dict | None = None
 
     # --- datos ------------------------------------------------------------------------------------
+
+    def set_sugerencias(self, sugerencias: dict | None) -> None:
+        """Sólo guarda: quien llama carga las filas después (`set_filas`), y eso reordena y
+        repinta. La vista lo hace siempre (`_aplicar_filtros`), porque el filtro de sugerencia
+        también cambia con el resultado."""
+        self._sug = sugerencias
+
+    def sugerencia(self, row: int):
+        return (self._sug or {}).get(self._filas[row].id)
 
     def set_filas(self, filas: list[FilaDisco]) -> None:
         self.beginResetModel()
@@ -91,6 +117,8 @@ class ModeloDiscos(QAbstractTableModel):
             return None
         f = self._filas[index.row()]
         col = index.column()
+        if col == C_SUG:
+            return self._data_sugerencia(f, role)
         if role == Qt.ItemDataRole.DisplayRole:
             return {
                 C_ID: f"#{f.id:05d}",
@@ -125,6 +153,23 @@ class ModeloDiscos(QAbstractTableModel):
             return int(Qt.AlignmentFlag.AlignCenter)
         return None
 
+    def _data_sugerencia(self, f: FilaDisco, role):
+        from app.ui.tokens import SUGERENCIA
+        if self._sug is None:
+            return CALCULANDO if role == Qt.ItemDataRole.DisplayRole else None
+        texto, tipo, conflicto, tip = texto_sugerencia(self._sug.get(f.id))
+        if role == Qt.ItemDataRole.DisplayRole:
+            return texto
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return tip or None
+        if role == Qt.ItemDataRole.ForegroundRole and tipo:
+            # En conflicto o nombrado por otra sugerencia: el color del tipo, apagado.
+            color = QColor(SUGERENCIA.get(tipo, ("", T.TEXT_SECONDARY))[1])
+            if conflicto or texto.startswith("↳"):
+                color.setAlpha(110)
+            return QBrush(color)
+        return None
+
     def sort(self, column, order=Qt.SortOrder.AscendingOrder):
         self.layoutAboutToBeChanged.emit()
         self._orden = (column, order)
@@ -133,4 +178,4 @@ class ModeloDiscos(QAbstractTableModel):
 
     def _ordenar(self) -> None:
         col, order = self._orden
-        self._filas.sort(key=_clave_orden(col), reverse=order == Qt.SortOrder.DescendingOrder)
+        self._filas.sort(key=_clave_orden(col, self._sug or {}), reverse=order == Qt.SortOrder.DescendingOrder)

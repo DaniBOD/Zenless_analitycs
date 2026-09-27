@@ -7,8 +7,10 @@
 | cuerpo | resto | la tabla (con scroll: 385 filas no entran, decisión de Daniel) + el lateral |
 | leyenda | 32 | qué significa cada color |
 
-Fuera del mockup, a propósito: la columna y el filtro de SCORE (0/385 discos lo tienen), las
-acciones rápidas, el insight de IA, el paginado y el badge de rareza (no hay columna que lo diga).
+Fuera del mockup, a propósito: las acciones rápidas, el paginado y el badge de rareza (no hay
+columna que lo diga). La columna y el filtro de SCORE y el insight, vaciados el 2026-09-13 porque el
+puntaje no estaba calibrado, volvieron el 2026-09-27 con las SUGERENCIAS del motor (SPEC de ese día):
+se calculan en otro hilo (`ServicioSugerencias`) y la tabla se completa cuando llegan.
 
 La vista no abre el modal: emite `disco_pedido(id)` y lo abre la ventana.
 """
@@ -24,12 +26,12 @@ from PySide6.QtWidgets import (
 )
 
 from app.ui import tokens as T
-from app.ui.discos.datos import FilaDisco, filtrar, leer_inventario
+from app.ui.discos.datos import FilaDisco, conteo_sugerencias, filtrar, leer_inventario
 from app.ui.discos.filtros import BandaFiltrosDiscos
 from app.ui.discos.lateral import LateralDiscos
 from app.ui.discos.tabla import (
-    AMBAR_NIVEL, C_DUENO, C_ESTADO, C_ID, C_MAIN, C_NV, C_ROLLS, C_SET, C_SLOT, C_SUBS, COLUMNAS,
-    ModeloDiscos,
+    AMBAR_NIVEL, C_DUENO, C_ESTADO, C_ID, C_MAIN, C_NV, C_ROLLS, C_SET, C_SLOT, C_SUBS, C_SUG,
+    COLUMNAS, ModeloDiscos,
 )
 from app.ui.live.item_card import TENENCIA_TEXTO
 
@@ -46,10 +48,17 @@ def _lbl(texto: str, font, color: str) -> QLabel:
 class DiscosView(QWidget):
     disco_pedido = Signal(int)
 
-    def __init__(self, con: sqlite3.Connection | None, parent: QWidget | None = None):
+    def __init__(self, con: sqlite3.Connection | None, parent: QWidget | None = None,
+                 servicio=None):
         super().__init__(parent)
         self._con = con
         self._filas: list[FilaDisco] = []
+        #: `ServicioSugerencias` (None = sin sugerencias: tests y DB ausente).
+        self.servicio = servicio
+        self._sug: dict | None = None
+        if servicio is not None:
+            servicio.listas.connect(self._sugerencias_listas)
+            servicio.fallo.connect(self._sugerencias_fallaron)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -68,6 +77,8 @@ class DiscosView(QWidget):
         self._visibles = _lbl("", T.font_mono(9), T.YELLOW)
         hl.addWidget(self._visibles)
         hl.addStretch()
+        self._estado_sug = _lbl("", T.font_mono(9), T.TEXT_MUTED)
+        hl.addWidget(self._estado_sug)
         root.addWidget(header)
 
         self._slot_filtros = QVBoxLayout()
@@ -95,7 +106,7 @@ class DiscosView(QWidget):
         self.tabla.setWordWrap(False)
         cab = self.tabla.horizontalHeader()
         for col, ancho in ((C_ID, 64), (C_SET, 170), (C_SLOT, 34), (C_MAIN, 170), (C_ROLLS, 52),
-                           (C_NV, 38), (C_DUENO, 130), (C_ESTADO, 90)):
+                           (C_NV, 38), (C_SUG, 170), (C_DUENO, 130), (C_ESTADO, 90)):
             cab.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
             self.tabla.setColumnWidth(col, ancho)
         cab.setSectionResizeMode(C_SUBS, QHeaderView.ResizeMode.Stretch)
@@ -130,6 +141,12 @@ class DiscosView(QWidget):
                              ("Nv ámbar · nivel distinto de 15", AMBAR_NIVEL),
                              ("click en una fila · detalle del disco", T.TEXT_MUTED)):
             h.addWidget(_lbl(texto, T.font_ui(8), color))
+        if self.servicio is not None:
+            from app.ui.tokens import SUGERENCIA
+            h.addSpacing(10)
+            h.addWidget(_lbl("SUGERENCIA:", T.font_ui(8), T.TEXT_MUTED))
+            for etiqueta, color in SUGERENCIA.values():
+                h.addWidget(_lbl(etiqueta.lower(), T.font_ui(8), color))
         h.addStretch()
         f.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         return f
@@ -159,12 +176,37 @@ class DiscosView(QWidget):
             self.lateral.deleteLater()
         self.lateral = LateralDiscos(self._filas)
         self.lateral.set_elegido.connect(lambda s: self.filtros.elegir("set", s))
+        self.lateral.sugerencia_elegida.connect(lambda t: self.filtros.elegir("sugerencia", t))
         self._slot_lateral.addWidget(self.lateral)
 
+        if self.servicio is None:
+            self._pintar_sugerencias({})
+        else:
+            if self._sug is not None:           # lo último que llegó, hasta que llegue lo nuevo
+                self._pintar_sugerencias(self._sug)
+            self._estado_sug.setText("calculando sugerencias…")
+            self.servicio.pedir()
         self._aplicar_filtros()
 
+    def _sugerencias_listas(self, sugerencias: dict) -> None:
+        self._sug = sugerencias
+        self._pintar_sugerencias(sugerencias)
+        self._estado_sug.setText("")
+        self._aplicar_filtros()
+
+    def _sugerencias_fallaron(self, error: str) -> None:
+        self._estado_sug.setText("sugerencias: no se pudieron calcular (ver log)")
+
+    def _pintar_sugerencias(self, sugerencias: dict) -> None:
+        self.modelo.set_sugerencias(sugerencias)
+        conteo = conteo_sugerencias(self._filas, sugerencias)
+        if self.filtros is not None:
+            self.filtros.set_sugerencias(conteo)
+        if self.lateral is not None:
+            self.lateral.set_sugerencias(conteo)
+
     def _aplicar_filtros(self) -> None:
-        visibles = filtrar(self._filas, self.filtros.seleccion())
+        visibles = filtrar(self._filas, self.filtros.seleccion(), self._sug)
         self.modelo.set_filas(visibles)
         self._visibles.setText(f"{len(visibles)} visibles")
 
@@ -180,7 +222,7 @@ class DiscosView(QWidget):
             self.refrescar()
             for eje, valores in sel.items():
                 for v in valores:
-                    if eje in ("set", "main", "dueno"):
+                    if eje in ("set", "main", "dueno", "sugerencia"):
                         self.filtros.elegir(eje, v)
                     else:
                         self.filtros.chip(eje, v).setChecked(True)

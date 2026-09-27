@@ -20,7 +20,11 @@ from dataclasses import dataclass
 from app.ui.formato import formatear_sub, formatear_valor
 
 __all__ = ["FilaDisco", "leer_inventario", "formatear_valor", "formatear_sub", "subs_texto",
-           "filtrar", "distribucion_por_set", "libres_por_slot", "alternativas"]
+           "filtrar", "distribucion_por_set", "libres_por_slot", "alternativas",
+           "tipo_sugerencia", "texto_sugerencia", "conteo_sugerencias", "SIN_CAMBIO"]
+
+#: El valor del filtro de sugerencia para un disco sin sugerencia propia.
+SIN_CAMBIO = "sin_cambio"
 
 
 @dataclass(frozen=True)
@@ -87,17 +91,66 @@ def subs_texto(fila: FilaDisco, sep: str = " · ") -> str:
     return sep.join(formatear_sub(n, v, u, k) for n, v, u, k in fila.subs)
 
 
-def _valor_eje(f: FilaDisco, eje: str):
+def _valor_eje(f: FilaDisco, eje: str, sugerencias: Mapping | None):
     if eje == "estado":
         return "equipado" if f.equipado else "libre"
+    if eje == "sugerencia":
+        return tipo_sugerencia((sugerencias or {}).get(f.id))
     return getattr(f, eje)
 
 
-def filtrar(filas: Iterable[FilaDisco], filtros: Mapping[str, set]) -> list[FilaDisco]:
+def filtrar(filas: Iterable[FilaDisco], filtros: Mapping[str, set],
+            sugerencias: Mapping | None = None) -> list[FilaDisco]:
     """Mismo contrato que `roster.datos.filtrar`: dentro de un eje SUMAN, entre ejes RESTAN.
-    Ejes: `set`, `slot`, `main`, `dueno`, `estado` (`equipado` | `libre`)."""
+    Ejes: `set`, `slot`, `main`, `dueno`, `estado` (`equipado` | `libre`) y `sugerencia` (un tipo
+    de `app.core.sugerencias.TIPOS` o `SIN_CAMBIO`), este último contra `sugerencias`
+    ({disc_id: SugerenciaDisco})."""
     activos = {e: v for e, v in filtros.items() if v}
-    return [f for f in filas if all(_valor_eje(f, e) in v for e, v in activos.items())]
+    return [f for f in filas if all(_valor_eje(f, e, sugerencias) in v for e, v in activos.items())]
+
+
+# --- sugerencias del motor (SPEC 2026-09-27) ------------------------------------------------------
+
+def tipo_sugerencia(sd) -> str:
+    """El tipo de la sugerencia PROPIA del disco, o `SIN_CAMBIO`. Que otra sugerencia lo nombre
+    (repone, par) no le da tipo: el filtro "Mover" muestra los discos que se mueven."""
+    return sd.propia["tipo"] if sd is not None and sd.propia is not None else SIN_CAMBIO
+
+
+def _num(x: float) -> str:
+    return f"{x:+.2f}".replace(".", ",")
+
+
+def texto_sugerencia(sd) -> tuple[str, str | None, bool, str]:
+    """(texto de la celda, tipo para el color, en conflicto, tooltip). Sin nada: ("", None, …)."""
+    from app.ui.tokens import SUGERENCIA
+    if sd is None:
+        return "", None, False, ""
+    if sd.propia is not None:
+        s = sd.propia
+        etiqueta = SUGERENCIA.get(s["tipo"], (s["tipo"].upper(), ""))[0]
+        texto = etiqueta
+        if s.get("destino") and s["tipo"] in ("equipar", "mover", "armar_2pc", "mejorar"):
+            texto += f" → {s['destino']}"
+        if s.get("delta") is not None:
+            texto += f" {_num(s['delta'])}"
+        tip = s.get("nota") or ""
+        if s.get("origen"):
+            tip = f"sale de {s['origen']}" + (f", lo repone el #{s['reemplazo_id']}" if s.get("reemplazo_id")
+                                             else ", el slot queda vacío y no pierde")
+        if s.get("conflicto"):
+            tip = (tip + "\n" if tip else "") + f"en conflicto: {s['conflicto']}"
+        return texto, s["tipo"], bool(s.get("conflicto")), tip
+    rol, s = sd.lo_nombran[0]
+    if rol == "repone":
+        return (f"↳ repone a #{s['disc_id']}", s["tipo"], bool(s.get("conflicto")),
+                f"si #{s['disc_id']} se mueve a {s.get('destino')}, este disco ocupa su lugar en {s.get('origen')}")
+    return (f"↳ par con #{s['disc_id']}", s["tipo"], bool(s.get("conflicto")), s.get("nota") or "")
+
+
+def conteo_sugerencias(filas: Iterable[FilaDisco], sugerencias: Mapping | None) -> dict[str, int]:
+    """Cuántos discos de `filas` tienen cada tipo de sugerencia propia (y cuántos ninguna)."""
+    return dict(Counter(tipo_sugerencia((sugerencias or {}).get(f.id)) for f in filas))
 
 
 def distribucion_por_set(filas: Iterable[FilaDisco]) -> list[tuple[str, int]]:

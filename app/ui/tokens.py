@@ -178,6 +178,20 @@ def color(hex_str: str, alpha: float = 1.0) -> QColor:
     return c
 
 
+#: Las sugerencias del motor en la pantalla Discos (SPEC 2026-09-27): tipo → (etiqueta, color).
+#: Equipar, mejorar, reserva y descartar con el color de su toast; mover, cambiar 2pc y guardar
+#: con color propio. El orden es el de `app.core.sugerencias.TIPOS`.
+SUGERENCIA: dict[str, tuple[str, str]] = {
+    "mover":     ("MOVER",       PINK),
+    "equipar":   ("EQUIPAR",     POSITIVE),
+    "armar_2pc": ("CAMBIAR 2PC", PURPLE),
+    "mejorar":   ("MEJORAR",     INFO),
+    "reserva":   ("RESERVA",     YELLOW),
+    "guardar":   ("GUARDAR",     YELLOW_DEEP),
+    "descartar": ("DESCARTAR",   WARNING),
+}
+
+
 def variant(name: str) -> dict:
     """Devuelve la config del variant 'equipar' / 'mejorar' / 'reserva' / 'guardar' / 'descartar' / 'lategame'."""
     return VARIANTS.get(name, VARIANTS["reserva"])

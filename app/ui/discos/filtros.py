@@ -3,7 +3,8 @@
 Dos filas para que ninguna pida más ancho que la ventana mínima:
 
 - chips de **slot** (1–6) y de **estado** (equipado / libre), con su conteo;
-- combos de **set**, **main** y **asignado**, que tienen demasiados valores para chips.
+- combos de **set**, **main** y **asignado**, que tienen demasiados valores para chips, y el de
+  **sugerencia** (SPEC 2026-09-27), que se llena cuando el motor termina de calcular.
 
 Los conteos son sobre el inventario completo, no sobre lo filtrado (un número que cambia al tocar
 otro filtro se lee como un error). Qué pasa un filtro lo decide `datos.filtrar`.
@@ -91,6 +92,16 @@ class BandaFiltrosDiscos(QFrame):
             self._combos[eje] = c
             f2.addWidget(c)
             f2.addSpacing(10)
+        f2.addWidget(_titulo("Sugerencia"))
+        c = QComboBox()
+        c.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        c.setMinimumContentsLength(14)
+        c.setStyleSheet(f"QComboBox {{ color: {T.TEXT_SECONDARY}; background: {T.BG_PANEL};"
+                        f" border: 1px solid {T.BORDER_MID}; padding: 2px 8px; }}")
+        c.currentIndexChanged.connect(lambda _i: self.cambiaron.emit())
+        self._combos["sugerencia"] = c
+        self.set_sugerencias(None)
+        f2.addWidget(c)
         f2.addStretch()
         v.addLayout(f2)
 
@@ -104,6 +115,30 @@ class BandaFiltrosDiscos(QFrame):
         return b
 
     # --- API ------------------------------------------------------------------------------------
+
+    def set_sugerencias(self, conteo: dict[str, int] | None) -> None:
+        """Llena el combo de sugerencia con el conteo por tipo (None = el motor todavía calcula).
+        Conserva lo elegido si sigue existiendo."""
+        from app.core.sugerencias import TIPOS
+        from app.ui.discos.datos import SIN_CAMBIO
+        from app.ui.tokens import SUGERENCIA
+        c = self._combos["sugerencia"]
+        elegido = c.currentData()
+        c.blockSignals(True)
+        c.clear()
+        if conteo is None:
+            c.addItem("calculando…", None)
+        else:
+            c.addItem(f"Todas ({sum(conteo.values())})", None)
+            for tipo in (*TIPOS, SIN_CAMBIO):
+                if conteo.get(tipo):
+                    nombre = SUGERENCIA[tipo][0].capitalize() if tipo in SUGERENCIA else "Sin cambio"
+                    c.addItem(f"{nombre} · {conteo[tipo]}", tipo)
+        i = c.findData(elegido) if elegido is not None else 0
+        c.setCurrentIndex(max(i, 0))
+        c.blockSignals(False)
+        if elegido is not None and i < 0:
+            self.cambiaron.emit()           # lo elegido desapareció: la tabla se vuelve a filtrar
 
     def chip(self, eje: str, valor) -> QPushButton:
         return self._chips[(eje, valor)]
