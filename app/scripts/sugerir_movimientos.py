@@ -8,7 +8,9 @@ Qué sugiere, con las reglas de sus casos:
   - **mover** un disco de un PJ a otro sólo si el que lo tiene NO pierde, contando un disco libre
     como reemplazo;
   - **mejorar** un disco sin terminar que promete, **reserva** uno bueno que hoy no le gana a nadie,
-    **descartar** el resto de los libres.
+    **descartar** el resto de los libres;
+  - **armar_2pc** (R24, 2026-09-27): dos discos libres que cambian el 2pc por el siguiente de la
+    guía para que el PJ CUMPLA un stat fijo, sin tocar el 4pc.
 
 Las sugerencias no se pisan: se toman de la de más ganancia para abajo, y una que pide un slot o
 un disco ya comprometido por otra queda como "en conflicto" en vez de desaparecer. Cada una está
@@ -36,7 +38,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app.core.audit_paths import reservar_rutas, resolve_audit_dir  # noqa: E402
-from app.core.recommender import nivel_prioridad, recomendar  # noqa: E402
+from app.core.recommender import buscar_par_2pc, nivel_prioridad, recomendar  # noqa: E402
 from app.core.score_normalizer import ScoringContext  # noqa: E402
 from app.db.repositories import (AgentRepo, ArchetypeRepo, Disc, DiscSetRepo,  # noqa: E402
                                  InventoryDiscRepo)
@@ -46,7 +48,7 @@ DB_DEFAULT = Path("db/danibod_zzz_v2.db")
 
 @dataclass
 class Sugerencia:
-    tipo: str                   # equipar | mover | mejorar | reserva | descartar
+    tipo: str                   # equipar | mover | armar_2pc | mejorar | reserva | guardar | descartar
     disc_id: int
     disco: str                  # descripción legible
     destino: str | None = None
@@ -58,6 +60,10 @@ class Sugerencia:
     score: float | None = None
     conflicto: str | None = None
     prioridad: str = "normal"     # la del PJ destino (mig 42)
+    #: Sólo `armar_2pc` (R24): el segundo disco del par, su slot, y qué cambia y para qué.
+    disc_id_2: int | None = None
+    slot_2: int | None = None
+    nota: str | None = None
 
 
 def _sha256(p: Path) -> str:
@@ -77,17 +83,21 @@ def resolver_conflictos(crudas: list[Sugerencia]) -> None:
     para abajo. La que pierde queda marcada `conflicto`, no desaparece."""
     tomados_slot: dict[tuple[int, int], int] = {}
     tomados_disco: dict[int, int] = {}
-    for s in sorted((x for x in crudas if x.tipo in ("equipar", "mover")),
+    for s in sorted((x for x in crudas if x.tipo in ("equipar", "mover", "armar_2pc")),
                     key=lambda x: (nivel_prioridad(x.prioridad), x.delta or 0.0), reverse=True):
-        clave = (s.destino_id, s.slot)
-        usados = [s.disc_id] + ([s.reemplazo_id] if s.reemplazo_id else [])
-        if clave in tomados_slot:
-            s.conflicto = f"ese slot ya lo toma el disco #{tomados_slot[clave]}"
+        # Un par (R24) toma DOS slots y DOS discos: o entran los dos, o queda en conflicto entero.
+        claves = [(s.destino_id, s.slot)] + ([(s.destino_id, s.slot_2)] if s.slot_2 else [])
+        usados = ([s.disc_id] + ([s.reemplazo_id] if s.reemplazo_id else [])
+                  + ([s.disc_id_2] if s.disc_id_2 else []))
+        if any(c in tomados_slot for c in claves):
+            c = next(c for c in claves if c in tomados_slot)
+            s.conflicto = f"ese slot ya lo toma el disco #{tomados_slot[c]}"
         elif any(u in tomados_disco for u in usados):
             u = next(u for u in usados if u in tomados_disco)
             s.conflicto = f"el disco #{u} ya está comprometido en otra sugerencia"
         else:
-            tomados_slot[clave] = s.disc_id
+            for c in claves:
+                tomados_slot[c] = s.disc_id
             for u in usados:
                 tomados_disco[u] = s.disc_id
 
@@ -136,6 +146,27 @@ def generar(db_path: Path) -> dict:
             else:
                 crudas.append(Sugerencia(rec.tipo, d.id, desc, rec.agente_nombre, rec.agente_id,
                                          d.slot, score=round(rec.score_norm, 3)))
+        # R24: un par de discos libres que arma el siguiente 2pc de la guía y hace cumplir un fijo.
+        etiquetas = {"prob_critico": "Prob. Crítica", "ataque": "ATK", "pv": "PV", "defensa": "DEF",
+                     "maestria_anomalia": "Maestría de Anomalía", "tasa_anomalia": "Tasa de Anomalía",
+                     "tasa_perforacion": "Tasa de Perforación", "impacto": "Impacto",
+                     "rec_energia": "Recarga de Energía"}
+        for a in agentes.get_all():
+            arch = arqs.get_by_id(a.arquetipo_primario_id)
+            if arch is None:
+                continue
+            par = buscar_par_2pc(a, arch, builds(a.id), libres, ctx, sets_repo)
+            if par is None:
+                continue
+            da, db = par.discos
+            viejo = sets.get(par.set_2p_viejo, "sin 2pc") if par.set_2p_viejo else "sin 2pc"
+            crudas.append(Sugerencia(
+                "armar_2pc", da.id, f"{_describir(da, sets)} + {_describir(db, sets)}",
+                a.nombre, a.id, par.slots[0], delta=round(par.delta, 3),
+                disc_id_2=db.id, slot_2=par.slots[1],
+                nota=(f"cambia tu 2pc de {viejo} por {sets.get(par.set_id, par.set_id)} para llegar a "
+                      f"{etiquetas.get(par.stat, par.stat)} {par.objetivo:g} "
+                      f"({par.antes:g} → al menos {par.despues_min:.1f})")))
         for s in crudas:
             s.prioridad = prioridades.get(s.destino_id, "normal")
     finally:
@@ -165,7 +196,9 @@ def _markdown(rep: dict) -> str:
            "", "Cada sugerencia está calculada contra el estado de HOY. Las que se pisarían entre sí",
            "quedan marcadas **en conflicto**: se toma la de más ganancia.", ""]
     titulos = [("mover", "Mover de un PJ a otro (el que lo tiene NO pierde)"),
-               ("equipar", "Equipar un disco libre"), ("mejorar", "Vale la pena subir"),
+               ("equipar", "Equipar un disco libre"),
+               ("armar_2pc", "Cambiar el 2pc para cumplir un stat fijo (R24, de a dos discos)"),
+               ("mejorar", "Vale la pena subir"),
                ("reserva", "Guardar para un PJ futuro"),
                ("guardar", "Guardar sin subir (sirve, pero subido no le ganaría a nadie de hoy)"),
                ("descartar", "Descartar")]
@@ -184,6 +217,8 @@ def _markdown(rep: dict) -> str:
             if s["origen"]:
                 linea += f" (sale de {s['origen']}"
                 linea += f"; lo repone el #{s['reemplazo_id']})" if s["reemplazo_id"] else "; queda vacío y no pierde)"
+            if s.get("nota"):
+                linea += f" — {s['nota']}"
             if s["delta"] is not None:
                 linea += f" · mejora {s['delta']:+.2f}"
             if s["conflicto"]:
@@ -207,7 +242,7 @@ def main(argv: list[str] | None = None) -> int:
     rutas[1].write_text(_markdown(rep), encoding="utf-8")
     t = rep["totales"]
     print(f"{t['inventario_activo']} discos · " + " · ".join(
-        f"{k} {t.get(k, 0)}" for k in ("mover", "equipar", "mejorar", "reserva", "guardar", "descartar")))
+        f"{k} {t.get(k, 0)}" for k in ("mover", "equipar", "armar_2pc", "mejorar", "reserva", "guardar", "descartar")))
     print(f"→ {rutas[1]}")
     return 0
 

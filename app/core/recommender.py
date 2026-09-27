@@ -560,3 +560,89 @@ def recommendation_to_json(rec: Recommendation) -> str:
             "mejora_en_linea_muerta": rec.potencial.mejora_en_linea_muerta,
         },
     }, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# R24: un fijo vital puede cambiar el 2pc por el siguiente de la guía (SPEC 2026-09-27)
+# ---------------------------------------------------------------------------
+# Daniel: "¿un stat fijo por encima de un set? Diría que no, al menos que si lo pones por encima del
+# set predefinido que al menos sea un set secundario (set de 2pc)"; "si cumple el set 2pc obvio debe
+# cumplir la stat fijada y el set 2pc que esté en segunda recomendación de la lista". Eligió ARMAR
+# el 2pc alternativo (de a dos discos) y "el siguiente disponible" de la lista. El 4pc no se toca.
+
+@dataclass
+class Par2pc:
+    """Dos discos libres que arman otro 2pc de la guía y hacen cumplir un stat fijo."""
+    agente_id: int
+    agente_nombre: str
+    set_id: int                             # el 2pc nuevo
+    set_2p_viejo: int | None
+    discos: tuple["Disc", "Disc"]
+    slots: tuple[int, int]
+    stat: str                               # el fijo que alcanza
+    antes: float
+    despues_min: float                      # la cota prudente de R21: al menos esto
+    objetivo: float
+    delta: float
+
+
+def buscar_par_2pc(agent: "Agent", arch, build: dict[int, "Disc"], libres: list["Disc"],
+                   ctx: "ScoringContext", disc_set_repo) -> Par2pc | None:
+    """El par de R24 para `agent`, o None.
+
+    1. El 4pc objetivo tiene que estar ACTIVO: los dos slots que no ocupa son los que se cambian.
+    2. Algún fijo con el stat leído y por debajo del objetivo.
+    3. Los 2pc de la guía en orden (`agent.alternativas_2pc`); el primer renglón con un par válido
+       gana, y dentro del renglón el de mayor mejora.
+    4. Pares de discos LIBRES terminados (Nivel 15) del mismo set, uno por slot, principal válido.
+    5. Válido si deja al PJ CUMPLIENDO uno de los fijos que le faltaban (cota prudente de R21: una
+       ganancia % de un stat de base no se cuenta), no le baja otro por debajo del suyo, y mejora al
+       menos `MEJORA_MINIMA`.
+    """
+    from app.core.stats_fijos import delta_conservador
+    s4 = getattr(agent, "set_4p_id", None)
+    if s4 is None:
+        return None
+    if Counter(d.set_id for d in build.values())[s4] < 4:
+        return None
+    slots = tuple(s for s in range(1, 7) if build.get(s) is None or build[s].set_id != s4)
+    if len(slots) != 2:
+        return None
+    stats = getattr(agent, "stats", None) or {}
+    faltan = {stat: obj for stat, obj in (getattr(agent, "stats_fijos", None) or {}).items()
+              if stats.get(stat) is not None and stats[stat] < obj}
+    if not faltan:
+        return None
+
+    bonos = _bonos_2pc_desde(disc_set_repo)
+    s_antes, _ = valor_sets(Counter(d.set_id for d in build.values()), agent, arch, bonos)
+    v_antes = sum(valor_disco(build[s], agent, arch, ctx) for s in slots if build.get(s) is not None)
+    utiles = [d for d in libres if d.nivel == 15 and principal_valido(d, arch, agent)]
+    for grupo in getattr(agent, "alternativas_2pc", ()):
+        pares = []
+        for set_id in grupo:
+            a = [d for d in utiles if d.set_id == set_id and d.slot == slots[0]]
+            b = [d for d in utiles if d.set_id == set_id and d.slot == slots[1]]
+            for da in a:
+                for db in b:
+                    despues = {**build, slots[0]: da, slots[1]: db}
+                    alcanzados = []
+                    for stat, obj in faltan.items():
+                        minimo = stats[stat] + delta_conservador(stat, stats[stat], build.values(),
+                                                                 despues.values())
+                        if minimo >= obj:
+                            alcanzados.append((stat, minimo, obj))
+                    if not alcanzados or rompe_stat_fijo(agent, build, despues) is not None:
+                        continue
+                    s_despues, _ = valor_sets(Counter(d.set_id for d in despues.values()), agent,
+                                              arch, bonos)
+                    delta = (valor_disco(da, agent, arch, ctx) + valor_disco(db, agent, arch, ctx)
+                             - v_antes + s_despues - s_antes)
+                    if delta < MEJORA_MINIMA:
+                        continue
+                    stat, minimo, obj = alcanzados[0]
+                    pares.append(Par2pc(agent.id, agent.nombre, set_id, getattr(agent, "set_2p_id", None),
+                                        (da, db), slots, stat, stats[stat], minimo, obj, delta))
+        if pares:
+            return max(pares, key=lambda p: p.delta)
+    return None
