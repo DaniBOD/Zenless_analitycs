@@ -59,6 +59,11 @@ class EleccionPJ:
     set_2p_id: int | None = None
 
 
+def _n(x: float) -> str:
+    """Un número como lo lee la ficha: coma decimal ("48,2"), sin ceros de más."""
+    return f"{x:g}".replace(".", ",")
+
+
 def _y(nombres: Iterable[str]) -> str:
     nombres = list(nombres)
     return nombres[0] if len(nombres) == 1 else ", ".join(nombres[:-1]) + " y " + nombres[-1]
@@ -127,13 +132,13 @@ def avisos(nombre: str, guia: GuiaPJ, eleccion: EleccionPJ, *, rol: str | None,
             if c.set_id == set_4p_id and c.tipo == "stat" and c.stat in stats_fijos:
                 out.append(Aviso(INFO, "condicion_como_fijo",
                                  f"El 4pc de {nombre_set(c.set_id)} pide {ETIQUETA_STAT.get(c.stat, c.stat)} "
-                                 f"≥ {c.umbral:g}: queda como stat fijo."))
+                                 f"≥ {_n(c.umbral)}: queda como stat fijo."))
 
     # Fijos por debajo: el motor los busca (R23) y puede cambiar el 2pc para alcanzarlos (R24).
     for stat, objetivo in stats_fijos.items():
         actual = stats.get(stat)
         if actual is not None and actual < objetivo:
             out.append(Aviso(INFO, "fijo_se_busca",
-                             f"{ETIQUETA_STAT.get(stat, stat)}: {actual:g} de {objetivo:g} (faltan "
-                             f"{objetivo - actual:g}). El motor lo busca."))
+                             f"{ETIQUETA_STAT.get(stat, stat)}: {_n(actual)} de {_n(objetivo)} (faltan "
+                             f"{_n(round(objetivo - actual, 2))}). El motor lo busca."))
     return out

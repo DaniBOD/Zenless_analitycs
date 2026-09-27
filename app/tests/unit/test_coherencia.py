@@ -95,7 +95,7 @@ def test_la_condicion_del_set_y_el_fijo_que_se_busca():
     avs = _a(rol="Aturdimiento", set_4p_id=MONARCA, stats={"prob_critico": 48.2},
              stats_fijos={"prob_critico": 50})
     assert _tipos(avs, INFO) == ["condicion_como_fijo", "fijo_se_busca"] and not _tipos(avs, AVISO)
-    assert "48.2 de 50" in avs[1].texto
+    assert "48,2 de 50 (faltan 1,8)" in avs[1].texto
 
 
 def test_un_pj_sin_guia_solo_ve_lo_del_set():
