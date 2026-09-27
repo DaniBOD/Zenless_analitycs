@@ -101,6 +101,11 @@ def factor_rango(actual: float, techo: float | None) -> float:
     return techo / actual
 
 
+#: R23: el piso del peso de las líneas de un fijo sin cumplir (el nivel Imprescindible); si otra
+#: línea del perfil pesa más, toman ésa.
+PESO_FIJO_SIN_CUMPLIR = 1.0
+
+
 def ajustar_por_estado(pos: dict[str, float], agent: "Agent") -> dict[str, float]:
     """Los pesos positivos corregidos por DÓNDE ESTÁ el PJ: balance del crítico y rangos.
 
@@ -129,6 +134,21 @@ def ajustar_por_estado(pos: dict[str, float], agent: "Agent") -> dict[str, float
         for linea in RANGO_A_LINEAS.get(stat, ()):
             if out.get(linea, 0) > 0:
                 out[linea] *= f
+    # R23 (SPEC 2026-09-27): un stat fijo SIN CUMPLIR se busca. Daniel: "primero quiero que se tome
+    # como prioridad el set que se elige" y, mientras el PJ esté por debajo de un fijo (del set o de
+    # su kit), ese stat pesa como Imprescindible; al alcanzarlo vuelve el nivel elegido. Va al final:
+    # manda sobre el balance del crítico y los rangos. Sin el stat leído (S18) no se sube nada (B2).
+    # "Imprescindible" es el tope del perfil, no 1,0 a secas: el balance puede dejar OTRA línea por
+    # encima de 1 (Anby, 48,2 / 50 de Prob. Crítica: el Daño Crítico quedaba en 1,16), y con 1,0 el
+    # motor seguía prefiriendo esa (medido 2026-09-27: el reporte no cambiaba en nada).
+    from app.core.stats_fijos import lineas_que_lo_suben
+    buscar = [linea for stat, objetivo in (getattr(agent, "stats_fijos", None) or {}).items()
+              if stats.get(stat) is not None and stats[stat] < objetivo
+              for linea in lineas_que_lo_suben(stat)]
+    if buscar:
+        tope = max(PESO_FIJO_SIN_CUMPLIR, *out.values())
+        for linea in buscar:
+            out[linea] = max(out.get(linea, 0.0), tope)
     return out
 
 
@@ -140,8 +160,11 @@ def _pesos(agent: "Agent", archetype: "Archetype") -> tuple[dict[str, float], di
     # Un stat que le SIRVE al PJ no lo penaliza su rol: la guía de Nangong Yu (aturdidora) pone la
     # Competencia de Anomalía primera y el perfil STUN la castigaba con -0,8; la de Pan Yinhu
     # (defensa) pone el ATK% primero y DEFENSE lo castigaba con -0,8 (2026-09-25).
-    neg = {s: p for s, p in archetype.substats_perjudiciales.items() if pos.get(s, 0) <= 0}
-    return ajustar_por_estado(pos, agent), neg
+    ajustados = ajustar_por_estado(pos, agent)
+    # R23: lo que un fijo sin cumplir sube tampoco lo castiga el rol (sumaría y restaría a la vez).
+    neg = {s: p for s, p in archetype.substats_perjudiciales.items()
+           if pos.get(s, 0) <= 0 and ajustados.get(s, 0) <= 0}
+    return ajustados, neg
 
 
 def aporte_linea(stat: str, mejoras: int, pesos_pos: dict[str, float],

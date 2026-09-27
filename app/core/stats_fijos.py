@@ -37,6 +37,18 @@ DE_BASE: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
 }
 
 
+def lineas_que_lo_suben(stat: str) -> tuple[str, ...]:
+    """R23 (SPEC 2026-09-27): los SECUNDARIOS que suben el stat de un fijo — los de `DIRECTOS` y la
+    parte % de `DE_BASE`. Las planas (ATK, PV, DEF) no: una mejora de ATK plano rinde bastante
+    menos que una de ATK%, y buscarlas con peso de Imprescindible las igualaría. Los stats que sólo
+    vienen como PRINCIPAL (Impacto, Tasa de Perforación, Tasa de Anomalía, Recarga) no tienen
+    secundario: el principal suma un puntaje fijo y no depende del peso; a ésos los cuida el veto
+    de R21 (no bajar) y los puede alcanzar R24."""
+    from app.core.stats_vocab import CANONICAL_SUBSTATS
+    lineas = DIRECTOS.get(stat, ()) + (DE_BASE[stat][1] if stat in DE_BASE else ())
+    return tuple(l for l in lineas if l in CANONICAL_SUBSTATS)
+
+
 def _lineas(disc: "Disc") -> Iterable[tuple[str, float]]:
     if disc.main_stat and disc.main_valor is not None:
         yield disc.main_stat, float(disc.main_valor)
