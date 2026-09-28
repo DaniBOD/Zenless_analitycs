@@ -76,6 +76,91 @@ def avisos_de(con: sqlite3.Connection, agent) -> list:
 
 
 # ---------------------------------------------------------------------------
+# Lecturas de la página del PJ (SPEC 2026-09-28)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Renglon2pc:
+    """Un renglón de 2pc de la guía para un 4pc. Puede traer dos sets equivalentes."""
+    grupo: int
+    sets: tuple[int, ...]                  # el recomendado primero, después por id
+    recomendado: int | None
+
+
+def renglones_2pc(con: sqlite3.Connection, agente_id: int) -> dict[int, list[Renglon2pc]]:
+    """4pc → sus renglones de 2pc EN ORDEN (`pj_sets_2pc.grupo`), el orden que usa R24.
+    `leer_guia_pj` los guarda como conjunto porque el asesor sólo pregunta si un 2pc está."""
+    if not _tabla_existe(con, "pj_sets_2pc"):
+        return {}
+    por_4pc: dict[int, dict[int, list[tuple[int, int]]]] = {}
+    for s4, grupo, s, rec in con.execute(
+            "SELECT set_4p_id, grupo, set_id, recomendado FROM pj_sets_2pc WHERE agente_id = ? "
+            "ORDER BY set_4p_id, grupo, recomendado DESC, set_id", (agente_id,)):
+        por_4pc.setdefault(s4, {}).setdefault(grupo, []).append((s, rec))
+    return {s4: [Renglon2pc(g, tuple(s for s, _ in v), next((s for s, r in v if r), None))
+                 for g, v in grupos.items()]
+            for s4, grupos in por_4pc.items()}
+
+
+@dataclass(frozen=True)
+class FijoFicha:
+    """Un stat fijo como lo muestra la ficha."""
+    stat: str                              # vocabulario de agents ('prob_critico', …)
+    objetivo: float | None                 # el que usa el motor; None = desactivado por el usuario
+    origen: str                            # 'kit' | 'set' | 'tuyo'
+    de_la_guia: float | None               # el de kit/set; None si sólo lo puso el usuario
+    actual: float | None                   # la stat leída del juego
+
+
+def fijos_de_la_ficha(con: sqlite3.Connection, agent) -> list[FijoFicha]:
+    """Los fijos del PJ con su origen. Las mismas reglas que `fijos_del_pj` (el motor): kit, las
+    condiciones de stat del 4pc objetivo si el PJ cumple su rol/elemento (el mayor gana; empate →
+    kit) y el usuario encima (un objetivo reemplaza, NULL desactiva). Los objetivos vivos son
+    exactamente `agent.stats_fijos` (lo prueba un test sobre los 52 PJs)."""
+    from app.db.repositories import cumple_condiciones_4pc
+    kit: dict[str, float] = {}
+    if _tabla_existe(con, "pj_stats_fijos"):
+        kit = {s: o for s, o in con.execute(
+            "SELECT stat, objetivo FROM pj_stats_fijos WHERE agente_id = ? AND requiere_set_4p_id IS NULL",
+            (agent.id,))}
+    condiciones = leer_condiciones(con)
+    del_set: dict[str, float] = {}
+    if cumple_condiciones_4pc(condiciones, agent.set_4p_id, agent.rol, agent.elemento):
+        for c in condiciones:
+            if c.set_id == agent.set_4p_id and c.tipo == "stat":
+                del_set[c.stat] = max(del_set.get(c.stat, c.umbral), c.umbral)
+    guia: dict[str, tuple[float, str]] = {s: (v, "kit") for s, v in kit.items()}
+    for s, v in del_set.items():
+        if v > kit.get(s, float("-inf")):
+            guia[s] = (v, "set")
+    usuario: dict[str, float | None] = {}
+    if _tabla_existe(con, "ajustes_usuario_fijos"):
+        usuario = {s: o for s, o in con.execute(
+            "SELECT stat, objetivo FROM ajustes_usuario_fijos WHERE agente_id = ?", (agent.id,))}
+    out = []
+    for s in sorted(set(guia) | set(usuario)):
+        de_la_guia, origen = guia.get(s, (None, "tuyo"))
+        if s in usuario:
+            objetivo = usuario[s]
+            if objetivo is not None or de_la_guia is None:
+                origen = "tuyo"
+        else:
+            objetivo = de_la_guia
+        out.append(FijoFicha(s, objetivo, origen, de_la_guia, (agent.stats or {}).get(s)))
+    return out
+
+
+def principales_validos(slot: int, elemento: str | None) -> tuple[str, ...]:
+    """Los principales que el juego permite en el slot (4-6), y en el 5 sólo el bono de daño del
+    elemento del PJ (Lumen no tiene: `stats_vocab`)."""
+    from app.core.stats_vocab import CANONICAL_MAINS_VARIABLE
+    propio = f"Bono Daño {elemento}" if elemento else None
+    return tuple(sorted(p for p in CANONICAL_MAINS_VARIABLE.get(slot, ())
+                        if not p.startswith("Bono Daño") or p == propio))
+
+
+# ---------------------------------------------------------------------------
 # Escribir lo que el usuario elige (mig 43 y 46) — la ceremonia de `app.core.build_objetivo`
 # ---------------------------------------------------------------------------
 
