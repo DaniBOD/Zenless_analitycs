@@ -13,6 +13,7 @@ Del mockup se porta lo que informa y se deja lo que recomienda:
 | W-Engine con R1–R5 | P1–P5, que es como lo llama el juego |
 | despertar "4/6 · próximo nodo desbloquea…" | el nivel sí; **la frase no** (no hay de dónde sacarla) |
 | 4 botones de acción | **no** |
+| — | **recuadro "Asesor"** abajo de la columna 3: los avisos de coherencia (SPEC 2026-09-28) |
 """
 from __future__ import annotations
 
@@ -234,6 +235,7 @@ class PjModal(QDialog):
         self.setModal(True)
         self.setFixedSize(ANCHO, ALTO)
         self._stats: dict[str, QLabel] = {}
+        self.caja_asesor: QFrame | None = None
 
         marco = QFrame(self)
         marco.setObjectName("pj_modal")
@@ -474,8 +476,40 @@ class PjModal(QDialog):
             if f.despertar_nombre:
                 texto += f" · {f.despertar_nombre}"
             v.addWidget(_lbl(texto, T.font_ui(9), T.TEXT_SECONDARY, wrap=True))
+        v.addWidget(self._caja_asesor())
         v.addStretch()
         return w
+
+    def _caja_asesor(self) -> QFrame:
+        """Los avisos del asesor de coherencia: el resumen que pide el brief de la ficha (§2.5).
+        Cuando llegue el mockup, cada aviso se muda junto a su sección."""
+        from app.core.coherencia import AVISO
+        avisos = self.ficha.avisos
+        hay_aviso = any(a.severidad == AVISO for a in avisos or ())
+        caja = QFrame()
+        caja.setObjectName("caja_asesor")
+        caja.setStyleSheet(f"QFrame#caja_asesor {{ border: 1px solid {T.WARNING if hay_aviso else T.BORDER_SUBTLE};"
+                           f" background: rgba(255,255,255,0.02); }}")
+        v = QVBoxLayout(caja)
+        v.setContentsMargins(12, 8, 12, 8)
+        v.setSpacing(5)
+        v.addWidget(_caps(f"Asesor · {len(avisos)}" if avisos else "Asesor",
+                          T.WARNING if hay_aviso else T.TEXT_MUTED))
+        if avisos is None:
+            v.addWidget(_lbl("no se pudieron calcular", T.font_ui(9), T.TEXT_MUTED))
+        elif not avisos:
+            v.addWidget(_lbl("Sin avisos.", T.font_ui(9), T.TEXT_SECONDARY))
+        for a in avisos or ():
+            es_aviso = a.severidad == AVISO
+            fila = QHBoxLayout()
+            fila.setSpacing(6)
+            fila.addWidget(_lbl("⚠" if es_aviso else "ℹ", T.font_ui(9, bold=True),
+                                T.WARNING if es_aviso else T.TEXT_MUTED), 0, Qt.AlignmentFlag.AlignTop)
+            fila.addWidget(_lbl(a.texto, T.font_ui(8), T.TEXT_PRIMARY if es_aviso else T.TEXT_SECONDARY,
+                                wrap=True), 1)
+            v.addLayout(fila)
+        self.caja_asesor = caja
+        return caja
 
     # --- eventos ------------------------------------------------------------------------------------
 

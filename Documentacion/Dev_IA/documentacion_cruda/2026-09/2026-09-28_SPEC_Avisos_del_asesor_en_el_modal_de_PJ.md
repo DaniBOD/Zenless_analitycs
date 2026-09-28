@@ -36,7 +36,7 @@ cada aviso se muda junto a su sección.
 - **Recuadro "Asesor"** (`app/ui/pj_modal/modal.py`, columna 3): el título lleva el conteo
   (`ASESOR · 2`). Si hay algún ⚠️, el borde va naranja (`T.WARNING`, el de "descartar"); si hay
   sólo ℹ️, gris. Cada aviso es una línea con su ícono y su texto, con salto de línea. Sin avisos:
-  *"Sin avisos: lo que elegiste coincide con la guía."*
+  *"Sin avisos."* (no "coincide con la guía": un PJ sin guía tampoco tiene avisos).
 - El modal sigue sin consultar nada: recibe la ficha ya armada y se testea sin DB.
 
 ## Orden de entrega (un commit por paso, suite completa antes del push)

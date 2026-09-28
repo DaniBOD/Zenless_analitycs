@@ -9,6 +9,9 @@ Todo sale de fuentes que ya existen, sin una segunda definición:
 Lo que NO está en la ficha es tan deliberado como lo que sí: ni "build completion" ni ninguna
 recomendación. Salen de un scoring que no está calibrado (decisión de Daniel, 2026-09-13).
 
+Lo que SÍ está desde el 2026-09-28: los avisos del asesor de coherencia (`avisos_de`, la misma
+función que `ficha_pj.foto`). No puntúan discos: comparan lo que el usuario eligió con la guía.
+
 Un dato ausente queda en `None` y la vista dice "sin leer" / "sin registro". Desde la
 reconstrucción de la DB (17/08) las stats están vacías para todos: se llenan solas al abrir los
 atributos del PJ en el juego (`sync_agent_stats`), no inventándolas acá.
@@ -87,6 +90,9 @@ class FichaPJ:
     extra: dict = field(default_factory=dict)
     #: Prioridad de buildeo (mig 42): 'alta' | 'normal' | 'baja', de `PrioridadRepo`.
     prioridad: str = "normal"
+    #: Avisos del asesor (`coherencia.Aviso`), los "aviso" primero. `None` = no se pudieron
+    #: calcular, que NO es lo mismo que no tener avisos.
+    avisos: tuple | None = ()
 
 
 def formatear_stat(columna: str, valor) -> str | None:
@@ -105,6 +111,23 @@ def sets_de_build(slots: dict[int, dict]) -> list[tuple[str, int]]:
     sueltos devuelve [], y la pieza suelta de un 4+1 no aparece."""
     cuenta = Counter(d.get("set") for d in slots.values() if d.get("set"))
     return sorted(((n, k) for n, k in cuenta.items() if k >= 2), key=lambda x: (-x[1], x[0]))
+
+
+def avisos_del_pj(con: sqlite3.Connection, agente_id: int) -> tuple | None:
+    """Los avisos del asesor de coherencia para la ficha, los "aviso" antes que los "info".
+
+    `None` si el cálculo falla: se loguea con el traceback y la ficha dice "no se pudieron
+    calcular", en vez de confundirse con un PJ sin avisos."""
+    from app.core.coherencia import AVISO
+    from app.core.ficha_pj import avisos_de
+    from app.db.repositories import AgentRepo
+    try:
+        agent = AgentRepo(con).get_by_id(agente_id)
+        lista = avisos_de(con, agent) if agent is not None else []
+    except Exception:
+        log.exception("[modal] no se pudieron calcular los avisos del PJ %s", agente_id)
+        return None
+    return tuple(sorted(lista, key=lambda a: a.severidad != AVISO))
 
 
 def ficha_pj(con: sqlite3.Connection, agente_id: int) -> FichaPJ | None:
@@ -161,7 +184,7 @@ def ficha_pj(con: sqlite3.Connection, agente_id: int) -> FichaPJ | None:
     arte = agent_avatar_path(a["nombre"], "extend")
     logo_fac = faction_logo_path(a.get("faccion"))
     return FichaPJ(
-        prioridad=prioridad,
+        prioridad=prioridad, avisos=avisos_del_pj(con, agente_id),
         id=a["id"], nombre=a["nombre"], rango=a.get("rango"), elemento=a.get("elemento"),
         rol=a.get("rol"), faccion=a.get("faccion"), mindscape=a.get("mindscape"),
         nivel=a.get("nivel"),
