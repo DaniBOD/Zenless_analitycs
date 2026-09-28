@@ -83,6 +83,8 @@ class ShellWindow(QMainWindow):
             | Qt.WindowType.WindowMinMaxButtonsHint
         )
         self._views: dict[str, QWidget] = {}
+        #: Una página fuera del sidebar (la del PJ, SPEC 2026-09-28): tapa la vista activa.
+        self._pagina: QWidget | None = None
 
         central = QWidget()
         central.setObjectName("shell")
@@ -126,6 +128,7 @@ class ShellWindow(QMainWindow):
     def _on_item(self, clave: str) -> None:
         w = self._views.get(clave)
         if w is not None:
+            self._soltar_pagina()
             self.stack.setCurrentWidget(w)
 
     def current_view(self) -> QWidget | None:
@@ -133,6 +136,32 @@ class ShellWindow(QMainWindow):
 
     def show_view(self, clave: str) -> None:
         self.sidebar.select(clave)
+
+    # --- una página fuera del sidebar ---------------------------------------------------------
+
+    def mostrar_pagina(self, pagina: QWidget) -> None:
+        """Muestra una página que no está en el sidebar (la del PJ) tapando la vista activa, hasta
+        `volver()` o hasta que se toque un ítem del sidebar. Una sola a la vez."""
+        self._soltar_pagina()
+        self._pagina = pagina
+        self.stack.addWidget(pagina)
+        self.stack.setCurrentWidget(pagina)
+
+    def volver(self) -> None:
+        """Suelta la página y vuelve a la vista activa del sidebar (de donde se vino)."""
+        self._soltar_pagina()
+        w = self._views.get(self.sidebar.active_key())
+        if w is not None:
+            self.stack.setCurrentWidget(w)
+
+    def pagina_actual(self) -> QWidget | None:
+        return self._pagina
+
+    def _soltar_pagina(self) -> None:
+        if self._pagina is not None:
+            self.stack.removeWidget(self._pagina)
+            self._pagina.deleteLater()
+            self._pagina = None
 
     def _toggle_max(self) -> None:
         self.showNormal() if self.isMaximized() else self.showMaximized()
