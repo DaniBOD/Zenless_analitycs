@@ -113,7 +113,7 @@ def test_el_armero_muestra_laceracion_y_afiladura_en_vez_de_atk_y_er(con):
     assert f.stats_crudos["dano_laceracion"] == 150.0
 
 
-# --- widget ------------------------------------------------------------------------------------
+# --- widget: la página del PJ (el modal se retiró el 2026-09-28) ---------------------------------
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -125,25 +125,31 @@ def qapp():
     yield QApplication.instance() or QApplication(sys.argv)
 
 
-def test_el_modal_no_muestra_scoring_ni_botones_de_accion(qapp, con):
+def _pagina(con, agente_id, **kw):
+    from app.ui.pj_pagina.datos import pagina_pj
+    from app.ui.pj_pagina.pagina import PjPagina
+    return PjPagina(lambda: pagina_pj(con, agente_id), **kw)
+
+
+def test_la_pagina_no_muestra_scoring_ni_botones_de_accion(qapp, con):
+    from collections import Counter
     from PySide6.QtWidgets import QPushButton
-    from app.ui.pj_modal.modal import PjModal
-    m = PjModal(ficha_pj(con, 1))
+    m = _pagina(con, 1)
     textos = " ".join(m.textos_visibles()).upper()
-    for prohibido in ("BUILD COMPLETION", "OPTIMIZAR", "SUGERIR EQUIPO", "VER RUNS", "% COMPLETION"):
+    for prohibido in ("BUILD COMPLETION", "OPTIMIZAR", "SUGERIR EQUIPO", "VER RUNS", "% COMPLETION"):
         assert prohibido not in textos
-    botones = [b.text() for b in m.findChildren(QPushButton)]
-    # Cerrar y, desde la mig 42, los tres segmentos del selector de prioridad (Daniel, 2026-09-24:
-    # la prioridad se edita en la app). Ningún botón de acción del mockup.
-    assert botones == ["×", "▲ Alta", "Normal", "▼ Baja"], f"sólo cerrar y la prioridad: {botones}"
+    botones = Counter(b.text() for b in m.findChildren(QPushButton))
+    # Volver, la prioridad (mig 42), los ✎ de la build declarada y "todo a la guía" (SPEC
+    # 2026-09-28). Ningún botón de acción del mockup.
+    assert botones == Counter(["← Roster", "▲ Alta", "Normal", "▼ Baja", "✎ Editar", "✎ Editar",
+                               "✎ Editar", "✎ Editar", "↺ Volver todo a la guía"]), botones
     assert "YANAGI" in textos and "LLANTO MIELGO" in textos and "P5" in textos
     assert "4 PIEZAS" in textos and "2 PIEZAS" in textos
     m.close()
 
 
 def test_stats_vacias_dicen_sin_leer_y_ningun_numero(qapp, con):
-    from app.ui.pj_modal.modal import PjModal
-    m = PjModal(ficha_pj(con, 2))
+    m = _pagina(con, 2)
     stats = m.textos_de_stats()
     assert stats and all(v == "sin leer" for v in stats.values()), stats
     textos = m.textos_visibles()
@@ -152,38 +158,34 @@ def test_stats_vacias_dicen_sin_leer_y_ningun_numero(qapp, con):
     m.close()
 
 
-def test_el_modal_del_armero_dibuja_sus_filas(qapp, con):
-    from app.ui.pj_modal.modal import PjModal
+def test_la_pagina_del_armero_dibuja_sus_filas(qapp, con):
     con.execute("INSERT INTO agents (id, nombre, rango, elemento, rol, protected_build, "
                 "dano_laceracion, acumulacion_afiladura) VALUES "
                 "(3, 'Claret Flint', 'S', 'Eléctrico', 'Armero', 0, 150.0, 1.5)")
-    m = PjModal(ficha_pj(con, 3))
+    m = _pagina(con, 3)
     stats = m.textos_de_stats()
     assert stats.get("Laceración") == "150.0%" and stats.get("Afiladura") == "1.50", stats
     m.close()
 
 
-def test_la_x_y_escape_cierran(qapp, con):
+def test_la_flecha_y_escape_vuelven(qapp, con):
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
-    from app.ui.pj_modal.modal import PjModal
-    m = PjModal(ficha_pj(con, 1))
+    m = _pagina(con, 1, volver_texto="Armas")
+    pedidos = []
+    m.volver_pedido.connect(lambda: pedidos.append(1))
     m.show()
     qapp.processEvents()
-    m.btn_cerrar.click()
+    assert m.btn_volver.text() == "← Armas"
+    m.btn_volver.click()
+    QTest.keyClick(m, Qt.Key.Key_Escape)
     qapp.processEvents()
-    assert not m.isVisible()
-    m2 = PjModal(ficha_pj(con, 1))
-    m2.show()
-    qapp.processEvents()
-    QTest.keyClick(m2, Qt.Key.Key_Escape)
-    qapp.processEvents()
-    assert not m2.isVisible()
+    assert pedidos == [1, 1]
+    m.close()
 
 
 def test_el_acento_sale_del_elemento(qapp, con):
     from app.ui import tokens as T
-    from app.ui.pj_modal.modal import PjModal
-    m = PjModal(ficha_pj(con, 1))
+    m = _pagina(con, 1)
     assert m.acento == T.color_elemento("Eléctrico")
     m.close()

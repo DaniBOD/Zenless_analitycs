@@ -1,6 +1,9 @@
 """El selector de prioridad en la ficha del PJ (paso 5; handoff design_v3).
 
-- Arriba a la derecha del hero, a la izquierda de la cruz, sin taparla.
+Desde el 2026-09-28 la ficha es una PÁGINA (el modal se retiró): el selector sigue arriba a la
+derecha de la portada.
+
+- Arriba a la derecha de la portada.
 - Muestra la prioridad guardada y la nota de qué implica.
 - Un click guarda (en la DB, con `EditorPrioridades`: un backup por ficha abierta) y avisa
   `prioridad_cambiada`; el Roster actualiza esa celda en el lugar.
@@ -22,8 +25,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication            # noqa: E402
 
-from app.ui.pj_modal.datos import ficha_pj           # noqa: E402
-from app.ui.pj_modal.modal import PRIO_NOTA, PjModal  # noqa: E402
+from app.ui.pj_pagina.datos import pagina_pj         # noqa: E402
+from app.ui.pj_pagina.hoy import PRIO_NOTA            # noqa: E402
+from app.ui.pj_pagina.pagina import PjPagina          # noqa: E402
 
 DB_REAL = Path(__file__).resolve().parents[3] / "db" / "danibod_zzz_v2.db"
 pytestmark = pytest.mark.skipif(not DB_REAL.is_file(), reason="sin la DB de dominio")
@@ -67,7 +71,8 @@ def _en_db(db):
 
 
 def _modal(con, db, nombre="Claret Flint"):
-    return PjModal(ficha_pj(con, _id(con, nombre)), db_path=db)
+    pid = _id(con, nombre)
+    return PjPagina(lambda: pagina_pj(con, pid), db_path=db)
 
 
 def _tildados(m):
@@ -83,11 +88,14 @@ def test_la_ficha_lee_la_prioridad_guardada(qapp, con, db):
     assert m.selector_prioridad.nota.text() == PRIO_NOTA["alta"]
 
 
-def test_va_a_la_izquierda_de_la_cruz_sin_taparla(qapp, con, db):
+def test_va_arriba_a_la_derecha_de_la_portada(qapp, con, db):
     m = _modal(con, db)
-    sel, cruz = m.selector_prioridad.geometry(), m.btn_cerrar.geometry()
-    assert sel.right() < cruz.left() and cruz.left() - sel.right() - 1 == 12
-    assert sel.top() == cruz.top() == 14
+    m.resize(1100, 740)
+    m.show()
+    qapp.processEvents()
+    sel, portada = m.selector_prioridad.geometry(), m.portada.rect()
+    assert portada.right() - sel.right() == 14 and sel.top() == 14
+    m.close()
 
 
 def test_un_click_guarda_avisa_y_dice_que_se_recalculo(qapp, con, db):
@@ -126,23 +134,24 @@ def test_en_solo_lectura_no_se_puede_tocar(qapp, con, db, monkeypatch):
     assert "solo lectura" in m.selector_prioridad.nota.text()
 
 
-def test_la_ventana_engancha_la_ficha_al_roster(qapp, monkeypatch):
-    """`MainWindow._abrir_ficha_pj` VERDADERO: la ficha que abre tiene que llegar al Roster. Solo
-    lectura (no escribe: el cambio se simula desde `exec`, y el Roster sólo actualiza la pantalla)."""
+def test_la_ventana_engancha_la_pagina_al_roster_y_vuelve(qapp, monkeypatch):
+    """`MainWindow._abrir_ficha_pj` VERDADERO: abre la página, que tiene que llegar al Roster, y
+    "←" vuelve. Solo lectura (el cambio de prioridad se simula con la señal)."""
     monkeypatch.setenv("DANIBOD_READONLY", "1")
     monkeypatch.setenv("DANIBOD_NO_AUTOSTART", "1")
-    from app.ui.pj_modal import modal as M
-
-    def exec_simulado(self):
-        self.prioridad_cambiada.emit(self.ficha.id, "alta")
-        return 0
-    monkeypatch.setattr(M.PjModal, "exec", exec_simulado)
     from app.main import MainWindow
     w = MainWindow()
     try:
+        w.show_view("roster")
         celda = next(c for c in w._roster_view.celdas() if c.celda.prioridad == "normal")
         w._abrir_ficha_pj(celda.celda.id)
+        pagina = w.pagina_actual()
+        assert isinstance(pagina, PjPagina) and w.current_view() is pagina
+        assert pagina.btn_volver.text() == "← Roster"
+        pagina.prioridad_cambiada.emit(celda.celda.id, "alta")
         assert celda.prioridad == "alta"
+        pagina.volver_pedido.emit()
+        assert w.current_view() is w._roster_view and w.pagina_actual() is None
     finally:
         w._tray.hide()
         w.close()

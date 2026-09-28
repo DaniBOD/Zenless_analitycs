@@ -33,6 +33,9 @@ que Daniel pidiera la página completa; con el espacio de la página ya no hacen
 - **Navegación.** Un click en un PJ del Roster cambia la ventana a la página del PJ, en el mismo
   `QStackedWidget` de las pestañas (`app/ui/shell/window.py`).
   - El menú lateral queda visible; **"← Roster"** arriba vuelve, y Escape también.
+    Al PJ también se llega desde Armas y desde el dueño de un disco (encontrado al planificar): el
+    "←" vuelve a **la vista de origen** ("← Roster", "← Armas", "← Discos"). Desde el modal del
+    disco, el modal se cierra antes de navegar.
   - Al volver, el Roster queda donde estaba.
   - La página se arma de cero en cada entrada: los datos siempre frescos.
 - **Paquete nuevo `app/ui/pj_pagina/`.** `PjModal` se retira: su contenido se porta y sus tests

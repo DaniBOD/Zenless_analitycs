@@ -324,28 +324,32 @@ class MainWindow(ShellWindow):
         )
 
     def _abrir_ficha_pj(self, agente_id: int):
-        """Click en una celda del roster → el modal de ese PJ. La ventana es la dueña de los
-        diálogos: la vista sólo pide la ficha."""
+        """Click en un PJ (Roster, Armas o el dueño de un disco) → la PÁGINA de ese PJ, que tapa la
+        vista hasta volver (SPEC 2026-09-28). La ventana es la dueña: la vista sólo la pide."""
         if self._ui_con is None:
             return
-        from app.ui.pj_modal.datos import ficha_pj
-        from app.ui.pj_modal.modal import PjModal
+        from app.ui.pj_pagina.datos import pagina_pj
+        from app.ui.pj_pagina.pagina import PjPagina
+        origen = {"roster": "Roster", "armas": "Armas", "discos": "Discos"}.get(
+            self.sidebar.active_key(), "Volver")
+        con = self._ui_con
         try:
-            ficha = ficha_pj(self._ui_con, agente_id)
+            if pagina_pj(con, agente_id) is None:
+                return
+            pagina = PjPagina(lambda: pagina_pj(con, agente_id), volver_texto=origen)
         except Exception:
-            log.exception("[roster] no se pudo armar la ficha del PJ %s", agente_id)
+            log.exception("[roster] no se pudo armar la página del PJ %s", agente_id)
             return
-        if ficha is not None:
-            modal = PjModal(ficha, parent=self)
-            # La prioridad se puede cambiar desde la ficha: el Roster actualiza esa celda.
-            roster = getattr(self, "_roster_view", None)
-            if roster is not None:
-                modal.prioridad_cambiada.connect(roster.prioridad_actualizada)
-            modal.exec()
+        pagina.volver_pedido.connect(self.volver)
+        # La prioridad se puede cambiar desde la ficha: el Roster actualiza esa celda.
+        roster = getattr(self, "_roster_view", None)
+        if roster is not None:
+            pagina.prioridad_cambiada.connect(roster.prioridad_actualizada)
+        self.mostrar_pagina(pagina)
 
     def _abrir_ficha_disco(self, disco_id: int):
-        """Click en una fila de Discos → el modal de ese disco. Desde ahí, click en el dueño abre
-        el modal de PJ encima (los dos son modales: al cerrar el de PJ se vuelve al disco)."""
+        """Click en una fila de Discos → el modal de ese disco. Desde ahí, click en el dueño cierra
+        el modal y va a la página de ese PJ ("← Discos" vuelve)."""
         if self._ui_con is None:
             return
         from app.ui.disco_modal.modal import DiscoModal
@@ -355,7 +359,7 @@ class MainWindow(ShellWindow):
         except Exception:
             log.exception("[discos] no se pudo armar la ficha del disco %s", disco_id)
             return
-        modal.pj_pedido.connect(self._abrir_ficha_pj)
+        modal.pj_pedido.connect(lambda pid: (modal.accept(), self._abrir_ficha_pj(pid)))
         modal.exec()
 
     def _pedir_refresco(self, *_):
