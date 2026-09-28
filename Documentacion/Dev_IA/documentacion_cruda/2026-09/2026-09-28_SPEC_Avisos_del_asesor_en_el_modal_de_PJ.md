@@ -1,6 +1,7 @@
 # SPEC · Los avisos del asesor en el modal de PJ (2026-09-28)
 
-**Estado:** diseño aprobado por Daniel el 2026-09-28 ("Columna 3, abajo").
+**Estado:** **hecho** el 2026-09-28 (ver "Implementación"). Diseño aprobado por Daniel ese día
+("Columna 3, abajo").
 
 ## Qué pidió Daniel
 
@@ -45,6 +46,26 @@ cada aviso se muda junto a su sección.
 2. `FichaPJ.avisos` + recuadro, con sus tests y sabotajes.
 3. Verificación visual: el modal renderizado fuera de pantalla con Anby (2 ℹ️), Grace (1 ℹ️) y un
    PJ sin avisos.
+
+## Implementación (2026-09-28)
+
+| paso | commit | qué |
+|---|---|---|
+| SPEC | `a429682` | este documento |
+| recuadro | `88389da` | `FichaPJ.avisos` (`avisos_del_pj`) + recuadro "Asesor" + `test_pj_modal_asesor.py` |
+
+### Lo que encontraron las verificaciones
+
+- **Seis sabotajes, los seis en rojo**: sin orden (los ⚠️ quedan detrás), falla tomada como "sin
+  avisos", avisos no pedidos, recuadro sin agregar, borde siempre gris, `None` mostrado como
+  "Sin avisos.". El sha de la DB, igual antes y después.
+- **Verificación visual** con la DB real en sólo lectura (Anby, Miyabi, Grace, Ellen, y Ellen con un
+  ⚠️ simulado de DEF%). El borde inferior del recuadro queda entre los 489 y los 532 px de 640:
+  entra sin scroll, con unos 100 px libres.
+- El render fuera de pantalla sale en cuadraditos si Qt no encuentra fuentes:
+  `QT_QPA_FONTDIR=C:/Windows/Fonts`.
+- Un "Sin avisos: coincide con la guía" habría mentido para un PJ sin guía, que tampoco tiene avisos:
+  el texto quedó en "Sin avisos.".
 
 ## Fuera de alcance
 
