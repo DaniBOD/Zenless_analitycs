@@ -166,3 +166,31 @@ def test_sin_4pc_no_se_puede_elegir_el_2pc(qapp, con, db):
     assert not v.elegir_2pc(_set(con, "Voz Astral"))
     assert v.mensaje.text() == "Elegí primero el 4pc." and _sha(db) == antes
 
+
+# --- principales -------------------------------------------------------------------------------
+
+def test_agregar_un_principal_fuera_de_la_guia_y_volver(qapp, con, db):
+    a = _id(con, "Ellen")
+    v = _pagina(con, db, "Ellen").ventana("principales")
+    assert v.botones[(4, "Daño Crítico")].isChecked() and v.botones[(4, "Daño Crítico")].text() == "Daño Crítico · guía"
+    assert v.alternar(4, "Prob. Crítica")
+    assert leer_eleccion_pj(con, a).principales == {4: ("Daño Crítico", "Prob. Crítica")}
+    assert v.botones[(4, "Prob. Crítica")].isChecked(), "se redibujó leyendo la DB"
+    assert any(t.startswith("Prob. Crítica en el slot 4 no le sirve a Ellen") for t in v.textos_visibles())
+    assert v.alternar(4, "Prob. Crítica")                     # igual a la guía: sin fila
+    assert leer_eleccion_pj(con, a).principales == {}
+
+
+def test_apagar_el_unico_no_deja_el_slot_vacio(qapp, con, db):
+    v = _pagina(con, db, "Ellen").ventana("principales")
+    antes = _sha(db)
+    v.botones[(4, "Daño Crítico")].click()                    # Qt lo destilda; no hay nada que guardar
+    assert _sha(db) == antes
+    assert v.botones[(4, "Daño Crítico")].isChecked()
+    assert "no puede quedar sin principales" in v.mensaje.text()
+
+
+def test_el_slot_5_solo_ofrece_el_bono_del_elemento(qapp, con, db):
+    v = _pagina(con, db, "Ellen").ventana("principales")
+    assert (5, "Bono Daño Hielo") in v.botones and (5, "Bono Daño Fuego") not in v.botones
+
