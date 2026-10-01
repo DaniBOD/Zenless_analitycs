@@ -179,3 +179,14 @@ def test_desde_el_modal_del_disco_se_cierra_el_modal_y_vuelve_a_discos(qapp, mon
         w._tray.hide()
         w.close()
         w.deleteLater()
+
+
+def test_el_origen_de_los_sets_dice_de_donde_sale_el_2pc(qapp, con, db):
+    """Con el 4pc equipado, el motor toma el 2pc equipado o, si no hay uno completo puesto, el
+    recomendado de la guía. Ellen lleva los dos; Anby lleva Monarca sin un 2pc completo."""
+    ellen = _pagina(con, db, "Ellen")
+    assert "los dos, los que tiene equipados" in ellen.textos_visibles()
+    anby = _pagina(con, db, "Anby")
+    assert "el 4pc que tiene equipado · el 2pc, el recomendado de la guía" in anby.textos_visibles()
+    ellen.close()
+    anby.close()

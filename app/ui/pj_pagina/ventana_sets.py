@@ -88,6 +88,9 @@ class VentanaSets(VentanaFlotante):
         v.setSpacing(4)
         v.addWidget(_caps("Otros sets · fuera de la guía", T.TEXT_MUTED))
         lista = QWidget()
+        # El viewport de un QScrollArea no hereda el fondo: sin esto, la lista sale blanca.
+        lista.setObjectName("lista_sets")
+        lista.setStyleSheet(f"QWidget#lista_sets {{ background: {T.BG_PANEL}; }}")
         lv = QVBoxLayout(lista)
         lv.setContentsMargins(0, 0, 0, 0)
         lv.setSpacing(3)

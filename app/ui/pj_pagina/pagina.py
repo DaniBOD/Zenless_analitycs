@@ -40,7 +40,7 @@ log = logging.getLogger(__name__)
 
 ORIGEN_BUILD = {
     "declarado": "declarado por vos",
-    "equipado": "el 4pc que tiene equipado (el 2pc, el equipado o el recomendado de la guía)",
+    "equipado": "el 4pc que tiene equipado",
     "guia_fuera": "el primero de la guía: lo equipado no está en la guía",
     "guia_sin_4pc": "el primero de la guía: no tiene un 4pc completo",
 }
@@ -222,7 +222,20 @@ class PjPagina(QWidget):
             return [("Sin 4pc: ni declarado, ni equipado completo, ni en la guía.", False)]
         return [(f"4pc {self._nombre_set(f.set_4p_id)} · 2pc {self._nombre_set(f.set_2p_id)}",
                  f.origen_build == "declarado"),
-                (ORIGEN_BUILD.get(f.origen_build, "sin build"), False)]
+                (self._origen_sets(), False)]
+
+    def _origen_sets(self) -> str:
+        """De dónde sale el build. Con el 4pc equipado, el 2pc puede ser el equipado o, si no hay un
+        2pc completo puesto, el recomendado de la guía: se dice cuál (Anby lleva Monarca sin 2pc)."""
+        f = self.datos.foto
+        if f.origen_build != "equipado":
+            return ORIGEN_BUILD.get(f.origen_build, "sin build")
+        if f.set_2p_id is None:
+            return "el 4pc que tiene equipado · sin 2pc"
+        puestos = {nombre for nombre, piezas in self.ficha.sets if piezas >= 2}
+        if self._nombre_set(f.set_2p_id) in puestos:
+            return "los dos, los que tiene equipados"
+        return "el 4pc que tiene equipado · el 2pc, el recomendado de la guía"
 
     def _lineas_principales(self) -> list[tuple[str, bool]]:
         f = self.datos.foto
