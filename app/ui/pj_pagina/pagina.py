@@ -320,3 +320,10 @@ class PjPagina(QWidget):
 
     def textos_de_stats(self) -> dict[str, str]:
         return self.hoy.textos_de_stats()
+
+
+
+# Las ventanas flotantes no importan esta página (la reciben): se registran acá, al final.
+from app.ui.pj_pagina.ventana_secundarios import VentanaSecundarios  # noqa: E402
+
+PjPagina.VENTANAS.update(secundarios=VentanaSecundarios)
