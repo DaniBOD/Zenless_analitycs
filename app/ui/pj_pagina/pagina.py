@@ -324,8 +324,9 @@ class PjPagina(QWidget):
 
 
 # Las ventanas flotantes no importan esta página (la reciben): se registran acá, al final.
+from app.ui.pj_pagina.ventana_fijos import VentanaFijos  # noqa: E402
 from app.ui.pj_pagina.ventana_principales import VentanaPrincipales  # noqa: E402
 from app.ui.pj_pagina.ventana_secundarios import VentanaSecundarios  # noqa: E402
 from app.ui.pj_pagina.ventana_sets import VentanaSets  # noqa: E402
 
-PjPagina.VENTANAS.update(secundarios=VentanaSecundarios, sets=VentanaSets, principales=VentanaPrincipales)
+PjPagina.VENTANAS.update(secundarios=VentanaSecundarios, sets=VentanaSets, principales=VentanaPrincipales, fijos=VentanaFijos)

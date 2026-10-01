@@ -194,3 +194,57 @@ def test_el_slot_5_solo_ofrece_el_bono_del_elemento(qapp, con, db):
     v = _pagina(con, db, "Ellen").ventana("principales")
     assert (5, "Bono Daño Hielo") in v.botones and (5, "Bono Daño Fuego") not in v.botones
 
+
+# --- fijos -------------------------------------------------------------------------------------
+
+def _fijo(con, nombre, stat):
+    from app.core.ficha_pj import fijos_de_la_ficha
+    from app.db.repositories import AgentRepo
+    agentes_cambiaron()
+    return {f.stat: f for f in fijos_de_la_ficha(con, AgentRepo(con).get_by_id(_id(con, nombre)))}.get(stat)
+
+
+def test_cambiar_desactivar_y_volver_a_la_guia(qapp, con, db):
+    v = _pagina(con, db, "Anby").ventana("fijos")
+    assert v.renglones["prob_critico"] == "tiene 48,2 · faltan 1,8 · el motor lo busca"
+    assert v.cambiar("prob_critico", 55)
+    f = _fijo(con, "Anby", "prob_critico")
+    assert (f.objetivo, f.origen, f.de_la_guia) == (55, "tuyo", 50)
+    assert v.spins["prob_critico"].value() == 55 and ("prob_critico", "↺") in v.botones
+    assert v.desactivar("prob_critico")
+    assert _fijo(con, "Anby", "prob_critico").objetivo is None
+    assert v.renglones["prob_critico"] == "desactivado (guía: 50)"
+    v.botones[("prob_critico", "reactivar")].click()
+    f = _fijo(con, "Anby", "prob_critico")
+    assert (f.objetivo, f.origen) == (50, "set")
+
+
+def test_agregar_uno_nuevo_y_el_combo_no_repite(qapp, con, db):
+    v = _pagina(con, db, "Anby").ventana("fijos")
+    ofrecidos = [v.combo_nuevo.itemData(i) for i in range(v.combo_nuevo.count())]
+    assert "prob_critico" not in ofrecidos and "ataque" in ofrecidos
+    assert v.agregar("ataque", 2000)
+    f = _fijo(con, "Anby", "ataque")
+    assert (f.objetivo, f.origen, f.de_la_guia) == (2000, "tuyo", None)
+    assert "ataque" not in [v.combo_nuevo.itemData(i) for i in range(v.combo_nuevo.count())]
+
+
+def test_editar_sin_cambiar_no_escribe_y_un_cero_no_se_guarda(qapp, con, db):
+    v = _pagina(con, db, "Anby").ventana("fijos")
+    antes = _sha(db)
+    v.spins["prob_critico"].editingFinished.emit()             # mismo valor: nada
+    assert _sha(db) == antes and not list(db.parent.glob("copia.backup_preficha_*.db"))
+    assert not v.cambiar("prob_critico", 0)
+    assert _sha(db) == antes and "mayor que 0" in v.mensaje.text()
+
+
+def test_despues_de_editar_la_ficha_y_el_motor_dicen_lo_mismo(qapp, con, db):
+    from app.core.ficha_pj import fijos_de_la_ficha
+    from app.db.repositories import AgentRepo
+    v = _pagina(con, db, "Anby").ventana("fijos")
+    v.cambiar("prob_critico", 55)
+    v.agregar("ataque", 2000)
+    agentes_cambiaron()
+    anby = AgentRepo(con).get_by_id(_id(con, "Anby"))
+    vivos = {f.stat: f.objetivo for f in fijos_de_la_ficha(con, anby) if f.objetivo is not None}
+    assert vivos == anby.stats_fijos == {"prob_critico": 55, "ataque": 2000}
