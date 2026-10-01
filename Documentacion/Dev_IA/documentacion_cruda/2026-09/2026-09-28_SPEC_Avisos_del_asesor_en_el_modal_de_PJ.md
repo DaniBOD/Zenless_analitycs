@@ -1,7 +1,9 @@
 # SPEC · Los avisos del asesor en el modal de PJ (2026-09-28)
 
 **Estado:** **hecho** el 2026-09-28 (ver "Implementación"). Diseño aprobado por Daniel ese día
-("Columna 3, abajo").
+("Columna 3, abajo"). **Reemplazado** el mismo día por la página del PJ
+(`2026-09-28_SPEC_Pagina_del_PJ_con_la_declaracion_de_sets_y_stats.md`): cada aviso va debajo de su
+bloque y el recuadro se retiró (commit `203cf09`).
 
 ## Qué pidió Daniel
 

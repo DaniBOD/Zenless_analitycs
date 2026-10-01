@@ -1,5 +1,8 @@
 # Brief Claude Design — La ficha del PJ: sets y stats (modal de PJ)
 
+> ✅ **Resuelto sin mockup** (SPEC 2026-09-28, página del PJ): la ficha es una página con la build
+> declarada y cuatro ventanas flotantes. Este brief queda como referencia del pedido.
+
 > **Qué se pide:** una sección del **modal de PJ** donde el usuario elige, para cada PJ, **sus sets
 > (4pc + 2pc), los principales de los discos 4-6, la prioridad de los secundarios y sus stats
 > fijos**, con la guía a la vista y avisos cuando algo no tiene sentido.

@@ -1,6 +1,7 @@
 # SPEC · La página del PJ, con la declaración de sets y stats (2026-09-28)
 
-**Estado:** diseño aprobado por Daniel el 2026-09-28, por partes ("si me cierra", tres veces).
+**Estado:** **hecho** (ver "Implementación"). Diseño aprobado por Daniel el 2026-09-28, por partes
+("si me cierra", tres veces); plan en `2026-09-28_PLAN_Pagina_del_PJ.md`.
 Reemplaza, sin esperar el mockup, la pantalla que pedía `BRIEF_ficha_sets_y_stats.md`.
 
 ## Qué pidió Daniel
@@ -151,6 +152,41 @@ calcular: la página lo dice. PJ sin guía: los bloques dicen "sin guía todaví
 7. Ventana de fijos.
 8. Verificación visual y cierre. El SPEC con commits y lo medido; `BRIEF_ficha_sets_y_stats.md`
    marcado "resuelto sin mockup (SPEC 2026-09-28)"; el SPEC de los avisos, con que el recuadro fue reemplazado.
+
+## Implementación
+
+| tarea | commit | qué |
+|---|---|---|
+| SPEC | `7415d90` | este documento |
+| plan | `89ce086` | 8 tareas |
+| 1 | `a3d2a38` | `renglones_2pc`, `fijos_de_la_ficha`, `principales_validos` |
+| 2 | `223f3cc` | `ShellWindow.mostrar_pagina` / `volver` |
+| 3 | `203cf09` | la página (`app/ui/pj_pagina/`), el modal retirado, "←" según el origen |
+| 4 | `a5b2ee1` | `VentanaFlotante` y la ventana de secundarios |
+| 5 | `3cc30ff` | ventana de sets |
+| 6 | `1af7b78` | ventana de principales |
+| 7 | `77fdc93` | ventana de fijos |
+| 8 | `0d9d53b` | lo que encontró la verificación visual |
+
+### Lo que encontraron las verificaciones
+
+- **Sabotajes:** 6 (lecturas), 4 (shell), 8 (página), 16 (ventanas) y 2 (origen de los sets), todos
+  en rojo; el sha de la DB, igual en cada corrida.
+- **Dos sabotajes salieron verdes en la Tarea 1** porque los datos reales no ejercían el caso:
+  ningún PJ empata kit = set, y todos los que usan Monarca son Aturdimiento. Se agregaron dos tests
+  armados en la copia.
+- **Un test salteaba** ("todos los PJs tienen guía"): ahora le borra la guía a Anby en la copia. Un
+  test que saltea no prueba nada (A2).
+- **Un `git add` falló** (un archivo ya borrado en la lista) y el commit de la Tarea 3 salió con
+  sólo los dos borrados. Se vio en el `--stat` y se corrigió con `--amend` antes del push.
+- **Verificación visual:**
+  - el nombre salía cortado (selector de prioridad y la identidad apilados en los 200 px del hero:
+    el selector vuelve a ir posicionado);
+  - "el que tiene equipado" mentía para Anby, que lleva Monarca sin un 2pc completo: el motor toma
+    el 2pc recomendado de la guía, y ahora la página lo dice;
+  - la lista "Otros sets" salía blanca (el viewport de un `QScrollArea` no hereda el fondo).
+- **Despertar:** en la página va como texto ("Nivel 6/6 · nombre") en vez de la grilla nv1…nv6, por
+  espacio. La información es la misma.
 
 ## Fuera de alcance
 
