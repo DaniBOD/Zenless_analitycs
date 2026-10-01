@@ -119,3 +119,50 @@ def test_una_escritura_que_falla_lo_dice_sin_romper(qapp, con, db):
     assert v.mensaje.text().startswith("No se guardó: CHECK constraint failed")
     assert v.fila_de["DEF%"] == 0
 
+
+# --- sets --------------------------------------------------------------------------------------
+
+def _set(con, nombre):
+    return con.execute("SELECT id FROM disc_sets WHERE nombre = ?", (nombre,)).fetchone()[0]
+
+
+def test_elegir_el_4pc_lleva_el_2pc_al_recomendado_y_los_renglones_en_orden(qapp, con, db):
+    a, monarca = _id(con, "Ju Fufu"), _set(con, "Monarca del Pináculo")
+    v = _pagina(con, db, "Ju Fufu").ventana("sets")
+    assert v.elegir_4pc(monarca)
+    e = leer_eleccion_pj(con, a)
+    assert (e.set_4p_id, e.set_2p_id) == (monarca, _set(con, "Disco Sacudestrellas"))
+    orden = [_set(con, n) for n in ("Disco Sacudestrellas", "Tecno Pícido")]
+    assert list(v.botones_2pc)[:2] == orden
+    assert set(list(v.botones_2pc)[2:4]) == {_set(con, "Voz Astral"), _set(con, "Punk Hormonal")}
+    assert v.botones_2pc[orden[0]].text() == "Disco Sacudestrellas (recomendado)"
+    assert monarca not in v.botones_2pc, "el set del 4pc no se ofrece como 2pc"
+    assert "2px solid" in v.botones_4pc[monarca].styleSheet()
+
+
+def test_elegir_el_2pc_guarda_con_el_4pc_vigente(qapp, con, db):
+    a, monarca, voz = _id(con, "Ju Fufu"), _set(con, "Monarca del Pináculo"), _set(con, "Voz Astral")
+    v = _pagina(con, db, "Ju Fufu").ventana("sets")
+    v.elegir_4pc(monarca)
+    assert v.elegir_2pc(voz)
+    e = leer_eleccion_pj(con, a)
+    assert (e.set_4p_id, e.set_2p_id) == (monarca, voz)
+
+
+def test_un_4pc_fuera_de_la_guia_avisa_y_automatico_lo_borra(qapp, con, db):
+    a = _id(con, "Ju Fufu")
+    v = _pagina(con, db, "Ju Fufu").ventana("sets")
+    fuera = next(s for s, b in v.botones_4pc.items() if b.toolTip() == "Fuera de la guía.")
+    assert v.elegir_4pc(fuera)
+    assert any("fuera de la guía de Ju Fufu" in t for t in v.textos_visibles())
+    assert v.elegir_4pc(None)
+    assert leer_eleccion_pj(con, a).set_4p_id is None
+
+
+def test_sin_4pc_no_se_puede_elegir_el_2pc(qapp, con, db):
+    v = _pagina(con, db, "Ju Fufu").ventana("sets")
+    antes = _sha(db)
+    v.datos.foto.set_4p_id = None
+    assert not v.elegir_2pc(_set(con, "Voz Astral"))
+    assert v.mensaje.text() == "Elegí primero el 4pc." and _sha(db) == antes
+
