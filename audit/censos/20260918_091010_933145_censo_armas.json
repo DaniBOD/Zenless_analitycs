@@ -1,0 +1,19 @@
+{
+  "schema": "censo_armas/1",
+  "resumen": {
+    "entidad": "armas",
+    "estado": "en_curso",
+    "total_pantalla": 52,
+    "registrados": 2,
+    "faltan": 50,
+    "excedente": 0,
+    "libres": 0,
+    "con_dueno": 2,
+    "sin_resolver": 0,
+    "provisorios": 0,
+    "fuera_de_catalogo": 0,
+    "avisos": [],
+    "motivo_incompleto": "faltan 50 de 52: o no se recorrieron, o hay copias del mismo W-Engine que se vieron sin poder localizar la selección de la grilla — sin esa posición, dos copias idénticas cuentan como una"
+  },
+  "fuera_de_catalogo": []
+}
