@@ -72,3 +72,56 @@ fuente, o se acota (peor/mejor caso) sin pesos.
 1. Aprobar el SPEC de S22 (`2026-10-02_SPEC_Obtenido_guarda_los_discos.md`, puntos 1-5) y su plan.
 2. Diagnosticar el bug 3 con el log.
 3. Decidir con Daniel la predicción de "probar".
+
+---
+
+# Sesión 2 · QA en vivo del SPEC del "Obtenido" (2026-10-02, 10:22 → 11:58)
+
+App en modo escritura con los 5 commits del SPEC activos (`d11a0b2`…`13590b7`). Correcciones de la
+DB al cierre: `audit/correcciones_farmeo_claret_20261002.md` §4.
+
+## Lo que se verificó en vivo
+
+| paso del SPEC | visto | resultado |
+|---|---|---|
+| S22 guarda lo que se clickea | ~20 `s22_drop_insert` (#420…#461) | ✅ |
+| volver al Obtenido no reinserta | "ya guardado en esta tanda" (#422, #426, #461) | ✅ (salvo #444, ver bug 1) |
+| la mejora desde el "Ver" se confirma | #420, #443 | ✅ |
+| S9 confirma la mejora | #432, #434, #449, #423, #404 | ✅ (2 s en el camino feliz) |
+| S17 no pisa la fila con otro disco del mismo set | Remielle s3 (#3 → #463), Claret s1 (#396 → #465) | ✅ el viejo conserva SUS stats |
+| el libre recién equipado se adopta | — | ❌ no se armó el aviso (bug 4) → duplicados #443/#463, #404/#465 |
+| refrescos de S17 sin cambio | Remielle 6/6, Claret 6/6 | ✅ `s17_update` |
+
+## Bugs (en orden de lo que cuestan en datos)
+
+1. **El Obtenido leyó un roll de menos** ("Maestría de Anomalía 18" con 0 rolls) → la memoria de la
+   tanda no reconoció al #443 mejorado → #444. **ARREGLADO** en la sesión (`b177e4e`): rolls desde
+   el valor con `VALOR_POR_MEJORA`. Decisión de Daniel ("hacé el 1").
+2. **Mejoras que no se confirman** → la fila queda vieja (#422, #426, #431). Tres causas distintas:
+   - S10 leyó el PRE ya en Nv 3/4 (mejora rápida: 2-3 s en S10) → "no subió de nivel";
+   - el "Ver" descartado por confianza 0,69 (< 0,70) dos veces seguidas;
+   - **la captura se reinició** (10:36:36, 10:39:25, 10:53:12; `controller.stop`) y el pendiente
+     se perdió. ¿Lo hizo Daniel o algo lo dispara solo? Sin confirmar.
+   Daniel: "a veces no detecta la mejora porque no me dan materiales de vuelta" — a contrastar con
+   estas tres causas antes de teorizar otra.
+   **Arreglo propuesto (no hecho):** cuando el Obtenido muestra un disco de la tanda más crecido,
+   actualizar esa fila (es de la tanda y `es_el_mismo_disco` lo confirma).
+3. **Demora de 37 s** en confirmar el #443 (el "Ver" lo vio en Nv 15 a las 10:33:27, la fila se
+   actualizó a las 10:34:04): mientras tanto la card mostró DESCARTAR sobre el Nv 0.
+4. **La grilla de selección leyó "equipado · dueño incierto" un disco LIBRE** (#443, 10:55:21) → no
+   se armó "libre → PJ", S17 hizo `s17_swap` y el disco quedó dos veces. Pasó también con Claret
+   s1 (#404 → #465). Es el caso común de "equipar lo que sugiere el motor".
+   Opciones: armar el aviso también con "equipado · dueño incierto" + botón "Reemplazar", o leer
+   mejor el badge de la grilla.
+5. **El resumen de la mejora no muestra el substat nuevo** (`_roll_diff`: entra con 0 rolls → delta
+   0) → "nivel 0→4 · sin cambio de roll" con DEF% recién destrabado. Sólo el mensaje.
+6. **Stats de Claret en S18** (10:58:53): Prob. Crítica 112,3 % (¿12,3 %?), ATK y Recarga sin leer,
+   y el log igual dice "11/11 stats capturados". Velina, leída justo antes, salió perfecta →
+   hipótesis: el perfil de Armero (LAC/AF) corre las filas.
+7. **Ruido conocido:** el "Obtenido" de la moneda del evento (gastar baterías) entra como S24 y se
+   abstiene ("sin tanda de desmontaje abierta"). Correcto; aclarado por Daniel.
+
+## Siguiente
+
+Prioridad por datos: bug 4 (duplicado en cada equipamiento sugerido) y bug 2 (el arreglo propuesto
+del Obtenido + diagnosticar los reinicios). Después 3, 6 y 5.

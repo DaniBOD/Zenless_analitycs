@@ -162,6 +162,14 @@ Hallazgos al implementar:
   ve como OTRO disco (antes, con sólo el set, se pisaba igual). Lo protege la madurez del
   aggregator; si aparece, el QA lo muestra como `s17_swap` donde se esperaba `s17_update`.
 
+## QA en vivo (2026-10-02, 10:22 → 11:58)
+
+Detalle en `2026-10-02_QA_en_vivo_farmeo_Claret.md` (sesión 2). Puntos 1, 3, 4, 5 y 6 verificados en
+vivo (el 6 en su parte central: el viejo ya no se pisa). Falló la adopción del libre recién equipado
+—la grilla leyó "equipado · dueño incierto" un disco libre y no se armó el aviso— y quedaron
+mejoras sin confirmar por tres causas (S10 tarde, "Ver" con confianza 0,69, reinicios de la
+captura). Arreglado en la sesión: los rolls del Obtenido desde el valor (`b177e4e`).
+
 ## Reglas
 
 RNF-01 (el camino nuevo escribe la DB: backup, transacción, `foreign_key_check`,
