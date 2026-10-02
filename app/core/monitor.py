@@ -234,6 +234,9 @@ _S5_EVOKED_TTL_S = 600.0
 # S9, así que la espera real es varias veces mayor. En S17 no se cambió (no tiene baseline y no está
 # en el camino del censo); en S9 los libres dejaron de entrar al warmup.
 _S17_OWNER_MIN_SAMPLES = 4
+# Tope de fichas de `_s17_trace` (una por pasada): sobra para ver el arranque de un disco, que es
+# donde vive la duda, y acota la línea del log.
+_S17_TRACE_MAX = 24
 _S17_WARM_CADENCE_MS = 100     # mientras calienta, re-chequear el voto rápido (no esperar 1s)
 # Despacho rápido de S9 (2026-09-16): pasadas SEGUIDAS en que la firma del disco recién visto puede
 # seguir cambiando antes de abandonar la confirmación y volver a la cadencia de siempre. La firma de
@@ -673,6 +676,10 @@ class Monitor:
         # arbitra LIBRE) y las pasadas del warmup. Los nombres `_s17_*` históricos
         # quedan como properties de compatibilidad (tests + call sites).
         self._s17_vote = OwnerVoteAccumulator()
+        # Traza por pasada del loop rápido (una ficha grid+detalle por frame, ver
+        # `_s17_traza`). Se resetea con la votación. Es el dato que faltó para diagnosticar el
+        # libre leído "equipado · dueño incierto" (QA 2026-10-02, Remielle s3 → duplicado).
+        self._s17_trace: list[str] = []
         # Último recorte BUENO del detalle-badge para el disco actual: (firma, crop). El recorte
         # es intermitente —Hough cierra el círculo en unos frames y en otros no— y la cosecha de
         # rescate corría sobre el frame de la decisión, que podía ser justo uno de los malos:
@@ -3123,6 +3130,7 @@ class Monitor:
         self._s17_det_crop = None
         self._s17_rescue_pending = None
         self._s17_vote.reset()
+        self._s17_trace = []
         self._s17_warming = False
         self._grid_diag_counts.clear()
         # Botón de acción: olvidar la lectura y su gate. El `_pending_swap` NO se toca — sobrevive
@@ -5518,6 +5526,7 @@ class Monitor:
         if self._s17_owner_sig is None or not self._sig_close(sig, self._s17_owner_sig):
             self._s17_owner_sig = sig          # disco nuevo → empezar votación limpia
             self._s17_vote.reset()
+            self._s17_trace = []
             self._s17_det_crop = None          # la cara guardada era del disco anterior
             self._s17_rescue_pending = None    # y el rescate pendiente, del disco anterior
             if self._id_diag_on:
@@ -5529,6 +5538,7 @@ class Monitor:
         self._s17_vote.passes += 1
         badge = crop_grid_selected_badge(frame)
         g_name, g_conf = None, 0.0
+        d_ficha = "-"                                # detalle: - sin recorte · t texto · c cara
         if badge is None:
             self._s17_vote.mark_absent(_SURF_GRID)   # gate L.7.2: sin avatar (libre/NOLOC)
             self._dump_grid_diag(frame, None, None, 0.0, False, sig)   # grid no localizó (NOLOC)
@@ -5554,7 +5564,10 @@ class Monitor:
             # nombrar (gap de refs) cuenta como presente igual. Antes se exigía
             # conf/margen del matcher → avatar no-nombrable contaba ausente → falso
             # LIBRE (Jane desde Velina, QA 2026-07-18).
-            if self._identifier.s17_detail_is_face(det):
+            es_cara = self._identifier.s17_detail_is_face(det)
+            d_ficha = "c" if es_cara else "t"
+            self._dump_det_diag(det, es_cara, d_name, d_conf, sig)
+            if es_cara:
                 self._s17_vote.mark_present(_SURF_DET)  # avatar de dueño (nombrable o no)
                 # Guardar el recorte para la cosecha de rescate: es CARA (no el texto '(N)') y
                 # es de ESTE disco. Que el matcher no sepa nombrarla es justamente el caso que
@@ -5565,6 +5578,10 @@ class Monitor:
                 self._s17_vote.mark_absent(_SURF_DET)   # crop espurio (texto) → ausente
             if d_name:
                 self._s17_vote.vote(_SURF_DET, d_name, d_conf)
+                d_ficha = d_ficha.upper()            # T/C: además votó a alguien
+        if len(self._s17_trace) < _S17_TRACE_MAX:
+            g_ficha = "n" if badge is None else ("G" if g_name else "g")
+            self._s17_trace.append(g_ficha + d_ficha)
         # Instrumentación L.0 (gated): desglose por-disco grid/detalle (loc + match + voto).
         if self._id_diag_on and self._id_diag:
             d = self._id_diag
@@ -5579,6 +5596,43 @@ class Monitor:
                 if d_name:
                     d["det_match"] += 1
                     d["det_votes"][d_name] = d["det_votes"].get(d_name, 0.0) + float(d_conf)
+
+    def _s17_traza(self) -> str:
+        """La evidencia que llevó a "dueño incierto", frame por frame, en una línea corta.
+
+        Una ficha por pasada del loop rápido: la GRILLA (`n` sin avatar localizado, `g` localizó
+        y no votó, `G` votó) y el DETALLE (`-` sin recorte, `t` texto, `c` cara; en mayúscula si
+        además votó). Más los votos acumulados. Distingue de un vistazo las hipótesis del
+        duplicado de Remielle (QA 2026-10-02): una cara sólo en las primeras fichas (frame de
+        transición con el avatar del disco anterior) contra una cara sostenida (el disco SÍ tiene
+        dueño, o el clasificador ve cara donde no hay)."""
+        def _votos(v):
+            return ",".join(f"{k}:{x:.2f}" for k, x in sorted(v.items(), key=lambda kv: -kv[1])) or "-"
+        return (f"traza={' '.join(self._s17_trace) or '-'} "
+                f"votos grid=[{_votos(self._s17_grid_votes)}] det=[{_votos(self._s17_det_votes)}]")
+
+    def _dump_det_diag(self, det, es_cara: bool, name, conf: float, sig) -> None:
+        """El recorte del DETALLE-badge con su veredicto (cara/texto, voto), gated por
+        `DANIBOD_GRID_DIAG` como `_dump_grid_diag` y con el mismo tope por disco. Ese volcado sólo
+        guardaba la grilla, y la presencia que decide LIBRE es la del detalle. No toca la DB."""
+        import os
+        d = os.environ.get("DANIBOD_GRID_DIAG")
+        if not d or det is None or not getattr(det, "size", 0):
+            return
+        try:
+            import hashlib
+            import cv2
+            from pathlib import Path
+            key = "det_" + hashlib.md5(repr(sig).encode()).hexdigest()[:8]
+            cnt = self._grid_diag_counts.get(key, 0)
+            if cnt >= 12:
+                return
+            self._grid_diag_counts[key] = cnt + 1
+            outdir = Path(d); outdir.mkdir(parents=True, exist_ok=True)
+            tag = ("cara" if es_cara else "texto") + "_" + (name or "none").replace(" ", "")
+            cv2.imwrite(str(outdir / f"{key}_{cnt:02d}_{tag}_{conf:.2f}.png"), det)
+        except Exception:
+            log.debug("det_diag dump falló", exc_info=True)
 
     def _dump_grid_diag(self, frame, badge, name, conf: float, rejected: bool, sig) -> None:
         """Diagnóstico de recortes de badge S17 (gated DANIBOD_GRID_DIAG). Por cada
@@ -5876,7 +5930,8 @@ class Monitor:
                 disc.equip_libre = False
                 self._log_s17_assign(
                     ("presencia_incierto",),
-                    "[S17] equipado · dueño incierto (avatar visto, no identificado).",
+                    "[S17] equipado · dueño incierto (avatar visto, no identificado) · %s",
+                    self._s17_traza(),
                 )
                 return
             disc.equip_pj_visual = None
@@ -5932,7 +5987,8 @@ class Monitor:
                 return
             disc.equip_pj_visual = None
             disc.equip_libre = False
-            self._log_s17_assign(("grid_owner", "?"), "[grilla] disco equipado · dueño incierto.")
+            self._log_s17_assign(("grid_owner", "?"), "[grilla] disco equipado · dueño incierto · %s",
+                                 self._s17_traza())
 
     def _set_latch_assignment(self, disc: DiscParsed, latch: str, conf: float, sim_str: str) -> None:
         """Asigna el disco equipado al latch (trust-latch) + log."""

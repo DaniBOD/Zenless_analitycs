@@ -2535,3 +2535,60 @@ def test_en_readonly_no_se_da_de_baja_nada(syncer_db, monkeypatch):
     con = sqlite3.connect(str(syncer_db))
     assert con.execute("SELECT COUNT(*) FROM inventory_discs WHERE descartado=1").fetchone()[0] == 0
     con.close()
+
+
+def test_dueno_incierto_loguea_la_traza_frame_por_frame(monkeypatch, caplog):
+    """QA 2026-10-02 (Remielle s3): un disco LIBRE salió "equipado · dueño incierto" y no quedó
+    con qué saber por qué. La línea lleva ahora la evidencia por pasada: grilla (n/g/G) +
+    detalle (-/t/c, mayúscula si votó) y los votos acumulados."""
+    import logging
+    import numpy as np
+    import app.core.monitor as mon
+    from app.core.monitor import Monitor
+    monkeypatch.setattr(mon, "crop_grid_selected_badge",
+                        lambda f: np.zeros((40, 40, 3), np.uint8))   # grid ve algo, no matchea
+    caras = iter([np.zeros((40, 40, 3), np.uint8), None, None])     # cara SÓLO en la primera
+    monkeypatch.setattr(mon, "crop_detail_badge", lambda f: next(caras, None))
+    monkeypatch.setattr(Monitor, "_s17_disc_signature", staticmethod(lambda f: _sig(10)))
+    m = _monitor()
+    m._identifier = _StubIdent(sim=0.40, owner=None, det_owner=None)
+    m._last_agent_name = "Zhu Yuan"
+    m._s17_last_slot = 2                     # ya en el slot: es un CANDIDATO, no el del ancla
+    for _ in range(3):
+        m._sample_s17_owner(_frame())
+    assert m._s17_trace == ["gc", "g-", "g-"]
+    with caplog.at_level(logging.INFO, logger="app.core.monitor"):
+        m._assign_s17_pj(_disc(slot=2), _frame())
+    lineas = [r.getMessage() for r in caplog.records if "dueño incierto" in r.getMessage()]
+    assert lineas and "traza=gc g- g-" in lineas[0], [r.getMessage() for r in caplog.records]
+
+
+def test_la_traza_se_reinicia_con_el_disco(monkeypatch):
+    import numpy as np
+    import app.core.monitor as mon
+    from app.core.monitor import Monitor
+    monkeypatch.setattr(mon, "crop_grid_selected_badge", lambda f: None)
+    monkeypatch.setattr(mon, "crop_detail_badge", lambda f: np.zeros((40, 40, 3), np.uint8))
+    monkeypatch.setattr(Monitor, "_s17_disc_signature", staticmethod(lambda f: _sig(10)))
+    m = _monitor()
+    m._identifier = _StubIdent(sim=0.40, owner=None, det_owner=None)
+    m._sample_s17_owner(_frame())
+    m._sample_s17_owner(_frame())
+    monkeypatch.setattr(Monitor, "_s17_disc_signature", staticmethod(lambda f: _sig(200)))
+    m._sample_s17_owner(_frame())
+    assert m._s17_trace == ["nc"]
+
+
+def test_grid_diag_tambien_vuelca_el_detalle(monkeypatch, tmp_path):
+    """La presencia que decide LIBRE es la del DETALLE, y `-GridDiag` sólo guardaba la grilla."""
+    import numpy as np
+    import app.core.monitor as mon
+    from app.core.monitor import Monitor
+    monkeypatch.setenv("DANIBOD_GRID_DIAG", str(tmp_path))
+    monkeypatch.setattr(mon, "crop_grid_selected_badge", lambda f: None)
+    monkeypatch.setattr(mon, "crop_detail_badge", lambda f: np.zeros((40, 40, 3), np.uint8))
+    monkeypatch.setattr(Monitor, "_s17_disc_signature", staticmethod(lambda f: _sig(10)))
+    m = _monitor()
+    m._identifier = _StubIdent(sim=0.40, owner=None, det_owner=None)
+    m._sample_s17_owner(_frame())
+    assert [f.name for f in tmp_path.glob("det_*_cara_*.png")], list(tmp_path.iterdir())
