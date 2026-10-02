@@ -101,7 +101,9 @@ DB al cierre: `audit/correcciones_farmeo_claret_20261002.md` §4.
    - S10 leyó el PRE ya en Nv 3/4 (mejora rápida: 2-3 s en S10) → "no subió de nivel";
    - el "Ver" descartado por confianza 0,69 (< 0,70) dos veces seguidas;
    - **la captura se reinició** (10:36:36, 10:39:25, 10:53:12; `controller.stop`) y el pendiente
-     se perdió. ¿Lo hizo Daniel o algo lo dispara solo? Sin confirmar.
+     se perdió. **Fue Daniel** (confirmado): "siempre que no capta algo trato de reiniciar el
+     detector". O sea: el reinicio es el síntoma de que algo no se detectó, y borra los pendientes
+     que viven en el monitor (mejora, swap, libre→PJ).
    Daniel: "a veces no detecta la mejora porque no me dan materiales de vuelta" — a contrastar con
    estas tres causas antes de teorizar otra.
    **Arreglo propuesto (no hecho):** cuando el Obtenido muestra un disco de la tanda más crecido,
@@ -125,3 +127,29 @@ DB al cierre: `audit/correcciones_farmeo_claret_20261002.md` §4.
 
 Prioridad por datos: bug 4 (duplicado en cada equipamiento sugerido) y bug 2 (el arreglo propuesto
 del Obtenido + diagnosticar los reinicios). Después 3, 6 y 5.
+
+
+## Arranque de la próxima sesión: el duplicado al equipar (bug 4)
+
+Daniel (2026-10-02): "si arranca por el duplicado". Estado del diagnóstico, para no rehacerlo:
+
+- **Lo que pasa:** en el equipamiento (S17), al elegir un disco LIBRE de la grilla para un slot
+  ocupado, el badge de la grilla lo lee "equipado · dueño incierto" (`monitor.py:5919`,
+  `[grilla] disco equipado · dueño incierto.`) en vez de LIBRE (`:5906`). `_arm_libre_pending`
+  (`monitor.py:2346`) exige `merged.equip_libre` **y** botón "equipar"/"reemplazar" → no arma →
+  al confirmar, `_check_libre_equipado` nunca marca `equipado_desde_libre` → `persist_s17_disc`
+  va al `s17_swap` (inserta una fila nueva; el viejo se desequipa bien). Casos: Remielle s3
+  (#443 libre → #463, 10:55:21 / 10:57:19) y Claret s1 (#404 libre → #465, 11:58:23).
+- **Sin verificar todavía:** si el badge falla siempre en ese flujo o sólo a veces (¿los discos
+  recién mejorados? ¿el slot ocupado?). Buscar en `app.log` del 2026-10-02 los `[grilla]` previos a
+  cada `s17_swap` y a los `s17_equipa_libre` (no hubo ninguno en vivo).
+- **Opción A (monitor):** armar el pendiente también con "equipado · dueño incierto" + botón
+  "reemplazar"/"equipar". El botón "reemplazar" aparece también para un disco de OTRO PJ (S23),
+  pero ahí la DB desambigua: un disco de otro PJ no tiene fila LIBRE, así que
+  `_find_disc_to_move` no adopta nada (y el camino S23 sigue igual). La guarda de "exactamente una
+  fila libre" queda como red.
+- **Opción B (badge):** leer mejor el badge de la grilla en ese flujo. Más cara; ver
+  `project-fase5R-identidad-grilla` ("presencia gana a libre": la regla que hace que un dudoso
+  salga "equipado").
+- **Datos:** después de arreglarlo, en el QA: equipar un libre sugerido → `s17_equipa_libre`, sin
+  fila nueva.
