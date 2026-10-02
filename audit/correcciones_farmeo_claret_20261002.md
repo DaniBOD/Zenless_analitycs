@@ -49,3 +49,26 @@ una copia, `apply_migration.py` con backup, transacción, `foreign_key_check` e 
 
 4pc Rosa espinosa + 2pc Tecno tetraodóntido, 6/6: #396 (s1), #397 (s2), #398 (s3), #402 (s4,
 Prob. Crítica, DEF% +2), #400 (s5, Tasa de Perforación), #417 (s6, **DEF%**, el main que faltaba).
+
+## 4 · Cierre de la sesión de la mañana (12:00) — QA en vivo del SPEC del "Obtenido"
+
+Segunda sesión (10:22 → 11:58) con los 5 commits del SPEC "El Obtenido guarda los discos" activos.
+Daniel: "cerrá la app y hacé el cierre". Pares sospechosos buscados con `es_el_mismo_disco` sobre
+todas las filas de la sesión, y cada uno contrastado con el log.
+
+- **#404 borrado = #465.** Rosa espinosa s1 Nv 15 (Prob. Crítica +2, DEF% +2, Daño Crítico +1).
+  Daniel lo equipó en Claret (11:58:23): S17 hizo `s17_swap` (insertó #465) en vez de adoptar la
+  fila libre — no había aviso "libre → PJ" armado. #396 quedó desplazado, con sus stats.
+- **#426 borrado = #464.** Rosa espinosa s1, mejorado a Nv 15 sin confirmar (el "Ver" se descartó
+  dos veces por confianza 0,69); S9 lo insertó después como #464 (Perforación +2, DEF +2).
+- **#443 y #444 borrados = #463.** Hado emplumado s3 Nv 15. #444 era el reinsertado por el roll de
+  Maestría mal leído en el Obtenido (arreglado en `b177e4e`); #463 es el `s17_swap` de cuando
+  Daniel lo equipó en Remielle (10:57:19), con la grilla leyéndolo "equipado · dueño incierto".
+- **#422 → Nv 3** (+ PV% 3 %, DEF 73), del Obtenido 10:24:59: S10 lo leyó ya en Nv 3 y no vio subir.
+- **#431 → Nv 3** (+ DEF 15, ATK 126), de la captura de Daniel y el PRE de S10 10:38:42: la captura
+  se reinició a las 10:39:25 y la mejora pendiente se perdió.
+- Descartados como duplicados (coincidencia de substats, otros discos): #422/#432, #426/#396,
+  #457/#2; #446/#447 y #448/#449 tienen mains distintos.
+- **Antes:** nada en `inventory_disc_evaluations` ni `movimientos_discos` apuntaba a las borradas.
+- **Checks:** #463/#464/#465 intactos; Claret 6 equipados con #465 en s1; #463 en Remielle s3; FK e
+  integridad ok. **Backup:** `db/danibod_zzz_v2.backup_premig_20261002_120051.db`.
