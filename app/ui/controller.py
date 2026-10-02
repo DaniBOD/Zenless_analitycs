@@ -705,12 +705,13 @@ class MonitorController(QObject):
                 # A la vista en vivo, DESPUÉS de persistir y loguear, y en su propio try: la
                 # pantalla no puede colgar de que el payload se arme, ni cortar un censo.
                 try:
-                    self.disc_observed.emit(self._build_observed_payload(disc_parsed))
+                    self.disc_observed.emit(self._build_observed_payload(disc_parsed, result, state))
                 except Exception:
                     log.exception("Error armando el payload de disc_observed (la pasada sigue)")
                 # Devolver el resultado NO es cosmético: el censo de discos lo usa como identidad
                 # (la fila que se tocó). Sin esto tendría que recalcularla y volvería el desfasaje.
                 return result
+            result = None
             if state.code == "S3" and self._disc_syncer is not None:
                 # El drop ENTRA a la DB (2026-09-05). Antes S3 era display-only y el disco
                 # farmeado sólo llegaba a la tabla si después lo mirabas en el inventario o lo
@@ -725,10 +726,10 @@ class MonitorController(QObject):
                 # (rediseño 2026-07-20) — por eso el except traga la excepción DESPUÉS de
                 # loguearla: prefiero un drop sin guardar y con toast, que la pantalla muda.
                 try:
-                    self._disc_syncer.persist_s17_disc(disc_parsed, es_drop=True)
+                    result = self._disc_syncer.persist_s17_disc(disc_parsed, es_drop=True)
                 except Exception:
                     log.exception("Error persistiendo el drop S3 (el toast sale igual)")
-            payload = self._build_payload(disc_parsed, state)
+            payload = self._build_payload(disc_parsed, state, result)
             self.disc_detected.emit(payload)
         except Exception as exc:
             log.exception("Error procesando disco capturado")
@@ -929,11 +930,12 @@ class MonitorController(QObject):
             return "incierto"
         return "sin_leer"
 
-    def _build_observed_payload(self, disc) -> dict:
+    def _build_observed_payload(self, disc, result=None, state=None) -> dict:
         """DiscParsed de S17/S9 → payload de `disc_observed`. Sólo lecturas.
 
-        A PROPÓSITO no trae score, variante ni PJ sugerido: reporta lo que se vio. El scoring no
-        está calibrado (thresholds en el default) y la vista dibuja el build del dueño REAL."""
+        No trae score ni variante del scoring viejo: reporta lo que se vio, y la vista dibuja el
+        build del dueño REAL. Desde el paso 8 (SPEC 2026-10-01) suma `sugerencia`, la del motor de
+        Discos, que nunca saca toast desde acá (mirar el inventario no es un cambio)."""
         from app.core.asset_resolver import set_logo_path_by_es
 
         tenencia = self._tenencia_observada(disc)
@@ -960,6 +962,7 @@ class MonitorController(QObject):
             "dueno":        dueno,
             "dueno_avatar": dueno_avatar,
             "tenencia":     tenencia,
+            "sugerencia":   self._sugerencia_en_vivo(disc, result, state),
         }
 
     def _log_s17_extraction(self, disc, result=None) -> None:
@@ -1025,38 +1028,79 @@ class MonitorController(QObject):
         if disc.notas:
             self.log_message.emit(f"[disco] notas: {', '.join(disc.notas)}")
 
-    def _build_payload(self, disc_parsed, state) -> dict:
-        from app.core.recommender import recomendar
-        from app.core.asset_resolver import set_logo_path, agent_avatar_path
-        from app.db.repositories import Disc
+    # --- paso 8: la sugerencia del motor de Discos, en vivo (SPEC 2026-10-01) -------------------
 
-        # Convertir DiscParsed → Disc para el recommender
+    #: Pantallas que traen un disco NUEVO (un evento): se evalúan como disco nuevo, nunca se
+    #: buscan por identidad (un gemelo exacto en la DB haría evaluar otra fila).
+    _EVENTOS_DISCO = ("S3", "S5", "S22")
+    #: Las que pueden sacar toast: los discos nuevos y el "Ver" (S6/S7), que es abrir UN disco a
+    #: propósito (Daniel, 18/07 y 2026-10-01). El inventario (S9/S17) nunca: mirar no es un cambio.
+    _CON_TOAST = ("S3", "S5", "S22", "S6", "S7")
+
+    def _disco_a_evaluar(self, disc_parsed, result, codigo: str | None):
+        """El `Disc` que se le pasa al motor: la fila persistida si la hay; si no, y es una
+        observación (no un evento), la fila real por identidad; si no, el armado del parseado
+        (id −1), equipado al dueño que muestra la pantalla."""
+        from app.db.repositories import Disc, InventoryDiscRepo
+        repo = InventoryDiscRepo(self._con)
+        if result is not None and getattr(result, "disc_id", None):
+            fila = repo.get_by_id(result.disc_id)
+            if fila is not None:
+                return fila
         set_id = self._lookup_set_id(disc_parsed.set_name_canon or disc_parsed.set_name_raw)
-        subs_tuples = [
-            (s.nombre_canon, s.valor, s.unidad, s.rolls)
-            for s in disc_parsed.subs
-            if s.nombre_canon
-        ]
-        disc = Disc(
-            id=-1,
-            set_id=set_id or 0,
-            slot=disc_parsed.slot,
-            main_stat=disc_parsed.main_stat_canon,
-            main_valor=disc_parsed.main_valor,
+        if codigo not in self._EVENTOS_DISCO and set_id:
+            filas = repo.find_all_by_identity(disc_parsed, set_id)
+            if len(filas) == 1:
+                return filas[0]
+        dueno_id = None
+        dueno = disc_parsed.equip_pj_visual or disc_parsed.agente_asignado_nombre
+        if dueno and not disc_parsed.equip_libre and self._agent_repo is not None:
+            dueno_id = next((a.id for a in self._agent_repo.get_all() if a.nombre == dueno), None)
+        return Disc(
+            id=-1, set_id=set_id or 0, slot=disc_parsed.slot,
+            main_stat=disc_parsed.main_stat_canon, main_valor=disc_parsed.main_valor,
             main_unidad=disc_parsed.main_unidad,
-            subs=subs_tuples,
-            nivel=disc_parsed.nivel,
-            equipado=0,
-            agente_asignado=None,
+            subs=[(s.nombre_canon, s.valor, s.unidad, s.rolls) for s in disc_parsed.subs if s.nombre_canon],
+            nivel=disc_parsed.nivel, equipado=1 if dueno_id else 0, agente_asignado=dueno_id,
         )
 
-        rec = recomendar(
-            disc,
-            self._agent_repo,
-            self._archetype_repo,
-            self._disc_set_repo,
-            self._scoring_ctx,
-        )
+    def _sugerencia_en_vivo(self, disc_parsed, result, state) -> dict:
+        """La sugerencia del motor de Discos para el disco que se ve, ya resuelta para la vista y el
+        toast. Nunca levanta: si el cálculo falla, el bloque lo dice (A2) y no hay toast."""
+        codigo = getattr(state, "code", None)
+        try:
+            from app.core.sugerencias import sugerir_un_disco
+            from app.ui.discos.datos import texto_sugerencia
+            from app.ui.disco_modal.datos import detalle_sugerencia
+            disco = self._disco_a_evaluar(disc_parsed, result, codigo)
+            sd = sugerir_un_disco(self._con, disco)
+            texto, tipo, conflicto, _tip = texto_sugerencia(sd if sd.propia else None)
+            s = sd.propia or {}
+            bloque = {
+                "texto": texto or "Nada que hacer",
+                "tipo": tipo,
+                "conflicto": conflicto,
+                "detalle": detalle_sugerencia(self._con, sd) if sd.propia else [],
+                "destino": s.get("destino"),
+                "destino_id": s.get("destino_id"),
+                "mejora": s.get("delta"),
+                "toast": codigo in self._CON_TOAST and tipo in ("equipar", "mejorar"),
+                "error": False,
+            }
+            ident = f"#{disco.id}" if disco.id and disco.id > 0 else "(nuevo)"
+            self.log_message.emit(f"[sugerencia] {ident} → {bloque['texto']}")
+            return bloque
+        except Exception:
+            log.exception("[sugerencia] falló el cálculo en vivo (%s)", codigo)
+            return {"texto": "sin sugerencia: falló el cálculo (ver log)", "tipo": None,
+                    "conflicto": None, "detalle": [], "destino": None, "destino_id": None,
+                    "mejora": None, "toast": False, "error": True}
+
+    def _build_payload(self, disc_parsed, state, result=None) -> dict:
+        from app.core.asset_resolver import set_logo_path, agent_avatar_path
+
+        set_id = self._lookup_set_id(disc_parsed.set_name_canon or disc_parsed.set_name_raw)
+        sug = self._sugerencia_en_vivo(disc_parsed, result, state)
 
         # Resolver set logo (necesitamos nombre_en desde DB)
         set_logo: str | None = None
@@ -1072,18 +1116,18 @@ class MonitorController(QObject):
             except Exception:
                 pass
 
-        # Resolver avatar del target agent (extend = cuerpo entero)
+        # Resolver avatar del PJ destino de la sugerencia (extend = cuerpo entero)
         target_avatar: str | None = None
         target_mind = 0
-        if rec.agente_id is not None and self._agent_repo is not None:
+        if sug.get("destino_id") is not None and self._agent_repo is not None:
             try:
-                agent = self._agent_repo.get_by_id(rec.agente_id)
+                agent = self._agent_repo.get_by_id(sug["destino_id"])
                 if agent is not None:
                     p = agent_avatar_path(agent.nombre, variant="extend")
                     target_avatar = str(p) if p else None
                     # mindscape no está en el Agent dataclass del repo actual; leer directo de DB
                     row = self._con.execute(
-                        "SELECT mindscape FROM agents WHERE id=?", (rec.agente_id,)
+                        "SELECT mindscape FROM agents WHERE id=?", (sug["destino_id"],)
                     ).fetchone()
                     target_mind = row["mindscape"] if row else 0
             except Exception:
@@ -1108,7 +1152,7 @@ class MonitorController(QObject):
         ]
 
         return {
-            "variant":       rec.tipo,
+            "variant":       sug.get("tipo") or "reserva",
             "set":           set_name_es or "?",
             "slot":          disc_parsed.slot,
             "rarity":        disc_parsed.rareza if disc_parsed.rareza in ("S", "A", "B") else "S",
@@ -1121,11 +1165,11 @@ class MonitorController(QObject):
             "main_unidad":   disc_parsed.main_unidad,
             "subs":          subs_summary,
             "subs_detail":   subs_detail,
-            "target":        rec.agente_nombre or "—",
+            "target":        sug.get("destino") or "—",
             "mind":          target_mind,
-            "score":         round(rec.score_norm * 100, 1),
-            "threshold":     0.75 if rec.tipo == "equipar" else 0.50,
-            "urgency":       min(1.0, rec.score_norm * 1.1),
+            # Paso 8: la sugerencia del motor de Discos. `score`/`threshold`/`urgency` (del scoring
+            # sin calibrar) ya no viajan; el toast muestra la mejora y lo decide `toast`.
+            "sugerencia":    sug,
             "confianza":     disc_parsed.confianza_global,
             "state_code":    state.code,
             "set_logo":      set_logo,

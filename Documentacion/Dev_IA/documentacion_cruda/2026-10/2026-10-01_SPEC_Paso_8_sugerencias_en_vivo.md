@@ -27,10 +27,25 @@ El paso 8 del plan de la Fase A (`~/.claude/plans/dale-rangos-en-la-streamed-hop
 | pregunta | decisión |
 |---|---|
 | qué pasa por el motor en vivo | **drops (S3/S6/S7) e inventario (S9/S17)** |
-| qué saca toast | sólo un **drop** cuya sugerencia sea **EQUIPAR o MEJORAR** |
+| qué saca toast | **discos nuevos (S3, S5, S22) y el "Ver" (S6/S7)**, sólo si la sugerencia es **EQUIPAR o MEJORAR** (corrección de la tabla: ver abajo) |
 | un drop que no mejora a nadie (reserva, guardar, descartar) | **sin toast**: card y log |
 | lo del inventario | **sin toast** aunque mejore (mirar no es un cambio; una pasada de censo darían ~40) |
 | dónde se ve la sugerencia | **una línea en la card y el detalle en la región derecha** |
+
+### Corrección (2026-10-01, al implementar)
+
+El diseño llamó "drops (S3/S6/S7)" a lo que pasa por `_build_payload`, y S6/S7 **no es un drop**:
+es la pantalla "Ver" de un disco, a la que se llega desde la tienda, las baterías o el
+inventario. Al camino del toast llegan **S3** (drop de desafío), **S5** (afinación), **S22**
+(baterías, "Obtenido") y **S6/S7** (el "Ver").
+
+Daniel eligió **"Nuevos + Ver"**: el "Ver" es abrir UN disco a propósito, no inunda como el censo,
+y es lo que pidió en la QA del 18/07.
+
+Además:
+- los eventos (S3/S5/S22) se evalúan como disco nuevo;
+- las observaciones (S6/S7/S9/S17) se resuelven a su fila real por identidad, para que el disco no
+  quede gemelo de sí mismo y R22 dé lo mismo que en Discos.
 
 ## Medido antes de diseñar (2026-10-01, DB real en sólo lectura, con la suite corriendo en paralelo)
 

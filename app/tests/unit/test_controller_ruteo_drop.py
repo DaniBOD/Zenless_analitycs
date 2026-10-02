@@ -83,7 +83,9 @@ def test_el_drop_se_persiste_como_drop(qapp):
 
 
 def test_el_drop_sigue_emitiendo_su_toast(qapp):
-    """La otra mitad: persistir no puede costar el toast del farmeo."""
+    """La otra mitad: persistir no puede costar el aviso del farmeo. `disc_detected` sale siempre
+    (la card en vivo); si además hay TOAST lo decide la sugerencia del motor (paso 8,
+    `test_controller_sugerencia_vivo.py`)."""
     from app.core.detector import ScreenState
     from app.ui.controller import MonitorController
     ctrl = _controller_con_repos()
@@ -93,7 +95,7 @@ def test_el_drop_sigue_emitiendo_su_toast(qapp):
 
     ctrl._on_disc_from_monitor(_drop(), ScreenState("S3", 1.0, "s3_drop"))
 
-    assert len(payloads) == 1, "el drop dejó de avisar por toast"
+    assert len(payloads) == 1, "el drop dejó de llegar a la vista en vivo"
 
 
 def test_sin_syncer_el_toast_sale_igual(qapp):
