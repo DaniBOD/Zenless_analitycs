@@ -72,6 +72,23 @@ Y, preguntado:
 - La memoria de la tanda **suma la identidad del POST**: si después se vuelve al Obtenido y el
   panel muestra el disco ya mejorado, no se inserta un segundo.
 
+### 4 · La confirmación de una mejora exige que sea EL MISMO disco (bug visto en vivo)
+
+QA 2026-10-02 00:01: `_same_disc` / `_same_disc_canon` comparan **sólo set + slot**. Daniel mejoró
+un Rosa espinosa slot 1 libre (#408, Nv 0) y fue al equipamiento de Claret, que lleva OTRO Rosa
+espinosa slot 1 (#396): ese disco confirmó la mejora y `actualizar_por_mejora` le escribió a #408 los
+stats de #396. Con más pantallas confirmando (punto 3), el error se multiplica.
+
+- La confirmación exige además **el mismo main** y que **los substats del PRE estén todos en el
+  POST** (al subir de nivel los substats sólo se suman: el 4.º aparece en +3, ninguno se va).
+- Si no coincide, no confirma: el pendiente sigue esperando o vence (resumen "sin confirmar").
+
+### 5 · El inventario (S9) también confirma
+
+QA 2026-10-02 00:02: Hado emplumado slot 1 mejorado 0 → 3 desde el "Ver" y mirado en S9 →
+`libre_insert` #412 al lado de la fila vieja #411 (Nv 0): fantasma. S9 emite el disco maduro igual
+que S17; pasa a llamar `on_post_upgrade_disc` con la guarda del punto 4.
+
 ## Lo que queda afuera (dicho, no olvidado)
 
 - **Gemelos dentro de una tanda:** dos drops con el mismo set, slot, main y los mismos 3
@@ -83,8 +100,10 @@ Y, preguntado:
 
 ## A verificar en el QA en vivo
 
-1. ¿Al volver al Obtenido después de mejorar desde el "Ver", el panel muestra el disco mejorado
-   o el de Nivel 0? Define si el punto 3 de la memoria hace falta en la práctica.
+1. ~~¿Al volver al Obtenido después de mejorar desde el "Ver", el panel muestra el disco mejorado
+   o el de Nivel 0?~~ **Verificado en vivo (2026-10-02 00:05:31): lo muestra MEJORADO** (Rosa
+   espinosa slot 5, Nv 0 → 15 desde el "Ver", y al volver el Obtenido lo lee Nv 15/15 con sus 4
+   substats). La memoria de la tanda tiene que sumar la identidad del POST: hace falta.
 2. El recorrido completo: farmear → clic en el Obtenido (inserta, una línea `s22_drop_insert`)
    → "Ver" → mejorar → "Ver" (actualiza, `s10_upgrade_update`) → S9 encuentra la fila (no inserta
    otra).
