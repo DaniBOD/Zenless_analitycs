@@ -404,6 +404,34 @@ _DETAIL_TITLE_ROI = (0.56, 0.335, 0.20, 0.062)
 # de un disco de la cantidad de un material ("×N", sin paréntesis) → sin él, `detail_has_disc`
 # daría falsos positivos (RNF-02). Se busca (no se ancla): el nombre es todo lo anterior.
 _RE_DETAIL_TITULO = re.compile(r"\(?\s*([1-6])\s*\)")
+# Rescate (QA en vivo 2026-10-01, "Hado emplumado (1)" no se detectaba): en la captura nativa
+# PaddleOCR lee el "(1)" como "()" —se come el dígito— y a otras escalas como "(i)". El alias es
+# el de `parser_sustitucion` (una sola autoridad) y acá el "(" es OBLIGATORIO, por lo mismo que
+# allá: sin él, una letra final del nombre se colaría como slot.
+_RE_DETAIL_TITULO_LAX = re.compile(r"\(\s*([il|¡zsb])\s*\)", re.IGNORECASE)
+_RE_DETAIL_PARENTESIS_VACIO = re.compile(r"\(\s*\)")
+#: Margen (px) de la segunda lectura cuando sale "()": con el texto pegado al borde el OCR pierde
+#: el "1"; con margen lo lee (medido sobre la franja de la captura en vivo).
+_DETAIL_TITLE_PAD = 20
+
+
+def _slot_del_titulo(joined: str) -> tuple[str | None, int | None]:
+    """(nombre, slot) de un título ya unido, o (None, None) si no trae el marcador."""
+    from app.core.parser_sustitucion import _SLOT_OCR_ALIAS
+    m = _RE_DETAIL_TITULO.search(joined)
+    if m:
+        slot = int(m.group(1))
+    else:
+        m = _RE_DETAIL_TITULO_LAX.search(joined)
+        if not m:
+            return None, None
+        slot = int(_SLOT_OCR_ALIAS[m.group(1).lower()])
+    nombre = joined[:m.start()].strip()   # el nombre es todo lo anterior al marcador "(N)"
+    return (nombre or None), (slot if 1 <= slot <= 6 else None)
+
+
+def _leer_franja(ocr, strip) -> str:
+    return " ".join(t for (t, _c, _b) in ocr.text_with_bboxes(strip) if t and t.strip()).strip()
 
 
 def _read_detail_title(frame, ocr) -> tuple[str | None, int | None]:
@@ -421,18 +449,19 @@ def _read_detail_title(frame, ocr) -> tuple[str | None, int | None]:
         strip = crop_roi(frame, _DETAIL_TITLE_ROI)
         if strip is None or getattr(strip, "size", 0) == 0:
             return None, None
-        partes = [t for (t, _c, _b) in ocr.text_with_bboxes(strip) if t and t.strip()]
+        joined = _leer_franja(ocr, strip)
+        if not joined:
+            return None, None
+        nombre, slot = _slot_del_titulo(joined)
+        if slot is None and _RE_DETAIL_PARENTESIS_VACIO.search(joined):
+            p = _DETAIL_TITLE_PAD
+            releido = _leer_franja(ocr, cv2.copyMakeBorder(strip, p, p, p, p, cv2.BORDER_REPLICATE))
+            nombre, slot = _slot_del_titulo(releido)
+            log.info("[s22] título con el slot vacío %r → relectura con margen %r → slot %s",
+                     joined, releido, slot)
     except Exception:
         return None, None
-    if not partes:
-        return None, None
-    joined = " ".join(partes).strip()
-    m = _RE_DETAIL_TITULO.search(joined)
-    if not m:
-        return None, None
-    slot = int(m.group(1))
-    nombre = joined[:m.start()].strip()   # el nombre es todo lo anterior al marcador "(N)"
-    return (nombre or None), (slot if 1 <= slot <= 6 else None)
+    return (nombre, slot) if slot is not None else (None, None)
 
 
 def detail_has_disc(frame, ocr) -> bool:
