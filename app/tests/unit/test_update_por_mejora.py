@@ -372,3 +372,56 @@ def test_pre_tarde_en_vivo_desde_s10(db, monkeypatch):
     s.on_s10_update(None)
     f = _filas(db)[0]
     assert (f["id"], f["nivel"]) == (rid, 6)
+
+
+# --- S10 ve el disco YA mejorado al entrar (QA en vivo 2026-10-02 13:45, #484) ----------------
+
+_484_NV0 = [_sub("Perforación", 9.0, 0), _sub("Maestría de Anomalía", 9.0, 0),
+            _sub("Prob. Crítica", 2.4, 0, "%")]
+_484_NV3 = _484_NV0 + [_sub("ATK%", 3.0, 0, "%")]
+
+
+def test_alcanzar_el_caso_del_484(db):
+    """Daniel subió a Nv 3 en ~2 s: el primer frame legible del modal ya tenía el ATK% nuevo."""
+    rid = _fila(db, subs=_484_NV0, main_valor=46.0)
+    sync = _syncer(db)
+    assert sync.alcanzar_estado(_disco(3, _484_NV3, main_valor=73.0)) == rid
+    f = _filas(db)[0]
+    assert (f["nivel"], f["sub4"], f["main_valor"]) == (3, "ATK%", 73.0)
+
+
+def test_alcanzar_no_toca_una_fila_que_ya_esta_al_dia(db):
+    """Si ya hay una fila en este estado, el disco está al día. Una fila vieja del mismo disco
+    (un fantasma de Nv 0) NO se sube: quedarían dos filas idénticas."""
+    _fila(db, subs=_484_NV3, nivel=3, main_valor=73.0)
+    fantasma = _fila(db, subs=_484_NV0, main_valor=46.0)
+    sync = _syncer(db)
+    assert sync.alcanzar_estado(_disco(3, _484_NV3, main_valor=73.0)) is None
+    assert {f["id"]: f["nivel"] for f in _filas(db)}[fantasma] == 0
+
+
+def test_alcanzar_ante_dos_previos_indistinguibles_se_abstiene(db):
+    _fila(db, subs=_484_NV0)
+    _fila(db, subs=_484_NV0)
+    sync = _syncer(db)
+    assert sync.alcanzar_estado(_disco(3, _484_NV3)) is None
+    assert [f["nivel"] for f in _filas(db)] == [0, 0]
+
+
+def test_alcanzar_no_toca_al_equipado(db):
+    _fila(db, subs=_484_NV0, agente=5, equipado=1)
+    sync = _syncer(db)
+    assert sync.alcanzar_estado(_disco(3, _484_NV3)) is None
+    assert _filas(db)[0]["nivel"] == 0
+
+
+def test_entrar_a_s10_con_el_disco_ya_mejorado_actualiza_la_fila(db, monkeypatch):
+    import numpy as np
+    from app.core.sync_upgrade import UpgradeSyncer
+    rid = _fila(db, subs=_484_NV0, main_valor=46.0)
+    s = UpgradeSyncer(ocr=None, on_diagnostic=lambda _m: None, disc_syncer=_syncer(db))
+    monkeypatch.setattr(s, "_safe_parse", lambda _f: _disco(3, _484_NV3, main_valor=73.0))
+    monkeypatch.setattr(s, "_level_sig", lambda _f: np.zeros((32, 32), np.float32))
+    s.on_s10_enter(None)                      # y se va enseguida: no hay subida que ver
+    f = _filas(db)[0]
+    assert (f["id"], f["nivel"]) == (rid, 3)

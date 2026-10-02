@@ -155,6 +155,7 @@ class UpgradeSyncer:
             return
         self._pre = self._last = _Snap(parsed.nivel, parsed)
         self._en_db = parsed
+        self._alcanzar(parsed)
         self._ref_sig = self._level_sig(frame)
         self._changed = False
         self._maxed = "s10_max" in parsed.notas
@@ -293,6 +294,17 @@ class UpgradeSyncer:
         # Contra lo que la fila tiene HOY: si S10 ya escribió pasos, el PRE dejó de estar en la DB.
         self._persistir_mejora(self._en_db_pendiente or pre.parsed, post_parsed)
         self._emit_resumen(pre, post_parsed, post_nivel)
+
+    def _alcanzar(self, parsed: DiscParsed) -> None:
+        """Lo primero que se lee del modal puede ser YA el disco mejorado (Daniel sube en ~2 s y
+        el primer frame legible muestra el Nv 3; QA 2026-10-02 13:45, #484). Si la fila quedó en
+        un nivel anterior, se lleva a lo leído ahora mismo (`alcanzar_estado`)."""
+        if self._disc_syncer is None or not hasattr(self._disc_syncer, "alcanzar_estado"):
+            return
+        try:
+            self._disc_syncer.alcanzar_estado(parsed)
+        except Exception:
+            log.exception("Error llevando la fila al disco visto en la mejora")
 
     def _persistir_paso(self, parsed: DiscParsed) -> None:
         """Escribe YA una subida de nivel vista en S10 (pedido de Daniel, 2026-10-02).

@@ -764,6 +764,50 @@ class DiscSyncer:
         finally:
             con_w.close()
 
+    def alcanzar_estado(self, visto: DiscParsed) -> int | None:
+        """Lleva al estado `visto` la fila LIBRE de este disco que quedó en un nivel anterior.
+
+        Para la mejora que S10 no llega a ver subir (QA en vivo 2026-10-02 13:45, #484): Daniel
+        mejora en ~2 s y el primer frame legible del modal ya muestra el Nv 3 con el 4.º substat.
+        No hay "subida" que observar, pero lo leído ES el disco mejorado. Si ya hay una fila con
+        esta identidad, está al día y no se toca. Si no, `find_estados_previos` (mismo disco,
+        umbrales de nivel, valores de los substats sin roll nuevo) y exactamente un libre → se
+        actualiza; ≥2 → se abstiene. El equipado lo sigue resolviendo la S17 por (PJ, slot)."""
+        if visto is None or visto.nivel is None:
+            return None
+        set_id = self._resolve_set_id(visto)
+        if set_id is None:
+            return None
+        if is_readonly():
+            return None
+        con_w = sqlite3.connect(str(self._db_path))
+        con_w.row_factory = sqlite3.Row
+        repo = InventoryDiscRepo(con_w)
+        t0 = time.perf_counter()
+        try:
+            with con_w:
+                if repo.find_all_by_identity(visto, set_id):
+                    return None                      # la fila ya está en este estado
+                libres = [d for d in repo.find_estados_previos(visto, set_id)
+                          if d.agente_asignado is None and not _es_dueno_incierto(d)]
+                if len(libres) != 1:
+                    if len(libres) > 1:
+                        log.warning("Mejora: %d discos libres podrían ser éste (ids %s) — no se "
+                                    "actualiza ninguno.", len(libres),
+                                    ", ".join(str(d.id) for d in libres))
+                    return None
+                fila = libres[0]
+                repo.update_from_parsed(fila.id, visto)
+            log.info("Disco LIBRE actualizado id=%d s10_upgrade_update set=%s slot=%s nivel %s→%d "
+                     "(visto ya mejorado) %.0fms", fila.id, visto.set_name_raw, visto.slot,
+                     fila.nivel, visto.nivel, (time.perf_counter() - t0) * 1000)
+            return fila.id
+        except Exception:
+            log.exception("Error llevando el disco a su estado mejorado")
+            return None
+        finally:
+            con_w.close()
+
     def _resultado_libre(self, parsed: DiscParsed, set_id: int, disc_id: int,
                          trigger: str, t0: float) -> SyncResult:
         """Log + `SyncResult` de un disco guardado sin dueño. Una sola autoridad para los tres
