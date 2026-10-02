@@ -34,6 +34,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from app.core.mismo_disco import es_el_mismo_disco
 from app.core.parser_disc import DiscParsed
 from app.core.parser_disc_s10 import parse_disc_s10
 from app.core.stats_vocab import _norm_key
@@ -248,6 +249,11 @@ class UpgradeSyncer:
             self._pending = None
             return
         if not self._same_disc_canon(pre.parsed, disc):
+            return
+        # Set + slot no alcanzan: otro disco del mismo set y slot (el que lleva el PJ que se mira
+        # después) confirmaba la mejora y le escribía sus stats a la fila mejorada — dos veces en el
+        # QA del 2026-10-02 (#408 ← #396, #406 ← #397). El pendiente sigue esperando a SU disco.
+        if not es_el_mismo_disco(pre.parsed, disc):
             return
         self._pending = None
         # POST autoritativo = el de mayor nivel (S17 asentado gana si S10 se quedó atrás).
