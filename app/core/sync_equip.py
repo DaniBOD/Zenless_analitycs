@@ -388,7 +388,8 @@ class DiscSyncer:
             parsed.set_name_raw,
         )
 
-    def persist_s17_disc(self, parsed: DiscParsed, *, es_drop: bool = False) -> SyncResult | None:
+    def persist_s17_disc(self, parsed: DiscParsed, *, es_drop: bool = False,
+                         trigger_drop: str = "s3_drop_insert") -> SyncResult | None:
         """
         Persistencia ENFOCADA de un disco equipado S17 (decisión 2026-06-06):
         upsert disco + asignación con salvaguarda + bono, SIN scoring/optimizer
@@ -422,7 +423,8 @@ class DiscSyncer:
             #
             # La distinción no existía antes: `crop_s9_selected_badge` devolvía None para las dos.
             if getattr(parsed, "equip_libre", False):
-                return self._persist_disco_libre(parsed, set_id, t0, es_drop=es_drop)
+                return self._persist_disco_libre(parsed, set_id, t0, es_drop=es_drop,
+                                                 trigger_drop=trigger_drop)
             # TERCER desenlace (2026-08-21): el badge ESTÁ —hay avatar— pero ninguna de las dos
             # superficies pudo nombrarlo. No es "libre" ni es "no sé nada": es un disco leído
             # entero al que le falta un solo campo. Descartarlo tiraba set, slot, nivel y los
@@ -780,7 +782,8 @@ class DiscSyncer:
 
     def _persist_disco_libre(self, parsed: DiscParsed, set_id: int, t0: float,
                              *, dueno_incierto: bool = False,
-                             es_drop: bool = False) -> SyncResult | None:
+                             es_drop: bool = False,
+                             trigger_drop: str = "s3_drop_insert") -> SyncResult | None:
         """Persiste un disco que se AFIRMÓ libre: fila con `agente_asignado = NULL`, `equipado = 0`.
 
         `es_drop=True` (S3, el disco acaba de caer) SALTEA toda la deduplicación e INSERTA siempre.
@@ -813,8 +816,8 @@ class DiscSyncer:
                     # Un disco entró a la cuenta: se inserta y punto (ver docstring).
                     disc_id = repo.insert_from_parsed(
                         parsed, set_id, agente_asignado=None, equipado=0)
-                    trigger = "s3_drop_insert"
-                    return self._resultado_libre(parsed, set_id, disc_id, trigger, t0)
+                    # El trigger dice de qué pantalla vino (S3 desafío, S22 "Obtenido").
+                    return self._resultado_libre(parsed, set_id, disc_id, trigger_drop, t0)
                 candidatos = repo.find_all_by_identity(parsed, set_id)
                 ocupados = [d for d in candidatos if d.agente_asignado is not None]
                 # Las filas MARCADAS tienen agente_asignado NULL igual que un libre, pero NO son

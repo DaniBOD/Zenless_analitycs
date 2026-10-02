@@ -427,3 +427,12 @@ def test_reclickear_un_disco_ya_visto_avisa_en_vez_de_callar(mon_det):
     assert len(lineas) == 2
     assert "ya capturado" in lineas[1]
     assert "Salón huracanado" in lineas[1] and "slot 2" in lineas[1]
+
+
+def test_el_disco_del_detail_entra_libre_para_guardarse(mon_det):
+    """SPEC 2026-10-02 "El Obtenido guarda los discos", punto 1: `persist_s17_disc` guarda un drop
+    sólo si viene afirmado libre — y todo lo del Obtenido acaba de entrar a la cuenta."""
+    mon_det._det = _disc()
+    mon_det._dispatch_state(_frame(), _ST22)
+    d, _st = mon_det._emitted[0]
+    assert d.equip_libre is True and d.rareza == "S"

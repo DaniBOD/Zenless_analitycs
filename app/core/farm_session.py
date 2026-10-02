@@ -61,6 +61,11 @@ class FarmSession:
         # revisitar S13. `time.monotonic()` no sobrevive el reinicio, así que el restore rearma
         # con ventana fresca. Sin state_path (producción) no persiste ni restaura.
         self._state_path: Path | None = Path(state_path) if state_path else None
+        # Filas que el "Obtenido" (S22) insertó en ESTA tanda (SPEC 2026-10-02 "El Obtenido guarda
+        # los discos", punto 2). Vive acá y no en el monitor porque el monitor borra su dedup cada
+        # vez que el estado deja de ser S22 — un "Ver", una mejora o un parpadeo reinsertarían.
+        # La vacía otra tanda (S21); con breadcrumb sobrevive a un reinicio (decisión de Daniel).
+        self._guardados: list[int] = []
 
     def on_state(self, code: str, ts: float) -> None:
         """Alimentar en cada ciclo con el estado activo. Re-arma el gate si es un estado de
@@ -102,6 +107,25 @@ class FarmSession:
         """Guardar el nº de corridas leído en S21 (modal de usos de batería)."""
         self._usos = n
         self._usos_until = ts + self._window_s
+        self.nueva_tanda()
+
+    # --- lo que el "Obtenido" ya guardó en la tanda ---------------------------
+
+    def nueva_tanda(self) -> None:
+        """Otro "Obtenido": lo guardado antes ya no es de esta tanda."""
+        if self._guardados:
+            self._guardados = []
+            if self._state_path is not None:
+                self._persist()
+
+    def anotar_guardado(self, disc_id: int) -> None:
+        if disc_id not in self._guardados:
+            self._guardados.append(disc_id)
+            if self._state_path is not None:
+                self._persist()
+
+    def guardados(self) -> list[int]:
+        return list(self._guardados)
 
     def usos(self, ts: float) -> int | None:
         """Nº de corridas vigente si estamos dentro de la ventana; si no, None."""
@@ -118,7 +142,8 @@ class FarmSession:
             self._state_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
             payload = {"node": self._pred_node,
-                       "sets": [[sid, en] for sid, en in self._pred_sets]}
+                       "sets": [[sid, en] for sid, en in self._pred_sets],
+                       "guardados": list(self._guardados)}
             tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             os.replace(tmp, self._state_path)   # rename atómico
         except OSError:
@@ -144,4 +169,5 @@ class FarmSession:
         self._pred_sets = sets
         self._pred_until = ts + self._window_s
         self._armed_until = ts + self._window_s   # armar gate → contexto=flujo
+        self._guardados = [int(i) for i in (data.get("guardados") or []) if isinstance(i, int)]
         return node, list(sets)

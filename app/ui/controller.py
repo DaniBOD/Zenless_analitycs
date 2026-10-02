@@ -729,11 +729,46 @@ class MonitorController(QObject):
                     result = self._disc_syncer.persist_s17_disc(disc_parsed, es_drop=True)
                 except Exception:
                     log.exception("Error persistiendo el drop S3 (el toast sale igual)")
+            elif state.code == "S22" and self._disc_syncer is not None:
+                # El "Obtenido" de las baterías también guarda (SPEC 2026-10-02, punto 1). Mismo
+                # contrato que S3: el toast no depende de que la DB escriba.
+                try:
+                    result = self._persistir_drop_s22(disc_parsed)
+                except Exception:
+                    log.exception("Error persistiendo el drop S22 (el toast sale igual)")
             payload = self._build_payload(disc_parsed, state, result)
             self.disc_detected.emit(payload)
         except Exception as exc:
             log.exception("Error procesando disco capturado")
             self.error_occurred.emit(f"Procesando disco: {exc}")
+
+    def _persistir_drop_s22(self, disc_parsed):
+        """Guarda el disco del panel DETAIL del "Obtenido", una vez por tanda.
+
+        Si una fila que esta tanda ya insertó es el mismo disco (`es_el_mismo_disco`: también el
+        mismo disco ya mejorado, que es como lo muestra el Obtenido al volver del "Ver"), no se
+        inserta otra y se usa esa. Si no, se inserta como drop y se anota en la tanda."""
+        from types import SimpleNamespace
+
+        from app.core.mismo_disco import es_el_mismo_disco
+        from app.db.repositories import InventoryDiscRepo
+        fs = self._farm_session
+        set_id = self._lookup_set_id(disc_parsed.set_name_canon or disc_parsed.set_name_raw)
+        if fs is not None and set_id:
+            repo = InventoryDiscRepo(self._con)
+            for disc_id in fs.guardados():
+                fila = repo.get_by_id(disc_id)
+                if (fila is not None and fila.set_id == set_id and fila.slot == disc_parsed.slot
+                        and es_el_mismo_disco(fila, disc_parsed)):
+                    log.info("[s22] ya guardado en esta tanda: #%d (no se inserta otro)", disc_id)
+                    return SimpleNamespace(disc_id=disc_id)
+        result = self._disc_syncer.persist_s17_disc(disc_parsed, es_drop=True,
+                                                    trigger_drop="s22_drop_insert")
+        if result is not None and (result.disc_id or 0) > 0:
+            log.info("[s22] disco guardado #%d (%s)", result.disc_id, result.trigger)
+            if fs is not None:
+                fs.anotar_guardado(result.disc_id)
+        return result
 
     def _on_replacement_from_monitor(self, ev: dict) -> None:
         """El monitor OBSERVÓ que un disco cambió de dueño → toast. Dos sabores según `kind`:

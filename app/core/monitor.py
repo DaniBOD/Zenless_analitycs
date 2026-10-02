@@ -2735,6 +2735,9 @@ class Monitor:
         # el "Ver" (S6/S7) — era el único camino de detalle que no toastaba (QA en vivo
         # 2026-07-18). El controller enruta S22 al recommender (no a persistencia): display-only.
         d.rareza = "S"   # invariante del "Obtenido": todo drop conservado es tier S (dorado)
+        # Y entra LIBRE: el Obtenido sólo lista lo que acaba de entrar a la cuenta. Es lo que le
+        # pide `persist_s17_disc` para guardarlo como drop (SPEC 2026-10-02, punto 1).
+        d.equip_libre = True
         if self._on_disc:
             try:
                 self._on_disc(d, state)
