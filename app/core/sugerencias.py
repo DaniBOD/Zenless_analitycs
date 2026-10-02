@@ -19,7 +19,7 @@ contra el estado de HOY. **Sólo lee la DB** (`mode=ro`).
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.core.coherencia import ETIQUETA_STAT
@@ -83,50 +83,83 @@ def resolver_conflictos(crudas: list[Sugerencia]) -> None:
                 tomados_disco[u] = s.disc_id
 
 
+@dataclass
+class ContextoMotor:
+    """Lo que el motor necesita para sugerir sobre un disco, armado UNA vez por DB (o por disco en
+    vivo): los repos, el inventario activo y los libres, y los builds de cada PJ (cacheados)."""
+    agentes: AgentRepo
+    arqs: ArchetypeRepo
+    sets_repo: DiscSetRepo
+    inv: InventoryDiscRepo
+    nombres: dict[int, str]
+    prioridades: dict[int, str]
+    sets: dict[int, str]
+    activos: list[Disc]
+    libres: list[Disc]
+    ctx: ScoringContext
+    _builds: dict[int, dict[int, Disc]] = field(default_factory=dict)
+
+    def builds(self, agente_id: int) -> dict[int, Disc]:
+        if agente_id not in self._builds:
+            self._builds[agente_id] = self.inv.find_equipped_by_agent(agente_id)
+        return self._builds[agente_id]
+
+
+def contexto_motor(con: sqlite3.Connection) -> ContextoMotor:
+    """El contexto del motor para una conexión. Una sola autoridad: lo usan `generar` (la pantalla
+    Discos y el reporte) y `sugerir_un_disco` (el vivo, paso 8)."""
+    agentes, arqs, sets_repo = AgentRepo(con), ArchetypeRepo(con), DiscSetRepo(con)
+    inv = InventoryDiscRepo(con)
+    activos = inv.get_all_active()
+    return ContextoMotor(
+        agentes=agentes, arqs=arqs, sets_repo=sets_repo, inv=inv,
+        nombres={a.id: a.nombre for a in agentes.get_all()},
+        prioridades={a.id: a.prioridad for a in agentes.get_all()},
+        sets={s.id: s.nombre for s in sets_repo.get_all()},
+        activos=activos, libres=[d for d in activos if not d.equipado], ctx=ScoringContext())
+
+
+def _clasificar(d: Disc, rec, c: ContextoMotor) -> tuple[str, Sugerencia | None]:
+    """La recomendación de un disco → su sugerencia. `("sin_cambio", None)` si está equipado y bien
+    donde está; `("sin_nivel", None)` si es libre y no se leyó el nivel."""
+    desc = _describir(d, c.sets)
+    m = rec.movimiento
+    if d.equipado and d.agente_asignado:
+        if m is None:
+            return "sin_cambio", None
+        return "sugerencia", Sugerencia("mover", d.id, desc, c.nombres.get(m.agente_id),
+                                        m.agente_id, m.slot, c.nombres.get(m.origen_id),
+                                        m.reemplazo_id, round(m.delta, 3), round(rec.score_norm, 3))
+    if d.nivel is None:
+        return "sin_nivel", None
+    if rec.tipo == "equipar" and m is not None:
+        return "sugerencia", Sugerencia("equipar", d.id, desc, c.nombres.get(m.agente_id),
+                                        m.agente_id, m.slot, delta=round(m.delta, 3),
+                                        score=round(rec.score_norm, 3))
+    return "sugerencia", Sugerencia(rec.tipo, d.id, desc, rec.agente_nombre, rec.agente_id,
+                                    d.slot, score=round(rec.score_norm, 3))
+
+
 def generar(db_path: Path) -> dict:
     """Evalúa todo el inventario. Devuelve el reporte como dict (no escribe nada)."""
     con = sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
     try:
-        agentes, arqs, sets_repo = AgentRepo(con), ArchetypeRepo(con), DiscSetRepo(con)
-        inv = InventoryDiscRepo(con)
-        nombres = {a.id: a.nombre for a in agentes.get_all()}
-        prioridades = {a.id: a.prioridad for a in agentes.get_all()}
-        sets = {s.id: s.nombre for s in sets_repo.get_all()}
-        activos = inv.get_all_active()
-        libres = [d for d in activos if not d.equipado]
-        cache: dict[int, dict[int, Disc]] = {}
-
-        def builds(agente_id: int) -> dict[int, Disc]:
-            if agente_id not in cache:
-                cache[agente_id] = inv.find_equipped_by_agent(agente_id)
-            return cache[agente_id]
-
-        ctx = ScoringContext()
+        c = contexto_motor(con)
+        agentes, arqs, sets_repo = c.agentes, c.arqs, c.sets_repo
+        sets, prioridades, activos, libres, ctx = c.sets, c.prioridades, c.activos, c.libres, c.ctx
+        builds = c.builds
         crudas: list[Sugerencia] = []
         sin_cambio = sin_nivel = 0
         for d in activos:
             rec = recomendar(d, agentes, arqs, sets_repo, ctx, builds=builds, libres=libres)
-            desc = _describir(d, sets)
-            m = rec.movimiento
-            if d.equipado and d.agente_asignado:
-                if m is None:
-                    sin_cambio += 1
-                    continue
-                crudas.append(Sugerencia("mover", d.id, desc, nombres.get(m.agente_id),
-                                         m.agente_id, m.slot, nombres.get(m.origen_id),
-                                         m.reemplazo_id, round(m.delta, 3), round(rec.score_norm, 3)))
-                continue
-            if d.nivel is None:
+            estado, s = _clasificar(d, rec, c)
+            if estado == "sin_cambio":
+                sin_cambio += 1
+            elif estado == "sin_nivel":
                 sin_nivel += 1
-                continue
-            if rec.tipo == "equipar" and m is not None:
-                crudas.append(Sugerencia("equipar", d.id, desc, nombres.get(m.agente_id),
-                                         m.agente_id, m.slot, delta=round(m.delta, 3),
-                                         score=round(rec.score_norm, 3)))
             else:
-                crudas.append(Sugerencia(rec.tipo, d.id, desc, rec.agente_nombre, rec.agente_id,
-                                         d.slot, score=round(rec.score_norm, 3)))
+                crudas.append(s)
         # R24: un par de discos libres que arma el siguiente 2pc de la guía y hace cumplir un fijo.
         etiquetas = ETIQUETA_STAT
         for a in agentes.get_all():
@@ -192,3 +225,23 @@ def por_disco(reporte: dict) -> dict[int, SugerenciaDisco]:
                 nombran.setdefault(s["disc_id_2"], []).append(("par", s))
     ids = set(propias) | set(nombran)
     return {i: SugerenciaDisco(propias.get(i), tuple(nombran.get(i, ()))) for i in ids}
+
+
+# ---------------------------------------------------------------------------
+# Un disco solo: el vivo (SPEC 2026-10-01, paso 8)
+# ---------------------------------------------------------------------------
+
+def sugerir_un_disco(con: sqlite3.Connection, disco: Disc,
+                     contexto: ContextoMotor | None = None) -> SugerenciaDisco:
+    """La sugerencia de UN disco con las mismas reglas que `generar`. Sin `resolver_conflictos`: en
+    vivo no se cruza con las otras sugerencias, así que dice la mejora frente a lo que el PJ lleva
+    hoy. Un disco que no está en la DB (un drop en sólo lectura, id −1) se evalúa igual: no hace
+    falta sumarlo a los libres, porque R22 (`unico_en_la_cuenta`) excluye al propio disco y los
+    libres sólo cuentan como reemplazo de un disco equipado que se mueve."""
+    c = contexto or contexto_motor(con)
+    rec = recomendar(disco, c.agentes, c.arqs, c.sets_repo, c.ctx, builds=c.builds, libres=c.libres)
+    _estado, s = _clasificar(disco, rec, c)
+    if s is None:
+        return SugerenciaDisco()
+    s.prioridad = c.prioridades.get(s.destino_id, "normal")
+    return SugerenciaDisco(s.__dict__)
