@@ -1,0 +1,2668 @@
+{
+  "schema": "desmontaje/1",
+  "ts_apertura": "2026-10-02T13:55:10",
+  "ts_commit": "2026-10-02T13:57:26",
+  "conteo": {
+    "declarado": 63,
+    "capturados": 41,
+    "faltantes": 22,
+    "fuente_declarado": "contador_header",
+    "material_primero": 63,
+    "corroborado": true
+  },
+  "modo": "manual",
+  "confirmacion_grado_s": true,
+  "avisos": [
+    "scroll durante la tanda",
+    "contador del header ilegible"
+  ],
+  "discos": [
+    {
+      "seq": 1,
+      "celda": {
+        "fila": 0,
+        "col": 0
+      },
+      "set_raw": "Hado emplumado (3) 3",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 3,
+      "nivel": null,
+      "rareza": "?",
+      "main": {
+        "canon": "",
+        "raw": "",
+        "valor": null,
+        "unidad": null
+      },
+      "subs": [],
+      "confianza": 0.769,
+      "identidad": {
+        "set_id": 54,
+        "slot": 3,
+        "nivel": null,
+        "main": "",
+        "subs": []
+      }
+    },
+    {
+      "seq": 2,
+      "celda": {
+        "fila": 0,
+        "col": 1
+      },
+      "set_raw": "Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 2,
+      "nivel": 6,
+      "rareza": "?",
+      "main": {
+        "canon": "ATK",
+        "raw": "Ataque",
+        "valor": 173.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "DEF%",
+          "raw": "Defensa",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK%",
+          "raw": "Ataque",
+          "valor": 6.0,
+          "unidad": "%",
+          "rolls": 1
+        },
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 15.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.908,
+      "identidad": {
+        "set_id": 54,
+        "slot": 2,
+        "nivel": 6,
+        "main": "atk",
+        "subs": [
+          [
+            "atk%",
+            1
+          ],
+          [
+            "def",
+            0
+          ],
+          [
+            "def%",
+            0
+          ],
+          [
+            "maestriadeanomalia",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 3,
+      "celda": {
+        "fila": 0,
+        "col": 2
+      },
+      "set_raw": "Rosa espinosa (1) S",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 1,
+      "nivel": 15,
+      "rareza": "?",
+      "main": {
+        "canon": "HP",
+        "raw": "PV",
+        "valor": 2200.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "Perforación",
+          "raw": "Perforación",
+          "valor": 18.0,
+          "unidad": "flat",
+          "rolls": 1
+        },
+        {
+          "canon": "ATK",
+          "raw": "Ataque",
+          "valor": 76.0,
+          "unidad": "flat",
+          "rolls": 3
+        },
+        {
+          "canon": "Daño Crítico",
+          "raw": "Dano Critico",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 30.0,
+          "unidad": "flat",
+          "rolls": 1
+        }
+      ],
+      "confianza": 0.959,
+      "identidad": {
+        "set_id": 55,
+        "slot": 1,
+        "nivel": 15,
+        "main": "hp",
+        "subs": [
+          [
+            "atk",
+            3
+          ],
+          [
+            "danocritico",
+            0
+          ],
+          [
+            "def",
+            1
+          ],
+          [
+            "perforacion",
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 4,
+      "celda": {
+        "fila": 0,
+        "col": 3
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 5,
+      "nivel": 15,
+      "rareza": "?",
+      "main": {
+        "canon": "DEF%",
+        "raw": "Defensa",
+        "valor": 48.0,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "HP",
+          "raw": "PV",
+          "valor": 336.0,
+          "unidad": "flat",
+          "rolls": 2
+        },
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 45.0,
+          "unidad": "flat",
+          "rolls": 2
+        },
+        {
+          "canon": "Daño Crítico",
+          "raw": "Daio Critico",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "Perforación",
+          "raw": "Perforación",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.874,
+      "identidad": {
+        "set_id": 55,
+        "slot": 5,
+        "nivel": 15,
+        "main": "def%",
+        "subs": [
+          [
+            "danocritico",
+            0
+          ],
+          [
+            "def",
+            2
+          ],
+          [
+            "hp",
+            2
+          ],
+          [
+            "perforacion",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 5,
+      "celda": {
+        "fila": 0,
+        "col": 4
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 1,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "HP",
+        "raw": "PV",
+        "valor": 550.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "ATK",
+          "raw": "Ataque",
+          "valor": 19.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF%",
+          "raw": "Defensa",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "Daño Crítico",
+          "raw": "Dafo Critico",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.895,
+      "identidad": {
+        "set_id": 55,
+        "slot": 1,
+        "nivel": 0,
+        "main": "hp",
+        "subs": [
+          [
+            "atk",
+            0
+          ],
+          [
+            "danocritico",
+            0
+          ],
+          [
+            "def%",
+            0
+          ],
+          [
+            "maestriadeanomalia",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 6,
+      "celda": {
+        "fila": 0,
+        "col": 5
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 1,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "HP",
+        "raw": "PV",
+        "valor": 550.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "Prob. Crítica",
+          "raw": "Probabilidad de Critico",
+          "valor": 2.4,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 15.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "HP%",
+          "raw": "PV",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.98,
+      "identidad": {
+        "set_id": 55,
+        "slot": 1,
+        "nivel": 0,
+        "main": "hp",
+        "subs": [
+          [
+            "def",
+            0
+          ],
+          [
+            "hp%",
+            0
+          ],
+          [
+            "prob.critica",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 7,
+      "celda": {
+        "fila": 0,
+        "col": 6
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 1,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "HP",
+        "raw": "PV",
+        "valor": 550.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 15.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "HP%",
+          "raw": "PV",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "Daño Crítico",
+          "raw": "Daio Critico",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.97,
+      "identidad": {
+        "set_id": 55,
+        "slot": 1,
+        "nivel": 0,
+        "main": "hp",
+        "subs": [
+          [
+            "danocritico",
+            0
+          ],
+          [
+            "def",
+            0
+          ],
+          [
+            "hp%",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 8,
+      "celda": {
+        "fila": 0,
+        "col": 7
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 2,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "ATK",
+        "raw": "Ataque",
+        "valor": 79.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 15.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK%",
+          "raw": "Ataque",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "Daño Crítico",
+          "raw": "Dafo Critico",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.979,
+      "identidad": {
+        "set_id": 55,
+        "slot": 2,
+        "nivel": 0,
+        "main": "atk",
+        "subs": [
+          [
+            "atk%",
+            0
+          ],
+          [
+            "danocritico",
+            0
+          ],
+          [
+            "def",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 9,
+      "celda": {
+        "fila": 0,
+        "col": 8
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 3,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "DEF",
+        "raw": "Defensa",
+        "valor": 46.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF%",
+          "raw": "Defensa",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "HP",
+          "raw": "PV",
+          "valor": 112.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.887,
+      "identidad": {
+        "set_id": 55,
+        "slot": 3,
+        "nivel": 0,
+        "main": "def",
+        "subs": [
+          [
+            "def%",
+            0
+          ],
+          [
+            "hp",
+            0
+          ],
+          [
+            "maestriadeanomalia",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 10,
+      "celda": {
+        "fila": 1,
+        "col": 0
+      },
+      "set_raw": "Mostrar lo equipado OFF DETAIL Desmontar +128400 Bloquear Descartar",
+      "set_canon": null,
+      "set_id": null,
+      "slot": 0,
+      "nivel": null,
+      "rareza": "?",
+      "main": {
+        "canon": "",
+        "raw": "",
+        "valor": null,
+        "unidad": null
+      },
+      "subs": [],
+      "confianza": 0.985,
+      "identidad": {
+        "set_id": null,
+        "slot": 0,
+        "nivel": null,
+        "main": "",
+        "subs": []
+      }
+    },
+    {
+      "seq": 11,
+      "celda": {
+        "fila": 1,
+        "col": 1
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 3,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "DEF",
+        "raw": "Defensa",
+        "valor": 46.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "HP",
+          "raw": "PV",
+          "valor": 112.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Perforación",
+          "raw": "Perforación",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK",
+          "raw": "Ataque",
+          "valor": 19.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.862,
+      "identidad": {
+        "set_id": 55,
+        "slot": 3,
+        "nivel": 0,
+        "main": "def",
+        "subs": [
+          [
+            "atk",
+            0
+          ],
+          [
+            "hp",
+            0
+          ],
+          [
+            "perforacion",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 12,
+      "celda": {
+        "fila": 1,
+        "col": 2
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 3,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "DEF",
+        "raw": "Defensa",
+        "valor": 46.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "ATK%",
+          "raw": "Ataque",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "HP%",
+          "raw": "PV",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.881,
+      "identidad": {
+        "set_id": 55,
+        "slot": 3,
+        "nivel": 0,
+        "main": "def",
+        "subs": [
+          [
+            "atk%",
+            0
+          ],
+          [
+            "hp%",
+            0
+          ],
+          [
+            "maestriadeanomalia",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 13,
+      "celda": {
+        "fila": 1,
+        "col": 3
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 3,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "DEF",
+        "raw": "Defensa",
+        "valor": 46.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "ATK",
+          "raw": "Ataque",
+          "valor": 19.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK%",
+          "raw": "Ataque",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF%",
+          "raw": "Defensa",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.981,
+      "identidad": {
+        "set_id": 55,
+        "slot": 3,
+        "nivel": 0,
+        "main": "def",
+        "subs": [
+          [
+            "atk",
+            0
+          ],
+          [
+            "atk%",
+            0
+          ],
+          [
+            "def%",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 14,
+      "celda": {
+        "fila": 1,
+        "col": 4
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 4,
+      "nivel": null,
+      "rareza": "?",
+      "main": {
+        "canon": "",
+        "raw": "",
+        "valor": null,
+        "unidad": null
+      },
+      "subs": [],
+      "confianza": 0.998,
+      "identidad": {
+        "set_id": 55,
+        "slot": 4,
+        "nivel": null,
+        "main": "",
+        "subs": []
+      }
+    },
+    {
+      "seq": 15,
+      "celda": {
+        "fila": 1,
+        "col": 5
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 4,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "DEF%",
+        "raw": "Defensa",
+        "valor": 12.0,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "HP%",
+          "raw": "PV",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK%",
+          "raw": "Ataque",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 15.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.896,
+      "identidad": {
+        "set_id": 55,
+        "slot": 4,
+        "nivel": 0,
+        "main": "def%",
+        "subs": [
+          [
+            "atk%",
+            0
+          ],
+          [
+            "def",
+            0
+          ],
+          [
+            "hp%",
+            0
+          ],
+          [
+            "maestriadeanomalia",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 16,
+      "celda": {
+        "fila": 1,
+        "col": 6
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 4,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "Maestría de Anomalía",
+        "raw": "Maestria de Anomalia",
+        "valor": 23.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "Daño Crítico",
+          "raw": "Dano Critico",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF%",
+          "raw": "Defensa",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK%",
+          "raw": "Ataque",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.979,
+      "identidad": {
+        "set_id": 55,
+        "slot": 4,
+        "nivel": 0,
+        "main": "maestriadeanomalia",
+        "subs": [
+          [
+            "atk%",
+            0
+          ],
+          [
+            "danocritico",
+            0
+          ],
+          [
+            "def%",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 17,
+      "celda": {
+        "fila": 1,
+        "col": 7
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 4,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "HP%",
+        "raw": "PV",
+        "valor": 7.5,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Perforación",
+          "raw": "Perforación",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF%",
+          "raw": "Defensa",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.779,
+      "identidad": {
+        "set_id": 55,
+        "slot": 4,
+        "nivel": 0,
+        "main": "hp%",
+        "subs": [
+          [
+            "def%",
+            0
+          ],
+          [
+            "maestriadeanomalia",
+            0
+          ],
+          [
+            "perforacion",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 35,
+      "celda": {
+        "fila": 4,
+        "col": 0
+      },
+      "set_raw": "Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 3,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "DEF",
+        "raw": "Defensa",
+        "valor": 46.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "HP%",
+          "raw": "PV",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "HP",
+          "raw": "PV",
+          "valor": 112.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF%",
+          "raw": "Defensa",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.979,
+      "identidad": {
+        "set_id": 54,
+        "slot": 3,
+        "nivel": 0,
+        "main": "def",
+        "subs": [
+          [
+            "def%",
+            0
+          ],
+          [
+            "hp",
+            0
+          ],
+          [
+            "hp%",
+            0
+          ],
+          [
+            "maestriadeanomalia",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 36,
+      "celda": {
+        "fila": 4,
+        "col": 1
+      },
+      "set_raw": "Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 0,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "ATK%",
+        "raw": "Ataque",
+        "valor": 7.5,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 15.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK",
+          "raw": "Ataque",
+          "valor": 19.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.984,
+      "identidad": {
+        "set_id": 54,
+        "slot": 0,
+        "nivel": 0,
+        "main": "atk%",
+        "subs": [
+          [
+            "atk",
+            0
+          ],
+          [
+            "def",
+            0
+          ],
+          [
+            "maestriadeanomalia",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 37,
+      "celda": {
+        "fila": 4,
+        "col": 3
+      },
+      "set_raw": "Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 4,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "ATK%",
+        "raw": "Ataque",
+        "valor": 7.5,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 15.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Prob. Crítica",
+          "raw": "Probabilidad de Critico",
+          "valor": 2.4,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "HP",
+          "raw": "PV",
+          "valor": 112.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.975,
+      "identidad": {
+        "set_id": 54,
+        "slot": 4,
+        "nivel": 0,
+        "main": "atk%",
+        "subs": [
+          [
+            "def",
+            0
+          ],
+          [
+            "hp",
+            0
+          ],
+          [
+            "prob.critica",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 38,
+      "celda": {
+        "fila": 4,
+        "col": 4
+      },
+      "set_raw": "Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 4,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "Prob. Crítica",
+        "raw": "Probabilidad de Critico",
+        "valor": 6.0,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "Daño Crítico",
+          "raw": "Daio Critico",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK%",
+          "raw": "Ataque",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "HP",
+          "raw": "PV",
+          "valor": 112.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.978,
+      "identidad": {
+        "set_id": 54,
+        "slot": 4,
+        "nivel": 0,
+        "main": "prob.critica",
+        "subs": [
+          [
+            "atk%",
+            0
+          ],
+          [
+            "danocritico",
+            0
+          ],
+          [
+            "hp",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 39,
+      "celda": {
+        "fila": 4,
+        "col": 5
+      },
+      "set_raw": "Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 0,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "DEF%",
+        "raw": "Defensa",
+        "valor": 12.0,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 15.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Daño Crítico",
+          "raw": "Dano Critico",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "Prob. Crítica",
+          "raw": "Probabilidad de Critico",
+          "valor": 2.4,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.984,
+      "identidad": {
+        "set_id": 54,
+        "slot": 0,
+        "nivel": 0,
+        "main": "def%",
+        "subs": [
+          [
+            "danocritico",
+            0
+          ],
+          [
+            "def",
+            0
+          ],
+          [
+            "prob.critica",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 40,
+      "celda": {
+        "fila": 4,
+        "col": 8
+      },
+      "set_raw": "Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 5,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "Tasa de Perforación",
+        "raw": "Tasa de Perforación",
+        "valor": 6.0,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "HP%",
+          "raw": "PV",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "HP",
+          "raw": "PV",
+          "valor": 112.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK%",
+          "raw": "Ataque",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.968,
+      "identidad": {
+        "set_id": 54,
+        "slot": 5,
+        "nivel": 0,
+        "main": "tasadeperforacion",
+        "subs": [
+          [
+            "atk%",
+            0
+          ],
+          [
+            "hp",
+            0
+          ],
+          [
+            "hp%",
+            0
+          ],
+          [
+            "maestriadeanomalia",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 41,
+      "celda": {
+        "fila": 2,
+        "col": 0
+      },
+      "set_raw": "Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 0,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "DEF%",
+        "raw": "Defensa",
+        "valor": 12.0,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "ATK%",
+          "raw": "Ataque",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "HP%",
+          "raw": "PV",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.875,
+      "identidad": {
+        "set_id": 54,
+        "slot": 0,
+        "nivel": 0,
+        "main": "def%",
+        "subs": [
+          [
+            "atk%",
+            0
+          ],
+          [
+            "hp%",
+            0
+          ],
+          [
+            "maestriadeanomalia",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 42,
+      "celda": {
+        "fila": 2,
+        "col": 1
+      },
+      "set_raw": "Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 5,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "HP%",
+        "raw": "PV",
+        "valor": 7.5,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 15.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK%",
+          "raw": "Ataque",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK",
+          "raw": "Ataque",
+          "valor": 19.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.99,
+      "identidad": {
+        "set_id": 54,
+        "slot": 5,
+        "nivel": 0,
+        "main": "hp%",
+        "subs": [
+          [
+            "atk",
+            0
+          ],
+          [
+            "atk%",
+            0
+          ],
+          [
+            "def",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 43,
+      "celda": {
+        "fila": 2,
+        "col": 2
+      },
+      "set_raw": "Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 0,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "Impacto",
+        "raw": "Impacto",
+        "valor": 4.5,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 15.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF%",
+          "raw": "Defensa",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.879,
+      "identidad": {
+        "set_id": 54,
+        "slot": 0,
+        "nivel": 0,
+        "main": "impacto",
+        "subs": [
+          [
+            "def",
+            0
+          ],
+          [
+            "def%",
+            0
+          ],
+          [
+            "maestriadeanomalia",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 44,
+      "celda": {
+        "fila": 2,
+        "col": 3
+      },
+      "set_raw": "5 Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 6,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "",
+        "raw": "",
+        "valor": null,
+        "unidad": null
+      },
+      "subs": [],
+      "confianza": 0.947,
+      "identidad": {
+        "set_id": 54,
+        "slot": 6,
+        "nivel": 0,
+        "main": "",
+        "subs": []
+      }
+    },
+    {
+      "seq": 45,
+      "celda": {
+        "fila": 2,
+        "col": 4
+      },
+      "set_raw": "Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 6,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "ATK%",
+        "raw": "Ataque",
+        "valor": 7.5,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "HP",
+          "raw": "PV",
+          "valor": 112.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK",
+          "raw": "Ataque",
+          "valor": 19.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Daño Crítico",
+          "raw": "Dafo Critico",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.947,
+      "identidad": {
+        "set_id": 54,
+        "slot": 6,
+        "nivel": 0,
+        "main": "atk%",
+        "subs": [
+          [
+            "atk",
+            0
+          ],
+          [
+            "danocritico",
+            0
+          ],
+          [
+            "hp",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 46,
+      "celda": {
+        "fila": 2,
+        "col": 5
+      },
+      "set_raw": "Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 6,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "DEF%",
+        "raw": "Defensa",
+        "valor": 12.0,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "Prob. Crítica",
+          "raw": "Probabilidad de Critico",
+          "valor": 2.4,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 15.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK%",
+          "raw": "Ataque",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.979,
+      "identidad": {
+        "set_id": 54,
+        "slot": 6,
+        "nivel": 0,
+        "main": "def%",
+        "subs": [
+          [
+            "atk%",
+            0
+          ],
+          [
+            "def",
+            0
+          ],
+          [
+            "prob.critica",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 47,
+      "celda": {
+        "fila": 2,
+        "col": 6
+      },
+      "set_raw": "5 Hado emplumado6)",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 0,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "Recarga de Energía",
+        "raw": "Recuperación de Energia",
+        "valor": 15.0,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "DEF%",
+          "raw": "Defensa",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK%",
+          "raw": "Ataque",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "Daño Crítico",
+          "raw": "Dano Critico",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.965,
+      "identidad": {
+        "set_id": 54,
+        "slot": 0,
+        "nivel": 0,
+        "main": "recargadeenergia",
+        "subs": [
+          [
+            "atk%",
+            0
+          ],
+          [
+            "danocritico",
+            0
+          ],
+          [
+            "def%",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 48,
+      "celda": {
+        "fila": 2,
+        "col": 7
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 3,
+      "nivel": 3,
+      "rareza": "?",
+      "main": {
+        "canon": "DEF",
+        "raw": "Defensa",
+        "valor": 73.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "Perforación",
+          "raw": "Perforaciön",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Prob. Crítica",
+          "raw": "Probabilidad de Critico",
+          "valor": 2.4,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK%",
+          "raw": "Ataque",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.897,
+      "identidad": {
+        "set_id": 55,
+        "slot": 3,
+        "nivel": 3,
+        "main": "def",
+        "subs": [
+          [
+            "atk%",
+            0
+          ],
+          [
+            "maestriadeanomalia",
+            0
+          ],
+          [
+            "perforacion",
+            0
+          ],
+          [
+            "prob.critica",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 49,
+      "celda": {
+        "fila": 2,
+        "col": 8
+      },
+      "set_raw": "Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 2,
+      "nivel": 3,
+      "rareza": "?",
+      "main": {
+        "canon": "ATK",
+        "raw": "Ataque",
+        "valor": 126.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "HP%",
+          "raw": "PV",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK%",
+          "raw": "Ataque",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 15.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.982,
+      "identidad": {
+        "set_id": 54,
+        "slot": 2,
+        "nivel": 3,
+        "main": "atk",
+        "subs": [
+          [
+            "atk%",
+            0
+          ],
+          [
+            "def",
+            0
+          ],
+          [
+            "hp%",
+            0
+          ],
+          [
+            "maestriadeanomalia",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 50,
+      "celda": {
+        "fila": 3,
+        "col": 0
+      },
+      "set_raw": "Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 5,
+      "nivel": 3,
+      "rareza": "?",
+      "main": {
+        "canon": "ATK%",
+        "raw": "Ataque",
+        "valor": 12.0,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "Prob. Crítica",
+          "raw": "Probabilidad de Critico",
+          "valor": 2.4,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "HP",
+          "raw": "PV",
+          "valor": 112.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Perforación",
+          "raw": "Perforacion",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF%",
+          "raw": "Defensa",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.896,
+      "identidad": {
+        "set_id": 54,
+        "slot": 5,
+        "nivel": 3,
+        "main": "atk%",
+        "subs": [
+          [
+            "def%",
+            0
+          ],
+          [
+            "hp",
+            0
+          ],
+          [
+            "perforacion",
+            0
+          ],
+          [
+            "prob.critica",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 51,
+      "celda": {
+        "fila": 3,
+        "col": 1
+      },
+      "set_raw": "Rosa espinosa (2) 2 5",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 2,
+      "nivel": 4,
+      "rareza": "?",
+      "main": {
+        "canon": "ATK",
+        "raw": "Ataque",
+        "valor": 142.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "HP",
+          "raw": "PV",
+          "valor": 112.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Daño Crítico",
+          "raw": "Dano Critico",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 15.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "HP%",
+          "raw": "PV",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.955,
+      "identidad": {
+        "set_id": 55,
+        "slot": 2,
+        "nivel": 4,
+        "main": "atk",
+        "subs": [
+          [
+            "danocritico",
+            0
+          ],
+          [
+            "def",
+            0
+          ],
+          [
+            "hp",
+            0
+          ],
+          [
+            "hp%",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 52,
+      "celda": {
+        "fila": 3,
+        "col": 2
+      },
+      "set_raw": "Rosa espinosa (6) 5 5",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 6,
+      "nivel": 4,
+      "rareza": "?",
+      "main": {
+        "canon": "DEF%",
+        "raw": "Defensa",
+        "valor": 21.6,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "ATK",
+          "raw": "Ataque",
+          "valor": 19.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Prob. Crítica",
+          "raw": "Probabilidad de Criticg",
+          "valor": 2.4,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "Perforación",
+          "raw": "Perforación",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "HP",
+          "raw": "PV",
+          "valor": 112.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.943,
+      "identidad": {
+        "set_id": 55,
+        "slot": 6,
+        "nivel": 4,
+        "main": "def%",
+        "subs": [
+          [
+            "atk",
+            0
+          ],
+          [
+            "hp",
+            0
+          ],
+          [
+            "perforacion",
+            0
+          ],
+          [
+            "prob.critica",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 53,
+      "celda": {
+        "fila": 3,
+        "col": 3
+      },
+      "set_raw": "Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 1,
+      "nivel": 4,
+      "rareza": "?",
+      "main": {
+        "canon": "HP",
+        "raw": "PV",
+        "valor": 990.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "Prob. Crítica",
+          "raw": "Probabilidad de Critico",
+          "valor": 2.4,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK%",
+          "raw": "Ataque",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "Perforación",
+          "raw": "Perforación",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF%",
+          "raw": "Defensa",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.898,
+      "identidad": {
+        "set_id": 54,
+        "slot": 1,
+        "nivel": 4,
+        "main": "hp",
+        "subs": [
+          [
+            "atk%",
+            0
+          ],
+          [
+            "def%",
+            0
+          ],
+          [
+            "perforacion",
+            0
+          ],
+          [
+            "prob.critica",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 54,
+      "celda": {
+        "fila": 3,
+        "col": 4
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 1,
+      "nivel": 15,
+      "rareza": "?",
+      "main": {
+        "canon": "HP",
+        "raw": "PV",
+        "valor": 2200.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "Perforación",
+          "raw": "Perforacion",
+          "valor": 27.0,
+          "unidad": "flat",
+          "rolls": 2
+        },
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Daño Crítico",
+          "raw": "Dano Critico",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 45.0,
+          "unidad": "flat",
+          "rolls": 2
+        }
+      ],
+      "confianza": 0.903,
+      "identidad": {
+        "set_id": 55,
+        "slot": 1,
+        "nivel": 15,
+        "main": "hp",
+        "subs": [
+          [
+            "danocritico",
+            0
+          ],
+          [
+            "def",
+            2
+          ],
+          [
+            "maestriadeanomalia",
+            0
+          ],
+          [
+            "perforacion",
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 55,
+      "celda": {
+        "fila": 3,
+        "col": 5
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 1,
+      "nivel": 15,
+      "rareza": "?",
+      "main": {
+        "canon": "HP",
+        "raw": "PV",
+        "valor": 2200.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "Daño Crítico",
+          "raw": "Dano Critico",
+          "valor": 9.6,
+          "unidad": "%",
+          "rolls": 1
+        },
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 30.0,
+          "unidad": "flat",
+          "rolls": 1
+        },
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Perforación",
+          "raw": "Perforación",
+          "valor": 27.0,
+          "unidad": "flat",
+          "rolls": 2
+        }
+      ],
+      "confianza": 0.893,
+      "identidad": {
+        "set_id": 55,
+        "slot": 1,
+        "nivel": 15,
+        "main": "hp",
+        "subs": [
+          [
+            "danocritico",
+            1
+          ],
+          [
+            "def",
+            1
+          ],
+          [
+            "maestriadeanomalia",
+            0
+          ],
+          [
+            "perforacion",
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 56,
+      "celda": {
+        "fila": 3,
+        "col": 6
+      },
+      "set_raw": "Rosa espinosa (2) 2 5",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 2,
+      "nivel": 15,
+      "rareza": "?",
+      "main": {
+        "canon": "ATK",
+        "raw": "Ataque",
+        "valor": 316.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "Daño Crítico",
+          "raw": "Dano Critico",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 30.0,
+          "unidad": "flat",
+          "rolls": 1
+        },
+        {
+          "canon": "DEF%",
+          "raw": "Defensa",
+          "valor": 9.6,
+          "unidad": "%",
+          "rolls": 1
+        },
+        {
+          "canon": "Perforación",
+          "raw": "Perforación",
+          "valor": 27.0,
+          "unidad": "flat",
+          "rolls": 2
+        }
+      ],
+      "confianza": 0.974,
+      "identidad": {
+        "set_id": 55,
+        "slot": 2,
+        "nivel": 15,
+        "main": "atk",
+        "subs": [
+          [
+            "danocritico",
+            0
+          ],
+          [
+            "def",
+            1
+          ],
+          [
+            "def%",
+            1
+          ],
+          [
+            "perforacion",
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 57,
+      "celda": {
+        "fila": 3,
+        "col": 7
+      },
+      "set_raw": "Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 3,
+      "nivel": 15,
+      "rareza": "?",
+      "main": {
+        "canon": "DEF",
+        "raw": "Defensa",
+        "valor": 184.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "Prob. Crítica",
+          "raw": "Probabilidad de Critico",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 1
+        },
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 36.0,
+          "unidad": "flat",
+          "rolls": 3
+        },
+        {
+          "canon": "ATK%",
+          "raw": "Ataque",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF%",
+          "raw": "Defensa",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.984,
+      "identidad": {
+        "set_id": 54,
+        "slot": 3,
+        "nivel": 15,
+        "main": "def",
+        "subs": [
+          [
+            "atk%",
+            0
+          ],
+          [
+            "def%",
+            0
+          ],
+          [
+            "maestriadeanomalia",
+            3
+          ],
+          [
+            "prob.critica",
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 58,
+      "celda": {
+        "fila": 3,
+        "col": 8
+      },
+      "set_raw": "Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 6,
+      "nivel": 15,
+      "rareza": "?",
+      "main": {
+        "canon": "Tasa de Anomalía",
+        "raw": "Tasa de Anomalia",
+        "valor": 30.0,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "ATK%",
+          "raw": "Ataque",
+          "valor": 9.0,
+          "unidad": "%",
+          "rolls": 2
+        },
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 15.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Perforación",
+          "raw": "Perforación +i",
+          "valor": 18.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 18.0,
+          "unidad": "flat",
+          "rolls": 1
+        }
+      ],
+      "confianza": 0.944,
+      "identidad": {
+        "set_id": 54,
+        "slot": 6,
+        "nivel": 15,
+        "main": "tasadeanomalia",
+        "subs": [
+          [
+            "atk%",
+            2
+          ],
+          [
+            "def",
+            0
+          ],
+          [
+            "maestriadeanomalia",
+            1
+          ],
+          [
+            "perforacion",
+            0
+          ]
+        ]
+      }
+    }
+  ],
+  "huecos": [
+    {
+      "motivo": "fuera_de_viewport",
+      "n": 22
+    }
+  ]
+}

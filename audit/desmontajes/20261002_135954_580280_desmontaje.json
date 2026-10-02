@@ -1,0 +1,427 @@
+{
+  "schema": "desmontaje/1",
+  "ts_apertura": "2026-10-02T13:59:36",
+  "ts_commit": "2026-10-02T13:59:54",
+  "conteo": {
+    "declarado": 10,
+    "capturados": 6,
+    "faltantes": 4,
+    "fuente_declarado": "contador_header",
+    "material_primero": 10,
+    "corroborado": true
+  },
+  "modo": "manual",
+  "confirmacion_grado_s": true,
+  "avisos": [
+    "scroll durante la tanda",
+    "contador del header ilegible"
+  ],
+  "discos": [
+    {
+      "seq": 1,
+      "celda": {
+        "fila": 1,
+        "col": 0
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 4,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "DEF%",
+        "raw": "Defensa",
+        "valor": 12.0,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "Perforación",
+          "raw": "Perforación",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK",
+          "raw": "Ataque",
+          "valor": 19.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 15.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "HP%",
+          "raw": "PV",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.974,
+      "identidad": {
+        "set_id": 55,
+        "slot": 4,
+        "nivel": 0,
+        "main": "def%",
+        "subs": [
+          [
+            "atk",
+            0
+          ],
+          [
+            "def",
+            0
+          ],
+          [
+            "hp%",
+            0
+          ],
+          [
+            "perforacion",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 2,
+      "celda": {
+        "fila": 0,
+        "col": 8
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 4,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "ATK%",
+        "raw": "Ataque",
+        "valor": 7.5,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "HP%",
+          "raw": "PV",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "Daño Crítico",
+          "raw": "Dano Critico",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK",
+          "raw": "Ataque",
+          "valor": 19.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.978,
+      "identidad": {
+        "set_id": 55,
+        "slot": 4,
+        "nivel": 0,
+        "main": "atk%",
+        "subs": [
+          [
+            "atk",
+            0
+          ],
+          [
+            "danocritico",
+            0
+          ],
+          [
+            "hp%",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 3,
+      "celda": {
+        "fila": 0,
+        "col": 5
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 4,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "DEF%",
+        "raw": "Defensa",
+        "valor": 12.0,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "ATK",
+          "raw": "Ataque",
+          "valor": 19.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK%",
+          "raw": "Ataque",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.883,
+      "identidad": {
+        "set_id": 55,
+        "slot": 4,
+        "nivel": 0,
+        "main": "def%",
+        "subs": [
+          [
+            "atk",
+            0
+          ],
+          [
+            "atk%",
+            0
+          ],
+          [
+            "maestriadeanomalia",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 4,
+      "celda": {
+        "fila": 0,
+        "col": 4
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 4,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "Maestría de Anomalía",
+        "raw": "Maestria de Anomalia",
+        "valor": 23.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "HP",
+          "raw": "PV",
+          "valor": 112.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 15.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Perforación",
+          "raw": "Perforacion",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.95,
+      "identidad": {
+        "set_id": 55,
+        "slot": 4,
+        "nivel": 0,
+        "main": "maestriadeanomalia",
+        "subs": [
+          [
+            "def",
+            0
+          ],
+          [
+            "hp",
+            0
+          ],
+          [
+            "perforacion",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 5,
+      "celda": {
+        "fila": 0,
+        "col": 1
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 4,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "ATK%",
+        "raw": "Ataque",
+        "valor": 7.5,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "HP%",
+          "raw": "PV",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "Daño Crítico",
+          "raw": "Dano Critico",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "Perforación",
+          "raw": "Perforacion",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.812,
+      "identidad": {
+        "set_id": 55,
+        "slot": 4,
+        "nivel": 0,
+        "main": "atk%",
+        "subs": [
+          [
+            "danocritico",
+            0
+          ],
+          [
+            "hp%",
+            0
+          ],
+          [
+            "maestriadeanomalia",
+            0
+          ],
+          [
+            "perforacion",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 6,
+      "celda": {
+        "fila": 0,
+        "col": 0
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 4,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "Daño Crítico",
+        "raw": "Dano Critico",
+        "valor": 12.0,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "ATK%",
+          "raw": "Ataque",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "Prob. Crítica",
+          "raw": "Probabilidad de Critico",
+          "valor": 2.4,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 15.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.976,
+      "identidad": {
+        "set_id": 55,
+        "slot": 4,
+        "nivel": 0,
+        "main": "danocritico",
+        "subs": [
+          [
+            "atk%",
+            0
+          ],
+          [
+            "def",
+            0
+          ],
+          [
+            "prob.critica",
+            0
+          ]
+        ]
+      }
+    }
+  ],
+  "huecos": [
+    {
+      "motivo": "fuera_de_viewport",
+      "n": 4
+    }
+  ]
+}

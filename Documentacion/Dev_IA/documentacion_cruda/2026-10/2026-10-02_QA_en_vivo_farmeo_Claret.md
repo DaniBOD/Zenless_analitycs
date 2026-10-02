@@ -153,3 +153,56 @@ Daniel (2026-10-02): "si arranca por el duplicado". Estado del diagnóstico, par
   salga "equipado").
 - **Datos:** después de arreglarlo, en el QA: equipar un libre sugerido → `s17_equipa_libre`, sin
   fila nueva.
+
+## Sesión 3 (sin juego, 2026-10-02 tarde): el duplicado y la mejora en vivo
+
+Daniel: "arrancá con el duplicado, voy por la opción B" + "[la mejora] debe detectar el nivel y
+constantemente verificar las stats en la pestaña de mejora y ahí mismo actualizar la db".
+
+### El duplicado al equipar: eran DOS causas, no una
+
+Verificado en el `app.log` (las líneas `[grilla]` y `[equipado]` antes de cada `s17_swap`):
+
+| caso | qué pasó | causa |
+|---|---|---|
+| Claret s1 (#404 → #465) | el aviso libre→PJ **se armó** (11:00:14) y **se confirmó** (11:00:33 "CAMBIÓ ✓"), pero no salió ningún "Disco detectado" | el gate de `_disc_emitted` corría el check y no re-emitía; sin latch (volvía de S10) el dueño quedaba sólo observado y la clave del dedup no cambiaba → la marca nunca llegó a la DB. Una hora después, `s17_swap`. Pasó igual a las 00:01:36 y 00:08:03 |
+| Remielle s3 (#443 → #463) | la grilla leyó "equipado · dueño incierto" el libre (10:55:21) → no se armó el aviso | **sin diagnosticar**: no hay capturas de ese momento |
+
+- **Claret: ARREGLADO** (`b8f8636`). La confirmación (badge + botón) deja al destino como dueño certero
+  y el gate re-emite una vez.
+- **Remielle (opción B, la elegida):** las 11 capturas de libres de
+  `17_Inventario_Disco_Vista_Individual_libres` siguen saliendo LIBRE con las librerías de hoy (sin
+  votos, sin cara), así que un libre QUIETO se lee bien. Hipótesis sin verificar: un frame de
+  transición (el detalle todavía con el avatar de Remielle, del disco anterior, con la firma nueva);
+  con "presencia gana a libre" un solo frame con cara bloquea LIBRE hasta el próximo disco.
+  Instrumentado (`7cab9fa`): las líneas de "dueño incierto" llevan `traza=` (una ficha por pasada:
+  grilla `n/g/G` + detalle `-/t/c`, mayúscula si votó) y los votos; con `-GridDiag` se vuelca
+  también el recorte del DETALLE. `gc g- g- g-` = transición; `gc gc gc gc` = cara sostenida.
+
+### La mejora se escribe en vivo
+
+- `99d8955`: cada subida de nivel que se VE en S10 actualiza la fila en ese momento, sin esperar la
+  pantalla posterior ni el vuelto de materiales. Sólo con lectura coherente: `es_el_mismo_disco` +
+  #substats + Σrolls − nivel//3 constante. Medido antes: la regla vale para 426 de 427 discos de la
+  DB, y S10 lee los rolls bien en 17 de 17 capturas (05/06/19_Upgrade_*).
+- `31ad52f`: el PRE leído tarde (S10 ya en Nv 3/4, la fila en Nv 0) busca la fila de un nivel
+  anterior de ese disco (`find_estados_previos`: mismo disco, umbrales, valores de los substats sin
+  roll nuevo). Es otra de las tres causas de las mejoras sin confirmar.
+- Lo que **no** cambió: el disco equipado lo sigue actualizando la S17 por (PJ, slot). Pendiente de
+  decisión de Daniel (ver abajo).
+
+### Qué mirar en el próximo QA
+
+1. Equipar un libre sugerido a un slot ocupado → `s17_equipa_libre`, sin fila nueva. Si la grilla
+   vuelve a dudar: copiar la línea con `traza=` (y, con `qa_launch ... -GridDiag`, los
+   `det_*.png`).
+2. Mejorar un libre de 0 a 3 y salir → `Disco LIBRE actualizado … s10_upgrade_update` justo
+   después de `[mejora] nivel 0→3`, sin esperar nada.
+3. Si aparece `la lectura no cuadra con la anterior`, anotar el disco: es un paso que S10 leyó mal.
+
+### Decisión pendiente
+
+¿La escritura en vivo actualiza también al disco EQUIPADO? Hoy no: `actualizar_por_mejora` lo deja a
+la S17 posterior por (PJ, slot), con un test que lo fija ("tocar la fila acá sería una segunda
+autoridad"). Mejorando desde el equipamiento, la S17 lo refresca al volver; desde el inventario
+(S9) o la tienda (S5) depende de esa pantalla.
