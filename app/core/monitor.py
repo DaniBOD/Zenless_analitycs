@@ -3980,6 +3980,11 @@ class Monitor:
         """Emite (dedup por identidad + equip_map + log + on_disc/sync) un disco S9.
         Espejo de `_emit_s17_disc`; comparte el dedup con S17 (un disco es un disco)."""
         self._s9_emitted = True
+        # Confirmación de una MEJORA (SPEC 2026-10-02 "El Obtenido guarda los discos", punto 5),
+        # antes del dedup como en S5: mejorar desde el "Ver" y mirar el disco acá dejaba la fila vieja
+        # en Nv 0 y S9 insertaba otra (#411/#412). Sólo maduro (rolls asentados); `es_el_mismo_disco`
+        # dentro del syncer evita que confirme otro disco del mismo set y slot.
+        self._confirmar_mejora(merged, "s9")
         identity = self._disc_identity(merged)
         emit_key = self._disc_emit_key(identity, merged)
         # Un disco repetido no imprime línea: no hay espera que cronometrar. Sin soltar el
@@ -5942,6 +5947,17 @@ class Monitor:
         self._s17_assign_sig = sig
         (log.debug if razonamiento else log.info)(msg, *args)
 
+    def _confirmar_mejora(self, disc, origen: str) -> None:
+        """Le pasa al `UpgradeSyncer` un disco de una pantalla POSTERIOR a la mejora ("Ver", S9).
+        Sólo si está maduro: con un frame parcial no se confirma (queda el resumen "sin confirmar",
+        RNF-02). No-op sin pendiente."""
+        if self._upgrade_syncer is None or not disc_is_mature(disc):
+            return
+        try:
+            self._upgrade_syncer.on_post_upgrade_disc(disc)
+        except Exception:
+            log.debug("on_post_upgrade_disc (%s) falló", origen, exc_info=True)
+
     def _process_disc(self, frame, state: ScreenState) -> None:
         try:
             # S17 (disco equipado, "Personalización de pistas") usa el parser
@@ -5958,6 +5974,10 @@ class Monitor:
                 disc = parse_disc_s7(frame, self._ocr)
             else:
                 disc = parse_modal_detalle(frame, self._ocr, self._set_repo, state_code=state.code)
+            if state.code in ("S6", "S7") and disc.confianza_global >= 0.7:
+                # El "Ver" es a donde vuelve una mejora empezada desde él (S7 → S10 → S20 → S7):
+                # es su pantalla posterior, como S17 o S5 (SPEC 2026-10-02, punto 3).
+                self._confirmar_mejora(disc, state.code.lower())
             if disc.confianza_global < 0.7:
                 reason = f"confianza OCR {disc.confianza_global:.2f} < 0.70"
                 log.info(
