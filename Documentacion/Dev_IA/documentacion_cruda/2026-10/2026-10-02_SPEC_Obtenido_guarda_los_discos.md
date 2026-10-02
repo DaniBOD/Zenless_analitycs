@@ -1,7 +1,8 @@
 # SPEC · El "Obtenido" de las baterías guarda los discos (2026-10-02)
 
 **Estado:** alcance decidido por Daniel el 2026-10-01 a la noche (dos preguntas, las dos en la
-opción recomendada). Falta aprobar este SPEC y el plan.
+opción recomendada). Aprobado el 2026-10-02 ("R14 se queda igual entonces, veamos el 1 del spec de
+obtenido"). Plan: `2026-10-02_PLAN_Obtenido_guarda_los_discos.md`.
 
 ## Qué pidió Daniel
 
@@ -88,6 +89,25 @@ stats de #396. Con más pantallas confirmando (punto 3), el error se multiplica.
 QA 2026-10-02 00:02: Hado emplumado slot 1 mejorado 0 → 3 desde el "Ver" y mirado en S9 →
 `libre_insert` #412 al lado de la fila vieja #411 (Nv 0): fantasma. S9 emite el disco maduro igual
 que S17; pasa a llamar `on_post_upgrade_disc` con la guarda del punto 4.
+
+### 6 · S17 no pisa la fila del slot con OTRO disco del mismo set (bug 3 del QA, diagnosticado)
+
+QA 2026-10-02 00:22: Daniel le cambió a Claret el slot 4 Rosa espinosa por OTRO Rosa espinosa.
+`persist_s17_disc` (`sync_equip.py:482`) decide "mismo disco (refresco tras upgrade)" con **sólo
+`slot_disc.set_id == set_id`** → `s17_update` sobrescribió #402 con el disco nuevo. El viejo
+desapareció de la DB y el nuevo quedó dos veces (#402 y el `libre_insert` #419 de 5 s antes). Pasó
+también con los slots 1 y 2 (la DB quedó bien de casualidad: ver el audit).
+
+- "Mismo disco" pasa a ser la regla del punto 4 (mismo main, substats del de antes ⊆ los de
+  ahora, nivel que no baja). Si no se cumple, sigue el camino que ya existe para un disco
+  DISTINTO: `_find_disc_to_move` encuentra la fila libre del entrante (#419) y la re-equipa, y el
+  viejo queda libre (`set_unequipped`) — sin insertar ni pisar.
+
+### Una sola autoridad para "¿es el mismo disco?" (B1)
+
+Los puntos 4 y 6 son la misma pregunta. Va UNA función pura, `es_el_mismo_disco(antes, ahora)`
+(`app/core/mismo_disco.py`), que usan `sync_upgrade` (confirmación) y `sync_equip` (refresco de
+S17). Acepta un `DiscParsed` o un `Disc` de la DB.
 
 ## Lo que queda afuera (dicho, no olvidado)
 
