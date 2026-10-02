@@ -72,3 +72,21 @@ todas las filas de la sesión, y cada uno contrastado con el log.
 - **Antes:** nada en `inventory_disc_evaluations` ni `movimientos_discos` apuntaba a las borradas.
 - **Checks:** #463/#464/#465 intactos; Claret 6 equipados con #465 en s1; #463 en Remielle s3; FK e
   integridad ok. **Backup:** `db/danibod_zzz_v2.backup_premig_20261002_120051.db`.
+
+## 5. Sesión de la tarde (13:41 → 14:07), con las mejoras en vivo activas
+
+Fase 0 del plan del hito "El ritmo de Daniel" (`2026-10-02_SPEC_Ritmo_de_Daniel.md`). Ensayo en copia
+(expected_0 / 1 / 416, FK e integridad ok) y después la DB real.
+
+- **#478 borrado.** Fila VACÍA (main '' y sin substats) que guardó el Obtenido a las 13:44:18 con el
+  panel a medio cargar (arreglado en `5e964c0`). El disco real fue #479, que el desmontaje de las
+  13:57 ya dio de baja.
+- **#484 → Nv 3 y dado de baja.** Rosa espinosa s3: Daniel lo subió a Nv 3 (DEF 73 · +ATK% 3 %) en ~2 s
+  y la app no vio subir (arreglado en `3953918`). Se desmontó a las 13:57 (bitácora
+  `20261002_135726_473675`: DEF 73 · Perforación 9 · Maestría 9 · Prob. Crítica 2,4 · ATK% 3) y la
+  baja no lo encontró porque la fila seguía en Nv 0. Queda con el estado en que se desmontó.
+- **No tocado a mano:** los otros desmontados que la app no leyó (22 + 4, más una tanda de 10 que
+  nunca cerró) y los 18 leídos sin match. Los resuelve el censo (Fase 6). Activas: 418 → 416; en el
+  juego, 379.
+- **Antes:** nada en `inventory_disc_evaluations` ni `movimientos_discos` apuntaba a #478/#484.
+- **Backup:** `db/danibod_zzz_v2.backup_premig_20261002_143845.db`.
