@@ -999,6 +999,38 @@ class InventoryDiscRepo:
         return [d for d in (self._row_to_disc(r) for r in rows)
                 if self.row_matches_parsed_identity(d, p, set_id, ignorar_nivel=True)]
 
+    def find_estados_previos(self, p: "DiscParsed", set_id: int) -> list["Disc"]:
+        """Filas que son `p` en un nivel ANTERIOR: el mismo disco antes de mejorarlo.
+
+        Para la mejora cuyo PRE se leyó tarde (QA 2026-10-02: S10 vio el disco ya en Nv 3/4 y la
+        fila seguía en Nv 0 → `find_all_by_identity(pre)` no la encuentra y la mejora se pierde).
+        Exige las tres pruebas de que es ESE disco y no otro del mismo set y slot:
+          - `es_el_mismo_disco_subido(fila, p)`: substats ⊆, rolls que no bajan y lo que dan los
+            umbrales de nivel cruzados;
+          - los VALORES de los substats que no ganaron roll, iguales (en Nv 0 todos los rolls son 0
+            y los nombres solos no separan a los gemelos del mismo nodo).
+        Lista, no uno: ≥2 es ambigüedad y el caller se abstiene (RNF-02)."""
+        from app.core.mismo_disco import es_el_mismo_disco_subido
+        from app.core.stats_vocab import _norm_key
+        if p.nivel is None:
+            return []
+        rows = self._con.execute(
+            "SELECT * FROM inventory_discs WHERE set_id=? AND slot=? AND nivel < ? "
+            "AND descartado=0",
+            (set_id, p.slot, p.nivel),
+        ).fetchall()
+        de_p = {_norm_key(s.nombre_canon or s.nombre_raw or ""): (s.valor, s.rolls or 0)
+                for s in (p.subs or [])}
+        out: list[Disc] = []
+        for r in rows:
+            d = self._row_to_disc(r)
+            if not es_el_mismo_disco_subido(d, p):
+                continue
+            if all(self._cerca(v, de_p[_norm_key(n)][0])
+                   for n, v, _u, rolls in d.subs if n and (rolls or 0) == de_p[_norm_key(n)][1]):
+                out.append(d)
+        return out
+
     def find_equipped_by_agent_slot(self, agente_id: int, slot: int) -> "Disc | None":
         """
         Disco equipado de un PJ en un slot dado. Clave NATURAL del equipamiento:

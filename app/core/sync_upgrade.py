@@ -41,7 +41,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from app.core.mismo_disco import es_el_mismo_disco
+from app.core.mismo_disco import crecimiento as _crecimiento
+from app.core.mismo_disco import es_el_mismo_disco, es_el_mismo_disco_subido
 from app.core.parser_disc import DiscParsed
 from app.core.parser_disc_s10 import parse_disc_s10
 from app.core.stats_vocab import _norm_key
@@ -99,19 +100,12 @@ def _same_disc(a: DiscParsed, b: DiscParsed) -> bool:
     return bool(ka) and ka == kb
 
 
-def _crecimiento(d: DiscParsed) -> int:
-    """#substats + Σrolls − nivel//3: cada 3 niveles el disco gana un substat (si tiene 3) o un
-    roll, así que este número no cambia al subir (3 o 4, según con cuántos substats cayó). Medido
-    sobre la DB el 2026-10-02: 426 de 427 discos (el otro, un Nv 0 con 2 substats)."""
-    return len(d.subs) + sum(s.rolls for s in d.subs) - (d.nivel or 0) // 3
-
-
 def _paso_coherente(antes: DiscParsed, ahora: DiscParsed) -> bool:
     """¿`ahora` es `antes` subido de nivel, leído bien? Mismo disco por la regla de siempre
     (`es_el_mismo_disco`: substats ⊆ y rolls que no bajan) y exactamente lo que dan los umbrales
-    cruzados (`_crecimiento` igual). Un frame de animación o un "+N" perdido lo rompe → ese paso no
+    cruzados (`crecimiento` igual; las dos en `mismo_disco`). Un frame de animación o un "+N" perdido lo rompe → ese paso no
     se escribe (RNF-02); la pantalla posterior todavía puede confirmar."""
-    return es_el_mismo_disco(antes, ahora) and _crecimiento(antes) == _crecimiento(ahora)
+    return es_el_mismo_disco_subido(antes, ahora)
 
 
 def _roll_diff(pre: DiscParsed, post: DiscParsed) -> dict[str, int]:

@@ -92,3 +92,21 @@ def test_sin_nivel_leido_compara_igual_los_substats():
 def test_tildes_y_mayusculas_del_ocr_no_separan():
     antes = _p("HP", 0, [("Daño Critico", 0), ("Maestria de Anomalia", 0), ("DEF", 0)])
     assert es_el_mismo_disco(antes, _p("HP", 0, PRE_408))
+
+
+# ---- la cuenta de los umbrales (2026-10-02, mejora en vivo y PRE leído tarde) ----------------
+
+def test_crecimiento_de_fila_y_de_lectura():
+    from app.core.mismo_disco import crecimiento
+    assert crecimiento(_d("HP", 0, PRE_408)) == 3
+    assert crecimiento(_p("HP", 15, EQUIPADO_396)) == 4 + 4 - 5   # 4 substats + 4 rolls − 5 umbrales: cayó con 3
+
+
+def test_subido_exige_lo_que_dan_los_umbrales():
+    from app.core.mismo_disco import es_el_mismo_disco_subido
+    nv3 = PRE_408 + [("Perforación", 0)]
+    assert es_el_mismo_disco_subido(_d("HP", 0, PRE_408), _p("HP", 3, nv3))
+    # a +3 ganó el 4.º substat Y un roll: el juego no hace eso → mala lectura u otro disco
+    doble = [("Daño Crítico", 1)] + PRE_408[1:] + [("Perforación", 0)]
+    assert es_el_mismo_disco(_d("HP", 0, PRE_408), _p("HP", 3, doble))
+    assert not es_el_mismo_disco_subido(_d("HP", 0, PRE_408), _p("HP", 3, doble))

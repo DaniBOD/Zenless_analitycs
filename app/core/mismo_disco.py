@@ -43,3 +43,19 @@ def es_el_mismo_disco(antes, ahora) -> bool:
     if not set(subs_a) <= set(subs_b):
         return False
     return all(subs_b[n] >= r for n, r in subs_a.items())
+
+
+def crecimiento(d) -> int:
+    """#substats + Σrolls − nivel//3 de un `DiscParsed` o un `Disc`. Cada 3 niveles el disco gana un
+    substat (si tiene 3) o un roll, así que este número NO cambia al subir: 3 o 4, según con
+    cuántos substats cayó. Medido sobre la DB el 2026-10-02: 426 de 427 discos (el otro, un Nv 0
+    con 2 substats)."""
+    _main, nivel, subs = _huella(d)
+    return len(subs) + sum(subs.values()) - (nivel or 0) // 3
+
+
+def es_el_mismo_disco_subido(antes, ahora) -> bool:
+    """`es_el_mismo_disco` + exactamente lo que dan los umbrales de nivel cruzados. Es la prueba
+    de que `ahora` es `antes` mejorado Y bien leído: un "+N" perdido o un frame de animación rompe
+    la cuenta."""
+    return es_el_mismo_disco(antes, ahora) and crecimiento(antes) == crecimiento(ahora)

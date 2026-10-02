@@ -306,3 +306,69 @@ def test_main_con_otro_valor_no_coincide(repo):
 def test_none_de_cualquier_lado_no_rechaza(repo):
     assert repo.row_matches_parsed_values(_disc_row(main_valor=None), _disco(0, _SUBS_PRE))
     assert repo.row_matches_parsed_values(_disc_row(), _disco(0, _SUBS_PRE, main_valor=None))
+
+
+# --- el PRE leído tarde (QA 2026-10-02: S10 vio el disco ya en Nv 3/4, la fila seguía en Nv 0) --
+
+# Datos que cumplen cómo sube el juego (cada 3 niveles: el 4.º substat O un roll, no las dos).
+# `_SUBS_POST` de arriba gana las dos cosas a +3 y la búsqueda de previos lo rechaza, con razón.
+_SUBS_NV3 = _SUBS_PRE + [_sub("Prob. Crítica", 2.4, 0, "%")]
+_SUBS_NV6 = [_sub("DEF%", 4.8, 0, "%"), _sub("HP", 112.0, 0), _sub("Perforación", 18.0, 1),
+             _sub("Prob. Crítica", 2.4, 0, "%")]
+
+
+def test_pre_leido_tarde_actualiza_la_fila_del_nivel_anterior(db):
+    """Daniel mejora rápido: el primer frame de S10 ya muestra Nv 3. Contra ese PRE no hay fila
+    (está en Nv 0), y antes la mejora entera se perdía."""
+    rid = _fila(db)                                             # Nv 0, como entró por el drop
+    sync = _syncer(db)
+    assert sync.actualizar_por_mejora(_disco(3, _SUBS_NV3), _disco(6, _SUBS_NV6)) == rid
+    f = _filas(db)[0]
+    assert (f["nivel"], f["sub4"]) == (6, "Prob. Crítica")
+    con = sqlite3.connect(str(db))
+    assert con.execute("SELECT rolls3, val3 FROM inventory_discs").fetchone() == (1, 18.0)
+    con.close()
+
+
+def test_pre_tarde_los_valores_separan_a_los_gemelos_de_nivel_0(db):
+    otros = [_sub("DEF%", 4.8, 0, "%"), _sub("HP", 112.0, 0), _sub("Perforación", 15.0, 0)]
+    gemelo = _fila(db, subs=otros)
+    mio = _fila(db)
+    sync = _syncer(db)
+    assert sync.actualizar_por_mejora(_disco(3, _SUBS_NV3), _disco(6, _SUBS_NV6)) == mio
+    assert {f["id"]: f["nivel"] for f in _filas(db)} == {gemelo: 0, mio: 6}
+
+
+def test_pre_tarde_ante_dos_previos_indistinguibles_no_toca_ninguno(db):
+    _fila(db)
+    _fila(db)
+    sync = _syncer(db)
+    assert sync.actualizar_por_mejora(_disco(3, _SUBS_NV3), _disco(6, _SUBS_NV6)) is None
+    assert [f["nivel"] for f in _filas(db)] == [0, 0]
+
+
+def test_pre_tarde_que_no_cuadra_con_los_umbrales_no_es_ese_disco(db):
+    """Una fila Nv 0 con los mismos nombres pero que a +3 tendría que haber ganado algo: si el
+    "PRE" dice Nv 3 sin substat nuevo ni roll, no es ese disco subido (o se leyó mal)."""
+    _fila(db)
+    sync = _syncer(db)
+    pre_mal = _disco(3, _SUBS_PRE)                              # Nv 3 sin nada ganado
+    assert sync.actualizar_por_mejora(pre_mal, _disco(6, _SUBS_NV6)) is None
+    assert _filas(db)[0]["nivel"] == 0
+
+
+def test_pre_tarde_en_vivo_desde_s10(db, monkeypatch):
+    """De punta a punta con el `UpgradeSyncer`: entra a S10 ya en Nv 3, ve subir a Nv 6 y la fila
+    (que estaba en Nv 0) queda en Nv 6 sin salir del modal."""
+    import numpy as np
+    from app.core.sync_upgrade import UpgradeSyncer
+    rid = _fila(db)
+    s = UpgradeSyncer(ocr=None, on_diagnostic=lambda _m: None, disc_syncer=_syncer(db))
+    lecturas = iter([_disco(3, _SUBS_NV3), _disco(6, _SUBS_NV6)])
+    monkeypatch.setattr(s, "_safe_parse", lambda _f: next(lecturas))
+    sigs = iter(range(10))
+    monkeypatch.setattr(s, "_level_sig", lambda _f: np.full((32, 32), next(sigs) * 10.0, np.float32))
+    s.on_s10_enter(None)
+    s.on_s10_update(None)
+    f = _filas(db)[0]
+    assert (f["id"], f["nivel"]) == (rid, 6)

@@ -717,13 +717,21 @@ class DiscSyncer:
         try:
             with con_w:
                 candidatos = repo.find_all_by_identity(pre, set_id)
+                previo = None
+                if not candidatos:
+                    # El PRE se leyó tarde (S10 vio el disco ya en Nv 3/4 y la fila sigue en el
+                    # nivel anterior): buscar la fila en un estado PREVIO de este disco y
+                    # tratarla como el PRE (QA 2026-10-02, "no subió de nivel").
+                    candidatos = repo.find_estados_previos(pre, set_id)
+                    previo = True
                 ocupados = [d for d in candidatos if d.agente_asignado is not None]
                 # Las filas MARCADAS `dueno_no_identificado` tienen dueño NULL pero NO están
                 # libres: alguien las tiene y no se pudo leer quién. Fuera del bucket, igual que
                 # en `_persist_disco_libre`.
                 libres = [d for d in candidatos
                           if d.agente_asignado is None and not _es_dueno_incierto(d)]
-                libres = [d for d in libres if repo.row_matches_parsed_values(d, pre)]
+                if not previo:   # los previos ya compararon valores, con sus rolls de antes
+                    libres = [d for d in libres if repo.row_matches_parsed_values(d, pre)]
                 if len(libres) > 1:
                     log.warning(
                         "Mejora: %d discos libres indistinguibles para set=%s slot=%s nivel=%s "
@@ -742,10 +750,13 @@ class DiscSyncer:
                                  "en la próxima captura.", pre.set_name_raw, pre.slot, pre.nivel)
                     return None
                 disc_id = libres[0].id
+                nivel_fila = libres[0].nivel
                 repo.update_from_parsed(disc_id, post)
             log.info("Disco LIBRE actualizado id=%d s10_upgrade_update set=%s slot=%s "
-                     "nivel %d→%d %.0fms", disc_id, pre.set_name_raw, pre.slot,
-                     pre.nivel, post.nivel, (time.perf_counter() - t0) * 1000)
+                     "nivel %s→%d%s %.0fms", disc_id, pre.set_name_raw, pre.slot,
+                     nivel_fila, post.nivel,
+                     " (la mejora se vio desde Nv %d)" % pre.nivel if previo else "",
+                     (time.perf_counter() - t0) * 1000)
             return disc_id
         except Exception:
             log.exception("Error actualizando el disco mejorado")
