@@ -128,3 +128,4 @@ archivos no se mudan después: una ruta que cambia rompe los enlaces que apuntan
 ## 2026-10 — 🟢 **vivo** — el mes en curso
 
 - [2026-10-01](documentacion_cruda/2026-10/2026-10-01_SPEC_Paso_8_sugerencias_en_vivo.md) - SPEC Fase A · paso 8: **las sugerencias del motor en vivo**. Drops e inventario pasan por el motor de Discos (`sugerir_un_disco`, una sola autoridad con `generar`); toast sólo para un drop EQUIPAR o MEJORAR, con la mejora real en vez del score sin calibrar; línea en la card y detalle en la región derecha. 57 ms medidos → sincrónico
+- [2026-10-01](documentacion_cruda/2026-10/2026-10-01_PLAN_Paso_8_sugerencias_en_vivo.md) - PLAN del paso 8: 5 tareas (sugerir_un_disco, controlador, toast con la mejora, card y región derecha, cierre con QA en vivo)
