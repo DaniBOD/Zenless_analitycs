@@ -2477,6 +2477,17 @@ class Monitor:
         # una fila libre de este disco: `equipado_desde_libre` es la evidencia para que S17 la
         # adopte en vez de insertar otra (QA 2026-10-02: #419 quedó duplicado de #402).
         merged.equipado_desde_libre = True
+        # Las dos señales confirmaron AL DESTINO: pasa a ser el dueño certero. Sin esto el merge
+        # quedaba con el dueño sólo observado (`equip_pj_visual`; tras volver de S10 no hay
+        # latch), la persistencia no lo tomaba y la clave del filtro de repetidos (identidad +
+        # dueño certero) no cambiaba → el disco no se re-emitía y la marca se perdía con él. Una
+        # hora después la S17 del PJ lo insertó otra vez (QA 2026-10-02 11:00:33, Claret s1:
+        # #404 → #465).
+        nuevo_dueno = dest or owner
+        merged.agente_asignado_nombre = nuevo_dueno
+        merged.equip_pj_visual = nuevo_dueno
+        merged.equip_libre = False
+        merged.equip_detectado = True
         self._pending_swap = None
         self._swap_check_mark = None
         if self._on_replacement:
@@ -3342,6 +3353,11 @@ class Monitor:
                 if merged is not None:
                     self._assign_s17_pj(merged, frame)   # refresca dueño (badge) y botón
                     self._check_swap_owner(merged, state)
+                    if merged.equipado_desde_libre:
+                        # Confirmado DESPUÉS de que el disco emitió como libre: sin re-emitir,
+                        # la marca nunca llegaba a la persistencia (QA 2026-10-02, Claret s1).
+                        # El dueño nuevo cambia la clave del dedup, así que esto pasa una vez.
+                        self._emit_s17_disc(merged, state, True)
             return
         # 5R.L.6 — WARMUP del dueño: el disco ya maduró (OCR completo) pero salía con dueño
         # INCIERTO sobre 1 frame. Mientras calienta, NO re-OCR (RNF-06): el loop rápido (10fps)

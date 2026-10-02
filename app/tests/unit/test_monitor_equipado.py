@@ -507,3 +507,43 @@ def test_sin_confirmar_no_se_marca():
     visto = _disc(owner="Nangong Yu")
     m._check_swap_owner(visto, _ST17)
     assert visto.equipado_desde_libre is False
+
+
+def test_confirmado_con_el_disco_ya_emitido_se_reemite_con_la_marca(monkeypatch):
+    """QA 2026-10-02 11:00:33 (Claret s1): el check dio "CAMBIÓ ✓" sobre un disco que YA había
+    emitido como libre, y sin latch (volvía de S10) el dueño quedaba sólo observado. No se
+    re-emitía → la marca no llegaba a la persistencia → una hora después, `s17_swap` (#465)."""
+    import types
+    emitidos: list = []
+    m = _monitor()
+    m._on_disc = lambda d, s: emitidos.append(
+        (d.agente_asignado_nombre, d.equipado_desde_libre))
+    libre = _disc(libre=True)
+    _armado(m, libre, boton="reemplazar")                         # dest Nangong Yu
+    m._emit_s17_disc(libre, _ST17, mature=True)                   # emitió como libre
+    assert emitidos == [(None, False)]
+    sig = (np.zeros((48, 24), np.float32), np.zeros((48, 48), np.float32),
+           np.zeros((24, 24), np.float32))
+    monkeypatch.setattr(m, "_s17_disc_signature", lambda frame: sig)
+    m._disc_agg_sig = sig
+    m._disc_aggregator = types.SimpleNamespace(current=libre)
+    m._last_agent_name = None                                     # sin latch tras S10/S20
+
+    def _badge_visual(disc, frame):                               # el badge sólo OBSERVA
+        disc.equip_pj_visual, disc.equip_libre = "Nangong Yu", False
+    monkeypatch.setattr(m, "_assign_s17_pj", _badge_visual)
+    m._s17_action_btn = "desequipar"
+    m._process_disc_s17_continuous(None, _ST17)
+    assert emitidos == [(None, False), ("Nangong Yu", True)]
+    m._process_disc_s17_continuous(None, _ST17)                   # sin pendiente: no repite
+    assert len(emitidos) == 2
+
+
+def test_el_confirmado_queda_con_el_destino_como_dueno_certero():
+    m = _armado(_monitor(), _disc(libre=True))
+    m._s17_action_btn = "desequipar"
+    # Sin latch el badge sólo OBSERVA (`equip_pj_visual`) y no toca `equip_libre`: el merge
+    # sigue diciendo libre aunque ya esté puesto.
+    visto = _disc(libre=True, visual="Nangong Yu")
+    m._check_swap_owner(visto, _ST17)
+    assert (visto.agente_asignado_nombre, visto.equip_libre) == ("Nangong Yu", False)
