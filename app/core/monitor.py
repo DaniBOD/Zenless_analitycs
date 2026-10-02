@@ -237,6 +237,9 @@ _S17_OWNER_MIN_SAMPLES = 4
 # Tope de fichas de `_s17_trace` (una por pasada): sobra para ver el arranque de un disco, que es
 # donde vive la duda, y acota la línea del log.
 _S17_TRACE_MAX = 24
+# Relecturas del panel DETAIL de S22 cuando sale sin stats completos (cargando): después se espera
+# a que el panel cambie.
+_S22_REINTENTOS_INMADURO = 3
 _S17_WARM_CADENCE_MS = 100     # mientras calienta, re-chequear el voto rápido (no esperar 1s)
 # Despacho rápido de S9 (2026-09-16): pasadas SEGUIDAS en que la firma del disco recién visto puede
 # seguir cambiando antes de abandonar la confirmación y volver a la cadencia de siempre. La firma de
@@ -803,6 +806,7 @@ class Monitor:
         # (no por posición): el usuario puede volver a clickear el mismo disco.
         self._s22_detail_sig = None
         self._s22_disc_ids: set = set()
+        self._s22_inmaduros = 0   # lecturas seguidas del DETAIL sin stats completos
 
         # S4 (selector tienda música): predicción display-only edge-triggered por (set, slot).
         # `_s4_last_sig` gatea el re-OCR del género (RNF-06); `_s4_last_key` deduplica la emisión;
@@ -1350,6 +1354,7 @@ class Monitor:
             self._s22_seen = {}
             self._s22_detail_sig = None
             self._s22_disc_ids = set()
+            self._s22_inmaduros = 0
         if state.code != "S4":
             self._s4_last_sig = None
             self._s4_last_key = None
@@ -2704,6 +2709,17 @@ class Monitor:
             return
         if d is None:
             return   # no hay disco seleccionado (el modal abre en "Crédito proxy"), o ilegible
+        if not disc_is_mature(d):
+            # Panel a medio cargar: título y nivel sin main ni substats. Emitirlo GUARDÓ una fila
+            # vacía (#478, QA 2026-10-02 13:44:18) y el disco de verdad entró después como otra
+            # (#479). Se relee en los ciclos siguientes, con tope (RNF-06).
+            self._s22_inmaduros += 1
+            if self._s22_inmaduros <= _S22_REINTENTOS_INMADURO:
+                self._s22_detail_sig = None
+            log.info("[s22] panel del disco sin stats completos (%s slot %s) · no se guarda",
+                     d.set_name_raw or "?", d.slot)
+            return
+        self._s22_inmaduros = 0
 
         # Canon del set: resolución DIFUSA (el OCR rompe las tildes — 'Salönhuracanado' por
         # 'Salón huracanado'). La comparación exacta de `parse_modal_detalle` no serviría acá.

@@ -250,7 +250,8 @@ def test_el_matcher_se_restringe_a_los_sets_del_nodo(mon):
 
 
 def _disc(set_raw="Salönhuracanado", slot=2, nivel=0, main=("ATK", 79.0, "flat"),
-          subs=(("Perforación", 9.0, "flat"), ("DEF%", 4.8, "%"))):
+          subs=(("Perforación", 9.0, "flat"), ("DEF%", 4.8, "%"), ("HP", 112.0, "flat"))):
+    """Un S a Nv 0 cae con 3 o 4 substats: con menos, el panel está a medio cargar y no se emite."""
     from app.core.parser_disc import DiscParsed, SubstatParsed
     return DiscParsed(
         set_name_raw=set_raw, set_name_canon=None, slot=slot,
@@ -361,7 +362,7 @@ def test_detail_emite_cada_disco_distinto(mon_det):
     mon_det._det = _disc(slot=2)
     mon_det._dispatch_state(_frame(fill=10), _ST22)
     mon_det._det = _disc(set_raw="Firmamentollameante", slot=4,
-                         subs=(("Daño Crítico", 4.8, "%"),))
+                         subs=(("Daño Crítico", 4.8, "%"), ("ATK", 19.0, "flat"), ("HP", 112.0, "flat")))
     mon_det._dispatch_state(_frame(fill=90), _ST22)
     assert len(_discos(mon_det)) == 2
 
@@ -383,7 +384,7 @@ def test_el_detalle_se_lee_aunque_la_grilla_este_quieta(mon_det):
     mon_det._det = _disc(slot=2)
     mon_det._dispatch_state(f, _ST22)          # 1er disco
     mon_det._det = _disc(set_raw="Firmamentollameante", slot=6,
-                         subs=(("ATK", 19.0, "flat"),))
+                         subs=(("ATK", 19.0, "flat"), ("DEF", 15.0, "flat"), ("HP%", 3.0, "%")))
     mon_det._s22_detail_sig = None             # el panel cambió...
     mon_det._dispatch_state(f, _ST22)          # ...con el MISMO frame de grilla
     assert len(_discos(mon_det)) == 2
@@ -436,3 +437,24 @@ def test_el_disco_del_detail_entra_libre_para_guardarse(mon_det):
     mon_det._dispatch_state(_frame(), _ST22)
     d, _st = mon_det._emitted[0]
     assert d.equip_libre is True and d.rareza == "S"
+
+
+def test_un_panel_a_medio_cargar_no_se_emite_y_se_relee(mon_det):
+    """QA en vivo 2026-10-02 13:44:18: el panel salió con título y nivel, sin main ni substats, y
+    se GUARDÓ así (#478, fila vacía); el disco entró después como otra fila (#479)."""
+    mon_det._det = _disc(main=(None, None, None), subs=())
+    mon_det._dispatch_state(_frame(fill=10), _ST22)
+    assert _discos(mon_det) == []
+    assert mon_det._s22_detail_sig is None, "se relee el ciclo siguiente"
+    mon_det._det = _disc()                         # ya cargó
+    mon_det._dispatch_state(_frame(fill=10), _ST22)
+    assert len(_discos(mon_det)) == 1
+
+
+def test_el_panel_inmaduro_se_relee_con_tope(mon_det):
+    import app.core.monitor as mon
+    mon_det._det = _disc(main=(None, None, None), subs=())
+    for _ in range(mon._S22_REINTENTOS_INMADURO + 2):
+        mon_det._dispatch_state(_frame(fill=10), _ST22)
+    assert mon_det._s22_detail_sig is not None, "pasado el tope espera a que el panel cambie"
+
