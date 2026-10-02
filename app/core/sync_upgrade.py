@@ -11,6 +11,13 @@ lo necesita: la S17 posterior lo reescribe por `(PJ, slot)`. El libre no tiene e
 subir de nivel le cambia la identidad, sin esto su fila vieja queda de fantasma y la próxima
 captura inserta una segunda. Sin `disc_syncer` el comportamiento es exactamente el de antes.
 
+**Escribe EN VIVO desde el 2026-10-02** (pedido de Daniel): cada subida de nivel que se VE en S10
+actualiza la fila en ese momento (`_persistir_paso`), sin esperar a la pantalla posterior. Esperarla
+perdía mejoras enteras: subiendo justo hasta un umbral (Nv 3) no hay vuelto de materiales, Daniel
+seguía a otra cosa o reiniciaba la captura, y la fila quedaba vieja (#422, #426, #431). Cada paso
+exige una lectura COHERENTE con la anterior (`_paso_coherente`); la pantalla posterior sigue
+siendo la que asienta el último roll al maxear.
+
 Estado final autoritativo = la S17 posterior (QA 2026-07-10): al MAXEAR, el juego auto-cierra
 el modal S10 en <1 ciclo de poll, así que el frame MAX (con el último roll asentado) suele NO
 poder leerse dentro de S10. Por eso el RESUMEN se difiere: al salir de S10 se guarda un
@@ -92,6 +99,21 @@ def _same_disc(a: DiscParsed, b: DiscParsed) -> bool:
     return bool(ka) and ka == kb
 
 
+def _crecimiento(d: DiscParsed) -> int:
+    """#substats + Σrolls − nivel//3: cada 3 niveles el disco gana un substat (si tiene 3) o un
+    roll, así que este número no cambia al subir (3 o 4, según con cuántos substats cayó). Medido
+    sobre la DB el 2026-10-02: 426 de 427 discos (el otro, un Nv 0 con 2 substats)."""
+    return len(d.subs) + sum(s.rolls for s in d.subs) - (d.nivel or 0) // 3
+
+
+def _paso_coherente(antes: DiscParsed, ahora: DiscParsed) -> bool:
+    """¿`ahora` es `antes` subido de nivel, leído bien? Mismo disco por la regla de siempre
+    (`es_el_mismo_disco`: substats ⊆ y rolls que no bajan) y exactamente lo que dan los umbrales
+    cruzados (`_crecimiento` igual). Un frame de animación o un "+N" perdido lo rompe → ese paso no
+    se escribe (RNF-02); la pantalla posterior todavía puede confirmar."""
+    return es_el_mismo_disco(antes, ahora) and _crecimiento(antes) == _crecimiento(ahora)
+
+
 def _roll_diff(pre: DiscParsed, post: DiscParsed) -> dict[str, int]:
     """{substat: delta_rolls} solo para los que ganaron roll (o aparecieron) PRE→POST."""
     def rolls_by_name(d: DiscParsed) -> dict[str, int]:
@@ -125,6 +147,10 @@ class UpgradeSyncer:
         self._refund_seen = False                  # popup "Materiales recuperados" ya anunciado (edge)
         # Pendiente de confirmación por la S17 posterior: (pre, last, target, ts_salida).
         self._pending: tuple[_Snap, _Snap, int | None, float] | None = None
+        # Lo que tiene escrito la fila del disco HOY: el PRE al entrar, y cada paso que
+        # `_persistir_paso` logró escribir. Es contra esto que matchea la próxima escritura.
+        self._en_db: DiscParsed | None = None
+        self._en_db_pendiente: DiscParsed | None = None   # el `_en_db` del pendiente
 
     # -- ciclo de vida ------------------------------------------------------
     def on_s10_enter(self, frame) -> None:
@@ -134,6 +160,7 @@ class UpgradeSyncer:
         if parsed is None:
             return
         self._pre = self._last = _Snap(parsed.nivel, parsed)
+        self._en_db = parsed
         self._ref_sig = self._level_sig(frame)
         self._changed = False
         self._maxed = "s10_max" in parsed.notas
@@ -190,6 +217,7 @@ class UpgradeSyncer:
         pretty = ", ".join(f"+{d} en {n}" for n, d in diff.items()) or "sin cambio de roll"
         remate = " · MÁXIMO (15) alcanzado" if maxed else ""
         self._emit(f"[mejora] nivel {self._last.nivel}→{nivel}{remate} · {pretty}")
+        self._persistir_paso(parsed)
         self._last = _Snap(nivel, parsed)
         self._changed = True
         if maxed:
@@ -201,7 +229,9 @@ class UpgradeSyncer:
         # Adjuntamos el target (nivel proyectado) para el fallback si la S17 nunca llega.
         if self._pre is not None and self._last is not None:
             self._pending = (self._pre, self._last, self._target, time.monotonic())
+            self._en_db_pendiente = self._en_db
         self._pre = self._last = None
+        self._en_db = None
         self._ref_sig = None
         self._changed = False
         self._maxed = False
@@ -266,23 +296,45 @@ class UpgradeSyncer:
         # Persistir ANTES del resumen y con su propio guard: si la escritura falla, el resumen
         # sale igual. Es el mismo criterio que el toast del drop — el diagnóstico que el usuario
         # está mirando no puede depender de que la DB colabore.
-        self._persistir_mejora(pre, post_parsed)
+        # Contra lo que la fila tiene HOY: si S10 ya escribió pasos, el PRE dejó de estar en la DB.
+        self._persistir_mejora(self._en_db_pendiente or pre.parsed, post_parsed)
         self._emit_resumen(pre, post_parsed, post_nivel)
 
-    def _persistir_mejora(self, pre: _Snap, post_parsed: DiscParsed) -> None:
+    def _persistir_paso(self, parsed: DiscParsed) -> None:
+        """Escribe YA una subida de nivel vista en S10 (pedido de Daniel, 2026-10-02).
+
+        Matchea contra `_en_db` —lo que la fila tiene escrito— y sólo si la lectura es coherente
+        con eso (`_paso_coherente`). Si la escritura no encuentra la fila (equipado, gemelos, no
+        capturado) `_en_db` no avanza y el próximo paso reintenta desde ahí."""
+        if self._disc_syncer is None or self._en_db is None:
+            return
+        if not _paso_coherente(self._en_db, parsed):
+            self._emit(f"[mejora] nivel {parsed.nivel}: la lectura no cuadra con la anterior "
+                       f"(substats o rolls) → no se escribe este paso")
+            return
+        try:
+            disc_id = self._disc_syncer.actualizar_por_mejora(self._en_db, parsed)
+        except Exception:
+            log.exception("Error persistiendo el paso de la mejora")
+            return
+        if disc_id is not None:
+            self._en_db = parsed
+
+    def _persistir_mejora(self, en_db: DiscParsed, post_parsed: DiscParsed) -> None:
         """Le pide al `DiscSyncer` que migre la fila del disco libre al estado nuevo.
 
-        Sólo desde acá, que es el camino CONFIRMADO por la pantalla posterior (S17 o S5) con los
-        rolls asentados. El fallback `_flush_pending` NO persiste a propósito: su POST es lo último
-        que se vio en S10 —o directamente el nivel PROYECTADO del preview— y escribir substats sin
-        confirmar dejaría la fila con una identidad que tampoco coincide con la realidad. O sea:
-        el duplicado igual, más los datos pisados. Abstenerse deja el estado de antes, que el censo
-        detecta.
+        Es el camino CONFIRMADO por la pantalla posterior (S17 o S5) con los rolls asentados; el
+        otro es `_persistir_paso`, que escribe cada nivel VISTO en S10 con su lectura verificada.
+        `en_db` es lo que la fila tiene escrito hoy: el PRE, o el último paso que S10 ya escribió.
+        El fallback `_flush_pending` NO persiste a propósito: lo que no se vio en S10 es a lo sumo
+        el nivel PROYECTADO del preview, y escribir substats sin verlos dejaría la fila con una
+        identidad que tampoco coincide con la realidad. Abstenerse deja el estado de antes, que el
+        censo detecta.
         """
         if self._disc_syncer is None:
             return
         try:
-            self._disc_syncer.actualizar_por_mejora(pre.parsed, post_parsed)
+            self._disc_syncer.actualizar_por_mejora(en_db, post_parsed)
         except Exception:
             log.exception("Error persistiendo la mejora (el resumen sale igual)")
 
@@ -296,6 +348,7 @@ class UpgradeSyncer:
             return
         pre, last, target, _ts = self._pending
         self._pending = None
+        self._en_db_pendiente = None
         if last.nivel > pre.nivel:
             self._emit_resumen(pre, last.parsed, last.nivel, sufijo=" (sin confirmar en inventario)")
         elif target is not None and target > pre.nivel:

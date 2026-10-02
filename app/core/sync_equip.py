@@ -694,10 +694,11 @@ class DiscSyncer:
             está equipado y lo resuelve la S17 que viene detrás por `(PJ, slot)`.
           - **0 candidatos** → el disco nunca se capturó. La próxima pasada lo inserta.
 
-        Sólo se llama desde el camino CONFIRMADO (`on_post_upgrade_disc`), nunca desde el resumen
-        proyectado: escribir un POST sin confirmar metería substats que después nada corrige, y la
-        fila quedaría con una identidad que tampoco matchea la realidad — o sea, el duplicado
-        igual, más los datos pisados.
+        Se llama con un POST VISTO: cada subida de nivel leída en S10 (`_persistir_paso`, con la
+        lectura verificada contra la anterior, desde el 2026-10-02) y la pantalla posterior
+        (`on_post_upgrade_disc`). Nunca con el nivel PROYECTADO del preview: escribir substats que
+        no se vieron metería datos que después nada corrige, y la fila quedaría con una identidad
+        que tampoco matchea la realidad — o sea, el duplicado igual, más los datos pisados.
         """
         if pre is None or post is None or post.nivel <= pre.nivel:
             return None
