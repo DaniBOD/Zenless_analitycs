@@ -136,6 +136,32 @@ S17). Acepta un `DiscParsed` o un `Disc` de la DB.
    otra).
 3. RNF-01: backup de sesión, FK e integridad después de la tanda.
 
+## Implementación (2026-10-02)
+
+| tarea | commit | qué | sabotajes |
+|---|---|---|---|
+| T1 | `d11a0b2` | `es_el_mismo_disco` (`app/core/mismo_disco.py`), la única regla | 5 |
+| T2 | `bdb48dc` | la confirmación de una mejora la exige (punto 4) | 2 |
+| T3 | `42ed8e5` | S17 no pisa la fila; el libre recién equipado se adopta con `equipado_desde_libre` (punto 6) | 5 |
+| T4 | `0e371e2` | el "Ver" (S6/S7) y S9 confirman la mejora, sólo con el disco maduro (puntos 3 y 5) | 4 |
+| T5 | `13590b7` | S22 guarda (`s22_drop_insert`) con la memoria de la tanda en `FarmSession` (puntos 1 y 2) | 9 |
+
+Hallazgos al implementar:
+
+- **Punto 6 corregido:** `find_swap_candidates_by_identity` deja afuera a los libres a propósito
+  (gemelos), así que el camino de "disco distinto" no encontraba la fila libre del entrante. La
+  evidencia la tenía el monitor (check "LIBRE → PJ · CAMBIÓ ✓"), cuyo comentario decía "no hay fila
+  que mover" — falso desde que los libres se guardan.
+- **El desplazado conserva el dueño** (`set_unequipped`): el invariante R2 del 2026-07-22 sigue
+  frenado por Daniel; los tests lo asumen así.
+- **Un test viejo** (`test_persist_s17_update_mismo_pj_slot`) armaba como "refresco" dos discos Nv 15
+  con substats distintos — imposible en el juego. Sus datos ahora son un refresco posible.
+- **La memoria de la tanda no se acopla a la mejora:** guarda ids de filas y pregunta
+  `es_el_mismo_disco(fila, lo_visto)`, que acepta el disco crecido. Cubre el POST sin que S10 avise.
+- **Riesgo aceptado:** si S17 o el "Ver" leen mal un substat de un disco ya guardado, la regla lo
+  ve como OTRO disco (antes, con sólo el set, se pisaba igual). Lo protege la madurez del
+  aggregator; si aparece, el QA lo muestra como `s17_swap` donde se esperaba `s17_update`.
+
 ## Reglas
 
 RNF-01 (el camino nuevo escribe la DB: backup, transacción, `foreign_key_check`,
