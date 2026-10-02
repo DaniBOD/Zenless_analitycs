@@ -214,12 +214,16 @@ def test_la_vista_pide_el_build_del_dueno_en_pantalla(qapp):
     assert v.item_card.modo() == "disco_con_dueno"
 
 
-def test_la_region_derecha_esta_en_blanco(qapp):
-    """Decisión de Daniel: en blanco hasta decidir qué va. Si alguien le mete algo sin decidirlo,
-    este test lo marca."""
+def test_la_region_derecha_tiene_solo_la_sugerencia(qapp):
+    """Decisión de Daniel: la región quedó en blanco hasta decidir qué iba (2026-09), y el
+    2026-10-01 decidió "card + detalle a la derecha" (paso 8). Sólo el recuadro de la sugerencia,
+    oculto hasta que llegue un disco. Si alguien le mete otra cosa sin decidirlo, este test lo marca."""
+    from app.ui.live.sugerencia import RecuadroSugerencia
     from app.ui.live.view import LiveView
     v = LiveView()
-    assert v.region_derecha.layout().count() == 0
+    widgets = [v.region_derecha.layout().itemAt(i).widget() for i in range(v.region_derecha.layout().count())]
+    assert [type(w) for w in widgets if w is not None] == [RecuadroSugerencia]
+    assert v.recuadro_sugerencia.isHidden()
 
 
 # --- 4 · la consola ---------------------------------------------------------------------------

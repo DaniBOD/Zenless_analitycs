@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.ui import tokens as T
+from app.ui.live.sugerencia import color_de
 from app.ui.live.hexagon import BuildHexagon
 
 #: Cómo se dice cada tenencia. Una línea por caso, sin colapsar ninguno.
@@ -157,6 +158,9 @@ class ItemCard(QFrame):
         tl.addWidget(self._d_meta)
         self._d_dueno = _lbl("", T.font_ui(10, bold=True), T.TEXT_PRIMARY)
         tl.addWidget(self._d_dueno)
+        # Paso 8: la etiqueta de la sugerencia del motor (el detalle va en la región derecha).
+        self._d_sug = _lbl("", T.font_ui(10, bold=True), T.TEXT_MUTED, wrap=True)
+        tl.addWidget(self._d_sug)
         lay.addWidget(tope)
 
         self._hex = BuildHexagon(230)
@@ -264,6 +268,10 @@ class ItemCard(QFrame):
         self._d_meta.setText(" · ".join(partes))
         self._d_dueno.setText(f"En {dueno}" if dueno else "")
         self._d_dueno.setVisible(bool(dueno))
+        sug = d.get("sugerencia")
+        self._d_sug.setText((sug.get("texto") or "Nada que hacer") if sug else "")
+        self._d_sug.setStyleSheet(f"color: {color_de(sug)}; background: transparent; border: none;")
+        self._d_sug.setVisible(bool(sug))
 
         self._hex_cont.setVisible(bool(dueno))
         if dueno:

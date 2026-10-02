@@ -4,19 +4,16 @@ Recibe las señales del `MonitorController` y reparte:
 
 | señal | a dónde |
 |---|---|
-| `disc_observed` (S17/S9, dueño en pantalla) | card → disco, con el build del dueño |
-| `disc_detected` (drops S3/S6/S7) | card → disco **sin** dueño; score y variante se IGNORAN |
+| `disc_observed` (S17/S9, dueño en pantalla) | card → disco, con el build del dueño; región derecha → la sugerencia |
+| `disc_detected` (discos nuevos S3/S5/S22 y el "Ver" S6/S7) | card → disco **sin** dueño; región derecha → la sugerencia |
 | `weapon_seen` | card → arma |
 | `log_message`, `error_occurred` | consola |
 | `state_changed` | consola (estado actual) |
 
-`disc_detected` trae un score y un "PJ sugerido" que salen del scoring, que **no está calibrado**
-(los 51 thresholds en el default). Por eso se traduce a la forma de `disc_observed` descartando
-esos campos: la card nunca ve un `target`, y no puede dibujar el build de un PJ que el scoring eligió.
-
-La región derecha queda EN BLANCO por decisión de Daniel, en un contenedor propio y sustituible
-(`region_derecha`) para que ahí entre después lo que se decida — cards de scoring o la consola
-agrandada — sin rearmar el layout.
+Desde el paso 8 (SPEC 2026-10-01) los dos payloads traen `sugerencia`: la del motor de Discos, ya
+resuelta por el controlador. La card muestra su etiqueta y la región derecha (`region_derecha`, un
+contenedor propio y sustituible) su detalle (`RecuadroSugerencia`). Lo que NO pasa a la card es el
+`target` del drop: la card no dibuja el build de un PJ que no es el dueño.
 
 Los nombres de las señales y slots de control son los del `LivePanel` viejo, para que el cableado
 de `main.py` cambie de destino y no de forma.
@@ -31,6 +28,7 @@ from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from app.ui import tokens as T
 from app.ui.live.console import Console
 from app.ui.live.item_card import ItemCard
+from app.ui.live.sugerencia import RecuadroSugerencia
 
 #: Nombre de PJ → {slot: {"logo", "nivel"}}. Inyectable para testear sin DB.
 BuildFn = Callable[[str], dict]
@@ -40,7 +38,7 @@ def drop_como_observacion(payload: dict) -> dict:
     """Payload de `disc_detected` → forma de `disc_observed`, SIN lo que sale del scoring.
 
     Un drop recién obtenido no tiene dueño: su tenencia es `nuevo`. `target`, `score`, `variant`,
-    `threshold` y `urgency` no pasan — ése es el punto de la función."""
+    `threshold` y `urgency` no pasan. `sugerencia` sí (paso 8): es la del motor de Discos."""
     main_value = payload.get("main_value") or ""
     # Los crudos primero (`main_valor`/`main_unidad`, desde el 2026-09-12): el texto está redondeado
     # a un decimal. El parseo del texto queda como respaldo para payloads viejos.
@@ -66,6 +64,7 @@ def drop_como_observacion(payload: dict) -> dict:
         "dueno":        None,
         "dueno_avatar": None,
         "tenencia":     "nuevo",
+        "sugerencia":   payload.get("sugerencia"),
     }
 
 
@@ -89,7 +88,11 @@ class LiveView(QWidget):
         arriba.addWidget(self.item_card)
         self.region_derecha = QWidget()
         self.region_derecha.setObjectName("region_derecha")
-        QVBoxLayout(self.region_derecha).setContentsMargins(0, 0, 0, 0)
+        rd = QVBoxLayout(self.region_derecha)
+        rd.setContentsMargins(0, 0, 0, 0)
+        self.recuadro_sugerencia = RecuadroSugerencia()
+        rd.addWidget(self.recuadro_sugerencia)
+        rd.addStretch(1)
         arriba.addWidget(self.region_derecha, 1)
         root.addLayout(arriba, 1)
 
@@ -106,12 +109,16 @@ class LiveView(QWidget):
         dueno = payload.get("dueno")
         build = self._build_fn(dueno) if dueno else None
         self.item_card.mostrar_disco(payload, build)
+        self.recuadro_sugerencia.mostrar(payload.get("sugerencia"))
 
     def on_disc_detected(self, payload: dict) -> None:
-        self.item_card.mostrar_disco(drop_como_observacion(payload), None)
+        d = drop_como_observacion(payload)
+        self.item_card.mostrar_disco(d, None)
+        self.recuadro_sugerencia.mostrar(d.get("sugerencia"))
 
     def on_weapon_seen(self, payload: dict) -> None:
         self.item_card.mostrar_arma(payload)
+        self.recuadro_sugerencia.mostrar(None)
 
     # --- consola y estado ---------------------------------------------------------------------
 
