@@ -108,6 +108,10 @@ class DiscParsed:
     # swap es RECIENTE (dispara el toast REEMPLAZADO; las correcciones tardías no).
     swap_origin_hint: str | None = None
     swap_fresh: bool = False
+    # Disco LIBRE recién equipado al PJ que se mira: el monitor vio "LIBRE → PJ · CAMBIÓ ✓"
+    # (badge Y botón). Es la evidencia para que S17 adopte la fila libre de ese disco en vez de
+    # insertar otra (SPEC 2026-10-02 "El Obtenido guarda los discos", punto 6).
+    equipado_desde_libre: bool = False
 
 
 def _parse_titulo(raw: str) -> tuple[str, int]:

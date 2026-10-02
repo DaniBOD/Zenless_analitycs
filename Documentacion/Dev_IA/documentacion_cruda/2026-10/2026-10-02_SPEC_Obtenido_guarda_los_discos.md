@@ -100,8 +100,15 @@ también con los slots 1 y 2 (la DB quedó bien de casualidad: ver el audit).
 
 - "Mismo disco" pasa a ser la regla del punto 4 (mismo main, substats del de antes ⊆ los de
   ahora, nivel que no baja). Si no se cumple, sigue el camino que ya existe para un disco
-  DISTINTO: `_find_disc_to_move` encuentra la fila libre del entrante (#419) y la re-equipa, y el
-  viejo queda libre (`set_unequipped`) — sin insertar ni pisar.
+  DISTINTO y el viejo se desequipa (`set_unequipped`) en vez de pisarse.
+- **Corrección al implementar:** ese camino NO encuentra la fila libre del entrante (#419):
+  `find_swap_candidates_by_identity` deja afuera a los libres a propósito (entre gemelos se
+  adoptaría el equivocado). La evidencia la tiene el monitor: el check "LIBRE → PJ · CAMBIÓ ✓"
+  (badge Y botón) vio ESTE disco pasar de libre a este PJ, y su comentario decía "no hay fila que
+  mover" — falso desde agosto, cuando los libres empezaron a guardarse. Ahora marca
+  `equipado_desde_libre` y `_find_disc_to_move` adopta la fila libre **sólo si hay exactamente
+  una** con esa identidad (gemelos → se abstiene e inserta, como hoy). Trigger `s17_equipa_libre`.
+  Mismo patrón que el hint del diálogo S23.
 
 ### Una sola autoridad para "¿es el mismo disco?" (B1)
 

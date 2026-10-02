@@ -488,3 +488,22 @@ def test_disco_ya_emitido_sin_pendiente_no_corre_el_check(monkeypatch):
     monkeypatch.setattr(m, "_check_swap_owner", lambda *a, **k: llamado.append(1))
     m._process_disc_s17_continuous(None, _ST17)
     assert llamado == []
+
+
+# ---- la marca para la persistencia (SPEC 2026-10-02 "El Obtenido guarda los discos", punto 6) --
+
+def test_cambio_confirmado_marca_el_disco_para_adoptar_su_fila_libre():
+    """Sin la marca, S17 insertaba otra fila para un disco libre que ya estaba guardado (#419)."""
+    m = _armado(_monitor(), _disc(libre=True))
+    m._s17_action_btn = "desequipar"
+    visto = _disc(owner="Nangong Yu")
+    m._check_swap_owner(visto, _ST17)
+    assert visto.equipado_desde_libre is True
+
+
+def test_sin_confirmar_no_se_marca():
+    m = _armado(_monitor(), _disc(libre=True))
+    m._s17_action_btn = "equipar"                  # sólo el badge → se abstiene
+    visto = _disc(owner="Nangong Yu")
+    m._check_swap_owner(visto, _ST17)
+    assert visto.equipado_desde_libre is False

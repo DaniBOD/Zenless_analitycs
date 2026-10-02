@@ -2472,9 +2472,11 @@ class Monitor:
 
         if outcome != "cambió":
             return
-        # Confirmado. A diferencia del reemplazo NO se marca `swap_origin_hint`/`swap_fresh`: no
-        # hay fila de origen que mover (el disco no era de nadie), así que la persistencia sigue
-        # su camino normal sin pistas nuestras. Este feature es puramente observacional.
+        # Confirmado. A diferencia del reemplazo NO se marca `swap_origin_hint`/`swap_fresh`: el
+        # disco no era de ningún PJ. Pero desde agosto los libres SE GUARDAN, así que puede haber
+        # una fila libre de este disco: `equipado_desde_libre` es la evidencia para que S17 la
+        # adopte en vez de insertar otra (QA 2026-10-02: #419 quedó duplicado de #402).
+        merged.equipado_desde_libre = True
         self._pending_swap = None
         self._swap_check_mark = None
         if self._on_replacement:

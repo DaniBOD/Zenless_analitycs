@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from app.core.mismo_disco import es_el_mismo_disco
 from app.core.parser_disc import DiscParsed
 from app.core.score_normalizer import ScoringContext
 from app.core.stats_vocab import _norm_key
@@ -479,7 +480,10 @@ class DiscSyncer:
                 # Clave NATURAL del equipamiento: un PJ tiene un disco por slot.
                 # Nunca matchea el disco de otro PJ (a diferencia de find_by_hash).
                 slot_disc = disc_repo_w.find_equipped_by_agent_slot(agente_id, parsed.slot)
-                if slot_disc is not None and slot_disc.set_id == set_id:
+                # "Mismo disco" no es "mismo set": cambiar un disco por OTRO del mismo set se
+                # tomaba como un refresco y pisaba la fila (QA 2026-10-02, #402).
+                if (slot_disc is not None and slot_disc.set_id == set_id
+                        and es_el_mismo_disco(slot_disc, parsed)):
                     # Mismo disco (refresco de nivel/substats tras upgrade).
                     disc_id = slot_disc.id
                     trigger = "s17_update"
@@ -506,6 +510,11 @@ class DiscSyncer:
                         moved = cross_pj
                         if cross_pj:
                             trigger = "s17_move"
+                        elif to_move.agente_asignado is None and not _es_dueno_incierto(to_move):
+                            # Fila LIBRE que el monitor vio equipar a este PJ (`equipado_desde_libre`).
+                            trigger = "s17_equipa_libre"
+                            log.info("EQUIPADO DESDE LIBRE: id=%d → '%s' slot %s (sin duplicar)",
+                                     to_move.id, parsed.agente_asignado_nombre or "?", parsed.slot)
                         elif to_move.agente_asignado is None:
                             # Fila sin dueño marcada `dueno_no_identificado`: no es re-equipar un
                             # disco propio desplazado, es ponerle por fin el nombre a uno que se
@@ -897,6 +906,20 @@ class DiscSyncer:
                 "Swap: %d discos matchean la identidad de '%s' slot=%d — ambiguo, no se mueve "
                 "(se inserta; RNF-02).", len(matches), parsed.set_name_raw, parsed.slot,
             )
+            return None, None, False
+        # 3) LIBRE recién equipado: los libres quedan FUERA del respaldo por identidad (entre
+        #    gemelos se adoptaría el equivocado), salvo con la evidencia del monitor — vio ESTE
+        #    disco pasar de libre a este PJ. Igual sólo con exactamente una fila libre.
+        if getattr(parsed, "equipado_desde_libre", False):
+            libres = [d for d in disc_repo_w.find_all_by_identity(parsed, set_id)
+                      if not d.equipado and d.agente_asignado is None
+                      and not _es_dueno_incierto(d) and d.id != exclude_disc_id]
+            if len(libres) == 1:
+                return libres[0], None, False
+            if len(libres) >= 2:
+                log.warning("Equipado desde libre: %d filas libres con la identidad de '%s' slot=%d "
+                            "— gemelos, no se adopta ninguna (se inserta; RNF-02).",
+                            len(libres), parsed.set_name_raw, parsed.slot)
         return None, None, False
 
     def _schedule_optimizer(self, agente_id: int) -> None:

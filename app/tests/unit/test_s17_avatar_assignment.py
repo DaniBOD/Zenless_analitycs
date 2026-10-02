@@ -1375,10 +1375,14 @@ def test_persist_s17_update_mismo_pj_slot(syncer_db):
     """Re-captura del mismo PJ+slot actualiza ESE disco (no crea duplicado)."""
     sync = _make_syncer(syncer_db)
     try:
-        d1 = _disc(slot=1); d1.agente_asignado_nombre = "Zhu Yuan"; d1.agente_asignado_conf = 0.95
+        # El 2.º es un refresco POSIBLE del 1.º (12 → 15, los substats sólo crecen): desde el SPEC
+        # 2026-10-02 "mismo disco" no es "mismo set" (`es_el_mismo_disco`).
+        d1 = _disc(slot=1); d1.nivel = 12
+        d1.agente_asignado_nombre = "Zhu Yuan"; d1.agente_asignado_conf = 0.95
         res1 = sync.persist_s17_disc(d1)
         d2 = _disc(slot=1); d2.nivel = 15
-        d2.subs = [SubstatParsed("Daño Crítico", "Daño Crítico", 12.0, "%", 2, 0.95)]
+        d2.subs = [SubstatParsed("ATK", "ATK", 38.0, "flat", 1, 0.95),
+                   SubstatParsed("Daño Crítico", "Daño Crítico", 12.0, "%", 2, 0.95)]
         d2.agente_asignado_nombre = "Zhu Yuan"; d2.agente_asignado_conf = 0.95
         res2 = sync.persist_s17_disc(d2)
         assert res2.disc_id == res1.disc_id, "debe actualizar el mismo disco, no duplicar"
