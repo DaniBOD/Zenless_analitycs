@@ -26,8 +26,8 @@ nunca cerró). Las causas medidas:
 
 | fase | qué | estado |
 |---|---|---|
-| 0 | push de lo de hoy + corrección de #478/#484 | en curso |
-| 1 | grabador (`app/core/grabacion.py`, `tools/grabar_sesion.py`), clicks (`app/core/clicks.py`), verdad de tierra y reproducción (`app/core/ritmo.py`, `tools/verdad_de_sesion.py`, `tools/reproducir_sesion.py`); línea de base con una sesión de Daniel | en curso |
+| 0 | push de lo de hoy + corrección de #478/#484 | ✅ |
+| 1 | grabador (`app/core/grabacion.py`, `tools/grabar_sesion.py`), clicks (`app/core/clicks.py`), verdad de tierra y reproducción (`app/core/ritmo.py`, `tools/verdad_de_sesion.py`, `tools/reproducir_sesion.py`); línea de base con una sesión de Daniel | código ✅ · falta la grabación |
 | 2 | no re-clasificar en un estado estable (`ScreenDetector.sigue_en`) | — |
 | 3 | pantallas breves (promoción de modales verificados) y la tanda que se cierra sin el "Obtenido" | — |
 | 4 | los clicks como disparador de la captura y como evidencia (S11, S10, S22) | — |
@@ -57,3 +57,8 @@ La Fase 1 vale si la reproducción del código de hoy reproduce las pérdidas de
 
 | commit | fase | qué |
 |---|---|---|
+| `5e964c0`…`b8f8636` | 0 | los 6 commits del duplicado y la mejora en vivo (suite 3643) |
+| `f04cb45` | 0 | data: #478 borrado, #484 dado de baja (418 → 416 activas) |
+| `a8cb8c5` | 1 | `ClickListener` (9 tests, 5 sabotajes) |
+| `90dfed1` | 1 | grabador de sesiones (6 tests, 6 sabotajes) |
+| `bd80797` | 1 | verdad de tierra + reproducción (7 tests, 6 sabotajes) |
