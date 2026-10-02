@@ -635,7 +635,8 @@ class DiscToast(QWidget):
         etiqueta, valor = bloque_puntaje(self._data)
         p.setFont(T.font_caps(7))
         p.setPen(T.color(T.TEXT_MUTED))
-        p.drawText(score_label_x, bottom_y - 8, etiqueta)
+        # -19 y no -8: con -8 el número de 18 pt tapaba el rótulo (se veía en el render).
+        p.drawText(score_label_x, bottom_y - 19, etiqueta)
 
         p.setFont(T.font_display(18, bold=True))
         p.setPen(accent)
