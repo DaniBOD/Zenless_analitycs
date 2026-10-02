@@ -512,7 +512,31 @@ def parse_detail_disc(frame, ocr):
     d.slot = slot
     if "slot_no_detectado" in d.notas:
         d.notas.remove("slot_no_detectado")
+    _rolls_desde_valor(d)
     return d
+
+
+def _rolls_desde_valor(d) -> None:
+    """Corrige los rolls de los substats con el VALOR, que se lee bien; el "+N" es un glifo de
+    pocos píxeles que el OCR pierde (QA 2026-10-02: "Maestría de Anomalía 18" con 0 rolls → la
+    memoria de la tanda no reconoció al #443 mejorado y lo insertó otra vez).
+
+    Todo lo del Obtenido es rango S, así que vale `VALOR_POR_MEJORA` (medido sobre 386 discos):
+    rolls = valor / valor_por_mejora − 1. Sólo si la división da un entero limpio de 1 a 6
+    (0 a 5 mejoras); si no, queda lo que leyó el OCR (RNF-02: no inventar)."""
+    from app.core.stats_vocab import VALOR_POR_MEJORA
+    for s in d.subs or []:
+        base = VALOR_POR_MEJORA.get(s.nombre_canon or "")
+        if not base or s.valor is None:
+            continue
+        k = s.valor / base
+        n = round(k)
+        if abs(k - n) > 0.05 or not 1 <= n <= 6:
+            continue
+        if s.rolls != n - 1:
+            log.debug("[s22] %s %s: rolls %s (OCR) → %d (por el valor)",
+                      s.nombre_canon, s.valor, s.rolls, n - 1)
+            s.rolls = n - 1
 
 
 def parse_obtenido(frame, ocr, matcher=None, cand_en: list[str] | None = None) -> list[Seccion]:
