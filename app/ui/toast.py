@@ -172,6 +172,22 @@ class DiscThumb(QWidget):
 # Toast principal
 # ---------------------------------------------------------------------------
 
+def bloque_puntaje(data: "ToastData") -> tuple[str, str]:
+    """(rótulo, valor) del bloque de la derecha del toast de recomendación.
+
+    Con `delta` (paso 8, SPEC 2026-10-01): la MEJORA real que el motor de Discos calculó frente a lo
+    que el PJ lleva hoy, con el formato de la columna de Discos ("+0,57"). Sin `delta`: el SCORE de
+    antes, que nadie más debería mandar."""
+    if data.delta is not None:
+        return "MEJORA", f"{data.delta:+.2f}".replace(".", ",")
+    return "SCORE", f"{data.score:.1f}"
+
+
+def usa_urgencia(data: "ToastData") -> bool:
+    """La barra de URGENCIA y el `thr` salen del scoring sin calibrar: con la mejora real no van."""
+    return data.delta is None
+
+
 class DiscToast(QWidget):
     """
     Toast frameless always-on-top bottom-right.
@@ -438,7 +454,11 @@ class DiscToast(QWidget):
                                       "sin escribir DB")
         else:
             self._paint_body(p, ox, oy, accent, v)
-            self._paint_footer(p, ox, oy, accent, v)
+            if usa_urgencia(self._data):
+                self._paint_footer(p, ox, oy, accent, v)
+            else:
+                self._paint_footer_static(p, ox, oy, accent, "SUGERENCIA DEL MOTOR",
+                                          "frente a lo que lleva hoy")
 
     def _chamfered_path(self, rect: QRect, chamfer: int) -> QPainterPath:
         """Path con chamfer en top-left y bottom-right."""
@@ -610,23 +630,16 @@ class DiscToast(QWidget):
         p.setPen(T.color(T.TEXT_SECONDARY))
         p.drawText(target_x + ta_w + 4, bottom_y, f"M{self._data.target_mind}")
 
-        # Score (derecha)
+        # Puntaje (derecha): la MEJORA real si viene (paso 8), si no el score de antes.
         score_label_x = ox + WIDTH - PADDING_X - 80
+        etiqueta, valor = bloque_puntaje(self._data)
         p.setFont(T.font_caps(7))
         p.setPen(T.color(T.TEXT_MUTED))
-        p.drawText(score_label_x, bottom_y - 8, "SCORE")
+        p.drawText(score_label_x, bottom_y - 8, etiqueta)
 
         p.setFont(T.font_display(18, bold=True))
         p.setPen(accent)
-        score_text = f"{self._data.score:.1f}"
-        p.drawText(score_label_x, bottom_y + 4, score_text)
-
-        # Delta
-        if self._data.delta is not None:
-            p.setFont(T.font_mono(8))
-            p.setPen(T.color(T.POSITIVE if self._data.delta >= 0 else T.WARNING))
-            delta_str = f"{'▲' if self._data.delta >= 0 else '▼'}{abs(self._data.delta):.1f}"
-            p.drawText(score_label_x + 32, bottom_y + 4, delta_str)
+        p.drawText(score_label_x, bottom_y + 4, valor)
 
     def _paint_footer(self, p: QPainter, ox: int, oy: int, accent: QColor, v: dict):
         """Urgency bar + label."""

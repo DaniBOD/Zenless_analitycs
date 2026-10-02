@@ -413,8 +413,13 @@ class MainWindow(ShellWindow):
         self.activateWindow()
 
     def _on_disc_show_toast(self, payload: dict):
-        """Slot: convierte payload del controller a ToastData y muestra el toast."""
+        """Slot: el toast de la sugerencia del motor, SÓLO si el controlador dice que mejora a
+        alguien (paso 8, SPEC 2026-10-01: discos nuevos y el "Ver", EQUIPAR o MEJORAR). Todo lo
+        demás queda en la card y el log: un toast avisa un cambio, no una lectura."""
         from app.ui.toast import ToastData
+        sug = payload.get("sugerencia") or {}
+        if not sug.get("toast"):
+            return
         td = ToastData(
             variant=payload.get("variant", "reserva"),
             set_name=payload.get("set", "?"),
@@ -427,9 +432,7 @@ class MainWindow(ShellWindow):
             target_mind=payload.get("mind", 0),
             target_avatar=payload.get("target_avatar"),
             set_logo=payload.get("set_logo"),
-            score=payload.get("score", 0.0),
-            urgency=payload.get("urgency", 0.7),
-            threshold=payload.get("threshold", 0.75),
+            delta=sug.get("mejora"),
             timeout_secs=4.0,
         )
         self._toast.show_recommendation(td)
