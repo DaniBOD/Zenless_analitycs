@@ -27,7 +27,7 @@ nunca cerró). Las causas medidas:
 | fase | qué | estado |
 |---|---|---|
 | 0 | push de lo de hoy + corrección de #478/#484 | ✅ |
-| 1 | grabador (`app/core/grabacion.py`, `tools/grabar_sesion.py`), clicks (`app/core/clicks.py`), verdad de tierra y reproducción (`app/core/ritmo.py`, `tools/verdad_de_sesion.py`, `tools/reproducir_sesion.py`); línea de base con una sesión de Daniel | código ✅ · falta la grabación |
+| 1 | grabador (`app/core/grabacion.py`, `tools/grabar_sesion.py`), clicks (`app/core/clicks.py`), verdad de tierra y reproducción (`app/core/ritmo.py`, `tools/verdad_de_sesion.py`, `tools/reproducir_sesion.py`); línea de base con una sesión de Daniel | ✅ (2026-10-03) |
 | 2 | no re-clasificar en un estado estable (`ScreenDetector.sigue_en`) | — |
 | 3 | pantallas breves (promoción de modales verificados) y la tanda que se cierra sin el "Obtenido" | — |
 | 4 | los clicks como disparador de la captura y como evidencia (S11, S10, S22) | — |
@@ -53,6 +53,34 @@ nunca cerró). Las causas medidas:
 
 La Fase 1 vale si la reproducción del código de hoy reproduce las pérdidas de hoy.
 
+## Línea de base (2026-10-03)
+
+Grabación `20261003_111858` (2 min 9 s, 347 frames, 51 clicks, 0 descartados): dos desmontajes
+rápidos (17 discos en ~8 s y 4) y una mejora 0→3. Reproducida contra `332f3d6` (`audit/ritmo/20261003_111858_base.md`):
+
+| KPI | verdad | en vivo (11:20) | reproducción `base` |
+|---|---|---|---|
+| S11 · discos marcados con datos | 21 | 7 (33 %) | 8 (38 %) |
+| S11 · tandas confirmadas y cerradas | 2 | 2 | 2 |
+| S10 · niveles subidos vistos | 3 | (leyó el PRE ya en Nv 3) | 3 |
+| pantalla breve S25 vista | 2 | 0 | 0 |
+| `loop_period` p50 / p90 | | | 328 / 937 ms |
+| `detector` p50 | | | 171 ms |
+
+**El banco reproduce las pérdidas en vivo** (33 % vs 38 % con datos; la confirmación S25 nunca se
+ve, en ninguno de los dos) → la Fase 1 vale y las fases siguientes se miden contra esta tabla.
+
+Falta en la línea de base: un desmontaje **cancelado** y el **Obtenido de baterías** (S22). Se
+suman en la próxima grabación.
+
+### Hallazgo: ZZZ corre como administrador (UIPI)
+
+Un proceso sin elevar no ve los clicks sobre el juego (pynput: 0, `GetAsyncKeyState`: 0, en pleno
+combate). Elevado, sí. Decisión de Daniel (2026-10-03): **un ayudante mínimo elevado que sólo lee
+clicks** (`tools/clicks_elevado.py`); la app sigue sin elevar. El grabador también corre elevado
+(`Start-Process -Verb RunAs`, se corta con el archivo `PARAR`). Para la Fase 4 el ayudante le pasa
+los clicks a la app (archivo/pipe).
+
 ## Commits
 
 | commit | fase | qué |
@@ -62,3 +90,6 @@ La Fase 1 vale si la reproducción del código de hoy reproduce las pérdidas de
 | `a8cb8c5` | 1 | `ClickListener` (9 tests, 5 sabotajes) |
 | `90dfed1` | 1 | grabador de sesiones (6 tests, 6 sabotajes) |
 | `bd80797` | 1 | verdad de tierra + reproducción (7 tests, 6 sabotajes) |
+| `9ad3692` | — | data: farmeo del 2026-10-03 (16 drops S3, 1 baja; 431 activas) |
+| `2e69319` | 1 | grabador elevado + `clicks_elevado.py` (UIPI) + 4 escritores + `PARAR` |
+| `332f3d6` | 1 | la verdad ignora parpadeos de S12 y sigue la confirmación hasta el Obtenido |
