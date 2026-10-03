@@ -66,7 +66,7 @@ class Grabador:
     umbral: float = UMBRAL_CAMBIO
     tras_click: float = TRAS_CLICK_S
     latido: float = LATIDO_S
-    escritores: int = 3
+    escritores: int = 4
     max_cola: int = 24
     codificar: Callable[[Path, np.ndarray], None] | None = None
 
@@ -134,10 +134,13 @@ class Grabador:
             return None
         return motivo
 
-    def correr(self, segundos: float, fps: float = 12.0, dormir=time.sleep) -> None:
+    def correr(self, segundos: float, fps: float = 8.0, dormir=time.sleep,
+               seguir: Callable[[], bool] = lambda: True) -> None:
+        """`seguir()` False corta antes (el CLI lo ata a un archivo: un proceso elevado no se puede
+        cortar con Ctrl-C desde otra consola)."""
         fin = self.reloj() + segundos
         periodo = 1.0 / fps
-        while self.reloj() < fin:
+        while self.reloj() < fin and seguir():
             t0 = self.reloj()
             self.paso()
             espera = periodo - (self.reloj() - t0)
@@ -221,6 +224,16 @@ def leer_grabacion(carpeta: Path | str) -> Grabacion:
             clicks.append(ev)
         elif tipo == "descartados":
             descartados = max(descartados, ev["n"])
+    # Los clicks también pueden venir del ayudante elevado (`tools/clicks_elevado.py`), en su
+    # propio archivo: ZZZ corre como administrador y un proceso sin elevar no ve su mouse.
+    aparte = carpeta / "clicks.jsonl"
+    if aparte.exists():
+        vistos = {(c["t"], c["x"], c["y"]) for c in clicks}
+        for linea in aparte.read_text(encoding="utf-8").splitlines():
+            if linea.strip():
+                ev = json.loads(linea)
+                if ev.get("tipo") == "click" and (ev["t"], ev["x"], ev["y"]) not in vistos:
+                    clicks.append(ev)
     frames.sort(key=lambda f: f.t)
     clicks.sort(key=lambda c: c["t"])
     return Grabacion(carpeta, inicio, frames, clicks, descartados)

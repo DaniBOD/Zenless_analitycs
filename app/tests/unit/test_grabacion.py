@@ -113,3 +113,26 @@ def test_si_el_escritor_no_da_abasto_descarta_y_lo_dice(tmp_path):
     bloqueo.set()
     assert g.cerrar() >= 1
     assert leer_grabacion(tmp_path / "rec").descartados >= 1
+
+
+def test_seguir_false_corta_la_grabacion(tmp_path):
+    """Un grabador elevado no se corta con Ctrl-C desde otra consola: el CLI lo ata a un archivo."""
+    g, reloj, _ = _grabador(tmp_path, [_frame(v) for v in range(0, 250, 10)])
+    pasos = []
+    g.correr(60.0, fps=10, dormir=lambda s: setattr(reloj, "t", reloj.t + s),
+             seguir=lambda: len(pasos.append(1) or pasos) <= 3)
+    assert len(pasos) == 4                       # 3 vueltas y el corte
+
+
+def test_lee_tambien_los_clicks_del_ayudante_elevado(tmp_path):
+    """ZZZ corre como administrador: los clicks pueden venir de `tools/clicks_elevado.py`."""
+    import json
+    g, reloj, _ = _grabador(tmp_path, [_frame(10)])
+    g.paso()
+    g.cerrar()
+    (tmp_path / "rec" / "clicks.jsonl").write_text(
+        json.dumps({"tipo": "inicio_clicks", "t": 99.0}) + "\n"
+        + json.dumps({"tipo": "click", "t": 100.5, "x": 0.68, "y": 0.52, "boton": "left"}) + "\n",
+        encoding="utf-8")
+    rec = leer_grabacion(tmp_path / "rec")
+    assert [(c["t"], c["x"]) for c in rec.clicks] == [(100.5, 0.68)]

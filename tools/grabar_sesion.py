@@ -11,6 +11,11 @@ Uso:
     .venv\\Scripts\\python tools\\grabar_sesion.py --minutos 20
     .venv\\Scripts\\python tools\\grabar_sesion.py --minutos 5 --fps 10 --out D:\\grabaciones\\prueba
 Ctrl-C corta antes y cierra la grabación bien.
+
+ZZZ corre como ADMINISTRADOR: para que entren los clicks, el grabador también tiene que correr
+elevado (UIPI, medido el 2026-10-03: sin elevar, 0 clicks en pleno combate). Lanzarlo con
+`Start-Process -Verb RunAs` y cortarlo creando el archivo `PARAR` en la carpeta de la grabación
+(un proceso elevado no se corta con Ctrl-C desde otra consola).
 """
 from __future__ import annotations
 
@@ -37,8 +42,10 @@ def _destino_por_defecto() -> Path:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--minutos", type=float, default=20.0)
-    ap.add_argument("--fps", type=float, default=12.0, help="capturas por segundo (no todas se guardan)")
+    ap.add_argument("--fps", type=float, default=8.0, help="capturas por segundo (no todas se guardan)")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--parar", default=None,
+                    help="archivo cuya aparición corta la grabación (por defecto <carpeta>/PARAR)")
     args = ap.parse_args()
 
     # Píxeles físicos para mss y para pynput por igual (si no, a escala != 100 % los clicks caen
@@ -74,7 +81,8 @@ def main() -> int:
     g.iniciar(ventana=(ventana.width, ventana.height), fps=args.fps)
     t0 = time.monotonic()
     try:
-        g.correr(args.minutos * 60.0, fps=args.fps)
+        parar = Path(args.parar) if args.parar else destino / "PARAR"
+        g.correr(args.minutos * 60.0, fps=args.fps, seguir=lambda: not parar.exists())
     except KeyboardInterrupt:
         print("\n[grabar] cortado a mano")
     finally:
