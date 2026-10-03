@@ -69,8 +69,33 @@ def corridas(obs: list[ObsFrame]) -> list[Corrida]:
     return out
 
 
-def eventos_de_verdad(obs: list[ObsFrame]) -> Verdad:
+# Un S12 más corto que esto entre dos frames es la transición de la animación, no una pantalla:
+# en la grabación del 2026-10-03 aparecen de a 0,12 s entre casi todos los cambios y partían una
+# misma visita a S10 en tres (la subida 0→3 no se veía).
+PARPADEO_S12_S = 0.5
+
+
+def sin_parpadeos(obs: list[ObsFrame], max_s: float = PARPADEO_S12_S) -> list[ObsFrame]:
+    """Los frames sin las corridas de S12 más cortas que `max_s` (ordenados por t)."""
     obs = sorted(obs, key=lambda o: o.t)
+    fuera: set[int] = set()
+    i = 0
+    while i < len(obs):
+        if obs[i].estado != "S12":
+            i += 1
+            continue
+        j = i
+        while j + 1 < len(obs) and obs[j + 1].estado == "S12":
+            j += 1
+        fin = obs[j + 1].t if j + 1 < len(obs) else obs[j].t
+        if 0 < i and j + 1 < len(obs) and fin - obs[i].t < max_s:
+            fuera.update(range(i, j + 1))
+        i = j + 1
+    return [o for k, o in enumerate(obs) if k not in fuera]
+
+
+def eventos_de_verdad(obs: list[ObsFrame]) -> Verdad:
+    obs = sin_parpadeos(obs)
     v = Verdad(corridas=corridas(obs))
     # S11: cada subida del contador es un disco marcado. Una bajada es destilde (o la selección
     # vaciada tras desmontar); no suma.
@@ -83,21 +108,27 @@ def eventos_de_verdad(obs: list[ObsFrame]) -> Verdad:
         elif previo is None and o.contador_s11 > 0:
             v.s11_marcados += o.contador_s11
         previo = o.contador_s11
-    # Tandas confirmadas: una corrida S25 seguida (antes de que vuelva a subir el contador) por
-    # el "Obtenido" del desmontaje (S24) o por S11 con la selección en 0.
+    # Tandas confirmadas: después de una corrida S25, aparece el "Obtenido" del desmontaje (S24)
+    # o la selección vuelve a 0 — antes de que suba el contador (selección nueva) o de otra S25.
+    # Ojo: al confirmar, el juego todavía muestra un frame de S11 CON la selección antes del
+    # Obtenido (grabación 2026-10-03), así que ver S11 no corta.
     cs = v.corridas
     for i, c in enumerate(cs):
         if c.estado != "S25":
             continue
-        for d in cs[i + 1:]:
-            if d.estado == "S24":
+        previo = [o.contador_s11 for o in obs
+                  if o.estado == "S11" and o.t < c.t_ini and o.contador_s11 is not None]
+        declarado = previo[-1] if previo else None
+        for o in obs:
+            if o.t < c.t_fin:
+                continue
+            if o.estado == "S24" or (o.estado == "S11" and o.contador_s11 == 0):
                 v.s11_tandas_confirmadas += 1
                 break
-            if d.estado == "S11":
-                vacia = any(o.estado == "S11" and o.contador_s11 == 0
-                            and d.t_ini <= o.t <= d.t_fin for o in obs)
-                if vacia:
-                    v.s11_tandas_confirmadas += 1
+            if o.estado == "S25" and o.t > c.t_fin:
+                break
+            if (o.estado == "S11" and o.contador_s11 is not None and declarado is not None
+                    and o.contador_s11 > declarado):
                 break
     # S10: niveles subidos dentro de cada visita al modal (el máximo menos el primero leído).
     for c in cs:

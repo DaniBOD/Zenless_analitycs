@@ -72,3 +72,33 @@ def test_comparar_y_reporte():
     assert round(s11.cobertura, 2) == 0.65
     md = reporte_md("base", filas)
     assert "| S11 · discos marcados con datos | 63 | 41 | 65% |" in md
+
+
+def test_los_parpadeos_de_s12_no_parten_una_visita():
+    """Grabación 2026-10-03: S10 0,0 · S12 (0,12 s) · S10 3 era UNA visita con la subida 0→3."""
+    obs = [_o(86.14, "S10", nivel_s10=0), _o(87.9, "S10", nivel_s10=0), _o(87.95, "S12"),
+           _o(88.08, "S10", nivel_s10=0), _o(88.84, "S12"), _o(89.09, "S10", nivel_s10=3),
+           _o(91.5, "S5")]
+    v = eventos_de_verdad(obs)
+    assert v.s10_niveles == 3
+    assert [c.estado for c in v.corridas] == ["S10", "S5"]
+
+
+def test_un_s12_largo_si_es_una_pantalla():
+    obs = [_o(0, "S10", nivel_s10=0), _o(1, "S12"), _o(3, "S10", nivel_s10=3)]
+    assert [c.estado for c in eventos_de_verdad(obs).corridas] == ["S10", "S12", "S10"]
+
+
+def test_al_confirmar_el_juego_muestra_s11_con_la_seleccion_antes_del_obtenido():
+    """Grabación 2026-10-03: S25 → S11 (todavía 4/300) → S24."""
+    obs = [_o(71, "S11", contador_s11=4), _o(74.6, "S25"), _o(76.27, "S11", contador_s11=4),
+           _o(76.66, "S24"), _o(77.41, "S11", contador_s11=0)]
+    assert eventos_de_verdad(obs).s11_tandas_confirmadas == 1
+
+
+def test_una_seleccion_nueva_despues_de_s25_es_cancelacion():
+    """Cancelar deja la selección; si sigue marcando, el Obtenido que venga después no es de esa
+    confirmación."""
+    obs = [_o(0, "S11", contador_s11=4), _o(1, "S25"), _o(2, "S11", contador_s11=4),
+           _o(3, "S11", contador_s11=6), _o(4, "S24")]
+    assert eventos_de_verdad(obs).s11_tandas_confirmadas == 0
