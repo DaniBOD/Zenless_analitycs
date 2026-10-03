@@ -1,0 +1,153 @@
+{
+  "schema": "desmontaje/1",
+  "ts_apertura": "2026-10-03T11:20:38",
+  "ts_commit": "2026-10-03T11:20:44",
+  "conteo": {
+    "declarado": 4,
+    "capturados": 2,
+    "faltantes": 2,
+    "fuente_declarado": "contador_header",
+    "material_primero": null,
+    "corroborado": null
+  },
+  "modo": "manual",
+  "confirmacion_grado_s": false,
+  "avisos": [
+    "scroll durante la tanda",
+    "contador del header ilegible"
+  ],
+  "discos": [
+    {
+      "seq": 1,
+      "celda": {
+        "fila": 0,
+        "col": 3
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 4,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "Maestría de Anomalía",
+        "raw": "Maestria de Anomalia",
+        "valor": 23.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "HP%",
+          "raw": "PV",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "HP",
+          "raw": "PV",
+          "valor": 112.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK",
+          "raw": "Ataque",
+          "valor": 19.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.982,
+      "identidad": {
+        "set_id": 55,
+        "slot": 4,
+        "nivel": 0,
+        "main": "maestriadeanomalia",
+        "subs": [
+          [
+            "atk",
+            0
+          ],
+          [
+            "hp",
+            0
+          ],
+          [
+            "hp%",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 2,
+      "celda": {
+        "fila": 0,
+        "col": 0
+      },
+      "set_raw": "Rosa espinosa (4) Nivel 00 715",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 4,
+      "nivel": null,
+      "rareza": "?",
+      "main": {
+        "canon": "Maestría de Anomalía",
+        "raw": "Maestria de Anomalia",
+        "valor": 23.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "Perforación",
+          "raw": "Perforación",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK",
+          "raw": "Ataque",
+          "valor": 19.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "HP",
+          "raw": "PV",
+          "valor": 112.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.958,
+      "identidad": {
+        "set_id": 55,
+        "slot": 4,
+        "nivel": null,
+        "main": "maestriadeanomalia",
+        "subs": [
+          [
+            "atk",
+            0
+          ],
+          [
+            "hp",
+            0
+          ],
+          [
+            "perforacion",
+            0
+          ]
+        ]
+      }
+    }
+  ],
+  "huecos": [
+    {
+      "motivo": "fuera_de_viewport",
+      "n": 2
+    }
+  ]
+}

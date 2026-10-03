@@ -1,0 +1,307 @@
+{
+  "schema": "desmontaje/1",
+  "ts_apertura": "2026-10-03T11:19:54",
+  "ts_commit": "2026-10-03T11:20:07",
+  "conteo": {
+    "declarado": 17,
+    "capturados": 5,
+    "faltantes": 12,
+    "fuente_declarado": "contador_header",
+    "material_primero": 17,
+    "corroborado": true
+  },
+  "modo": "manual",
+  "confirmacion_grado_s": false,
+  "avisos": [
+    "scroll durante la tanda",
+    "contador del header ilegible"
+  ],
+  "discos": [
+    {
+      "seq": 1,
+      "celda": {
+        "fila": 1,
+        "col": 7
+      },
+      "set_raw": "Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 0,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "DEF%",
+        "raw": "Defensa",
+        "valor": 12.0,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "Daño Crítico",
+          "raw": "Dano Critico",
+          "valor": 4.8,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "Prob. Crítica",
+          "raw": "Probabilidad de Critico",
+          "valor": 2.4,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalig",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.879,
+      "identidad": {
+        "set_id": 54,
+        "slot": 0,
+        "nivel": 0,
+        "main": "def%",
+        "subs": [
+          [
+            "danocritico",
+            0
+          ],
+          [
+            "maestriadeanomalia",
+            0
+          ],
+          [
+            "prob.critica",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 2,
+      "celda": {
+        "fila": 1,
+        "col": 3
+      },
+      "set_raw": "Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 0,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "ATK%",
+        "raw": "Ataque",
+        "valor": 7.5,
+        "unidad": "%"
+      },
+      "subs": [
+        {
+          "canon": "Perforación",
+          "raw": "Perforación",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "DEF",
+          "raw": "Defensa",
+          "valor": 15.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.783,
+      "identidad": {
+        "set_id": 54,
+        "slot": 0,
+        "nivel": 0,
+        "main": "atk%",
+        "subs": [
+          [
+            "def",
+            0
+          ],
+          [
+            "maestriadeanomalia",
+            0
+          ],
+          [
+            "perforacion",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 3,
+      "celda": {
+        "fila": 0,
+        "col": 8
+      },
+      "set_raw": "Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 2,
+      "nivel": null,
+      "rareza": "?",
+      "main": {
+        "canon": "",
+        "raw": "",
+        "valor": null,
+        "unidad": null
+      },
+      "subs": [],
+      "confianza": 0.966,
+      "identidad": {
+        "set_id": 54,
+        "slot": 2,
+        "nivel": null,
+        "main": "",
+        "subs": []
+      }
+    },
+    {
+      "seq": 4,
+      "celda": {
+        "fila": 0,
+        "col": 5
+      },
+      "set_raw": "Hado emplumado",
+      "set_canon": null,
+      "set_id": 54,
+      "slot": 1,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "HP",
+        "raw": "PV",
+        "valor": 550.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "HP%",
+          "raw": "PV",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        },
+        {
+          "canon": "ATK",
+          "raw": "Ataque",
+          "valor": 19.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Perforación",
+          "raw": "Perforación",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.881,
+      "identidad": {
+        "set_id": 54,
+        "slot": 1,
+        "nivel": 0,
+        "main": "hp",
+        "subs": [
+          [
+            "atk",
+            0
+          ],
+          [
+            "hp%",
+            0
+          ],
+          [
+            "perforacion",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "seq": 5,
+      "celda": {
+        "fila": 0,
+        "col": 0
+      },
+      "set_raw": "Rosa espinosa",
+      "set_canon": null,
+      "set_id": 55,
+      "slot": 1,
+      "nivel": 0,
+      "rareza": "?",
+      "main": {
+        "canon": "HP",
+        "raw": "PV",
+        "valor": 550.0,
+        "unidad": "flat"
+      },
+      "subs": [
+        {
+          "canon": "Maestría de Anomalía",
+          "raw": "Maestria de Anomalia",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "Perforación",
+          "raw": "Perforación",
+          "valor": 9.0,
+          "unidad": "flat",
+          "rolls": 0
+        },
+        {
+          "canon": "HP%",
+          "raw": "PV",
+          "valor": 3.0,
+          "unidad": "%",
+          "rolls": 0
+        }
+      ],
+      "confianza": 0.862,
+      "identidad": {
+        "set_id": 55,
+        "slot": 1,
+        "nivel": 0,
+        "main": "hp",
+        "subs": [
+          [
+            "hp%",
+            0
+          ],
+          [
+            "maestriadeanomalia",
+            0
+          ],
+          [
+            "perforacion",
+            0
+          ]
+        ]
+      }
+    }
+  ],
+  "huecos": [
+    {
+      "motivo": "fuera_de_viewport",
+      "n": 12
+    }
+  ]
+}
