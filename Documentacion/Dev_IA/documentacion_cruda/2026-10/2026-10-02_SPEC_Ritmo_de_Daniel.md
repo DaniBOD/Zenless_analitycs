@@ -28,7 +28,7 @@ nunca cerró). Las causas medidas:
 |---|---|---|
 | 0 | push de lo de hoy + corrección de #478/#484 | ✅ |
 | 1 | grabador (`app/core/grabacion.py`, `tools/grabar_sesion.py`), clicks (`app/core/clicks.py`), verdad de tierra y reproducción (`app/core/ritmo.py`, `tools/verdad_de_sesion.py`, `tools/reproducir_sesion.py`); línea de base con una sesión de Daniel | ✅ (2026-10-03) |
-| 2 | no re-clasificar en un estado estable (`ScreenDetector.sigue_en`) | — |
+| 2 | no re-clasificar en un estado estable (`ScreenDetector.sigue_en`) | ✅ (ganancia chica: loop p90 1036→854; S11 dentro del ruido) |
 | 3 | pantallas breves (promoción de modales verificados) y la tanda que se cierra sin el "Obtenido" | — |
 | 4 | los clicks como disparador de la captura y como evidencia (S11, S10, S22) | — |
 | 5 | capturar rápido, procesar después (sólo si 2-4 no alcanzan) | — |
@@ -72,6 +72,22 @@ ve, en ninguno de los dos) → la Fase 1 vale y las fases siguientes se miden co
 
 Falta en la línea de base: un desmontaje **cancelado** y el **Obtenido de baterías** (S22). Se
 suman en la próxima grabación.
+
+## Fase 2 · resultado (2026-10-03)
+
+3 reproducciones por versión de `20261003_111858` (la reproducción en tiempo real tiene varianza
+grande: S11 entre 5 y 9 con el mismo código):
+
+| | S11 con datos (de 21) | tandas (de 2) | loop p50 / p90 | detector total |
+|---|---|---|---|---|
+| base (`DANIBOD_SIN_SIGUE=1`) | 8 · 9 · 5 → 7,3 | 2 · 2 · 1 | 323 / 1036 ms | 36,6 s |
+| fase 2 | 9 · 6 · 9 → 8,0 | 2 · 1 · 2 | 302 / 854 ms | 32,8 s |
+
+El atajo es seguro (0 "sigue" falsos medidos) y baja el p90, pero en S11 no mueve la aguja: sólo
+cubre pantallas de template propio (la sesión pasa mucho en S12/S4/S15) y en S11 el cuello es el
+**despacho** (OCR del contador en cada ciclo + el del panel, p90 ~550 ms), no la clasificación.
+Conclusión para el orden: la mejora real de S11 está en capturar un frame por click y procesarlo
+después (fases 4 y 5); la fase 3 (S25 breve, tanda que cierra en 0/300) va antes por barata.
 
 ### Hallazgo: ZZZ corre como administrador (UIPI)
 
