@@ -128,3 +128,25 @@ def test_un_modal_que_no_vino_del_template_verificado_no_se_promueve():
     from app.core.monitor import Monitor
     b = _buffer_con("S11", "S11", "S11")
     assert Monitor._votar(b, ScreenState("S24", 0.55, "hsv", method="hsv")) is None
+
+
+# --- Los modales breves se despachan en el ciclo en que se confirman ----------------------------
+
+def test_un_modal_recien_confirmado_se_despacha_sin_esperar_la_cadencia():
+    """Reproducción 2026-10-03: S24 confirmado, despacho diferido por cadencia, tanda abandonada."""
+    from app.core.monitor import Monitor
+    s24 = ScreenState("S24", 1.0, "s24_obtenido_desmontaje.png")
+    assert Monitor._debe_despachar(False, 120.0, 500, s24, continuous=True)
+
+
+def test_un_estado_comun_respeta_la_cadencia():
+    from app.core.monitor import Monitor
+    s5 = ScreenState("S5", 1.0, "s5.png")
+    assert not Monitor._debe_despachar(False, 120.0, 1000, s5, continuous=True)
+    assert Monitor._debe_despachar(False, 1200.0, 1000, s5, continuous=True)
+
+
+def test_un_modal_ya_confirmado_respeta_la_cadencia():
+    """Sólo la TRANSICIÓN se apura: mientras el modal sigue en pantalla, cadencia de siempre."""
+    from app.core.monitor import Monitor
+    assert not Monitor._debe_despachar(False, 120.0, 500, None, continuous=True)

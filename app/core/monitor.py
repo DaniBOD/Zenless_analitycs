@@ -1171,9 +1171,8 @@ class Monitor:
                 # canal / por firma de rarezas) evita re-emitir lo mismo.
                 continuous = (active_state.code in _CONTINUOUS_STATES
                               or active_state.code in _REDISPATCH_STATES)
-                should_dispatch = forced or (
-                    elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
-                )
+                should_dispatch = self._debe_despachar(forced, elapsed_ms, cadence_ms,
+                                                       voted_state, continuous)
                 # Despacho rápido de S9: en la pasada en que el loop VIO el disco moverse, su frame
                 # puede estar a mitad de la animación del panel. No se lee; lo lee la pasada
                 # siguiente, cuando la firma confirme que quedó quieto. Sin esto la cadencia podía
@@ -1197,6 +1196,22 @@ class Monitor:
             #  estado se loguea en _notify_state_change; los stats/detalle, en sus
             #  handlers, solo cuando el dato cambia.)
             self._wait_fast()
+
+    @staticmethod
+    def _debe_despachar(forced: bool, elapsed_ms: float, cadence_ms: float,
+                        voted_state: ScreenState | None, continuous: bool) -> bool:
+        """¿Se despacha el handler en esta vuelta? Por cadencia, salvo dos excepciones.
+
+        Un modal breve RECIÉN confirmado (`_MODALES_DE_UN_FRAME`) se despacha ya, sin esperar la
+        cadencia: medido en la reproducción del 2026-10-03, el "Obtenido" del desmontaje se
+        confirmó pero el despacho esperó los 500 ms desde el último de S11 y para entonces la
+        pantalla ya era otra — la tanda se abandonó con los 4 discos desmontados. Lo mismo dejaba
+        sin registrar la confirmación S25 (y sin ella, la selección vaciada no puede cerrar)."""
+        if forced:
+            return True
+        if voted_state is not None and voted_state.code in _MODALES_DE_UN_FRAME:
+            return True
+        return elapsed_ms >= cadence_ms and (voted_state is not None or continuous)
 
     @staticmethod
     def _votar(buffer, raw_state: ScreenState) -> ScreenState | None:
