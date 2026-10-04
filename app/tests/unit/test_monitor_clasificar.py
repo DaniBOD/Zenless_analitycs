@@ -98,3 +98,33 @@ def test_si_el_atajo_revienta_clasifica_completo():
     m._clasificar(None, 10.0)
     assert m._clasificar(None, 10.3).code == "S11"
     assert det.completas == 2
+
+
+# --- Fase 3: los modales breves se confirman con un frame -------------------------------------
+
+def _buffer_con(*codes):
+    from app.core.detector import TemporalBuffer
+    b = TemporalBuffer(window_size=3)
+    for c in codes:
+        b.add(ScreenState(c, 0.99, "x"))
+    return b
+
+
+def test_la_confirmacion_del_desmontaje_se_confirma_con_un_frame():
+    """S25 vive 0,75-1,5 s: con el voto 2/3 no se vio nunca en la línea de base del 2026-10-03."""
+    from app.core.monitor import Monitor
+    b = _buffer_con("S11", "S11", "S11")
+    st = Monitor._votar(b, ScreenState("S25", 0.99, "s23_sustitucion.png", method="template"))
+    assert st is not None and st.code == "S25"
+
+
+def test_un_estado_comun_sigue_votando_dos_de_tres():
+    from app.core.monitor import Monitor
+    b = _buffer_con("S11", "S11", "S11")
+    assert Monitor._votar(b, ScreenState("S5", 0.99, "s5.png", method="template")) is None
+
+
+def test_un_modal_que_no_vino_del_template_verificado_no_se_promueve():
+    from app.core.monitor import Monitor
+    b = _buffer_con("S11", "S11", "S11")
+    assert Monitor._votar(b, ScreenState("S24", 0.55, "hsv", method="hsv")) is None

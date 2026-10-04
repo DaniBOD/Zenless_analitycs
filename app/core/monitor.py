@@ -338,6 +338,13 @@ _HEARTBEAT_BASE_S = 600.0
 # siendo la misma, una clasificación COMPLETA cada tanto. El atajo nunca afirma otra pantalla, pero
 # esto acota cuánto podría tardar en notarse una que se le escape (y refresca las ubicaciones).
 _RED_CLASIFICACION_S = 1.0
+# Modales que se confirman con UN frame clasificado y verificado, sin esperar el voto 2/3 del
+# TemporalBuffer (fase 3 del hito). Duran poco: la confirmación del desmontaje (S25) vive 0,75-1,5 s
+# y en la línea de base del 2026-10-03 NO se vio ni una vez (ni en vivo ni en la reproducción); el
+# "Obtenido" (S24) y el vuelto de materiales (S20) también pueden pasar en un par de ciclos. Que
+# `classify` los devuelva ya exige su template (umbral 0.85) + su verificación (texto del diálogo,
+# pill verde + pocas franjas): un frame suelto de ellos no es ruido de transición.
+_MODALES_DE_UN_FRAME = frozenset({"S20", "S24", "S25"})
 # Topes de ascensión que puede mostrar el pill "Nv. X/Y" de un W-Engine. Sirven de firma
 # estructural de la pantalla: un DISCO tope en 15 y por ahí se cuela un panel de discos parseado
 # como arma (ver `_parece_panel_de_arma`). Confirmado contra la pantalla por Daniel 2026-08-12.
@@ -1098,10 +1105,7 @@ class Monitor:
             # ---- Paso 2: alimentar buffer temporal ----
             # Deep detect con alta confianza salta la votación 2/3 para
             # responder en el primer frame (UX < 500 ms).
-            if raw_state.method == "deep_detect" and raw_state.confidence >= 0.75:
-                voted_state = buffer.promote_now(raw_state)
-            else:
-                voted_state = buffer.add(raw_state)
+            voted_state = self._votar(buffer, raw_state)
 
             # ---- Paso 3: emitir cuando buffer confirma + re-extraer S18 ----
             if voted_state is not None:
@@ -1184,6 +1188,20 @@ class Monitor:
             #  estado se loguea en _notify_state_change; los stats/detalle, en sus
             #  handlers, solo cuando el dato cambia.)
             self._wait_fast()
+
+    @staticmethod
+    def _votar(buffer, raw_state: ScreenState) -> ScreenState | None:
+        """El estado que confirma este frame, o None. Por defecto vota 2/3 (`TemporalBuffer`).
+
+        Se saltean la votación: el deep detect con alta confianza (UX < 500 ms en S18) y los
+        modales breves de `_MODALES_DE_UN_FRAME` cuando vienen del template verificado — si
+        esperaran el voto, los que duran menos de ~2 ciclos no existirían."""
+        if raw_state.method == "deep_detect" and raw_state.confidence >= 0.75:
+            return buffer.promote_now(raw_state)
+        if (raw_state.code in _MODALES_DE_UN_FRAME
+                and raw_state.method in ("template", "template+tab")):
+            return buffer.promote_now(raw_state)
+        return buffer.add(raw_state)
 
     def _clasificar(self, frame, now: float) -> ScreenState:
         """El estado del frame: primero el atajo barato, después la clasificación completa.
