@@ -142,3 +142,37 @@ def test_s5_grid_badge_tolerante_a_desplazamiento_captura_viva():
     slots = [s for s, _ in parse_s5_grid(fr, _paddle())]
     assert slots == [1, 1, 1, 2, 3, 5, 5, 5, 6, 6], slots
     assert 0 not in slots, f"quedó algún '?' (slot 0): {slots}"
+
+
+def test_la_ficha_se_lee_solo_del_recorte_del_panel():
+    """Hito "El ritmo de Daniel" (2026-10-04): OCR del panel, no del frame entero (808 → 608 ms
+    p50 sobre 52 frames reales). Las cajas vuelven en coordenadas del frame completo."""
+    import numpy as np
+    from app.core import parser_disc_s3 as p3
+
+    class _OcrEspia:
+        def __init__(self):
+            self.formas = []
+
+        def text_with_bboxes(self, img):
+            self.formas.append(img.shape[:2])
+            return [("Atributo principal", 0.99, (10, 20, 110, 40))]
+
+    ocr = _OcrEspia()
+    frame = np.zeros((1440, 2560, 3), np.uint8)
+    lineas = p3._ocr_lineas_de_roi(frame, ocr, p3._S5_PANEL_ROI)
+    x, y, w, h = p3._S5_PANEL_ROI
+    from app.core.capturer import crop_roi
+    assert ocr.formas == [crop_roi(frame, p3._S5_PANEL_ROI).shape[:2]]
+    assert ocr.formas[0][0] < 1440 and ocr.formas[0][1] < 2560       # no el frame entero
+    x0, y0 = int(x * 2560), int(y * 1440)
+    assert lineas == [("Atributo principal", 0.99, (10 + x0, 20 + y0, 110 + x0, 40 + y0))]
+
+
+def test_parse_disc_s5_usa_el_recorte(monkeypatch):
+    import numpy as np
+    from app.core import parser_disc_s3 as p3
+    vistos = []
+    monkeypatch.setattr(p3, "_ocr_lineas_de_roi", lambda f, o, roi: vistos.append(roi) or [])
+    p3.parse_disc_s5(np.zeros((1440, 2560, 3), np.uint8), object())
+    assert vistos == [p3._S5_PANEL_ROI]

@@ -361,13 +361,20 @@ def parse_disc_s3_full(frame: np.ndarray, ocr) -> DiscParsed:
 # 2 capturas de 11_Tienda_Musica_Afinacion.
 _S5_BAND = (0.30, 0.50)
 _S5_COL = PanelLayout(0.30, 0.50, 0.42)   # band_min, band_max, col_split (nombre <0.42 | valor)
+# La ficha ocupa x≈0.32-0.46, y≈0.18-0.94 (medido sobre las 5 capturas de 11_Tienda_Musica_Afinacion).
+# OCR sólo de ese panel en vez del frame entero, como S11 (hito "El ritmo de Daniel", 2026-10-04):
+# el despacho de S5 bloqueaba el loop 2-6 s y la ficha era la mitad (808 → 608 ms p50 sobre 52
+# frames reales). Lee igual o MEJOR: en 11 de los 15 frames que difieren el recorte acierta donde el
+# frame entero no (ATK 19 leído como 9, el main DEF% 19,2 tomado como nombre), y en 1 pierde un
+# valor que el agregador completa con el frame siguiente.
+_S5_PANEL_ROI = (0.29, 0.15, 0.23, 0.81)
 
 
 def parse_disc_s5(frame: np.ndarray, ocr) -> DiscParsed:
     """Parsea la ficha del disco SELECCIONADO del resultado de afinación (S5). Reusa el motor de
     S3 con UNA columna. La tienda solo entrega discos de grado S (texto del juego) → rareza='S'.
     Slot del "(N)" del título. Sin dueño (disco recién generado). Display-only."""
-    lines = _ocr_s3_lines(frame, ocr)
+    lines = _ocr_lineas_de_roi(frame, ocr, _S5_PANEL_ROI)
     H, W = frame.shape[:2]
     parsed = _parse_s3_from_lines(lines, W, H, frame=frame, ocr=ocr, band=_S5_BAND, cols=(_S5_COL,))
     parsed.rareza = "S"
@@ -399,19 +406,25 @@ _S11_BAND = (0.66, 0.97)
 _S11_COL = PanelLayout(0.66, 0.97, 0.88)   # nombres+badge ≤0.83 | valores ≥0.92
 
 
-def _ocr_s11_lines(frame: np.ndarray, ocr):
-    """OCR del panel DETAIL de S11, re-offseteado a coords del frame completo (así el parser
-    espacial de S3 no cambia). Fallback al frame completo si el crop no sale."""
+def _ocr_lineas_de_roi(frame: np.ndarray, ocr, roi):
+    """OCR de un panel `roi` (x, y, w, h normalizados), re-offseteado a coords del frame completo
+    (así el parser espacial de S3 no cambia). Fallback al frame completo si el crop no sale o no
+    trae nada. Lo comparten S11 y S5."""
     from app.core.capturer import crop_roi
-    x0 = int(_S11_PANEL_ROI[0] * frame.shape[1])
-    y0 = int(_S11_PANEL_ROI[1] * frame.shape[0])
-    crop = crop_roi(frame, _S11_PANEL_ROI)
+    x0 = int(roi[0] * frame.shape[1])
+    y0 = int(roi[1] * frame.shape[0])
+    crop = crop_roi(frame, roi)
     if crop is None or getattr(crop, "size", 0) == 0:
         return _ocr_s3_lines(frame, ocr)
     raw = ocr.text_with_bboxes(crop)
     if not raw:
         return _ocr_s3_lines(frame, ocr)
     return [(t, c, (b[0] + x0, b[1] + y0, b[2] + x0, b[3] + y0)) for (t, c, b) in raw]
+
+
+def _ocr_s11_lines(frame: np.ndarray, ocr):
+    """OCR del panel DETAIL de S11 (ver `_ocr_lineas_de_roi`)."""
+    return _ocr_lineas_de_roi(frame, ocr, _S11_PANEL_ROI)
 
 
 def parse_disc_s11(frame: np.ndarray, ocr) -> DiscParsed:
