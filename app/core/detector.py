@@ -1477,6 +1477,26 @@ def _verify_s28(frame: np.ndarray) -> tuple[bool, str | None]:
 # sustituirlo?") — 1 o 2 líneas, centrado. Generosa para cubrir ambos casos (medido sobre los 7
 # fixtures). La usan `_verify_s23` (anti-FP) y el parser (parser_sustitucion).
 _S23_TEXT_ROI = (0.10, 0.44, 0.80, 0.12)   # x, y, w, h
+
+
+def _texto_dialogo(frame: np.ndarray, crop: np.ndarray, ocr) -> str:
+    """El texto del diálogo genérico "Cancelar/Confirmar", leído UNA vez por `classify`.
+
+    `_verify_s23`, `_verify_s25` y `_verify_s29` comparten el template de botones y leen la misma
+    banda (`_S23_TEXT_ROI`) con el mismo Tesseract: en un `classify` de S25 corrían dos o tres
+    lecturas de ~500 ms cada una (Tesseract lanza un proceso por llamada) y el ciclo llegaba a
+    1,2-1,3 s — medido en la reproducción del 2026-10-04: con eso el "Obtenido" del desmontaje
+    (0,62 s) caía entre dos vueltas. Se cachea la lectura CRUDA (cada verify saca su conclusión),
+    con el mismo mecanismo y la misma vida que `_read_inventory_header`: una clasificación."""
+    cache = _lectura_header.get()
+    if cache is not None:
+        guardado = cache.get("dialogo")
+        if guardado is not None and guardado[0] is frame:
+            return guardado[1]
+    text, _ = ocr.text(crop, psm=6, lang="spa")
+    if cache is not None:
+        cache["dialogo"] = (frame, text)
+    return text
 _RE_S23_VERIFY = re.compile(r"sustituir|equipa\s+actualmente", re.I)
 
 # El sufijo de SLOT es lo único que separa el diálogo de disco del de ARMA: un disco vive en un
@@ -1529,7 +1549,7 @@ def _verify_s23(frame: np.ndarray) -> tuple[bool, str | None]:
         crop = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
         if crop.size == 0:
             return (True, None)
-        text, _ = ocr.text(crop, psm=6, lang="spa")
+        text = _texto_dialogo(frame, crop, ocr)
         text = text or ""
         if not _RE_S23_VERIFY.search(text):
             return (False, "txt=no-match")
@@ -1557,7 +1577,7 @@ def _verify_s29(frame: np.ndarray) -> tuple[bool, str | None]:
         crop = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
         if crop.size == 0:
             return (False, "roi-vacio")
-        text, _ = ocr.text(crop, psm=6, lang="spa")
+        text = _texto_dialogo(frame, crop, ocr)
         text = text or ""
         if not _RE_S23_VERIFY.search(text):
             return (False, "txt=no-match")
@@ -1595,7 +1615,7 @@ def _verify_s25(frame: np.ndarray) -> tuple[bool, str | None]:
         crop = frame[int(y * h):int((y + rh) * h), int(x * w):int((x + rw) * w)]
         if crop.size == 0:
             return (False, "roi-vacio")
-        text, _ = ocr.text(crop, psm=6, lang="spa")
+        text = _texto_dialogo(frame, crop, ocr)
         ok = bool(_RE_S25_VERIFY.search(text or ""))
         return (ok, "txt=desmontar" if ok else "txt=no-match")
     except Exception:
