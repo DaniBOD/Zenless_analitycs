@@ -176,3 +176,23 @@ def test_parse_disc_s5_usa_el_recorte(monkeypatch):
     monkeypatch.setattr(p3, "_ocr_lineas_de_roi", lambda f, o, roi: vistos.append(roi) or [])
     p3.parse_disc_s5(np.zeros((1440, 2560, 3), np.uint8), object())
     assert vistos == [p3._S5_PANEL_ROI]
+
+
+def test_la_grilla_se_lee_solo_de_la_franja_de_etiquetas(monkeypatch):
+    """2026-10-04: la grilla también hacía OCR del frame entero (938 → 403 ms p50 recortando; la
+    secuencia de slots coincide en 48 de 52 frames reales y las 4 diferencias son de la animación
+    de revelado, donde el recorte acierta 2 que el frame entero no)."""
+    import numpy as np
+    from app.core import parser_disc_s3 as p3
+    vistos = []
+    monkeypatch.setattr(p3, "_ocr_lineas_de_roi", lambda f, o, roi: vistos.append(roi) or [])
+    assert p3.parse_s5_grid(np.zeros((1440, 2560, 3), np.uint8), object()) == []
+    assert vistos == [p3._S5_GRID_ROI]
+
+
+def test_un_empty_mal_leido_no_es_un_disco():
+    """Con el recorte el OCR devuelve "EMPT"/"EMPTN" en tiles vacíos: no pueden contar como discos
+    (cambiarían el largo de la grilla y dispararían una "tanda nueva" falsa)."""
+    from app.core.parser_disc_s3 import _es_empty
+    assert all(_es_empty(t) for t in ("EMPTY", "EMPT", "EMPTN", "empty", "EMPTE"))
+    assert not _es_empty("Rosa espinosa (4)")

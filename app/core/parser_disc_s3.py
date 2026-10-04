@@ -589,7 +589,17 @@ def _monotone_slots(score_vectors: list[dict[int, float]], floor: float = -1.0) 
     return seq
 
 
-def parse_s5_grid(frame: np.ndarray, ocr) -> list[tuple[int, str]]:
+# Franja de las etiquetas de la grilla (filas y≈0.49/0.70 ±0.05, columnas x≈0.547-0.899 ±0.035) con
+# margen: el OCR de la grilla era el frame entero (≈837 ms p50, medido 2026-10-04).
+_S5_GRID_ROI = (0.50, 0.42, 0.45, 0.35)
+
+
+def _es_empty(texto: str) -> bool:
+    """"EMPTY" del tile vacío, tolerante a lo que el OCR le come al final ("EMPT", "EMPTN"…)."""
+    return _norm_key(texto).startswith("empt")
+
+
+def parse_s5_grid(frame: np.ndarray, ocr, recortar: bool = True) -> list[tuple[int, str]]:
     """Preview de la grilla de resultado de afinación (S5): lee el label "<set> (N)" de cada tile
     ocupado → lista de (slot, set_name_raw) en orden de lectura (row-major), saltando los EMPTY.
     Cantidad variable (4/6/10…). Display-only; el slot/set/stats definitivos salen de la ficha
@@ -598,7 +608,8 @@ def parse_s5_grid(frame: np.ndarray, ocr) -> list[tuple[int, str]]:
         return []
     H, W = frame.shape[:2]
     try:
-        raw = ocr.text_with_bboxes(frame)
+        raw = (_ocr_lineas_de_roi(frame, ocr, _S5_GRID_ROI) if recortar
+               else ocr.text_with_bboxes(frame))
     except Exception:
         return []
     cells: dict[tuple[int, int], list[tuple[float, str]]] = {}
@@ -620,7 +631,7 @@ def parse_s5_grid(frame: np.ndarray, ocr) -> list[tuple[int, str]]:
         ri, ci = key
         toks = [t for _y, t in sorted(cells[key])]
         text = " ".join(toks).strip()
-        if not text or _norm_key(text) == "empty":
+        if not text or _es_empty(text):
             continue
         name = re.sub(r"\(\s*\d?\s*\)", "", text).strip()
         if not name:
