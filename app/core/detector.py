@@ -61,7 +61,15 @@ _COARSE_PAD = 24              # px (full-res) de margen del ROI de confirmación
 # Sólo estados con template PROPIO y verificación sin OCR: los que comparten template con otro
 # (S17/S26, S9/S30, S23/S25/S29) se desambiguan por verificación y orden en `classify`, y la familia
 # S8/S18/S19 y S4/S15 dependen de overrides que este atajo no corre.
-ESTADOS_QUE_SIGUEN = frozenset({"S3", "S5", "S6", "S7", "S10", "S11", "S21", "S22", "S24"})
+ESTADOS_QUE_SIGUEN = frozenset({"S3", "S5", "S6", "S7", "S10", "S11", "S21", "S22", "S24", "S25"})
+# Estados que SIGUEN sin repetir su verificación. S25 (la confirmación del desmontaje) comparte la
+# fila "Cancelar/Confirmar" con S23/S29 y se distingue por el TEXTO, que se lee con Tesseract (~500
+# ms, un proceso por llamada): repetirlo en cada vuelta dejaba el ciclo en ~0,7-1,3 s mientras el
+# diálogo seguía abierto, y el "Obtenido" (0,62 s) que viene después caía entre dos vueltas
+# (reproducción 2026-10-04). El texto ya se verificó al ENTRAR (`classify`); mientras la fila de
+# botones siga donde estaba es el mismo diálogo — cerrarlo la saca, y ahí se clasifica completo.
+# La red de `Monitor._clasificar` lo re-verifica igual cada `_RED_CLASIFICACION_S`.
+_SIGUE_SIN_VERIFICAR = frozenset({"S25"})
 _SIGUE_PAD = 12
 _COARSE_MARGIN = 0.15         # cuánto por debajo de su umbral puede estar un template en el pase
                               #   grueso y todavía merecer confirmación. El peor positivo del
@@ -2594,8 +2602,9 @@ class ScreenDetector:
             val = float(cv2.minMaxLoc(cv2.matchTemplate(roi, gray_tmpl, cv2.TM_CCOEFF_NORMED))[1])
             if val < umbral:
                 continue
-            estado = self._verify(ScreenState(code, round(val, 3), entry["name"], method="sigue"),
-                                  frame)
+            estado = ScreenState(code, round(val, 3), entry["name"], method="sigue")
+            if code not in _SIGUE_SIN_VERIFICAR:
+                estado = self._verify(estado, frame)
             if estado.code == code:
                 self._last_raw_state = code
                 return estado

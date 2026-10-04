@@ -61,16 +61,53 @@ def test_otra_resolucion_no_usa_la_ubicacion_vieja(det_s11):
 
 
 def test_un_estado_fuera_de_la_lista_no_toma_el_atajo():
-    """S25 comparte template con S23/S29: se desambigua por verificación en `classify`. Aunque el
-    detector ya sepa dónde está su template, el atajo no se toma."""
+    """S23 comparte la fila de botones con S25 pero no está en la lista: aunque el template esté
+    ubicado (lo aprendió como S25), el atajo para S23 no se toma."""
     det = ScreenDetector(use_state_machine=False)
     confirmacion = _cargar("Ejemplo_8_(Confirmacion).png")
     assert det.classify(confirmacion).code == "S25"
-    assert "S25" not in ESTADOS_QUE_SIGUEN
-    assert det.sigue_en("S25", confirmacion) is None
+    assert "S23" not in ESTADOS_QUE_SIGUEN
+    assert det.sigue_en("S23", confirmacion) is None
+
+
+def test_la_confirmacion_sigue_sin_volver_a_leer_el_texto(monkeypatch):
+    """Reproducción 2026-10-04: cada vuelta con el diálogo abierto pagaba Tesseract (~500 ms)."""
+    import app.core.detector as d
+    det = ScreenDetector(use_state_machine=False)
+    confirmacion = _cargar("Ejemplo_8_(Confirmacion).png")
+    assert det.classify(confirmacion).code == "S25"
+    lecturas = []
+    monkeypatch.setattr(d, "_texto_dialogo", lambda *a: lecturas.append(1) or "")
+    st = det.sigue_en("S25", confirmacion)
+    assert st is not None and st.code == "S25" and lecturas == []
+
+
+def test_cerrado_el_dialogo_la_confirmacion_no_sigue(det_s11):
+    det = ScreenDetector(use_state_machine=False)
+    assert det.classify(_cargar("Ejemplo_8_(Confirmacion).png")).code == "S25"
+    assert det.sigue_en("S25", _cargar("Ejemplo_3.png")) is None
 
 
 def test_clasificar_completo_sigue_dando_lo_mismo(det_s11):
     """Aprender ubicaciones no cambia lo que contesta `classify`."""
     assert det_s11.classify(_cargar("Ejemplo_8_(Confirmacion).png")).code == "S25"
     assert det_s11.classify(_cargar("Ejemplo_3.png")).code == "S11"
+
+
+def test_el_texto_del_dialogo_se_lee_una_vez_por_clasificacion(monkeypatch):
+    """S23, S25 y S29 leen la misma banda: en un `classify` de S25 eran 2-3 Tesseract (~1,2 s)."""
+    import app.core.detector as d
+
+    class _OcrContador:
+        def __init__(self):
+            self.n = 0
+
+        def text(self, crop, psm=6, lang="spa"):
+            self.n += 1
+            return ("¿Seguro que quieres desmontarlas? Cancelar Confirmar", 0.9)
+
+    ocr = _OcrContador()
+    monkeypatch.setattr(d, "_get_dialog_verify_ocr", lambda: ocr)
+    det = ScreenDetector(use_state_machine=False)
+    det.classify(_cargar("Ejemplo_8_(Confirmacion).png"))
+    assert ocr.n == 1
