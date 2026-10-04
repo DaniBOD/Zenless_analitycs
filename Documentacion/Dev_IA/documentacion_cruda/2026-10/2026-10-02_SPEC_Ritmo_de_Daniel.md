@@ -29,7 +29,7 @@ nunca cerró). Las causas medidas:
 | 0 | push de lo de hoy + corrección de #478/#484 | ✅ |
 | 1 | grabador (`app/core/grabacion.py`, `tools/grabar_sesion.py`), clicks (`app/core/clicks.py`), verdad de tierra y reproducción (`app/core/ritmo.py`, `tools/verdad_de_sesion.py`, `tools/reproducir_sesion.py`); línea de base con una sesión de Daniel | ✅ (2026-10-03) |
 | 2 | no re-clasificar en un estado estable (`ScreenDetector.sigue_en`) | ✅ (ganancia chica: loop p90 1036→854; S11 dentro del ruido) |
-| 3 | pantallas breves (promoción de modales verificados) y la tanda que se cierra sin el "Obtenido" | — |
+| 3 | pantallas breves (promoción de modales verificados) y la tanda que se cierra sin el "Obtenido" | ✅ (S25 vista 0,33→1,67 de 2) |
 | 4 | los clicks como disparador de la captura y como evidencia (S11, S10, S22) | — |
 | 5 | capturar rápido, procesar después (sólo si 2-4 no alcanzan) | — |
 | 6 | censo de discos (S9) y QA final grabado | — |
@@ -109,3 +109,6 @@ los clicks a la app (archivo/pipe).
 | `9ad3692` | — | data: farmeo del 2026-10-03 (16 drops S3, 1 baja; 431 activas) |
 | `2e69319` | 1 | grabador elevado + `clicks_elevado.py` (UIPI) + 4 escritores + `PARAR` |
 | `332f3d6` | 1 | la verdad ignora parpadeos de S12 y sigue la confirmación hasta el Obtenido |
+| `663e91f` | 2 | `sigue_en` + `_clasificar` (red 1 s, `DANIBOD_SIN_SIGUE`) |
+| `ac5c8d4` | 3 | la selección vaciada tras la confirmación cierra la tanda (`cierre`) |
+| `74d58dd` | 3 | S20/S24/S25 verificados se confirman con un frame (`_votar`) |
