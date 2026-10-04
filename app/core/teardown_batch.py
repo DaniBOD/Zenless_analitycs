@@ -57,6 +57,9 @@ class TeardownDecision:
     """Qué debe hacer el monitor tras una observación."""
     cell_a_capturar: tuple[int, int] | None = None
     logs: list[str] = field(default_factory=list)
+    # La selección se vació DESPUÉS de la confirmación de grado S: el desmontaje ocurrió aunque el
+    # "Obtenido" no se haya visto. El monitor cierra la tanda (`commit`) en vez de descartarla.
+    cerrar_sin_obtenido: bool = False
 
 
 def _norm(s: str | None) -> str:
@@ -213,6 +216,15 @@ class TeardownBatch:
 
         # --- nada seleccionado: cubre "Cancelar selección" y entrar de nuevo a la pantalla -
         if counter == 0:
+            if self._confirmacion_grado_s and self._declarado:
+                # ...salvo que el usuario haya atravesado la confirmación: entonces la selección
+                # se vació PORQUE se desmontó, y descartarla borraba el desmontaje entero. Pasa
+                # cuando el "Obtenido" dura menos que un par de ciclos (2026-10-02, 14:00:56:
+                # 10 discos confirmados y nunca dados de baja). Se cierra con lo anotado.
+                d.cerrar_sin_obtenido = True
+                d.logs.append(f"la selección se vació después de la confirmación — se cierra la "
+                              f"tanda de {self._declarado} sin el Obtenido")
+                return d
             if self._capturados:
                 d.logs.append(f"selección vacía — se descartan {len(self._capturados)} disco(s) anotados")
                 self._capturados.clear()
@@ -310,7 +322,7 @@ class TeardownBatch:
         }
 
     # --- cierre ---------------------------------------------------------------------------
-    def commit(self, materiales, ts: float) -> dict | None:
+    def commit(self, materiales, ts: float, cierre: str = "obtenido") -> dict | None:
         """Cierra la tanda y devuelve el registro para la bitácora. `None` si no hay nada que
         registrar (no se declaró selección) o si ya se commiteó — el modal "Obtenido" es un
         estado continuo, así que el gate corre en cada ciclo."""
@@ -343,6 +355,9 @@ class TeardownBatch:
                                 else material_primero == self._declarado),
             },
             "modo": self._modo,
+            # Qué cerró la tanda: el "Obtenido" del desmontaje, o la selección vaciada después de
+            # la confirmación (sin material para corroborar).
+            "cierre": cierre,
             # La selección incluía grado S y el usuario atravesó el diálogo de confirmación.
             "confirmacion_grado_s": self._confirmacion_grado_s,
             "avisos": list(self._avisos),

@@ -229,3 +229,31 @@ def test_el_evento_lleva_el_registro_completo(mon):
     assert "identidad" in d and "subs" in d, "faltan los datos con los que se matchea la fila"
     # Y los conteos siguen ahí: el toast no debe depender de la baja.
     assert mon._toasts[0]["total"] == 1 and mon._toasts[0]["con_datos"] == 1
+
+
+# --- Fase 3 del hito "El ritmo de Daniel": el "Obtenido" que pasa sin verse --------------------
+
+def test_confirmacion_y_seleccion_vaciada_cierran_sin_el_obtenido(mon):
+    """2026-10-02 14:00:56: confirmación (S25) → S11 ya en 0/300 → otra pantalla. El "Obtenido"
+    no se vio y la tanda de 10 se descartó como "selección vacía". Ahora se cierra con lo anotado."""
+    _paso(mon, _S11, tildes=frozenset(), counter=0)
+    _paso(mon, _S11, tildes=frozenset({(0, 0)}), counter=1, disc=FakeDisc(slot=2))
+    _paso(mon, _S11, tildes=frozenset({(0, 0), (0, 1)}), counter=2, disc=FakeDisc(slot=3))
+    _paso(mon, _S25)
+    _paso(mon, _S11, tildes=frozenset(), counter=0)
+    assert len(mon._toasts) == 1, mon._toasts
+    ev = mon._toasts[0]
+    assert ev["total"] == 2 and ev["con_datos"] == 2
+    assert ev["registro"]["cierre"] == "seleccion_vaciada"
+    assert any("sin el Obtenido" in d for d in mon._diags), mon._diags
+    _paso(mon, _S24)                                  # si el Obtenido llega tarde: no duplica
+    assert len(mon._toasts) == 1
+
+
+def test_cancelar_en_la_confirmacion_no_cierra(mon):
+    """Cancelar en S25 vuelve a S11 con la selección intacta: no es un desmontaje."""
+    _paso(mon, _S11, tildes=frozenset(), counter=0)
+    _paso(mon, _S11, tildes=frozenset({(0, 0)}), counter=1)
+    _paso(mon, _S25)
+    _paso(mon, _S11, tildes=frozenset({(0, 0)}), counter=1)
+    assert mon._toasts == []

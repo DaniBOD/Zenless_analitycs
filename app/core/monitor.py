@@ -1664,6 +1664,9 @@ class Monitor:
         for linea in decision.logs:
             log.info("[desmontaje] %s", linea)
             self._diag(f"[desmontaje] {linea}")
+        if decision.cerrar_sin_obtenido:
+            self._cerrar_tanda(batch, materiales=None, cierre="seleccion_vaciada")
+            return
 
         cell = decision.cell_a_capturar
         if cell is None:
@@ -1749,10 +1752,18 @@ class Monitor:
         self._clear_stall("S24")
 
         from app.core import parser_desmontaje as pd
-        from app.core.teardown_batch import write_teardown_record
 
         materiales = pd.parse_obtenido_materiales(frame, self._ocr)
-        registro = batch.commit(materiales=materiales, ts=time.monotonic())
+        self._cerrar_tanda(batch, materiales, cierre="obtenido")
+
+    def _cerrar_tanda(self, batch, materiales, cierre: str) -> None:
+        """Commit de la tanda + bitácora + resumen + evento para la baja. Una sola autoridad para
+        los dos cierres: el "Obtenido" del desmontaje (S24) y la selección vaciada después de la
+        confirmación (S11 en 0/300, cuando el "Obtenido" pasó sin verse — fase 3 del hito "El
+        ritmo de Daniel")."""
+        from app.core.teardown_batch import write_teardown_record
+
+        registro = batch.commit(materiales=materiales, ts=time.monotonic(), cierre=cierre)
         if registro is None:
             return
 
@@ -1762,7 +1773,8 @@ class Monitor:
         marca = " ✓" if corrob else (" ⚠ no coincide" if corrob is False else "")
         resumen = (f"tanda cerrada · {conteo['declarado']} desmontados "
                    f"({conteo['capturados']} con datos, {conteo['faltantes']} sin)"
-                   f"{' · material ×' + str(conteo['material_primero']) + marca if conteo['material_primero'] is not None else ''}")
+                   f"{' · material ×' + str(conteo['material_primero']) + marca if conteo['material_primero'] is not None else ''}"
+                   f"{' · sin el Obtenido (la selección se vació)' if cierre == 'seleccion_vaciada' else ''}")
         log.info("[desmontaje] %s", resumen)
         self._diag(f"[desmontaje] {resumen}")
         if destino is not None:

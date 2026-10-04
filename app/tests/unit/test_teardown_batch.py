@@ -242,3 +242,35 @@ def test_el_registro_declara_el_esquema_y_los_faltantes():
     assert r["conteo"] == {"declarado": 3, "capturados": 1, "faltantes": 2,
                            "fuente_declarado": "contador_header",
                            "material_primero": 3, "corroborado": True}
+
+
+# --- La tanda que se cierra sin el "Obtenido" (hito "El ritmo de Daniel", fase 3) -------------
+
+def test_selección_vaciada_tras_la_confirmación_cierra_en_vez_de_descartar():
+    """2026-10-02 14:00:56: 10 discos confirmados, el "Obtenido" pasó sin verse, la selección
+    volvió a 0/300 y la regla de "selección vacía" descartó el desmontaje entero."""
+    b = _batch()
+    b.observe(tildes=frozenset({(0, 0)}), counter=1, scroll=0.1, ts=1.0)
+    b.attach((0, 0), FakeDisc())
+    b.observe(tildes=frozenset({(0, 0), (0, 1)}), counter=2, scroll=0.1, ts=2.0)
+    assert b.marcar_confirmacion()
+    d = b.observe(tildes=frozenset(), counter=0, scroll=0.1, ts=3.0)
+    assert d.cerrar_sin_obtenido
+    assert len(b.capturados) == 1 and b.declarado == 2, "no se descarta lo anotado"
+    r = b.commit(materiales=None, ts=3.1, cierre="seleccion_vaciada")
+    assert r["cierre"] == "seleccion_vaciada" and r["conteo"]["declarado"] == 2
+    assert r["conteo"]["corroborado"] is None
+
+
+def test_sin_confirmación_la_selección_vacía_sigue_siendo_cancelar():
+    b = _batch()
+    b.observe(tildes=frozenset({(0, 0)}), counter=1, scroll=0.1, ts=1.0)
+    b.attach((0, 0), FakeDisc())
+    d = b.observe(tildes=frozenset(), counter=0, scroll=0.1, ts=2.0)
+    assert not d.cerrar_sin_obtenido and b.capturados == {}
+
+
+def test_el_cierre_por_obtenido_queda_registrado():
+    b = _batch()
+    b.observe(tildes=frozenset({(0, 0)}), counter=1, scroll=0.1, ts=1.0)
+    assert b.commit(materiales=[("Disco original", 1)], ts=2.0)["cierre"] == "obtenido"
