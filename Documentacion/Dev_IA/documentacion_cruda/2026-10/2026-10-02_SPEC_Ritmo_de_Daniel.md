@@ -101,9 +101,26 @@ Decisión de Daniel: muestreador antes que clicks. Iteraciones medidas (3 reprod
 | OCR en su hilo (`ProcesadorS11`) | 16 · 16 · 16 | 16 · 16 · 16 | 516-625 ms |
 | + muestra de referencia | **21 · 17 · 17** | **17 · 17 · 17** | **453-531 ms** |
 
-La tanda de 4 se pierde a veces por **otro cuello**: el despacho de S5 (resultado de afinación)
-bloquea el loop 2-6 s de una vez (también en la base: 6,2 s), y la visita a S11 de 3,4 s pasa sin
-verse. Siguiente candidato: S5 asíncrono o más barato.
+La tanda de 4 se perdía a veces por **otros dos cuellos**, medidos en las métricas de la
+reproducción y arreglados (2026-10-04):
+
+1. **S5 bloqueaba el loop 2-6 s:** ficha y grilla hacían OCR del frame entero. Recortados al panel
+   y a la franja de etiquetas (ficha 808 → 608 ms, grilla 938 → 403 ms, leyendo igual o mejor):
+   despacho máximo de S5 2,6-6,2 s → ~1,9 s.
+2. **Cada vuelta con la confirmación S25 abierta tardaba 1,2-1,3 s:** dos o tres Tesseract (~500
+   ms, un proceso por llamada) leyendo el mismo texto. Texto cacheado por clasificación (1220 → 720
+   ms) y S25 sigue sin re-leerlo mientras la fila de botones esté en su lugar.
+
+| versión (3 reproducciones) | S11 con datos (de 21) | tandas (de 2) | S25 vista | S24 vista | loop p90 |
+|---|---|---|---|---|---|
+| base | 8 · 9 · 5 | 2 · 2 · 1 | 0 · 1 · 0 | 3 · 3 · 2 | ~1000 ms |
+| muestreador + referencia | 21 · 17 · 17 | 2 · 1 · 1 | 2 · 1 · 1 | — | 453-531 ms |
+| + S5 recortado | 17 · 17 · 17 | 1 · 1 · 1 | — | — | 563-656 ms |
+| **+ S25 rápido** | **21 · 21 · 21** | **2 · 2 · 2** | **2 · 2 · 2** | **3 · 3 · 3** | **531-594 ms** |
+
+**Meta de S11 cumplida contra la línea de base:** 0 % sin leer, 100 % de tandas cerradas. Queda
+S10: la subida 0→3 se vio 3 · 1 · 3 (el PRE a veces se lee ya en Nv 3; la fila igual se actualiza
+por `alcanzar_estado`, pero el KPI cuenta niveles vistos).
 
 ### Hallazgo: ZZZ corre como administrador (UIPI)
 
@@ -130,3 +147,7 @@ los clicks a la app (archivo/pipe).
 | `74d58dd` | 3 | S20/S24/S25 verificados se confirman con un frame (`_votar`) |
 | `1edab13` | 5 | muestreador de tildes S11 + procesador OCR en hilo + referencia + cierre pendiente |
 | `6cbf0b8` | 3 | modal breve recién confirmado se despacha sin esperar cadencia (`_debe_despachar`) |
+| `2a0752e` | 5 | S5: la ficha se lee del panel (808 → 608 ms) |
+| `c9fa9e9` | 5 | S5: la grilla se lee de la franja de etiquetas (938 → 403 ms) + `_es_empty` |
+| `a2475cb` | 3 | el texto del diálogo Cancelar/Confirmar se lee una vez por clasificación |
+| `8ca8ecb` | 3 | S25 sigue sin re-leer su texto (`_SIGUE_SIN_VERIFICAR`) |
