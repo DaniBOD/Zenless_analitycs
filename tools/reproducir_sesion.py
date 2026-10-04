@@ -144,6 +144,7 @@ def main() -> int:
         return 1
     pantalla = _Pantalla(rec, frame_vigente)
     Monitor._get_frame = lambda self: pantalla.frame()          # la grabación es la pantalla
+    Monitor._capturar_muestra = lambda self: pantalla.frame()   # también para el muestreador S11
 
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication

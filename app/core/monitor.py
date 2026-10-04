@@ -630,6 +630,9 @@ class Monitor:
         # re-extracción CONTINUA de S18 sin requerir cambio de estado ni re-scan.
         self._confirmed_state: ScreenState | None = None
         self._t_clasificacion_completa = float("-inf")   # ver `_clasificar`
+        self._muestreador_s11 = None   # hilo de tildes del desmontaje, perezoso (`_muestreador`)
+        self._procesador_s11 = None    # hilo que hace el OCR de esas muestras
+        self._cierre_pendiente = None  # (tanda, materiales): Obtenido visto, faltan lecturas
         # Flag para loggear "[S18] perfil reconocido" una sola vez por entrada
         # (el log de stats sí se repite en cada ciclo de extracción).
         self._agent_stats_screen_logged: bool = False
@@ -863,6 +866,10 @@ class Monitor:
         quien = "".join(_tb.format_stack(limit=3)[:-1]).strip().splitlines()
         origen = quien[-2].strip() if len(quien) >= 2 else "?"
         self._stop.set()
+        if self._muestreador_s11 is not None:
+            self._muestreador_s11.parar()
+        if self._procesador_s11 is not None:
+            self._procesador_s11.parar()
         if self._thread:
             self._thread.join(timeout=5)
         # Los censos de inventario no se cierran a mano: el sistema está siempre operativo y cada
@@ -1182,6 +1189,8 @@ class Monitor:
                     # esta separación no se distingue "tarda en enterarse" de "tarda en procesar".
                     with metrics.measure_block(f"dispatch:{active_state.code}"):
                         self._safe_dispatch(frame, active_state)
+
+            self._tick_cierre()
 
             # ---- Espera corta entre capturas (fast polling) ----
             # (Sin heartbeat periódico: el logging es edge-triggered. El cambio de
@@ -1647,6 +1656,86 @@ class Monitor:
             self._teardown = TeardownBatch()
         return self._teardown
 
+    def _capturar_muestra(self):
+        """Un frame para el muestreador de S11 (su propio hilo, su propia captura): sin buscar la
+        ventana ni loguear — eso es del loop. None si no hay ventana o el juego no tiene foco."""
+        w = self._window
+        if w is None:
+            return None
+        if self._capture_only_focused and not is_zzz_focused(get_foreground_window(), w.hwnd):
+            return None
+        try:
+            return capture_window(w)
+        except Exception:
+            return None
+
+    def _muestreador(self):
+        """El `MuestreadorS11`, creado la primera vez (hito "El ritmo de Daniel")."""
+        if self._muestreador_s11 is None:
+            from app.core import parser_desmontaje as pd
+            from app.core.muestreador_s11 import MuestreadorS11
+
+            def es_s11(frame) -> bool:
+                sigue = getattr(self._detector, "sigue_en", None)
+                return sigue is not None and isinstance(sigue("S11", frame), ScreenState)
+
+            self._muestreador_s11 = MuestreadorS11(
+                capturar=self._capturar_muestra, es_s11=es_s11,
+                tildes_fn=pd.tilde_cells, scroll_fn=pd.scroll_pos)
+        if self._procesador_s11 is None:
+            from app.core import parser_desmontaje as pd
+            from app.core.muestreador_s11 import ProcesadorS11
+            from app.core.parser_disc_s3 import parse_disc_s11
+            self._procesador_s11 = ProcesadorS11(
+                self._muestreador_s11,
+                contador_fn=lambda f: pd.parse_header_counter(f, self._ocr),
+                disco_fn=lambda f: parse_disc_s11(f, self._ocr))
+        return self._muestreador_s11
+
+    def _aplicar_leidas(self, batch) -> bool:
+        """Pasa por la tanda, en orden, las muestras que el procesador ya leyó (sin OCR acá).
+
+        Cada `Leida` es un frame en el que cambiaron las tildes, con su contador y —si sumó una
+        tilde— su disco. La regla de siempre (un delta de una celda confirmado por el contador)
+        ahora ve cada click por separado aunque el loop haya estado ocupado. Devuelve True si en
+        el camino la tanda se cerró (selección vaciada después de la confirmación)."""
+        proc = self._procesador_s11
+        if proc is None:
+            return False
+        for le in proc.leidas():
+            decision = batch.observe(tildes=le.tildes, counter=le.contador, scroll=le.scroll,
+                                     ts=le.t)
+            for linea in decision.logs:
+                log.info("[desmontaje] %s", linea)
+                self._diag(f"[desmontaje] {linea}")
+            if decision.cerrar_sin_obtenido:
+                self._cerrar_tanda(batch, materiales=None, cierre="seleccion_vaciada")
+                return True
+            cell, disc = decision.cell_a_capturar, le.disco
+            if cell is None or disc is None or (disc.confianza_global or 0.0) < 0.70:
+                continue
+            batch.attach(cell, disc, set_id=self._resolve_set_id_safe(disc.set_name_raw))
+            log.info("[desmontaje] +1 → %s/300 · %s", le.contador, self._fmt_teardown_disc(disc))
+            self._diag(f"[desmontaje] +1 → {le.contador}/300 · {self._fmt_teardown_disc(disc)}")
+        return False
+
+    def _tick_cierre(self, esperar_s: float = 0.0) -> None:
+        """Cierra la tanda cuyo "Obtenido" ya se vio, apenas el procesador terminó de leer lo que
+        el muestreador juntó. Corre en cada vuelta del loop (la pantalla ya puede ser otra). Con
+        `esperar_s` espera hasta ese tope (al empezar otra tanda o al parar)."""
+        if self._cierre_pendiente is None:
+            return
+        proc = self._procesador_s11
+        fin = time.monotonic() + esperar_s
+        while proc is not None and proc.ocupado and time.monotonic() < fin:
+            time.sleep(0.05)
+        if proc is not None and proc.ocupado:
+            return
+        batch, materiales = self._cierre_pendiente
+        self._cierre_pendiente = None
+        if not self._aplicar_leidas(batch):
+            self._cerrar_tanda(batch, materiales, cierre="obtenido")
+
     def _process_s11_desmontaje(self, frame, state: ScreenState) -> None:
         """Sigue la selección de discos a desmontar (S11), display-only.
 
@@ -1661,9 +1750,26 @@ class Monitor:
         from app.core import parser_desmontaje as pd
         from app.core.teardown_batch import TeardownBatch  # noqa: F401  (documenta la dependencia)
 
+        if self._cierre_pendiente is not None:
+            # Otra selección arranca con la anterior todavía leyéndose: se termina primero, o las
+            # dos se mezclarían en la misma tanda.
+            self._tick_cierre(esperar_s=5.0)
         batch = self._teardown_batch()
         if batch.ensure_open(ts=time.monotonic()):
             log.info("[desmontaje] tanda abierta")
+        muestreador = self._muestreador()
+        if not muestreador.activo:
+            self._procesador_s11.reiniciar()        # visita nueva: tildes de referencia en cero
+        muestreador.activar()
+        if self._aplicar_leidas(batch):
+            return
+        # Con el muestreador viendo S11 (ya sabe dónde está su template), ÉL es la fuente de los
+        # cambios de tildes: observar además este frame —más nuevo que lecturas todavía en cola—
+        # le haría ver a la tanda los cambios fuera de orden (un alta pendiente leída como baja).
+        sigue = getattr(self._detector, "sigue_en", None)
+        if sigue is not None and isinstance(sigue("S11", frame), ScreenState):
+            self._clear_stall("S11")
+            return
 
         tildes = pd.tilde_cells(frame)
         counter = pd.parse_header_counter(frame, self._ocr)
@@ -1771,7 +1877,18 @@ class Monitor:
 
         from app.core import parser_desmontaje as pd
 
+        if self._cierre_pendiente is not None:
+            return                                   # ya visto: lo cierra `_tick_cierre`
         materiales = pd.parse_obtenido_materiales(frame, self._ocr)
+        proc = self._procesador_s11
+        if proc is not None and proc.ocupado:
+            # El procesador todavía está leyendo discos de esta tanda: cerrar ahora los perdería.
+            # Se cierra apenas termine, aunque la pantalla ya sea otra.
+            self._cierre_pendiente = (batch, materiales)
+            log.info("[desmontaje] Obtenido visto · se cierra al terminar de leer las muestras")
+            return
+        if self._aplicar_leidas(batch):
+            return
         self._cerrar_tanda(batch, materiales, cierre="obtenido")
 
     def _cerrar_tanda(self, batch, materiales, cierre: str) -> None:
@@ -1782,6 +1899,9 @@ class Monitor:
         from app.core.teardown_batch import write_teardown_record
 
         registro = batch.commit(materiales=materiales, ts=time.monotonic(), cierre=cierre)
+        self._cierre_pendiente = None
+        if self._muestreador_s11 is not None:
+            self._muestreador_s11.desactivar()
         if registro is None:
             return
 
@@ -1821,6 +1941,14 @@ class Monitor:
 
     def _reset_teardown(self, motivo: str) -> None:
         """Cierra la tanda sin registrar (el usuario se fue de la pantalla sin desmontar)."""
+        if self._muestreador_s11 is not None:
+            self._muestreador_s11.desactivar()
+        if self._cierre_pendiente is not None:
+            return          # el Obtenido ya se vio: no es un abandono, la cierra `_tick_cierre`
+        if self._muestreador_s11 is not None:
+            self._muestreador_s11.drenar()
+        if self._procesador_s11 is not None:
+            self._procesador_s11.leidas()
         batch = self._teardown
         if batch is None or not batch.abierta:
             return

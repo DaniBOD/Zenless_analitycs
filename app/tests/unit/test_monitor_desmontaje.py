@@ -257,3 +257,97 @@ def test_cancelar_en_la_confirmacion_no_cierra(mon):
     _paso(mon, _S25)
     _paso(mon, _S11, tildes=frozenset({(0, 0)}), counter=1)
     assert mon._toasts == []
+
+
+# --- El muestreador de S11 (hito "El ritmo de Daniel", fase 5 acotada) ------------------------
+
+class _Leida:
+    def __init__(self, tildes, contador, t, disco=None):
+        self.tildes, self.scroll, self.t = frozenset(tildes), 0.1, t
+        self.contador, self.disco = contador, disco
+
+
+class _ProcesadorFalso:
+    """Las lecturas que el hilo procesador ya dejó listas, y si todavía le quedan muestras."""
+    def __init__(self, leidas, ocupado=False):
+        self._leidas, self.ocupado = list(leidas), ocupado
+
+    def leidas(self):
+        out, self._leidas = self._leidas, []
+        return out
+
+    def reiniciar(self):
+        pass
+
+    def parar(self):
+        pass
+
+
+class _MuestreadorQuieto:
+    activo = True
+
+    def activar(self):
+        pass
+
+    def desactivar(self):
+        pass
+
+    def drenar(self):
+        return []
+
+    def parar(self):
+        pass
+
+
+def _con_procesador(mon, leidas, ocupado=False):
+    mon._muestreador_s11 = _MuestreadorQuieto()
+    mon._procesador_s11 = _ProcesadorFalso(leidas, ocupado)
+    return mon._procesador_s11
+
+
+def test_dos_clicks_entre_despachos_se_atribuyen_los_dos(mon):
+    """La línea de base del 2026-10-03: dos clicks en la misma ventana del loop = delta de dos
+    tildes = ninguno atribuido. El muestreador los vio por separado y el procesador ya los leyó."""
+    _paso(mon, _S11, tildes=frozenset(), counter=0)
+    _con_procesador(mon, [_Leida({(0, 0)}, 1, 1.0, FakeDisc(slot=2)),
+                          _Leida({(0, 0), (0, 1)}, 2, 1.4, FakeDisc(slot=3))])
+    # El frame del loop llega cuando ya hubo dos clicks: sin las lecturas sería un delta de 2.
+    _paso(mon, _S11, tildes=frozenset({(0, 0), (0, 1)}), counter=2)
+    _paso(mon, _S24, materiales=[("Disco original", 2)])
+    ev = mon._toasts[0]
+    assert (ev["total"], ev["con_datos"]) == (2, 2), ev
+
+
+def test_el_obtenido_espera_al_procesador_y_cierra_cuando_termina(mon):
+    """Reproducción 2026-10-03: cerrar en cuanto aparece el Obtenido perdía los discos que el
+    procesador todavía estaba leyendo; drenarlos en el loop lo dejaba ciego 8-10 s."""
+    _paso(mon, _S11, tildes=frozenset(), counter=0)
+    proc = _con_procesador(mon, [], ocupado=True)
+    _paso(mon, _S24, materiales=[("Disco original", 1)])
+    assert mon._toasts == [] and mon._cierre_pendiente is not None
+    mon._reset_teardown("salió de la pantalla")        # la pantalla cambió: no es abandono
+    assert mon._cierre_pendiente is not None
+    proc._leidas = [_Leida({(0, 0)}, 1, 2.0, FakeDisc())]
+    proc.ocupado = False
+    mon._tick_cierre()
+    ev = mon._toasts[0]
+    assert (ev["total"], ev["con_datos"]) == (1, 1), ev
+    assert mon._cierre_pendiente is None
+
+
+class _DetectorQueSigue:
+    """El detector ya sabe dónde está el template de S11: el muestreador es la fuente."""
+    def sigue_en(self, code, frame):
+        return ScreenState(code, 0.99, "s11_desmontaje.png", method="sigue")
+
+
+def test_el_primer_click_se_atribuye_gracias_a_la_referencia(mon):
+    """Reproducción 2026-10-03: con el muestreador mandando, la tanda empezaba sin contador previo
+    y el primer click no se confirmaba (16 de 17; 0 de 4 si el muestreador arrancaba tarde)."""
+    mon._detector = _DetectorQueSigue()
+    _con_procesador(mon, [_Leida(set(), 0, 0.5),                       # referencia
+                          _Leida({(0, 0)}, 1, 1.0, FakeDisc(slot=4))])
+    _paso(mon, _S11, tildes=frozenset({(0, 0)}), counter=1)          # el frame propio no se usa
+    _paso(mon, _S24, materiales=[("Disco original", 1)])
+    ev = mon._toasts[0]
+    assert (ev["total"], ev["con_datos"]) == (1, 1), ev
