@@ -31,7 +31,7 @@ nunca cerró). Las causas medidas:
 | 2 | no re-clasificar en un estado estable (`ScreenDetector.sigue_en`) | ✅ (ganancia chica: loop p90 1036→854; S11 dentro del ruido) |
 | 3 | pantallas breves (promoción de modales verificados) y la tanda que se cierra sin el "Obtenido" | ✅ (S25 vista 0,33→1,67 de 2) |
 | 4 | los clicks como disparador de la captura y como evidencia (S11, S10, S22) | — |
-| 5 | capturar rápido, procesar después (sólo si 2-4 no alcanzan) | — |
+| 5 | capturar rápido, procesar después — **acotada a S11** (muestreador + procesador) | ✅ S11 17/17 en la tanda grande |
 | 6 | censo de discos (S9) y QA final grabado | — |
 
 ## Metas (contra la línea de base grabada)
@@ -89,6 +89,22 @@ cubre pantallas de template propio (la sesión pasa mucho en S12/S4/S15) y en S1
 Conclusión para el orden: la mejora real de S11 está en capturar un frame por click y procesarlo
 después (fases 4 y 5); la fase 3 (S25 breve, tanda que cierra en 0/300) va antes por barata.
 
+## Fase 5 acotada a S11 · resultado (2026-10-03/04)
+
+Decisión de Daniel: muestreador antes que clicks. Iteraciones medidas (3 reproducciones cada una):
+
+| versión | S11 con datos (de 21) | tanda de 17 | loop p90 |
+|---|---|---|---|
+| base | 8 · 9 · 5 | 6 · 7 · 5 | ~1000 ms |
+| muestreador, drenaje sincrónico | 21 · 17 · 19 | 17 · 17 · 15 | ~1100 ms |
+| + despacho inmediato de modales | 21 · 13 · 13 | 17 · 13 · 13 | ~1200 ms (drenar dejaba el loop 8-10 s ciego) |
+| OCR en su hilo (`ProcesadorS11`) | 16 · 16 · 16 | 16 · 16 · 16 | 516-625 ms |
+| + muestra de referencia | **21 · 17 · 17** | **17 · 17 · 17** | **453-531 ms** |
+
+La tanda de 4 se pierde a veces por **otro cuello**: el despacho de S5 (resultado de afinación)
+bloquea el loop 2-6 s de una vez (también en la base: 6,2 s), y la visita a S11 de 3,4 s pasa sin
+verse. Siguiente candidato: S5 asíncrono o más barato.
+
 ### Hallazgo: ZZZ corre como administrador (UIPI)
 
 Un proceso sin elevar no ve los clicks sobre el juego (pynput: 0, `GetAsyncKeyState`: 0, en pleno
@@ -112,3 +128,5 @@ los clicks a la app (archivo/pipe).
 | `663e91f` | 2 | `sigue_en` + `_clasificar` (red 1 s, `DANIBOD_SIN_SIGUE`) |
 | `ac5c8d4` | 3 | la selección vaciada tras la confirmación cierra la tanda (`cierre`) |
 | `74d58dd` | 3 | S20/S24/S25 verificados se confirman con un frame (`_votar`) |
+| `1edab13` | 5 | muestreador de tildes S11 + procesador OCR en hilo + referencia + cierre pendiente |
+| `6cbf0b8` | 3 | modal breve recién confirmado se despacha sin esperar cadencia (`_debe_despachar`) |
