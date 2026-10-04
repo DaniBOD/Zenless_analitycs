@@ -334,6 +334,10 @@ _RAM_CHECK_INTERVAL_S = 15.0
 #     cuando después hay que diagnosticar rendimiento.
 _HEARTBEAT_SILENCIO_S = 60.0
 _HEARTBEAT_BASE_S = 600.0
+# Red de la fase 2 del hito "El ritmo de Daniel": aunque `sigue_en` diga que la pantalla sigue
+# siendo la misma, una clasificación COMPLETA cada tanto. El atajo nunca afirma otra pantalla, pero
+# esto acota cuánto podría tardar en notarse una que se le escape (y refresca las ubicaciones).
+_RED_CLASIFICACION_S = 1.0
 # Topes de ascensión que puede mostrar el pill "Nv. X/Y" de un W-Engine. Sirven de firma
 # estructural de la pantalla: un DISCO tope en 15 y por ahí se cuela un panel de discos parseado
 # como arma (ver `_parece_panel_de_arma`). Confirmado contra la pantalla por Daniel 2026-08-12.
@@ -618,6 +622,7 @@ class Monitor:
         # dedupee (devuelva None por mismo estado), para permitir
         # re-extracción CONTINUA de S18 sin requerir cambio de estado ni re-scan.
         self._confirmed_state: ScreenState | None = None
+        self._t_clasificacion_completa = float("-inf")   # ver `_clasificar`
         # Flag para loggear "[S18] perfil reconocido" una sola vez por entrada
         # (el log de stats sí se repite en cada ciclo de extracción).
         self._agent_stats_screen_logged: bool = False
@@ -1006,7 +1011,7 @@ class Monitor:
                 continue
 
             # ---- Paso 1: clasificar frame individual ----
-            raw_state = self._detector.classify(frame)
+            raw_state = self._clasificar(frame, now)
 
             # Heartbeat de memoria (RNF-06, env-gated DANIBOD_MEM_DIAG). No-op si está
             # apagado; throttle interno ~20s → seguro llamar cada iteración.
@@ -1179,6 +1184,30 @@ class Monitor:
             #  estado se loguea en _notify_state_change; los stats/detalle, en sus
             #  handlers, solo cuando el dato cambia.)
             self._wait_fast()
+
+    def _clasificar(self, frame, now: float) -> ScreenState:
+        """El estado del frame: primero el atajo barato, después la clasificación completa.
+
+        Hito "El ritmo de Daniel", fase 2. Con una pantalla confirmada que tiene template propio,
+        `ScreenDetector.sigue_en` re-matchea sólo ese template donde estaba (~ms) en vez de los
+        ~171 ms de `classify` — que era el 46 % del ciclo en S11, donde Daniel clickea un disco por
+        segundo. Si el atajo no puede afirmar que sigue (cambió la pantalla, un modal encima, sin
+        ubicación todavía), clasifica completo como siempre; y lo hace igual cada
+        `_RED_CLASIFICACION_S` como red. `DANIBOD_SIN_SIGUE=1` lo apaga (para medir contra la base
+        y como salida si en vivo algo no anda)."""
+        conf = self._confirmed_state
+        if (conf is not None and now - self._t_clasificacion_completa < _RED_CLASIFICACION_S
+                and not os.environ.get("DANIBOD_SIN_SIGUE")):
+            sigue = getattr(self._detector, "sigue_en", None)
+            if sigue is not None:
+                try:
+                    st = sigue(conf.code, frame)
+                except Exception:
+                    st = None
+                if isinstance(st, ScreenState):
+                    return st
+        self._t_clasificacion_completa = now
+        return self._detector.classify(frame)
 
     def _heartbeat(self, now: float, state_code: str | None) -> None:
         """Prueba de vida del loop. Late solo cuando hace falta: tras un tramo de silencio de la

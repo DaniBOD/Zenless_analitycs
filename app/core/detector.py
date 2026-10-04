@@ -51,6 +51,18 @@ MATCH_THRESHOLD = 0.85
 # RESOLUCIÓN COMPLETA sobre el píxel original, dentro de un ROI chico.
 _COARSE_SCALE = 0.25          # escala del pase que localiza
 _COARSE_PAD = 24              # px (full-res) de margen del ROI de confirmación
+# --- "Sigue en la misma pantalla" (hito "El ritmo de Daniel", fase 2) -----------------------------
+# Re-clasificar el frame entero en cada vuelta cuesta ~171 ms (el 46 % del ciclo en S11, medido el
+# 2026-10-02/03) aunque la pantalla no haya cambiado. `ScreenDetector.sigue_en` re-matchea SÓLO el
+# template del estado confirmado, en un ROI de ±_SIGUE_PAD alrededor de donde lo encontró la última
+# clasificación completa, y corre su verificación. Medido sobre la grabación 20261003_111858 con
+# la ubicación de cada template: S11 pasa 75/76 de sus frames, S10 18/19, S24 9/9 — y **0** frames
+# de otra pantalla (con S25/S24 encima, el template de S11 ya no matchea).
+# Sólo estados con template PROPIO y verificación sin OCR: los que comparten template con otro
+# (S17/S26, S9/S30, S23/S25/S29) se desambiguan por verificación y orden en `classify`, y la familia
+# S8/S18/S19 y S4/S15 dependen de overrides que este atajo no corre.
+ESTADOS_QUE_SIGUEN = frozenset({"S3", "S5", "S6", "S7", "S10", "S11", "S21", "S22", "S24"})
+_SIGUE_PAD = 12
 _COARSE_MARGIN = 0.15         # cuánto por debajo de su umbral puede estar un template en el pase
                               #   grueso y todavía merecer confirmación. El peor positivo del
                               #   corpus quedó a 0.029 de su umbral ⇒ ~5× de holgura.
@@ -2212,6 +2224,9 @@ class ScreenDetector:
         self._missing: list[str] = []
         self._state_machine = StateMachine() if use_state_machine else None
         self._last_raw_state: str | None = None
+        # Dónde encontró cada template (por archivo) la última clasificación completa que lo dio
+        # por bueno: (x, y) a resolución completa y el tamaño del frame. Lo usa `sigue_en`.
+        self._ubicacion: dict[str, tuple[int, int, tuple[int, int]]] = {}
 
         for entry in _STATE_TEMPLATES:
             path = templates_dir / entry["template"]
@@ -2285,9 +2300,14 @@ class ScreenDetector:
             mapa[y0:y1, x0:x1] = -1.0
         return picos
 
-    @staticmethod
-    def _confirmar(gray_frame: np.ndarray, gray_tmpl: np.ndarray,
+    @classmethod
+    def _confirmar(cls, gray_frame: np.ndarray, gray_tmpl: np.ndarray,
                    picos: list[tuple[int, int]]) -> float:
+        return cls._confirmar_con_lugar(gray_frame, gray_tmpl, picos)[0]
+
+    @staticmethod
+    def _confirmar_con_lugar(gray_frame: np.ndarray, gray_tmpl: np.ndarray,
+                             picos: list[tuple[int, int]]) -> tuple[float, tuple[int, int] | None]:
         """Score a RESOLUCIÓN COMPLETA, mirando solo un ROI alrededor de cada pico grueso.
 
         Es un máximo sobre un SUBCONJUNTO de las posiciones que barría el match global, así que
@@ -2297,6 +2317,7 @@ class ScreenDetector:
         th, tw = gray_tmpl.shape[:2]
         H, W = gray_frame.shape[:2]
         mejor = 0.0
+        lugar = None
         for lx, ly in picos:
             cx, cy = int(lx / _COARSE_SCALE), int(ly / _COARSE_SCALE)
             x0, y0 = max(0, cx - _COARSE_PAD), max(0, cy - _COARSE_PAD)
@@ -2304,10 +2325,12 @@ class ScreenDetector:
             roi = gray_frame[y0:y1, x0:x1]
             if roi.shape[0] < th or roi.shape[1] < tw:
                 continue
-            val = float(cv2.minMaxLoc(cv2.matchTemplate(roi, gray_tmpl, cv2.TM_CCOEFF_NORMED))[1])
+            _, val, _, loc = cv2.minMaxLoc(cv2.matchTemplate(roi, gray_tmpl, cv2.TM_CCOEFF_NORMED))
+            val = float(val)
             if val > mejor:
                 mejor = val
-        return mejor
+                lugar = (x0 + int(loc[0]), y0 + int(loc[1]))
+        return mejor, lugar
 
     def _scores_por_archivo(self, gray_frame: np.ndarray) -> dict[str, float]:
         """Confianza por ARCHIVO de template (no por estado: 31 entradas usan 27 archivos, y
@@ -2345,8 +2368,11 @@ class ScreenDetector:
             small_tmpl = self._small_tmpl(entry) if usar_grueso else None
             if small_tmpl is None or small_tmpl.shape[0] > small_frame.shape[0] \
                     or small_tmpl.shape[1] > small_frame.shape[1]:
-                scores[n] = float(cv2.minMaxLoc(
-                    cv2.matchTemplate(gray_frame, gray_tmpl, cv2.TM_CCOEFF_NORMED))[1])
+                _, val, _, loc = cv2.minMaxLoc(
+                    cv2.matchTemplate(gray_frame, gray_tmpl, cv2.TM_CCOEFF_NORMED))
+                scores[n] = float(val)
+                if scores[n] >= umbral[n]:
+                    self._ubicacion[n] = (int(loc[0]), int(loc[1]), (fh, fw))
                 continue
 
             mapa = cv2.matchTemplate(small_frame, small_tmpl, cv2.TM_CCOEFF_NORMED)
@@ -2362,7 +2388,9 @@ class ScreenDetector:
 
         for n in a_confirmar:
             picos, _, gray_tmpl = gruesos[n]
-            scores[n] = self._confirmar(gray_frame, gray_tmpl, picos)
+            scores[n], lugar = self._confirmar_con_lugar(gray_frame, gray_tmpl, picos)
+            if lugar is not None and scores[n] >= umbral[n]:
+                self._ubicacion[n] = (lugar[0], lugar[1], (fh, fw))
 
         return scores
 
@@ -2514,6 +2542,44 @@ class ScreenDetector:
         gray = cv2.cvtColor(center, cv2.COLOR_BGR2GRAY) if center.ndim == 3 else center
         dark = (gray < threshold).sum()
         return (dark / gray.size) > dark_ratio
+
+    @measure_latency("detector_sigue")
+    def sigue_en(self, code: str, frame: np.ndarray) -> ScreenState | None:
+        """¿El frame sigue siendo la pantalla `code`? Barato: sólo su template, donde estaba.
+
+        Devuelve el `ScreenState` (método "sigue") si alguno de los templates de `code` matchea en
+        un ROI de ±`_SIGUE_PAD` alrededor de su última ubicación con el umbral de siempre y la
+        verificación del estado pasa; si no, None — y el llamador clasifica completo. Nunca
+        afirma otra pantalla: lo peor que puede pasar es que diga "no sé" y se pague el costo de
+        siempre. Sin ubicación conocida (todavía no hubo una clasificación completa que lo diera
+        por bueno, o cambió la resolución) también devuelve None."""
+        if code not in ESTADOS_QUE_SIGUEN or frame is None or frame.size == 0:
+            return None
+        fh, fw = frame.shape[:2]
+        umbral = THRESHOLD_BY_STATE.get(code, self._default_threshold)
+        for entry in self._templates:
+            if entry["code"] != code:
+                continue
+            ub = self._ubicacion.get(entry["name"])
+            if ub is None or ub[2] != (fh, fw):
+                continue
+            x, y, _ = ub
+            gray_tmpl = self._gray_tmpl(entry)
+            th, tw = gray_tmpl.shape[:2]
+            x0, y0 = max(0, x - _SIGUE_PAD), max(0, y - _SIGUE_PAD)
+            roi = frame[y0:min(fh, y + th + _SIGUE_PAD), x0:min(fw, x + tw + _SIGUE_PAD)]
+            if roi.shape[0] < th or roi.shape[1] < tw:
+                continue
+            roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY) if roi.ndim == 3 else roi
+            val = float(cv2.minMaxLoc(cv2.matchTemplate(roi, gray_tmpl, cv2.TM_CCOEFF_NORMED))[1])
+            if val < umbral:
+                continue
+            estado = self._verify(ScreenState(code, round(val, 3), entry["name"], method="sigue"),
+                                  frame)
+            if estado.code == code:
+                self._last_raw_state = code
+                return estado
+        return None
 
     @measure_latency("detector")
     def classify(self, frame: np.ndarray) -> ScreenState:
